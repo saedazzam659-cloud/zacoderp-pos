@@ -1141,7 +1141,7 @@ function AIAssistDialog({
   units: any[];
   onApply: (patch: Record<string, any>) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState<AIDraft | null>(null);
@@ -1277,7 +1277,7 @@ function AIAssistDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" dir="rtl">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" dir={i18n.language?.startsWith("en") ? "ltr" : "rtl"}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-primary" />
@@ -1729,7 +1729,7 @@ export default function Items() {
   }));
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -1795,7 +1795,7 @@ export default function Items() {
           saveDisabled={!form.nameAr}
           saveLabel={editId ? t("pages.items.saveEdit") : t("pages.items.addItem")}
         >
-          <div className="flex flex-col lg:flex-row gap-6" dir="rtl">
+          <div className="flex flex-col lg:flex-row gap-6" dir={isRtl ? "rtl" : "ltr"}>
             <div className="flex-1 min-w-0 space-y-5">
               <div className="flex justify-end">
             <Button
@@ -1821,7 +1821,7 @@ export default function Items() {
               <TabsTrigger value="additional" className="text-xs gap-1.5"><Layers     className="h-3.5 w-3.5" />{t("pages.items.additionalData")}</TabsTrigger>
               <TabsTrigger value="usage"      className="text-xs gap-1.5"><Cog        className="h-3.5 w-3.5" />{t("pages.items.usageControlTab")}</TabsTrigger>
               <TabsTrigger value="notes"      className="text-xs gap-1.5"><FileText   className="h-3.5 w-3.5" />{t("pages.items.notesTab")}</TabsTrigger>
-              {canRetailVariants && <TabsTrigger value="retail" className="text-xs gap-1.5"><Tag className="h-3.5 w-3.5" />تشكيلات التجزئة</TabsTrigger>}
+              {canRetailVariants && <TabsTrigger value="retail" className="text-xs gap-1.5"><Tag className="h-3.5 w-3.5" />{t("pages.items.retailVariantsTab")}</TabsTrigger>}
             </TabsList>
             <TabsContent value="basic" className="mt-0 space-y-6">
               <FormGrid cols={3}>
@@ -1862,40 +1862,40 @@ export default function Items() {
                     );
                   })()}
                 </Field>
-                <Field label="المجموعة الفرعية" hint="اختياري؛ تظهر المجموعات التابعة للفئة الرئيسية المحددة فقط.">
+                <Field label={t("pages.items.subgroupLabel")} hint={t("pages.items.subgroupHint")}>
                   <SearchCombobox
                     items={[
-                      { value: "", label: "بدون مجموعة فرعية" },
+                      { value: "", label: t("pages.items.noSubgroup") },
                       ...(subgroups as any[])
                         .filter((s: any) => String(s.parentGroupId) === String(form.groupId) && (s.isActive !== false || String(s.id) === String(form.subgroupId)))
-                        .map((s: any) => ({ value: String(s.id), code: s.code, label: s.nameAr, labelEn: s.nameEn || "" })),
+                        .map((s: any) => ({ value: String(s.id), code: s.code, label: localizedName(s.nameAr, s.nameEn, isRtl ? "ar" : "en"), labelEn: s.nameEn || "" })),
                     ]}
                     value={form.subgroupId}
                     onValueChange={(v) => setForm((p: any) => ({ ...p, subgroupId: v }))}
-                    placeholder={form.groupId ? "اختر المجموعة الفرعية" : "اختر المجموعة الرئيسية أولًا"}
+                    placeholder={form.groupId ? t("pages.items.chooseSubgroup") : t("pages.items.chooseGroupFirst")}
                     disabled={!form.groupId}
                   />
                 </Field>
                 <Field label={t("inventoryMaster.items.posGroup")}>
                   <SearchCombobox
-                    items={[{ value: "", label: t("inventoryMaster.items.noPosGroup") }, ...posGroups.map((g) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn ?? "" }))]}
+                    items={[{ value: "", label: t("inventoryMaster.items.noPosGroup") }, ...posGroups.map((g) => ({ value: String(g.id), code: g.code, label: localizedName(g.nameAr, g.nameEn, isRtl ? "ar" : "en"), labelEn: g.nameEn ?? "" }))]}
                     value={form.posGroupId}
                     onValueChange={(v) => setForm((p: any) => ({ ...p, posGroupId: v, posSubgroupId: "" }))}
                     placeholder={t("inventoryMaster.items.choosePosGroup")}
                   />
                   <p className="mt-1 text-xs text-muted-foreground">{t("inventoryMaster.items.posGroupHint")}</p>
                 </Field>
-                <Field label="المجموعة الفرعية لنقطة البيع" hint="اختياري؛ تظهر تحت مجموعة العرض المحددة في شاشة الكاشير.">
+                <Field label={t("pages.items.posSubgroupLabel")} hint={t("pages.items.posSubgroupHint")}>
                   <SearchCombobox
                     items={[
-                      { value: "", label: "بدون مجموعة فرعية" },
+                      { value: "", label: t("pages.items.noSubgroup") },
                       ...(posSubgroups as any[])
                         .filter((s: any) => String(s.parentPosGroupId) === String(form.posGroupId) && (s.isActive !== false || String(s.id) === String(form.posSubgroupId)))
-                        .map((s: any) => ({ value: String(s.id), code: s.code, label: s.nameAr, labelEn: s.nameEn || "" })),
+                        .map((s: any) => ({ value: String(s.id), code: s.code, label: localizedName(s.nameAr, s.nameEn, isRtl ? "ar" : "en"), labelEn: s.nameEn || "" })),
                     ]}
                     value={form.posSubgroupId}
                     onValueChange={(v) => setForm((p: any) => ({ ...p, posSubgroupId: v }))}
-                    placeholder={form.posGroupId ? "اختر المجموعة الفرعية" : "اختر مجموعة العرض أولًا"}
+                    placeholder={form.posGroupId ? t("pages.items.chooseSubgroup") : t("pages.items.choosePosGroupFirst")}
                     disabled={!form.posGroupId}
                   />
                 </Field>
@@ -2132,43 +2132,43 @@ export default function Items() {
                       data-testid="checkbox-retail-attributes-enabled"
                     />
                     <span>
-                      تفعيل خصائص التجزئة لهذا الصنف
+                      {t("pages.items.retailToggleLabel")}
                       <span className="mt-1 block text-xs font-normal text-muted-foreground">
-                        تحفظ بيانات النشاط واللون والمقاس على الصنف، ويمكن إدارة التشكيلات والإنشاء بالجملة من شاشة تشكيلات التجزئة.
+                        {t("pages.items.retailToggleHint")}
                       </span>
                     </span>
                   </label>
                 </div>
                 {form.retailEnabled && (
                   <FormGrid cols={3}>
-                    <Field label="نوع النشاط">
+                    <Field label={t("pages.items.retailCategory")}>
                       <SearchCombobox
                         items={[
-                          { value: "apparel", label: "ملابس" },
-                          { value: "footwear", label: "أحذية" },
-                          { value: "bags", label: "حقائب" },
-                          { value: "accessories", label: "إكسسوارات" },
-                          { value: "other", label: "نشاط تجزئة آخر" },
+                          { value: "apparel", label: t("pages.items.retailApparel") },
+                          { value: "footwear", label: t("pages.items.retailFootwear") },
+                          { value: "bags", label: t("pages.items.retailBags") },
+                          { value: "accessories", label: t("pages.items.retailAccessories") },
+                          { value: "other", label: t("pages.items.retailOther") },
                         ]}
                         value={form.retailCategory}
                         onValueChange={(v) => setForm((p: any) => ({ ...p, retailCategory: v }))}
-                        placeholder="اختر نوع النشاط"
+                        placeholder={t("pages.items.retailCategoryPlaceholder")}
                         testId="select-retail-category"
                       />
                     </Field>
-                    <Field label="اللون">
+                    <Field label={t("pages.items.retailColor")}>
                       <Input
                         value={form.retailColor}
                         onChange={(e) => setForm((p: any) => ({ ...p, retailColor: e.target.value }))}
-                        placeholder="مثال: أسود"
+                        placeholder={t("pages.items.retailColorExample")}
                         data-testid="input-retail-color"
                       />
                     </Field>
-                    <Field label="المقاس">
+                    <Field label={t("pages.items.retailSize")}>
                       <Input
                         value={form.retailSize}
                         onChange={(e) => setForm((p: any) => ({ ...p, retailSize: e.target.value }))}
-                        placeholder="مثال: 42 أو XL"
+                        placeholder={t("pages.items.retailSizeExample")}
                         data-testid="input-retail-size"
                       />
                     </Field>
@@ -2323,7 +2323,7 @@ export default function Items() {
                               className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
                                 expandedTab === "brands" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
                             >
-                              <Bookmark className="h-3.5 w-3.5" />العلامات التجارية
+                              <Bookmark className="h-3.5 w-3.5" />{t("pages.items.brandsTab")}
                             </button>
                             )}
                             <button
@@ -3348,6 +3348,7 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const isAr = i18n.language?.startsWith("ar");
+  const local = (ar: string, en: string) => isAr ? ar : en;
 
   const { data: links = [], isLoading, isError } = useQuery({
     queryKey: ["item-brands", itemId],
@@ -3473,7 +3474,7 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
   if (isError) {
     return (
       <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
-        تعذّر تحميل العلامات التجارية لهذا الصنف
+        {local("تعذّر تحميل العلامات التجارية لهذا الصنف", "Could not load brands for this item")}
       </div>
     );
   }
@@ -3483,7 +3484,7 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
       {!showForm && (
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            بيع الصنف تحت أكثر من علامة تجارية، لكل علامة سعرها وتكلفتها وباركودها ورقم قطعتها. تظهر في منتقي العلامة داخل فواتير المبيعات فقط.
+            {local("بيع الصنف تحت أكثر من علامة تجارية، لكل علامة سعرها وتكلفتها وباركودها ورقم قطعتها. تظهر في منتقي العلامة داخل فواتير المبيعات فقط.", "Sell this item under multiple brands, each with its own price, cost, barcode, and part number. Brands appear in the sales invoice brand picker.")}
           </p>
           <Button
             size="sm"
@@ -3491,10 +3492,10 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
             className="gap-1.5"
             onClick={() => setShowForm(true)}
             disabled={availableBrands.length === 0}
-            title={availableBrands.length === 0 ? "لا توجد علامات تجارية متاحة للإضافة" : ""}
+            title={availableBrands.length === 0 ? local("لا توجد علامات تجارية متاحة للإضافة", "No brands are available to add") : ""}
           >
             <Plus className="h-3.5 w-3.5" />
-            إضافة علامة تجارية
+            {local("إضافة علامة تجارية", "Add brand")}
           </Button>
         </div>
       )}
@@ -3503,7 +3504,7 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
         <div className="p-3 rounded-lg border bg-background/50 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs font-medium block mb-1">العلامة التجارية *</label>
+              <label className="text-xs font-medium block mb-1">{local("العلامة التجارية *", "Brand *")}</label>
               {editId != null ? (
                 <div className="w-full h-9 rounded-md border bg-muted/40 px-2 text-sm flex items-center text-muted-foreground">
                   {(() => {
@@ -3517,7 +3518,7 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
                   onChange={(e) => setForm(f => ({ ...f, brandId: e.target.value }))}
                   className="w-full h-9 rounded-md border bg-background px-2 text-sm"
                 >
-                  <option value="">— اختر العلامة التجارية —</option>
+                  <option value="">{local("— اختر العلامة التجارية —", "— Select brand —")}</option>
                   {availableBrands.map((b: any) => (
                     <option key={b.id} value={b.id}>
                       {(isAr ? b.nameAr : (b.nameEn || b.nameAr)) + (b.code ? ` (${b.code})` : "")}
@@ -3527,86 +3528,86 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
               )}
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">الباركود</label>
+              <label className="text-xs font-medium block mb-1">{local("الباركود", "Barcode")}</label>
               <Input value={form.barcode} onChange={(e) => setForm(f => ({ ...f, barcode: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">رقم القطعة</label>
+              <label className="text-xs font-medium block mb-1">{local("رقم القطعة", "Part number")}</label>
               <Input value={form.partNumber} onChange={(e) => setForm(f => ({ ...f, partNumber: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">كود المورّد</label>
+              <label className="text-xs font-medium block mb-1">{local("كود المورّد", "Supplier code")}</label>
               <Input value={form.supplierCode} onChange={(e) => setForm(f => ({ ...f, supplierCode: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">تكلفة الشراء</label>
+              <label className="text-xs font-medium block mb-1">{local("تكلفة الشراء", "Purchase cost")}</label>
               <Input type="number" step="any" value={form.purchaseCost} onChange={(e) => setForm(f => ({ ...f, purchaseCost: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">سعر البيع 1</label>
+              <label className="text-xs font-medium block mb-1">{local("سعر البيع 1", "Sale price 1")}</label>
               <Input type="number" step="any" value={form.salePrice1} onChange={(e) => setForm(f => ({ ...f, salePrice1: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">سعر البيع 2</label>
+              <label className="text-xs font-medium block mb-1">{local("سعر البيع 2", "Sale price 2")}</label>
               <Input type="number" step="any" value={form.salePrice2} onChange={(e) => setForm(f => ({ ...f, salePrice2: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">سعر البيع 3</label>
+              <label className="text-xs font-medium block mb-1">{local("سعر البيع 3", "Sale price 3")}</label>
               <Input type="number" step="any" value={form.salePrice3} onChange={(e) => setForm(f => ({ ...f, salePrice3: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">أقل سعر بيع</label>
+              <label className="text-xs font-medium block mb-1">{local("أقل سعر بيع", "Minimum sale price")}</label>
               <Input type="number" step="any" value={form.minSalePrice} onChange={(e) => setForm(f => ({ ...f, minSalePrice: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">بلد المنشأ</label>
+              <label className="text-xs font-medium block mb-1">{local("بلد المنشأ", "Country of origin")}</label>
               <Input value={form.countryOfOrigin} onChange={(e) => setForm(f => ({ ...f, countryOfOrigin: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">وحدة الشراء</label>
+              <label className="text-xs font-medium block mb-1">{local("وحدة الشراء", "Purchase unit")}</label>
               <Input value={form.purchaseUnit} onChange={(e) => setForm(f => ({ ...f, purchaseUnit: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">آخر تكلفة شراء</label>
+              <label className="text-xs font-medium block mb-1">{local("آخر تكلفة شراء", "Last purchase cost")}</label>
               <Input type="number" step="any" value={form.lastPurchaseCost} onChange={(e) => setForm(f => ({ ...f, lastPurchaseCost: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">متوسط التكلفة</label>
+              <label className="text-xs font-medium block mb-1">{local("متوسط التكلفة", "Average cost")}</label>
               <Input type="number" step="any" value={form.avgCost} onChange={(e) => setForm(f => ({ ...f, avgCost: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">هامش الربح %</label>
+              <label className="text-xs font-medium block mb-1">{local("هامش الربح %", "Profit margin %")}</label>
               <Input type="number" step="any" value={form.profitMargin} onChange={(e) => setForm(f => ({ ...f, profitMargin: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">مدة الضمان</label>
+              <label className="text-xs font-medium block mb-1">{local("مدة الضمان", "Warranty period")}</label>
               <Input value={form.warrantyPeriod} onChange={(e) => setForm(f => ({ ...f, warrantyPeriod: e.target.value }))} className="h-9" />
             </div>
             <div>
-              <label className="text-xs font-medium block mb-1">الحالة</label>
+              <label className="text-xs font-medium block mb-1">{local("الحالة", "Status")}</label>
               <select
                 value={form.status}
                 onChange={(e) => setForm(f => ({ ...f, status: e.target.value }))}
                 className="w-full h-9 rounded-md border bg-background px-2 text-sm"
               >
-                <option value="active">نشطة</option>
-                <option value="inactive">غير نشطة</option>
+                <option value="active">{local("نشطة", "Active")}</option>
+                <option value="inactive">{local("غير نشطة", "Inactive")}</option>
               </select>
             </div>
             <div className="sm:col-span-2 lg:col-span-3">
-              <label className="text-xs font-medium block mb-1">ملاحظات</label>
+              <label className="text-xs font-medium block mb-1">{local("ملاحظات", "Notes")}</label>
               <Input value={form.notes} onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} className="h-9" />
             </div>
           </div>
           <div className="flex items-center justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={() => { resetForm(); setShowForm(false); }}>إلغاء</Button>
+            <Button size="sm" variant="ghost" onClick={() => { resetForm(); setShowForm(false); }}>{local("إلغاء", "Cancel")}</Button>
             <Button
               size="sm"
               disabled={!form.brandId || addMut.isPending || updateMut.isPending}
               onClick={() => (editId != null ? updateMut.mutate() : addMut.mutate())}
             >
               {(addMut.isPending || updateMut.isPending) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              {editId != null ? "تحديث" : "حفظ"}
+              {editId != null ? local("تحديث", "Update") : local("حفظ", "Save")}
             </Button>
           </div>
         </div>
@@ -3614,21 +3615,21 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
 
       {links.length === 0 && !showForm ? (
         <div className="text-center text-xs text-muted-foreground py-6 border border-dashed rounded-lg">
-          لا توجد علامات تجارية مرتبطة بهذا الصنف بعد
+          {local("لا توجد علامات تجارية مرتبطة بهذا الصنف بعد", "No brands are linked to this item yet")}
         </div>
       ) : links.length > 0 ? (
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-full text-xs">
             <thead className="bg-muted/50">
               <tr className="text-right">
-                <th className="px-3 py-2 font-medium">العلامة التجارية</th>
-                <th className="px-3 py-2 font-medium">الباركود</th>
-                <th className="px-3 py-2 font-medium">رقم القطعة</th>
-                <th className="px-3 py-2 font-medium">تكلفة الشراء</th>
-                <th className="px-3 py-2 font-medium">سعر البيع 1</th>
-                <th className="px-3 py-2 font-medium">هامش الربح %</th>
-                <th className="px-3 py-2 font-medium">مدة الضمان</th>
-                <th className="px-3 py-2 font-medium">الحالة</th>
+                <th className="px-3 py-2 font-medium">{local("العلامة التجارية", "Brand")}</th>
+                <th className="px-3 py-2 font-medium">{local("الباركود", "Barcode")}</th>
+                <th className="px-3 py-2 font-medium">{local("رقم القطعة", "Part number")}</th>
+                <th className="px-3 py-2 font-medium">{local("تكلفة الشراء", "Purchase cost")}</th>
+                <th className="px-3 py-2 font-medium">{local("سعر البيع 1", "Sale price 1")}</th>
+                <th className="px-3 py-2 font-medium">{local("هامش الربح %", "Profit margin %")}</th>
+                <th className="px-3 py-2 font-medium">{local("مدة الضمان", "Warranty period")}</th>
+                <th className="px-3 py-2 font-medium">{local("الحالة", "Status")}</th>
                 <th className="px-3 py-2 font-medium"></th>
               </tr>
             </thead>
@@ -3636,7 +3637,7 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
               {links.map((l: any) => (
                 <tr key={l.id} className={cn("border-t", l.status === "inactive" && "opacity-60")}>
                   <td className="px-3 py-2">
-                    {l.brandNameAr || "—"}{l.brandCode ? ` (${l.brandCode})` : ""}
+                    {(isAr ? l.brandNameAr || l.brandNameEn : l.brandNameEn || l.brandNameAr) || "—"}{l.brandCode ? ` (${l.brandCode})` : ""}
                   </td>
                   <td className="px-3 py-2">{l.barcode || "—"}</td>
                   <td className="px-3 py-2">{l.partNumber || "—"}</td>
@@ -3646,8 +3647,8 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
                   <td className="px-3 py-2">{l.warrantyPeriod || "—"}</td>
                   <td className="px-3 py-2">
                     {l.status === "inactive"
-                      ? <span className="text-muted-foreground">غير نشطة</span>
-                      : <span className="text-emerald-600">نشطة</span>}
+                      ? <span className="text-muted-foreground">{local("غير نشطة", "Inactive")}</span>
+                      : <span className="text-emerald-600">{local("نشطة", "Active")}</span>}
                   </td>
                   <td className="px-3 py-2 text-left whitespace-nowrap">
                     <Button
@@ -3655,7 +3656,7 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
                       variant="ghost"
                       className="h-7 w-7 p-0"
                       onClick={() => startEdit(l)}
-                      title="تعديل"
+                      title={local("تعديل", "Edit")}
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>

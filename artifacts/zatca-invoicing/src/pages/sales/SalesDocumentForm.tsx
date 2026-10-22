@@ -3897,7 +3897,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية</span>
+                      <span className="text-sm font-bold text-foreground">{t("salesDocForm.zatcaTaxInvoiceTitle")}</span>
                       <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-primary/30 text-primary">B2B · Standard</Badge>
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
@@ -3906,20 +3906,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     {isStd && cust && (
                       <div className="mt-2 space-y-0.5 text-[10px]">
                         <div className={cn("flex items-center gap-1", vatOk ? "text-emerald-700" : "text-rose-700")}>
-                          <span>{vatOk ? "✓" : "✗"}</span><span>رقم ضريبي سعودي صحيح (15 رقم)</span>
+                          <span>{vatOk ? "✓" : "✗"}</span><span>{t("salesDocForm.zatcaVatNumberValid")}</span>
                         </div>
                         <div className={cn("flex items-center gap-1", crOk ? "text-emerald-700" : "text-muted-foreground")}>
-                          <span>{crOk ? "✓" : "•"}</span><span>رقم السجل التجاري (اختياري)</span>
+                          <span>{crOk ? "✓" : "•"}</span><span>{t("salesDocForm.zatcaCommercialRegister")}</span>
                         </div>
                         <div className={cn("flex items-center gap-1", addrMissing.length === 0 ? "text-emerald-700" : "text-rose-700")}>
                           <span>{addrMissing.length === 0 ? "✓" : "✗"}</span>
-                          <span>العنوان الوطني{addrMissing.length > 0 ? ` (ينقص: ${addrMissing.join("، ")})` : ""}</span>
+                          <span>{t("salesDocForm.zatcaNationalAddress")}{addrMissing.length > 0 ? ` (${t("salesDocForm.zatcaMissingFields")}: ${addrMissing.join(", ")})` : ""}</span>
                         </div>
                       </div>
                     )}
                     {isStd && !cust && (
                       <p className="mt-2 text-[10px] text-amber-700 flex items-center gap-1">
-                        <span>⚠</span><span>اختر العميل أولاً للتحقق من اكتمال البيانات</span>
+                        <span>⚠</span><span>{t("salesDocForm.zatcaSelectCustomerToValidate")}</span>
                       </p>
                     )}
                   </div>
@@ -3945,7 +3945,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-bold text-foreground">فاتورة ضريبية مبسّطة</span>
+                      <span className="text-sm font-bold text-foreground">{t("salesDocForm.zatcaSimplifiedInvoiceTitle")}</span>
                       <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-sky-300 text-sky-700">B2C · Simplified</Badge>
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
@@ -4222,7 +4222,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.branchPlaceholder")} /></SelectTrigger>
                       <SelectContent>
                         {(branches as any[]).map((b: any) => (
-                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? ` (${t("common.main")})` : ""}</SelectItem>
+                          <SelectItem key={b.id} value={String(b.id)}>{localizedName(b.nameAr, b.nameEn, isRtl ? "ar" : "en") ?? `#${b.id}`}{b.isMain ? ` (${t("common.main")})` : ""}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -4268,7 +4268,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.cashBoxPlaceholder")} /></SelectTrigger>
                       <SelectContent>
                         {(cashBoxes as any[]).map((b: any) => (
-                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
+                          <SelectItem key={b.id} value={String(b.id)}>{localizedName(b.nameAr, b.nameEn, isRtl ? "ar" : "en") ?? `#${b.id}`}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -4281,7 +4281,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.bankAccountPlaceholder")} /></SelectTrigger>
                       <SelectContent>
                         {(bankAccounts as any[]).map((b: any) => (
-                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
+                          <SelectItem key={b.id} value={String(b.id)}>{localizedName(b.nameAr, b.nameEn, isRtl ? "ar" : "en") ?? `#${b.id}`}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -4294,9 +4294,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     <Select value={currencyCode || undefined} onValueChange={handleCurrencyChange} disabled={fp.isReadOnly("currency")}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="..." /></SelectTrigger>
                       <SelectContent>
-                        {currencies.map((c: any) => (
-                          <SelectItem key={c.id} value={c.code}>{c.code}{c.nameAr ? ` — ${c.nameAr}` : ""}</SelectItem>
-                        ))}
+                        {currencies.map((c: any) => {
+                          const name = localizedName(c.nameAr, c.nameEn, isRtl ? "ar" : "en");
+                          return <SelectItem key={c.id} value={c.code}>{c.code}{name ? ` — ${name}` : ""}</SelectItem>;
+                        })}
                       </SelectContent>
                     </Select>
                   ) : (
@@ -4347,7 +4348,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 )}
                 {isInvoice && fp.isVisible("costCenter") && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">مركز التكلفة{fp.isRequired("costCenter") && <span className="text-destructive"> *</span>}</Label>
+                    <Label className="text-xs">{t("salesDocForm.costCenter")}{fp.isRequired("costCenter") && <span className="text-destructive"> *</span>}</Label>
                     <select
                       value={costCenter}
                       onChange={e => setCostCenter(e.target.value)}
@@ -4355,31 +4356,31 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       data-testid="sales-cost-center"
                       className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background disabled:bg-muted/40 disabled:cursor-not-allowed"
                     >
-                      <option value="">— بدون مركز تكلفة —</option>
+                      <option value="">{t("salesDocForm.noCostCenter")}</option>
                       {(costCentersList as any[])
                         .filter((c: any) => c.isActive !== false)
                         .map((c: any) => (
                           <option key={c.id} value={c.code}>
-                            {c.code} — {c.nameAr}
+                            {c.code} — {localizedName(c.nameAr, c.nameEn, isRtl ? "ar" : "en")}
                           </option>
                         ))}
                     </select>
-                    <p className="text-[10px] text-muted-foreground">يُسند تلقائياً إلى كل سطور القيد عند الترحيل.</p>
+                    <p className="text-[10px] text-muted-foreground">{t("salesDocForm.costCenterPostingHint")}</p>
                   </div>
                 )}
                 {isInvoice && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">المشروع (اختياري)</Label>
-                    <select aria-label="مشروع فاتورة المبيعات" value={projectId} onChange={e => setProjectId(e.target.value)}
+                    <Label className="text-xs">{t("salesDocForm.projectOptional")}</Label>
+                    <select aria-label={t("salesDocForm.salesInvoiceProject")} value={projectId} onChange={e => setProjectId(e.target.value)}
                       className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background">
-                      <option value="">— بدون مشروع —</option>
+                      <option value="">{t("salesDocForm.noProject")}</option>
                       {(projectOptions?.projects ?? []).filter(p => !branchId || p.branchId == null || String(p.branchId) === branchId)
-                        .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
+                        .map(p => <option key={p.id} value={p.id}>{p.code} — {localizedName(p.nameAr, p.nameEn, isRtl ? "ar" : "en")}</option>)}
                     </select>
                   </div>
                 )}
                 <div className="space-y-1.5">
-                  <Label className="text-xs">المستودع</Label>
+                  <Label className="text-xs">{t("salesDocForm.warehouse")}</Label>
                   <SearchCombobox
                     items={(warehouses as any[]).map((w: any) => ({
                       value: String(w.id),
@@ -4387,20 +4388,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     }))}
                     value={headerWarehouseId}
                     onValueChange={applyHeaderWarehouse}
-                    placeholder="اختر المستودع"
+                    placeholder={t("salesDocForm.warehousePlaceholder")}
                   />
-                  <p className="text-[10px] text-muted-foreground">يُعبَّأ تلقائياً على كل سطور الأصناف عند الاختيار.</p>
+                  <p className="text-[10px] text-muted-foreground">{t("salesDocForm.warehouseAutoApplyHint")}</p>
                 </div>
                 {taxCatalog.length > 0 && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">الضريبة</Label>
+                    <Label className="text-xs">{t("salesDocForm.taxLabel")}</Label>
                     <SearchCombobox
                       items={taxComboItems}
                       value={headerTaxId}
                       onValueChange={applyHeaderTax}
-                      placeholder="اختر الضريبة"
+                      placeholder={t("salesDocForm.taxPlaceholder")}
                     />
-                    <p className="text-[10px] text-muted-foreground">تُطبَّق نسبتها تلقائياً على كل سطور الأصناف.</p>
+                    <p className="text-[10px] text-muted-foreground">{t("salesDocForm.taxAutoApplyHint")}</p>
                   </div>
                 )}
               </div>
@@ -4604,7 +4605,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         </Button>
         {!editLock && (
           <>
-          {canSaveDraft && <Button variant="outline" onClick={() => handleSave(true)} disabled={saveMut.isPending} data-testid="button-save-draft">حفظ كمسودة</Button>}
+          {canSaveDraft && <Button variant="outline" onClick={() => handleSave(true)} disabled={saveMut.isPending} data-testid="button-save-draft">{t("salesDocForm.saveDraftAction")}</Button>}
           <Button data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={() => handleSave(false)} disabled={saveMut.isPending || (isInvoice && draftOnly)}>
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>

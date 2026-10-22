@@ -2940,7 +2940,7 @@ function TopNavBar(props: any) {
     },
     {
       key: "hr",
-      label: t("nav.hrGroup", { defaultValue: "الموارد البشرية" }),
+      label: t("nav.hrGroup"),
       newTabHref: "/hr",
       node: close => <HrNavGroup location={location} onNavigate={nav(close)} open onToggle={NOOP} />,
     },
