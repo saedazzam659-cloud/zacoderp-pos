@@ -6542,6 +6542,7 @@
       "posGroupHint": "This is separate from the accounting item category above.",
       "natureFieldLabel": "Item nature",
       "natureFieldHint": "Helps distinguish raw materials from finished goods in manufacturing screens",
+      "stockAccountingHint": "Stock accounts are routed through the accounting item category, warehouse, and company settings according to the transaction.",
       "serviceNoStockHint": "Service item: never affects inventory. Set the revenue account (required) in the \"Accounting Link\" tab — the cost account is optional (e.g. Projects under Construction).",
       "serviceAccountsRequired": "A service item requires a revenue account (set it in the \"Accounting Link\" tab) — the cost account is optional.",
       "prepaidNoStockHint": "Prepaid expense item: never affects inventory. Set the expense (cost) account in the \"Accounting Link\" tab — preferably also link the item to a \"Deferred expense\" group.",

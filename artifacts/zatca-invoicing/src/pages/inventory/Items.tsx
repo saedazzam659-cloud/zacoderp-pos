@@ -1487,7 +1487,7 @@ export default function Items() {
       const i = items.find((x: any) => x.id === id);
       if (i && editId !== id) {
         handleEdit(i);
-        if (tabParam) setActiveItemTab(tabParam);
+        if (tabParam) setActiveItemTab(tabParam === "accounts" && i.itemType === "stock" ? "basic" : tabParam);
         // Clean URL to base
         setLocation("/inventory/items", { replace: true });
       }
@@ -1569,7 +1569,7 @@ export default function Items() {
         return;
       }
     }
-    const { retailEnabled, retailCategory, retailColor, retailSize, ...itemFields } = form;
+    const { retailEnabled, retailCategory, retailColor, retailSize, costAccountId, revenueAccountId, ...itemFields } = form;
     const retailTags = tagsToArray(form.tags);
     const retailAttributes = { ...(form.variantAttributes && typeof form.variantAttributes === "object" ? form.variantAttributes : {}) };
     if (canRetailVariants) {
@@ -1593,8 +1593,10 @@ export default function Items() {
       posGroupId:       form.posGroupId       ? Number(form.posGroupId)       : null,
       posSubgroupId:    form.posSubgroupId    ? Number(form.posSubgroupId)    : null,
       unitId:           form.unitId           ? Number(form.unitId)           : null,
-      costAccountId:    form.costAccountId    ? Number(form.costAccountId)    : null,
-      revenueAccountId: form.revenueAccountId ? Number(form.revenueAccountId) : null,
+      ...(form.itemType !== "stock" ? {
+        costAccountId:    costAccountId    ? Number(costAccountId)    : null,
+        revenueAccountId: revenueAccountId ? Number(revenueAccountId) : null,
+      } : {}),
       ...(canRetailVariants ? {
         tags: retailTags.join(", "),
         variantAttributes: Object.keys(retailAttributes).length ? retailAttributes : null,
@@ -1816,7 +1818,9 @@ export default function Items() {
               <TabsTrigger value="basic"      className="text-xs gap-1.5"><Package    className="h-3.5 w-3.5" />{t("pages.items.basicData")}</TabsTrigger>
               <TabsTrigger value="pricing"    className="text-xs gap-1.5"><DollarSign className="h-3.5 w-3.5" />{t("pages.items.pricingAndQuantities")}</TabsTrigger>
               <TabsTrigger value="units"      className="text-xs gap-1.5"><Ruler      className="h-3.5 w-3.5" />{t("inventoryMaster.units.itemUnitsTitle", { defaultValue: "ربط وحدات القياس والتحويل" })}</TabsTrigger>
-              <TabsTrigger value="accounts"   className="text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{t("pages.items.accountingLink")}</TabsTrigger>
+              {form.itemType !== "stock" && (
+                <TabsTrigger value="accounts" className="text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{t("pages.items.accountingLink")}</TabsTrigger>
+              )}
               <TabsTrigger value="inventory"  className="text-xs gap-1.5"><Warehouse  className="h-3.5 w-3.5" />{t("pages.items.inventoryAndWarehouses")}</TabsTrigger>
               <TabsTrigger value="additional" className="text-xs gap-1.5"><Layers     className="h-3.5 w-3.5" />{t("pages.items.additionalData")}</TabsTrigger>
               <TabsTrigger value="usage"      className="text-xs gap-1.5"><Cog        className="h-3.5 w-3.5" />{t("pages.items.usageControlTab")}</TabsTrigger>
@@ -1829,8 +1833,8 @@ export default function Items() {
                 <Field label={t("pages.items.nameAr")} required><Input placeholder={t("pages.items.nameAr")} value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} /></Field>
                 <Field label={t("pages.items.nameEn")}><Input placeholder="Item Name" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></Field>
                 <Field label={t("pages.items.barcode")}><Input placeholder="1234567890" dir="ltr" className="text-left" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></Field>
-                <Field label={t("pages.items.itemType")} hint={form.itemType === "service" ? t("inventoryMaster.items.serviceNoStockHint") : form.itemType === "prepaid_expense" ? t("inventoryMaster.items.prepaidNoStockHint") : undefined}>
-                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }, { value: "fixed_asset", label: t("pages.items.fixedAsset") }, { value: "prepaid_expense", label: t("pages.items.prepaidExpense") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v, ...(v === "service" || v === "prepaid_expense" ? { itemNature: "merchandise", batchTrackingMode: "none", reorderLevel: "0", maxLevel: "", expiryDate: "", costMethod: "weighted_avg" } : {}) }))} placeholder={t("pages.items.itemType")} />
+                <Field label={t("pages.items.itemType")} hint={form.itemType === "stock" ? t("inventoryMaster.items.stockAccountingHint") : form.itemType === "service" ? t("inventoryMaster.items.serviceNoStockHint") : form.itemType === "prepaid_expense" ? t("inventoryMaster.items.prepaidNoStockHint") : undefined}>
+                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }, { value: "fixed_asset", label: t("pages.items.fixedAsset") }, { value: "prepaid_expense", label: t("pages.items.prepaidExpense") }]} value={form.itemType} onValueChange={v => { setForm((p: any) => ({ ...p, itemType: v, ...(v === "service" || v === "prepaid_expense" ? { itemNature: "merchandise", batchTrackingMode: "none", reorderLevel: "0", maxLevel: "", expiryDate: "", costMethod: "weighted_avg" } : {}) })); if (v === "stock") setActiveItemTab("basic"); }} placeholder={t("pages.items.itemType")} />
                 </Field>
                 {form.itemType !== "service" && form.itemType !== "prepaid_expense" && (
                 <Field label={t("inventoryMaster.items.natureFieldLabel")} hint={t("inventoryMaster.items.natureFieldHint")}>
@@ -2070,7 +2074,7 @@ export default function Items() {
               )}
             </TabsContent>
 
-            <TabsContent value="accounts" className="mt-0">
+            {form.itemType !== "stock" && <TabsContent value="accounts" className="mt-0">
               <FormGrid cols={3}>
                 <Field label={t("pages.items.costAccount")} required={form.itemType === "prepaid_expense"} hint={form.itemType === "prepaid_expense" ? t("inventoryMaster.items.prepaidCostAccountRequired") : undefined}>
                   <AccountCombobox value={form.costAccountId} onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))} placeholder={t("pages.items.chooseCostAccount")} filterTypes={["expense", "asset"]} grouped={false} />
@@ -2079,7 +2083,7 @@ export default function Items() {
                   <AccountCombobox value={form.revenueAccountId} onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))} placeholder={t("pages.items.chooseRevenueAccount")} filterTypes={["revenue"]} grouped={false} />
                 </Field>
               </FormGrid>
-            </TabsContent>
+            </TabsContent>}
             <TabsContent value="additional" className="mt-0 space-y-6">
               <FormGrid cols={3}>
                 <Field label={t("pages.items.tagsLabel")} hint={t("pages.items.tagsHint")} className="md:col-span-2 lg:col-span-3">
