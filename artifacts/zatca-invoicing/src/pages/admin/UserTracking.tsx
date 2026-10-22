@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Switch } from "@/components/ui/switch";
 import { MapPin, Users, Clock, AlertTriangle, Trash2, Plus, BarChart3, UserPlus, X, Search, Loader2, Globe2, LocateFixed, Pencil } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line, Legend } from "recharts";
-import maplibregl from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { DateField } from "@/components/ui/date-field";
 

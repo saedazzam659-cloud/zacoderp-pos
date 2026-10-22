@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { MapPin, Users, Clock, AlertTriangle, RefreshCw, Activity, CircleOff, ArrowRight } from "lucide-react";
-import maplibregl from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 // FREE OpenStreetMap raster tile style — same one used in the main tracking
