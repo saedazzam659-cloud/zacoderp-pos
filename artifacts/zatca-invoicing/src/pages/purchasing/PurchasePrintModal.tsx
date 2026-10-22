@@ -23,12 +23,37 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 // numeric span to visible glyphs only. The `.mono` span in baseStyles is also
 // forced to `direction:ltr; unicode-bidi:isolate` so the browser never injects
 // new marks at render time.
-const NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const STRIP_INVISIBLE = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
-const fmt = (n: any) => NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
 // Latin-digit formatter for English print mode.
-const EN_NUM_FMT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtEn = (n: any) => EN_NUM_FMT.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+let activePrintDecimalPlaces = 2;
+const amountFormatters = new Map<number, Intl.NumberFormat>();
+const fmt = (n: any) => {
+  let formatter = amountFormatters.get(activePrintDecimalPlaces);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: activePrintDecimalPlaces,
+      maximumFractionDigits: activePrintDecimalPlaces,
+    });
+    amountFormatters.set(activePrintDecimalPlaces, formatter);
+  }
+  return formatter.format(Number(n || 0)).replace(STRIP_INVISIBLE, "");
+};
+const fmtEn = (n: any) => fmt(n);
+function withCompanyPrintPrecision<T>(company: any, render: () => T): T {
+  const previous = activePrintDecimalPlaces;
+  const rawPrecision = company?.decimalPlaces;
+  const configured = rawPrecision == null || String(rawPrecision).trim() === ""
+    ? Number.NaN
+    : Number(rawPrecision);
+  activePrintDecimalPlaces = Number.isFinite(configured)
+    ? Math.max(0, Math.min(6, Math.trunc(configured)))
+    : 2;
+  try {
+    return render();
+  } finally {
+    activePrintDecimalPlaces = previous;
+  }
+}
 const escapePrintText = (value: unknown) =>
   String(value ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!),
@@ -1582,7 +1607,11 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
     const visiblePrintData: PrintData = user?.company?.showFreeQuantity === false
       ? { ...printData, lines: (printData.lines ?? []).map((line: any) => ({ ...line, freeQty: 0 })) }
       : printData;
-    const renderedHtml = tmpl.fn(visiblePrintData);
+    const renderedHtml = withCompanyPrintPrecision(
+      { decimalPlaces: visiblePrintData.company?.decimalPlaces ?? user?.company?.decimalPlaces },
+      () =>
+      tmpl.fn(visiblePrintData)
+    );
     const html = user?.company?.showFreeQuantity === false
       ? renderedHtml
           .replaceAll("إجمالي كميات الفاتورة (شاملة المجانية)", "إجمالي كميات الفاتورة")
