@@ -7061,9 +7061,30 @@ router.delete("/customer-settlements/:id", async (req, res) => {
 // (PCSID preferred) — without onboarding the invoice cannot be submitted.
 // Standard (B2B, customer has 15-digit VAT) → clearance; simplified → reporting.
 // ═══════════════════════════════════════════════════════════════════
+async function companyZidIssuerGate(companyId: number): Promise<{ allowed: boolean; error?: string }> {
+  const [company] = await db.select({ menuPermissions: companiesTable.menuPermissions })
+    .from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+  let permissions: Record<string, unknown> = {};
+  try { permissions = JSON.parse(company?.menuPermissions ?? "{}"); } catch { /* fail closed only for enabled Zid */ }
+  const erpSource = permissions.zid_invoice_source_erp === true;
+  const zidSource = permissions.zid_invoice_source_zid === true;
+  if (permissions.zid_integration === true && erpSource === zidSource) {
+    return { allowed: false, error: "اختر مصدرًا واحدًا لفواتير Zid من صلاحيات القوائم قبل الإرسال إلى ZATCA" };
+  }
+  if (zidSource && !erpSource) {
+    return { allowed: false, error: "مصدر الفاتورة الضريبية لهذه الشركة هو Zid؛ أوقف إرسال ERP إلى ZATCA لتجنب التكرار" };
+  }
+  return { allowed: true };
+}
+
 async function submitSalesInvoiceToZatcaUnlocked(req: any, res: any) {
   try {
     const cid = guard(req, res); if (!cid) return;
+    const issuerGate = await companyZidIssuerGate(cid);
+    if (!issuerGate.allowed) {
+      res.status(409).json({ error: issuerGate.error, code: "ZID_FISCAL_ISSUER_CONFLICT" });
+      return;
+    }
     const id = Number(req.params.id);
     const [inv] = await db.select().from(salesInvoicesTable)
       .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
@@ -7392,6 +7413,10 @@ type ZatcaSubmitOutcome = {
  * submission without rolling back a correctly posted return.
  */
 async function submitSalesReturnToZatcaUnlocked(companyId: number, id: number): Promise<ZatcaSubmitOutcome> {
+  const issuerGate = await companyZidIssuerGate(companyId);
+  if (!issuerGate.allowed) {
+    return { httpStatus: 409, body: { error: issuerGate.error, code: "ZID_FISCAL_ISSUER_CONFLICT" } };
+  }
   await assertZatcaSubmissionAllowed(companyId);
   const [ret] = await db.select().from(salesReturnsTable).where(and(
     eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, companyId),
