@@ -533,7 +533,7 @@ function ItemHistoryDialog({ open, onOpenChange, item }: { open: boolean; onOpen
             <History className="h-5 w-5 text-primary" />
             {t("pages.items.history.title")}
             <span className="text-sm font-normal text-muted-foreground">
-              — {item.nameAr ?? item.code}
+               — {localizedName(item.nameAr, item.nameEn, isRtl ? "ar" : "en") || item.code}
             </span>
           </DialogTitle>
         </DialogHeader>
@@ -3409,10 +3409,10 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
       inv();
       resetForm();
       setShowForm(false);
-      toast({ title: "تمت إضافة العلامة التجارية" });
+      toast({ title: local("تمت إضافة العلامة التجارية", "Brand added") });
     },
     onError: (e: any) => toast({
-      title: "تعذّر إضافة العلامة التجارية",
+      title: local("تعذّر إضافة العلامة التجارية", "Could not add brand"),
       description: parseError(e),
       variant: "destructive",
     }),
@@ -3424,10 +3424,10 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
       inv();
       resetForm();
       setShowForm(false);
-      toast({ title: "تم تحديث العلامة التجارية" });
+      toast({ title: local("تم تحديث العلامة التجارية", "Brand updated") });
     },
     onError: (e: any) => toast({
-      title: "تعذّر تحديث العلامة التجارية",
+      title: local("تعذّر تحديث العلامة التجارية", "Could not update brand"),
       description: parseError(e),
       variant: "destructive",
     }),
@@ -3462,9 +3462,9 @@ function ItemBrandsPanel({ itemId }: { itemId: number }) {
 
   const deleteMut = useMutation({
     mutationFn: (linkId: number) => inventoryApi.deleteItemBrand(itemId, linkId),
-    onSuccess: () => { inv(); toast({ title: "تم حذف العلامة التجارية" }); },
+    onSuccess: () => { inv(); toast({ title: local("تم حذف العلامة التجارية", "Brand deleted") }); },
     onError: (e: any) => toast({
-      title: "تعذّر حذف العلامة التجارية",
+      title: local("تعذّر حذف العلامة التجارية", "Could not delete brand"),
       description: parseError(e),
       variant: "destructive",
     }),

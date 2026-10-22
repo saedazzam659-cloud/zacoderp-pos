@@ -1,4 +1,5 @@
 import { Switch, Route, Router as WouterRouter, useLocation, useParams, Redirect } from "wouter";
+import { useTranslation } from "react-i18next";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import CustomerCobrowseWidget from "@/components/cobrowse/CustomerCobrowseWidget";
 import WhatsAppFloat from "@/components/WhatsAppFloat";
@@ -495,12 +496,24 @@ const queryClient = new QueryClient({
 });
 
 function LoadingScreen() {
+  const { i18n } = useTranslation();
+  const isEnglish = i18n.language?.startsWith("en");
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background" dir="rtl">
+    <div className="min-h-screen flex items-center justify-center bg-background" dir={isEnglish ? "ltr" : "rtl"}>
       <div className="text-center space-y-3">
         <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" />
-        <p className="text-sm text-muted-foreground">جاري التحقق من الجلسة...</p>
+        <p className="text-sm text-muted-foreground">{isEnglish ? "Checking your session…" : "جارٍ التحقق من الجلسة..."}</p>
       </div>
+    </div>
+  );
+}
+
+function AgentConfigLoading() {
+  const { i18n } = useTranslation();
+  const isEnglish = i18n.language?.startsWith("en");
+  return (
+    <div className="p-6 text-sm text-muted-foreground" role="status" dir={isEnglish ? "ltr" : "rtl"}>
+      {isEnglish ? "Loading agent settings…" : "جارٍ تحميل إعدادات الوكيل…"}
     </div>
   );
 }
@@ -566,11 +579,7 @@ function AgentUnifiedInventoryReportsRoute() {
   const inventoryEnabled = useUnifiedInventoryReports();
   const modulesEnabled = useUnifiedModuleReports("inventory");
   if (inventoryEnabled === null || modulesEnabled === null) {
-    return (
-      <div className="p-6 text-sm text-muted-foreground" role="status">
-        جارٍ تحميل إعدادات الوكيل…
-      </div>
-    );
+    return <AgentConfigLoading />;
   }
   return inventoryEnabled || modulesEnabled
     ? <UnifiedInventoryReports />
@@ -581,11 +590,7 @@ function AgentUnifiedModuleReportsRoute() {
   const { moduleKey } = useParams<{ moduleKey: string }>();
   const enabled = useUnifiedModuleReports(moduleKey);
   if (enabled === null) {
-    return (
-      <div className="p-6 text-sm text-muted-foreground" role="status">
-        جارٍ تحميل إعدادات الوكيل…
-      </div>
-    );
+    return <AgentConfigLoading />;
   }
   if (moduleKey === "inventory") {
     return enabled ? <UnifiedInventoryReports /> : <Redirect to="/inventory/reports" />;
@@ -601,11 +606,7 @@ function AgentInventoryReportsHubRoute() {
   const inventoryEnabled = useUnifiedInventoryReports();
   const modulesEnabled = useUnifiedModuleReports("inventory");
   if (inventoryEnabled === null || modulesEnabled === null) {
-    return (
-      <div className="p-6 text-sm text-muted-foreground" role="status">
-        جارٍ تحميل إعدادات الوكيل…
-      </div>
-    );
+    return <AgentConfigLoading />;
   }
   return inventoryEnabled || modulesEnabled
     ? <UnifiedInventoryReports />
@@ -615,7 +616,7 @@ function AgentInventoryReportsHubRoute() {
 function AgentSalesReportsHubRoute() {
   const enabled = useUnifiedModuleReports("sales");
   if (enabled === null) {
-    return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
+    return <AgentConfigLoading />;
   }
   return enabled ? <UnifiedModuleReports moduleId="sales" /> : <SalesReportsHub />;
 }
@@ -623,7 +624,7 @@ function AgentSalesReportsHubRoute() {
 function AgentPurchasingReportsHubRoute() {
   const enabled = useUnifiedModuleReports("purchasing");
   if (enabled === null) {
-    return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
+    return <AgentConfigLoading />;
   }
   return enabled ? <UnifiedModuleReports moduleId="purchasing" /> : <PurchaseReportsHub />;
 }
@@ -631,7 +632,7 @@ function AgentPurchasingReportsHubRoute() {
 function AgentCashReportsHubRoute() {
   const enabled = useUnifiedModuleReports("cash");
   if (enabled === null) {
-    return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
+    return <AgentConfigLoading />;
   }
   return enabled ? <UnifiedModuleReports moduleId="cash" /> : <CashReportsHub />;
 }
@@ -639,7 +640,7 @@ function AgentCashReportsHubRoute() {
 function AgentHrReportsHubRoute() {
   const enabled = useUnifiedModuleReports("hr");
   if (enabled === null) {
-    return <div className="p-6 text-sm text-muted-foreground" role="status">جارٍ تحميل إعدادات الوكيل…</div>;
+    return <AgentConfigLoading />;
   }
   return enabled ? <UnifiedModuleReports moduleId="hr" /> : <HRReportsHub />;
 }
@@ -647,11 +648,7 @@ function AgentHrReportsHubRoute() {
 function AccountingReportsRoute() {
   const enabled = useUnifiedModuleReports("accounting");
   if (enabled === null) {
-    return (
-      <div className="p-6 text-sm text-muted-foreground" role="status">
-        جارٍ تحميل إعدادات الوكيل…
-      </div>
-    );
+    return <AgentConfigLoading />;
   }
   return enabled
     ? <Redirect to="/module-reports/accounting" />

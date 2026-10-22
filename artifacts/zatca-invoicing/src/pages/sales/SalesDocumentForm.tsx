@@ -81,12 +81,14 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
 function SalesBranchStock({ itemId, companyId, userId, branchId, warehouseId, headers, enabled }: { itemId: string; companyId: number | string; userId: number | string; branchId: string; warehouseId: string; headers: Record<string, string>; enabled: boolean }) {
+  const { i18n } = useTranslation();
+  const isEnglish = i18n.language?.startsWith("en");
   const { data = [], isLoading, isError, refetch } = useQuery<any[]>({
     queryKey: ["sales-branch-stock", companyId, userId, itemId],
     enabled: enabled && !!itemId && !!companyId,
     queryFn: async () => {
       const r = await fetch(`${API}/api/inventory/items/${itemId}/sales-branch-stock`, { headers });
-      if (!r.ok) throw new Error("تعذر تحميل مخزون الفروع");
+      if (!r.ok) throw new Error(isEnglish ? "Could not load branch stock" : "تعذر تحميل مخزون الفروع");
       return r.json();
     },
     staleTime: 30_000,
@@ -97,15 +99,15 @@ function SalesBranchStock({ itemId, companyId, userId, branchId, warehouseId, he
     <Popover>
       <div className="flex items-center gap-1">
         {selectedWarehouse && (
-          <span data-testid={`selected-available-stock-${itemId}`} title="الكمية المتاحة في المخزن المحدد في بيانات الفاتورة" dir="ltr" className="rounded border border-rose-200 bg-rose-50 px-1 py-0.5 font-mono text-[9px] font-semibold leading-none text-rose-700">
+          <span data-testid={`selected-available-stock-${itemId}`} title={isEnglish ? "Available quantity in the invoice warehouse" : "الكمية المتاحة في المخزن المحدد في بيانات الفاتورة"} dir="ltr" className="rounded border border-rose-200 bg-rose-50 px-1 py-0.5 font-mono text-[9px] font-semibold leading-none text-rose-700">
             {Number(selectedWarehouse.qty || 0).toLocaleString("en-US")}
           </span>
         )}
         <PopoverTrigger asChild>
           <button
             type="button"
-            aria-label="عرض أرصدة الفروع المحددة"
-            title="عرض أرصدة الفروع المحددة"
+            aria-label={isEnglish ? "View stock at selected branches" : "عرض أرصدة الفروع المحددة"}
+            title={isEnglish ? "View stock at selected branches" : "عرض أرصدة الفروع المحددة"}
             data-testid={`sales-branch-stock-${itemId}`}
             className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-sky-200 bg-white text-sky-700 shadow-sm transition-colors hover:border-sky-400 hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
           >
@@ -118,32 +120,32 @@ function SalesBranchStock({ itemId, companyId, userId, branchId, warehouseId, he
           </button>
         </PopoverTrigger>
       </div>
-      <PopoverContent side="bottom" align="start" sideOffset={5} dir="rtl" className="z-[100] w-72 rounded-xl border border-sky-200 bg-white p-3 shadow-xl">
+      <PopoverContent side="bottom" align="start" sideOffset={5} dir={isEnglish ? "ltr" : "rtl"} className="z-[100] w-72 rounded-xl border border-sky-200 bg-white p-3 shadow-xl">
         <div className="mb-2 flex items-center justify-between gap-3 border-b pb-2">
           <div>
-            <p className="text-xs font-bold text-slate-900">رصيد الفروع المحددة</p>
-            <p className="mt-0.5 text-[10px] text-muted-foreground">بالوحدة الأساسية للصنف</p>
+            <p className="text-xs font-bold text-slate-900">{isEnglish ? "Selected branch stock" : "رصيد الفروع المحددة"}</p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">{isEnglish ? "In the item's base unit" : "بالوحدة الأساسية للصنف"}</p>
           </div>
-          {data.length > 0 && <span className="rounded-full bg-sky-50 px-2 py-1 text-[10px] font-semibold text-sky-800">{data.length} مستودع</span>}
+          {data.length > 0 && <span className="rounded-full bg-sky-50 px-2 py-1 text-[10px] font-semibold text-sky-800">{data.length} {isEnglish ? "warehouse(s)" : "مستودع"}</span>}
         </div>
         {isLoading ? (
-          <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> جارٍ تحميل الأرصدة…</div>
+          <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> {isEnglish ? "Loading stock…" : "جارٍ تحميل الأرصدة…"}</div>
         ) : isError ? (
           <div className="flex items-center justify-between gap-2 py-2">
-            <span className="text-xs text-rose-700">تعذر تحميل الأرصدة.</span>
+            <span className="text-xs text-rose-700">{isEnglish ? "Could not load stock." : "تعذر تحميل الأرصدة."}</span>
             <button type="button" onClick={() => void refetch()} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] hover:bg-muted">
-              <RefreshCw className="h-3 w-3" /> إعادة المحاولة
+              <RefreshCw className="h-3 w-3" /> {isEnglish ? "Retry" : "إعادة المحاولة"}
             </button>
           </div>
         ) : data.length === 0 ? (
-          <p className="py-2 text-xs text-muted-foreground">لا توجد فروع محددة لهذا المستخدم.</p>
+          <p className="py-2 text-xs text-muted-foreground">{isEnglish ? "No branches are assigned to this user." : "لا توجد فروع محددة لهذا المستخدم."}</p>
         ) : (
           <div className="max-h-56 space-y-1.5 overflow-y-auto">
             {data.map((row: any) => (
               <div key={`${row.branchId}-${row.warehouseId}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50/70 px-2.5 py-2">
                 <div className="min-w-0">
-                  <p className="truncate text-xs font-medium text-slate-800">{row.branchName || "فرع"} · {row.warehouseName || "مستودع"}</p>
-                  {String(row.branchId ?? "") === String(branchId ?? "") && <p className="mt-0.5 text-[9px] text-sky-700">فرع الفاتورة</p>}
+                  <p className="truncate text-xs font-medium text-slate-800">{row.branchName || (isEnglish ? "Branch" : "فرع")} · {row.warehouseName || (isEnglish ? "Warehouse" : "مستودع")}</p>
+                  {String(row.branchId ?? "") === String(branchId ?? "") && <p className="mt-0.5 text-[9px] text-sky-700">{isEnglish ? "Invoice branch" : "فرع الفاتورة"}</p>}
                 </div>
                 <span dir="ltr" className="shrink-0 rounded-md bg-white px-2 py-1 text-xs font-bold tabular-nums text-sky-800 shadow-sm">{Number(row.qty || 0).toLocaleString("en-US")}</span>
               </div>
@@ -165,6 +167,8 @@ type SalesItemPickerWithStockProps = ComponentProps<typeof SearchCombobox> & {
 };
 
 function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockEnabled, warehouseId, value, items, ...pickerProps }: SalesItemPickerWithStockProps) {
+  const { i18n } = useTranslation();
+  const isEnglish = i18n.language?.startsWith("en");
   // Put the controlled selection first so it is never clipped by the bounded
   // lookup when search results contain many rows or only the selected item is
   // being hydrated after the picker closes.
@@ -176,7 +180,7 @@ function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockE
     queryFn: async () => {
       const params = new URLSearchParams({ warehouseId, itemIds: itemIds.join(",") });
       const response = await fetch(`${API}/api/inventory/items/sales-stock-lookup?${params}`, { headers });
-      if (!response.ok) throw new Error("تعذر تحميل الكميات المتاحة");
+      if (!response.ok) throw new Error(isEnglish ? "Could not load available quantities" : "تعذر تحميل الكميات المتاحة");
       return response.json();
     },
     enabled: stockEnabled && !!warehouseId && itemIds.length > 0,
@@ -205,7 +209,7 @@ function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockE
               {item.badge && <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${item.badgeClass ?? "bg-muted text-muted-foreground"}`}>{item.badge}</span>}
               <span className="min-w-0 flex-1 text-sm font-medium">{item.label}</span>
               {typeof item.stockQty === "number" && (
-                <span data-testid={`available-stock-${item.value}`} title="الكمية المتاحة في المخزن المحدد (بالوحدة الأساسية)" dir="ltr" className="shrink-0 rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-rose-700">
+                <span data-testid={`available-stock-${item.value}`} title={isEnglish ? "Available quantity in the selected warehouse (base unit)" : "الكمية المتاحة في المخزن المحدد (بالوحدة الأساسية)"} dir="ltr" className="shrink-0 rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-rose-700">
                   {item.stockQty.toLocaleString("en-US")}
                 </span>
               )}
@@ -306,6 +310,8 @@ function ItemBrandPicker({
   onPick: (brandId: number | null, brandName: string, ib: any) => void;
 }) {
   const canBrands = usePermission("brands");
+  const { i18n } = useTranslation();
+  const isEnglish = i18n.language?.startsWith("en");
   const { data: links = [] } = useQuery({
     queryKey: ["item-brands", itemId],
     queryFn: () => inventoryApi.getItemBrands(Number(itemId)),
@@ -322,14 +328,14 @@ function ItemBrandPicker({
         onValueChange={v => {
           if (v === "__none__") { onPick(null, "", null); return; }
           const ib = links.find((x: any) => String(x.brandId) === v);
-          onPick(Number(v), ib?.brandNameAr ?? "", ib);
+          onPick(Number(v), localizedName(ib?.brandNameAr, ib?.brandNameEn, isEnglish ? "en" : "ar"), ib);
         }}
       >
         <SelectTrigger className="h-7 text-[11px] w-64">
-          <SelectValue placeholder="العلامة التجارية (اختياري)" />
+          <SelectValue placeholder={isEnglish ? "Brand (optional)" : "العلامة التجارية (اختياري)"} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="__none__">بدون علامة تجارية</SelectItem>
+          <SelectItem value="__none__">{isEnglish ? "No brand" : "بدون علامة تجارية"}</SelectItem>
           {links.map((ib: any) => (
             <SelectItem key={ib.id} value={String(ib.brandId)}>
               {ib.brandNameAr ?? ib.brandCode}
@@ -479,7 +485,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     queryKey: ["sales-invoice-overdraft-capability", user?.id, user?.sessionId],
     queryFn: async () => {
       const r = await fetch(`${API}/api/sales/sales-invoices/overdraft-capability`, { headers: authH });
-      if (!r.ok) throw new Error("تعذر التحقق من صلاحية السحب على المكشوف");
+      if (!r.ok) throw new Error(isRtl ? "تعذر التحقق من صلاحية السحب على المكشوف" : "Could not verify negative-stock permission");
       return r.json();
     },
     enabled: isInvoice && !!token,
@@ -2000,14 +2006,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // skip the auto-print hand-off (a draft shouldn't auto-print).
       const deferredDraft = !!saved?.__deferredDraft;
       if (saved?.__savedAsDraft) {
-        toast({ title: "تم حفظ الفاتورة كمسودة" });
+        toast({ title: isRtl ? "تم حفظ الفاتورة كمسودة" : "Invoice saved as draft" });
         if (saved?.id && matchNew) navigate(`${basePath}/${saved.id}?savedTab=items`);
         return;
       }
       if (deferredDraft) {
         toast({
-          title: "💾 حُفظت كمسودة",
-          description: "لم يتم ترحيل الفاتورة لعدم تحديد المستودع. اختر المستودع ثم احفظ الفاتورة مرة أخرى لترحيلها.",
+          title: isRtl ? "💾 حُفظت كمسودة" : "💾 Saved as draft",
+          description: isRtl
+            ? "لم يتم ترحيل الفاتورة لعدم تحديد المستودع. اختر المستودع ثم احفظ الفاتورة مرة أخرى لترحيلها."
+            : "The invoice was not posted because no warehouse was selected. Choose a warehouse and save again to post it.",
         });
         // ابقَ داخل الفاتورة (المسودة) بدل الرجوع للقائمة — الجديدة تُفتح
         // في وضع التعديل حتى يكمل المستخدم المستودع ويحفظ مرة أخرى.
@@ -2077,14 +2085,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   function missingNationalAddress(c: any): string[] {
     const out: string[] = [];
     const bn = String(c?.buildingNumber ?? "").trim();
-    if (!bn) out.push("رقم المبنى");
-    else if (!/^\d{4}$/.test(bn)) out.push("رقم المبنى (4 أرقام بالضبط)");
-    if (!String(c?.street   ?? "").trim()) out.push("اسم الشارع");
-    if (!String(c?.district ?? "").trim()) out.push("الحي");
-    if (!String(c?.city     ?? "").trim()) out.push("المدينة");
+    if (!bn) out.push(isRtl ? "رقم المبنى" : "Building number");
+    else if (!/^\d{4}$/.test(bn)) out.push(isRtl ? "رقم المبنى (4 أرقام بالضبط)" : "Building number (exactly 4 digits)");
+    if (!String(c?.street   ?? "").trim()) out.push(isRtl ? "اسم الشارع" : "Street name");
+    if (!String(c?.district ?? "").trim()) out.push(isRtl ? "الحي" : "District");
+    if (!String(c?.city     ?? "").trim()) out.push(isRtl ? "المدينة" : "City");
     const pc = String(c?.postalCode ?? "").trim();
-    if (!pc) out.push("الرمز البريدي");
-    else if (!/^\d{5}$/.test(pc)) out.push("الرمز البريدي (5 أرقام بالضبط)");
+    if (!pc) out.push(isRtl ? "الرمز البريدي" : "Postal code");
+    else if (!/^\d{5}$/.test(pc)) out.push(isRtl ? "الرمز البريدي (5 أرقام بالضبط)" : "Postal code (exactly 5 digits)");
     return out;
   }
 
@@ -2102,13 +2110,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (isInvoice || isOrder) {
       const missing: string[] = [];
       if (!customerId && (!isInvoice || (paymentType !== "cash" && paymentType !== "bank"))) {
-        missing.push(t("salesDocForm.customer", { defaultValue: "العميل" }));
+        missing.push(t("salesDocForm.customer", { defaultValue: isRtl ? "العميل" : "Customer" }));
       }
-      if (!branchId)   missing.push(t("salesDocForm.branch",   { defaultValue: "الفرع" }));
+      if (!branchId)   missing.push(t("salesDocForm.branch",   { defaultValue: isRtl ? "الفرع" : "Branch" }));
       if (missing.length) {
         toast({
-          title: "⚠️ بيانات ناقصة — لا يمكن حفظ الفاتورة",
-          description: `الحقول التالية مطلوبة: ${missing.join("، ")}`,
+          title: isRtl ? "⚠️ بيانات ناقصة — لا يمكن حفظ الفاتورة" : "⚠️ Missing information — invoice cannot be saved",
+          description: isRtl ? `الحقول التالية مطلوبة: ${missing.join("، ")}` : `Required fields: ${missing.join(", ")}`,
           variant: "destructive",
         });
         return;
@@ -2119,23 +2127,25 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId));
         const reasons: string[] = [];
         if (!cust) {
-          reasons.push("بيانات العميل غير محمَّلة");
+          reasons.push(isRtl ? "بيانات العميل غير محمَّلة" : "Customer details are not loaded");
         } else {
           if (!isValidSaudiVat(cust.vatNumber)) {
-            reasons.push("رقم ضريبي سعودي صحيح (15 رقم يبدأ وينتهي بـ 3)");
+            reasons.push(isRtl ? "رقم ضريبي سعودي صحيح (15 رقم يبدأ وينتهي بـ 3)" : "A valid Saudi VAT number (15 digits, starting and ending with 3)");
           }
           // ملاحظة: رقم السجل التجاري لم يعد إجبارياً لحفظ الفاتورة الضريبية —
           // الرقم الضريبي للعميل يكفي لتعريف المشتري في زاتكا (B2B). يُطبع
           // السجل التجاري إن وُجد فقط.
           const addrMissing = missingNationalAddress(cust);
           if (addrMissing.length) {
-            reasons.push(`العنوان الوطني (${addrMissing.join("، ")})`);
+            reasons.push(isRtl ? `العنوان الوطني (${addrMissing.join("، ")})` : `National address (${addrMissing.join(", ")})`);
           }
         }
         if (reasons.length) {
           toast({
-            title: "⛔ الفاتورة الضريبية تتطلّب بيانات زاتكا الكاملة",
-            description: `بيانات العميل الناقصة: ${reasons.join(" — ")}. يمكنك تعديل بيانات العميل من شاشة العملاء، أو تحويل الفاتورة إلى «فاتورة ضريبية مبسّطة» إذا كان البيع للأفراد.`,
+            title: isRtl ? "⛔ الفاتورة الضريبية تتطلّب بيانات زاتكا الكاملة" : "⛔ The tax invoice requires complete ZATCA details",
+            description: isRtl
+              ? `بيانات العميل الناقصة: ${reasons.join(" — ")}. يمكنك تعديل بيانات العميل من شاشة العملاء، أو تحويل الفاتورة إلى «فاتورة ضريبية مبسّطة» إذا كان البيع للأفراد.`
+              : `Missing customer details: ${reasons.join(" — ")}. Update the customer record or use a simplified tax invoice for consumer sales.`,
             variant: "destructive",
           });
           return;
@@ -2146,12 +2156,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // party isn't meaningful) AND a branch (so it can be branch-scoped like
       // invoices/orders).
       const missing: string[] = [];
-      if (!customerId) missing.push(t("salesDocForm.customer", { defaultValue: "العميل" }));
-      if (!branchId)   missing.push(t("salesDocForm.branch",   { defaultValue: "الفرع" }));
+      if (!customerId) missing.push(t("salesDocForm.customer", { defaultValue: isRtl ? "العميل" : "Customer" }));
+      if (!branchId)   missing.push(t("salesDocForm.branch",   { defaultValue: isRtl ? "الفرع" : "Branch" }));
       if (missing.length) {
         toast({
-          title: "⚠️ بيانات ناقصة — لا يمكن حفظ المستند",
-          description: `الحقول التالية مطلوبة: ${missing.join("، ")}`,
+          title: isRtl ? "⚠️ بيانات ناقصة — لا يمكن حفظ المستند" : "⚠️ Missing information — document cannot be saved",
+          description: isRtl ? `الحقول التالية مطلوبة: ${missing.join("، ")}` : `Required fields: ${missing.join(", ")}`,
           variant: "destructive",
         });
         return;
@@ -2335,8 +2345,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         allowNegativeStock ? "border-amber-500 bg-amber-50 text-amber-900" : "border-border hover:bg-muted/50",
       )}
       title={!globalOverdraftEnabled
-        ? "السحب على المكشوف معطّل من الإعدادات العامة للشركة"
-        : !canEditOverdraft ? "غير متاح للتفعيل حسب صلاحيات المستخدم" : undefined}
+        ? (isRtl ? "السحب على المكشوف معطّل من الإعدادات العامة للشركة" : "Negative stock is disabled in company settings")
+        : !canEditOverdraft ? (isRtl ? "غير متاح للتفعيل حسب صلاحيات المستخدم" : "You do not have permission to enable this") : undefined}
     >
       <input
         type="checkbox"
@@ -2348,12 +2358,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           setAllowNegativeStock(e.target.checked);
         }}
       />
-      <span className="font-semibold whitespace-nowrap">السحب على المكشوف</span>
+      <span className="font-semibold whitespace-nowrap">{isRtl ? "السحب على المكشوف" : "Allow negative stock"}</span>
       <span className={cn(
         "px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap",
         allowNegativeStock ? "bg-amber-100 text-amber-800" : "bg-muted text-foreground/70",
       )}>
-        {allowNegativeStock ? "مسموح لهذه الفاتورة" : "غير مسموح"}
+        {allowNegativeStock ? (isRtl ? "مسموح لهذه الفاتورة" : "Allowed for this invoice") : (isRtl ? "غير مسموح" : "Not allowed")}
       </span>
     </label>
   ) : null;
@@ -2375,7 +2385,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     fp.isReadOnly("priceIncludesVat") ? "cursor-not-allowed opacity-70" : "cursor-pointer",
                     priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
                   )}
-                  title={fp.isReadOnly("priceIncludesVat") ? "للقراءة فقط حسب سياسة الحقول" : undefined}
+                  title={fp.isReadOnly("priceIncludesVat") ? (isRtl ? "للقراءة فقط حسب سياسة الحقول" : "Read-only under field policy") : undefined}
                 >
                   <input
                     type="checkbox"
@@ -2454,7 +2464,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
       )}
       title={fp.isReadOnly("priceIncludesVat")
-        ? "للقراءة فقط حسب سياسة الحقول"
+        ? (isRtl ? "للقراءة فقط حسب سياسة الحقول" : "Read-only under field policy")
         : ((priceIncludesVat ? t("salesDocForm.priceInclusiveYes") : t("salesDocForm.priceInclusiveNo")) as string)}
     >
       <input
@@ -2573,17 +2583,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         </div>}
         <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colPrice")}</label>
-          <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" placeholder="تلقائي" value={qaPrice}
+          <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" placeholder={isRtl ? "تلقائي" : "Automatic"} value={qaPrice}
             onChange={e => setQaPrice(e.target.value.replace(/[^0-9.]/g, ""))} />
         </div>
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-1">
-            <label className="text-[11px] text-muted-foreground">{qaDiscMode === "amt" ? "خصم (مبلغ)" : "خصم %"}</label>
+            <label className="text-[11px] text-muted-foreground">{qaDiscMode === "amt" ? (isRtl ? "خصم (مبلغ)" : "Discount (amount)") : (isRtl ? "خصم %" : "Discount %")}</label>
             <button type="button" tabIndex={-1}
               onClick={() => setQaDiscMode(m => m === "amt" ? "pct" : "amt")}
               className="text-[10px] px-1 py-0.5 rounded border bg-background hover:bg-muted text-muted-foreground leading-none"
-              title="تبديل بين نسبة % ومبلغ">
-              {qaDiscMode === "amt" ? "→ %" : "→ مبلغ"}
+              title={isRtl ? "تبديل بين نسبة % ومبلغ" : "Switch between percentage and amount"}>
+              {qaDiscMode === "amt" ? "→ %" : (isRtl ? "→ مبلغ" : "→ Amount")}
             </button>
           </div>
           <Input className="h-9 text-xs" type="text" inputMode="decimal" dir="ltr" value={qaDiscount}
@@ -2602,7 +2612,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         </div>
         <Button type="button" size="sm" className="h-9 gap-1.5 whitespace-nowrap" onClick={() => void handleQuickAdd()} disabled={!qaItemId} data-testid="button-quick-add-item">
           <Plus className="h-4 w-4" />
-          إضافة إلى الجريدة
+          {isRtl ? "إضافة إلى القائمة" : "Add to list"}
         </Button>
       </div>
     </div>
@@ -2618,7 +2628,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // Invoice mode gets an extra in-row cost-center column (توزيع تحليلي).
     const showFreeQuantity = user?.company?.showFreeQuantity !== false;
     const gridCols = `38px 80px minmax(160px,1.3fr) 118px 110px 64px${showFreeQuantity ? " 64px" : ""} 98px 122px 74px 108px${isInvoice ? " 150px" : ""} 34px`;
-    const headers = ["#", t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), ...(showFreeQuantity ? [t("salesDocForm.colFreeQty")] : []), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), "الضريبة %", t("salesDocForm.colTotal"), ...(isInvoice ? ["مركز التكلفة"] : []), ""];
+    const headers = ["#", t("salesDocForm.colItemCode"), t("salesDocForm.colItem"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), ...(showFreeQuantity ? [t("salesDocForm.colFreeQty")] : []), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), isRtl ? "الضريبة %" : "Tax %", t("salesDocForm.colTotal"), ...(isInvoice ? [isRtl ? "مركز التكلفة" : "Cost center"] : []), ""];
     const whName = (id: string) => (warehouses as any[]).find((w: any) => String(w.id) === String(id))?.nameAr ?? "—";
     const filled = lines;
     // Tabbed grid: removing the last row leaves the grid EMPTY (the friendly
@@ -2645,7 +2655,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             <div className="divide-y">
               {filled.length === 0 ? (
                 <div className="px-3 py-10 text-center text-sm text-muted-foreground">
-                  لا توجد أصناف بعد — أضف صنفًا من الشريط بالأعلى.
+                  {isRtl ? "لا توجد أصناف بعد — أضف صنفًا من الشريط بالأعلى." : "No items yet — add an item using the bar above."}
                 </div>
               ) : filled.map((l, idx) => {
                 const dMode = lineDiscMode[l._id] ?? "pct";
@@ -2709,29 +2719,29 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       className={cn("h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono", fp.isReadOnly("freeQty") && "bg-muted/40 cursor-not-allowed")}
                       type="text" inputMode="numeric" dir="ltr" value={l.freeQty}
                       readOnly={fp.isReadOnly("freeQty")}
-                      title={fp.isReadOnly("freeQty") ? "للقراءة فقط حسب السياسة" : (t("salesDocForm.colFreeQtyHint") as string)}
+                      title={fp.isReadOnly("freeQty") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : (t("salesDocForm.colFreeQtyHint") as string)}
                       onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />}
                     <Input
                       className={cn("h-8 text-xs font-mono", l.appliedOfferId && l.appliedOfferName && "bg-emerald-50 border-emerald-300 text-emerald-800", fp.isReadOnly("unitPrice") && "bg-muted/40 cursor-not-allowed")}
                       type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
                       readOnly={fp.isReadOnly("unitPrice")}
-                      title={fp.isReadOnly("unitPrice") ? "للقراءة فقط حسب السياسة" : undefined}
+                      title={fp.isReadOnly("unitPrice") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : undefined}
                       onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <div className="flex items-center gap-0.5">
                       <Input className="h-8 text-xs font-mono flex-1 min-w-0" type="text" inputMode="decimal" dir="ltr"
                         value={dMode === "amt" ? (l.discountAmount || "0") : (l.discount || "0")}
-                        title={dMode === "amt" ? "خصم بمبلغ ثابت" : "خصم بنسبة %"}
+                        title={dMode === "amt" ? (isRtl ? "خصم بمبلغ ثابت" : "Fixed-amount discount") : (isRtl ? "خصم بنسبة %" : "Percentage discount")}
                         onChange={e => updateLine(l._id, dMode === "amt" ? "discountAmount" : "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <button type="button" tabIndex={-1}
                         onClick={() => setLineDiscMode(m => ({ ...m, [l._id]: dMode === "amt" ? "pct" : "amt" }))}
                         className="shrink-0 text-[10px] w-6 h-8 rounded border bg-background hover:bg-muted text-muted-foreground leading-none"
-                        title="تبديل بين نسبة % ومبلغ">
+                        title={isRtl ? "تبديل بين نسبة % ومبلغ" : "Switch between percentage and amount"}>
                         {dMode === "amt" ? "﷼" : "%"}
                       </button>
                     </div>
                     <Input className={cn("h-8 text-xs font-mono", fp.isReadOnly("taxRate") && "bg-muted/40 cursor-not-allowed")} type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
                       readOnly={fp.isReadOnly("taxRate")}
-                      title="نسبة ضريبة القيمة المضافة — للقراءة فقط افتراضيًا"
+                      title={isRtl ? "نسبة ضريبة القيمة المضافة — للقراءة فقط افتراضيًا" : "VAT rate — read-only by default"}
                       onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                     <span className="font-mono tabular-nums font-semibold text-primary text-end" dir="ltr">{fmt(Number(l.lineTotal) || 0)}</span>
                     {/* OPTIONAL per-line cost center (توزيع تحليلي) — invoice mode only.
@@ -2740,11 +2750,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <select
                         className="h-8 text-[11px] rounded-md border bg-background px-1 w-full"
                         value={l.costCenter}
-                        title="مركز التكلفة للسطر (اختياري) — الافتراضي: رأس المستند"
+                        title={isRtl ? "مركز التكلفة للسطر (اختياري) — الافتراضي: رأس المستند" : "Line cost center (optional) — defaults to document header"}
                         data-testid={`select-line-cost-center-${l._id}`}
                         onChange={e => updateLine(l._id, "costCenter", e.target.value)}
                       >
-                        <option value="">رأس المستند</option>
+                        <option value="">{isRtl ? "رأس المستند" : "Document header"}</option>
                         {(costCentersList as any[])
                           .filter((c: any) => c.isActive !== false)
                           .map((c: any) => (
@@ -2963,7 +2973,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         )}
                         type="text" inputMode="numeric" dir="ltr" value={l.freeQty}
                         readOnly={fp.isReadOnly("freeQty")}
-                        title={fp.isReadOnly("freeQty") ? "للقراءة فقط حسب السياسة" : (t("salesDocForm.colFreeQtyHint") as string)}
+                        title={fp.isReadOnly("freeQty") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : (t("salesDocForm.colFreeQtyHint") as string)}
                         onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />}
                       <Input
                         className={cn(
@@ -2973,7 +2983,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         )}
                         type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
                         readOnly={fp.isReadOnly("unitPrice")}
-                        title={fp.isReadOnly("unitPrice") ? "للقراءة فقط حسب السياسة" : undefined}
+                      title={fp.isReadOnly("unitPrice") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : undefined}
                         onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
                       {/* خصم% — نسبة مئوية تُطبَّق على (الكمية × سعر البيع). */}
                       <Input
@@ -2984,7 +2994,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         )}
                         type="text" inputMode="decimal" dir="ltr" value={l.discount}
                         readOnly={fp.isReadOnly("discount")}
-                        title={fp.isReadOnly("discount") ? "للقراءة فقط حسب السياسة" : "النسبة المئوية للخصم على هذا السطر"}
+                        title={fp.isReadOnly("discount") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : (isRtl ? "النسبة المئوية للخصم على هذا السطر" : "Discount percentage for this line")}
                         onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
                       {/* قيمة الخصم — مبلغ ثابت بالعملة يُطرح بعد الخصم بالنسبة.
                           الصيغة: الإجمالي = الكمية × سعر البيع × (1 − خصم%/100) − قيمة الخصم
@@ -2997,14 +3007,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         )}
                         type="text" inputMode="decimal" dir="ltr" value={l.discountAmount}
                         readOnly={fp.isReadOnly("discount")}
-                        title={fp.isReadOnly("discount") ? "للقراءة فقط حسب السياسة" : `قيمة الخصم بالعملة — تُطرح بعد الخصم بالنسبة وتُرحَّل على حساب الخصم المسموح به`}
+                        title={fp.isReadOnly("discount") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : (isRtl ? "قيمة الخصم بالعملة — تُطرح بعد الخصم بالنسبة وتُرحَّل على حساب الخصم المسموح به" : "Discount amount in document currency, applied after percentage discount")}
                         data-testid={`line-discount-amount-${l._id}`}
                         onChange={e => updateLine(l._id, "discountAmount", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input
                         className={cn("h-8 text-xs", fp.isReadOnly("taxRate") && "bg-muted/40 cursor-not-allowed")}
                         type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
                         readOnly={fp.isReadOnly("taxRate")}
-                        title={fp.isReadOnly("taxRate") ? "للقراءة فقط حسب السياسة" : undefined}
+                      title={fp.isReadOnly("taxRate") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : undefined}
                         onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
                       <Input className="h-8 text-xs" value={l.notes}
@@ -3207,17 +3217,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     const reg: ScreenActionsRegistration = {
       screenContext,
       description: isInvoice
-        ? "نموذج إنشاء فاتورة مبيعات: العميل، نوع الدفع، الأصناف، ثم الحفظ والترحيل."
+        ? (isRtl ? "نموذج إنشاء فاتورة مبيعات: العميل، نوع الدفع، الأصناف، ثم الحفظ والترحيل." : "Sales invoice form: customer, payment type, items, then save and post.")
         : isOrder
-          ? "نموذج أمر بيع: العميل، الأصناف، نوع الدفع، ثم الحفظ."
-          : "نموذج عرض سعر مبيعات: العميل، الأصناف، الصلاحية، ثم الحفظ.",
+          ? (isRtl ? "نموذج أمر بيع: العميل، الأصناف، نوع الدفع، ثم الحفظ." : "Sales order form: customer, items, payment type, then save.")
+          : (isRtl ? "نموذج عرض سعر مبيعات: العميل، الأصناف، الصلاحية، ثم الحفظ." : "Sales quotation form: customer, items, validity date, then save."),
       fields: [
         {
           name: "customerId",
           label: t("salesDocForm.customer"),
           type: "lookup",
           lookup: "customers",
-          description: "معرّف العميل (يجب اختياره من قائمة customers).",
+          description: isRtl ? "معرّف العميل (يجب اختياره من قائمة customers)." : "Customer ID (must be selected from the customers lookup).",
         },
         ...(usesOps
           ? ([
@@ -3226,30 +3236,30 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 label: t("salesDocForm.paymentType"),
                 type: "select",
                 options: [
-                  { value: "credit", label: paymentMethodLabel(user?.company, "credit", "آجل / Credit") },
-                  { value: "cash", label: paymentMethodLabel(user?.company, "cash", "نقدي / Cash") },
-                  { value: "bank", label: paymentMethodLabel(user?.company, "bank", "بنكي / Bank") },
+                  { value: "credit", label: paymentMethodLabel(user?.company, "credit", isRtl ? "آجل" : "Credit") },
+                  { value: "cash", label: paymentMethodLabel(user?.company, "cash", isRtl ? "نقدي" : "Cash") },
+                  { value: "bank", label: paymentMethodLabel(user?.company, "bank", isRtl ? "بنكي" : "Bank") },
                 ],
                 description:
-                  "credit = آجل (اعتماد على الذمة)، cash = نقدي (يحتاج cashBoxId)، bank = بنكي (يحتاج bankAccountId).",
+                  isRtl ? "credit = آجل (اعتماد على الذمة)، cash = نقدي (يحتاج cashBoxId)، bank = بنكي (يحتاج bankAccountId)." : "credit = on account, cash = requires cashBoxId, bank = requires bankAccountId.",
               },
               {
                 name: "cashBoxId",
-                label: t("salesDocForm.cashBox") ?? "صندوق النقدية",
+                label: t("salesDocForm.cashBox", { defaultValue: isRtl ? "صندوق النقدية" : "Cash box" }),
                 type: "lookup",
                 lookup: "cashBoxes",
-                description: "اختياري — استخدمه فقط عندما paymentType=cash.",
+                description: isRtl ? "اختياري — استخدمه فقط عندما paymentType=cash." : "Optional — use only when paymentType=cash.",
               },
               {
                 name: "bankAccountId",
-                label: t("salesDocForm.bankAccount") ?? "حساب البنك",
+                label: t("salesDocForm.bankAccount", { defaultValue: isRtl ? "حساب البنك" : "Bank account" }),
                 type: "lookup",
                 lookup: "bankAccounts",
-                description: "اختياري — استخدمه فقط عندما paymentType=bank.",
+                description: isRtl ? "اختياري — استخدمه فقط عندما paymentType=bank." : "Optional — use only when paymentType=bank.",
               },
               {
                 name: "salesRepId",
-                label: t("salesDocForm.salesRep") ?? "المندوب",
+                label: t("salesDocForm.salesRep", { defaultValue: isRtl ? "المندوب" : "Sales representative" }),
                 type: "lookup",
                 lookup: "salesReps",
               },
@@ -3257,27 +3267,27 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           : []),
         {
           name: "docDate",
-          label: t("salesDocForm.docDate") ?? "تاريخ المستند",
+          label: t("salesDocForm.docDate", { defaultValue: isRtl ? "تاريخ المستند" : "Document date" }),
           type: "date",
-          description: "بصيغة YYYY-MM-DD.",
+          description: isRtl ? "بصيغة YYYY-MM-DD." : "Use YYYY-MM-DD format.",
         },
         {
           name: "notes",
-          label: t("salesDocForm.notes") ?? "ملاحظات",
+          label: t("salesDocForm.notes", { defaultValue: isRtl ? "ملاحظات" : "Notes" }),
           type: "text",
         },
         {
           name: "priceIncludesVat",
-          label: t("salesDocForm.priceIncludesVat") ?? "السعر شامل الضريبة",
+          label: t("salesDocForm.priceIncludesVat", { defaultValue: isRtl ? "السعر شامل الضريبة" : "Price includes VAT" }),
           type: "boolean",
         },
       ],
       actions: [
         {
           name: "addLine",
-          label: t("salesDocForm.addLine") ?? "إضافة بند",
+          label: t("salesDocForm.addLine", { defaultValue: isRtl ? "إضافة بند" : "Add line" }),
           description:
-            "يضيف بند فاتورة. يجب تمرير item (id من lookup items أو الاسم) و qty (كمية رقمية). unitPrice و discount اختياريان.",
+            isRtl ? "يضيف بند فاتورة. يجب تمرير item (id من lookup items أو الاسم) و qty (كمية رقمية). unitPrice و discount اختياريان." : "Adds an invoice line. Pass item (an ID from the items lookup or a name) and qty (numeric). unitPrice and discount are optional.",
           params: [
             { name: "item", type: "string", required: true, lookup: "items" },
             { name: "qty", type: "number", required: true },
@@ -3287,13 +3297,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         },
         {
           name: "clearLines",
-          label: "مسح كل البنود",
-          description: "يحذف كل البنود ويترك سطراً فارغاً.",
+          label: isRtl ? "مسح كل البنود" : "Clear all lines",
+          description: isRtl ? "يحذف كل البنود ويترك سطراً فارغاً." : "Removes all lines and leaves one blank line.",
         },
         {
           name: "removeLine",
-          label: "حذف بند",
-          description: "يحذف بنداً واحداً عبر لـ index صفري (lineIndex) أو item (id/اسم).",
+          label: isRtl ? "حذف بند" : "Remove line",
+          description: isRtl ? "يحذف بنداً واحداً عبر لـ index صفري (lineIndex) أو item (id/اسم)." : "Removes one line by its zero-based lineIndex or item ID/name.",
           params: [
             { name: "lineIndex", type: "number", required: false },
             { name: "item", type: "string", required: false, lookup: "items" },
@@ -3302,20 +3312,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         {
           name: "save",
           label: isInvoice
-            ? t("salesDocForm.saveInvoice") ?? "حفظ الفاتورة"
+            ? t("salesDocForm.saveInvoice", { defaultValue: isRtl ? "حفظ الفاتورة" : "Save invoice" })
             : isOrder
-              ? t("salesDocForm.saveOrder") ?? "حفظ الأمر"
-              : t("salesDocForm.saveQuotation") ?? "حفظ العرض",
+              ? t("salesDocForm.saveOrder", { defaultValue: isRtl ? "حفظ الأمر" : "Save order" })
+              : t("salesDocForm.saveQuotation", { defaultValue: isRtl ? "حفظ العرض" : "Save quotation" }),
           description: isInvoice
-            ? "يحفظ الفاتورة ويرحلها تلقائياً (إذا كان الترحيل التلقائي مفعلاً على مستوى الشركة)."
-            : "يحفظ المستند.",
+            ? (isRtl ? "يحفظ الفاتورة ويرحلها تلقائياً (إذا كان الترحيل التلقائي مفعلاً على مستوى الشركة)." : "Saves and automatically posts the invoice when auto-posting is enabled for the company.")
+            : (isRtl ? "يحفظ المستند." : "Saves the document."),
           destructive: true,
         },
       ],
       lookups: {
         customers: (customers as any[]).map((c: any) => ({
           id: String(c.id),
-          name: c.nameAr ?? c.nameEn ?? `#${c.id}`,
+          name: localizedName(c.nameAr, c.nameEn, isRtl ? "ar" : "en") || `#${c.id}`,
           meta: { code: c.code, vatNumber: c.vatNumber },
         })),
         items: (inventoryItems as any[]).map((it: any) => ({
@@ -3423,7 +3433,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             const itemKey = params.item ?? params.itemId ?? params.itemName;
             const item = findItem(itemKey);
             if (!item) {
-              throw new Error(`الصنف غير موجود: ${itemKey}`);
+              throw new Error(isRtl ? `الصنف غير موجود: ${itemKey}` : `Item not found: ${itemKey}`);
             }
             const qty = Number(params.qty ?? 1) || 1;
             const newL = buildLineFromItem(
@@ -3455,7 +3465,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               });
             } else if (params.item !== undefined) {
               const item = findItem(params.item);
-              if (!item) throw new Error(`الصنف غير موجود: ${params.item}`);
+              if (!item) throw new Error(isRtl ? `الصنف غير موجود: ${params.item}` : `Item not found: ${params.item}`);
               setLines((prev) => {
                 if (prev.length <= 1) return prev;
                 const filtered = prev.filter((l) => String(l.itemId) !== String(item.id));
@@ -3547,14 +3557,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     const missing: string[] = [];
     if (isInvoice || isOrder) {
       if (!customerId && (!isInvoice || (paymentType !== "cash" && paymentType !== "bank"))) {
-        missing.push("العميل");
+        missing.push(isRtl ? "العميل" : "Customer");
       }
-      if (usesBranch && !branchId) missing.push("الفرع");
+      if (usesBranch && !branchId) missing.push(isRtl ? "الفرع" : "Branch");
     } else if (fp.isRequired("customer") && !customerId) {
-      missing.push("العميل");
+      missing.push(isRtl ? "العميل" : "Customer");
     }
-    if (!docDate) missing.push("التاريخ");
-    if (isInvoice && !allowDraftWithoutWarehouse && !headerWarehouseId) missing.push("المستودع");
+    if (!docDate) missing.push(isRtl ? "التاريخ" : "Date");
+    if (isInvoice && !allowDraftWithoutWarehouse && !headerWarehouseId) missing.push(isRtl ? "المستودع" : "Warehouse");
     return missing;
   })();
   const basicFieldsValid = missingBasicFields.length === 0;
@@ -3564,7 +3574,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const explainMissingBasics = () => {
     toast({
       title: t("salesDocForm.completeBasicDataTitle"),
-      description: t("salesDocForm.missingFieldsDescription", { fields: missingBasicFields.join("، ") }),
+      description: t("salesDocForm.missingFieldsDescription", { fields: missingBasicFields.join(isRtl ? "، " : ", ") }),
       variant: "destructive",
     });
   };
@@ -3582,8 +3592,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const handlePrintOnly = () => {
     if (!editId) {
       toast({
-        title: "احفظ المستند أولاً قبل الطباعة",
-        description: "يصبح زر الطباعة فعّالاً بعد حفظ المستند مرة واحدة.",
+        title: isRtl ? "احفظ المستند أولاً قبل الطباعة" : "Save the document before printing",
+        description: isRtl ? "يصبح زر الطباعة فعّالاً بعد حفظ المستند مرة واحدة." : "Printing is available after the document has been saved.",
       });
       return;
     }
@@ -3609,7 +3619,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       <p className="text-[11px] text-muted-foreground">
         {basicFieldsValid
           ? t("salesDocForm.basicDataComplete")
-          : t("salesDocForm.missingFieldsDescription", { fields: missingBasicFields.join("، ") })}
+          : t("salesDocForm.missingFieldsDescription", { fields: missingBasicFields.join(isRtl ? "، " : ", ") })}
       </p>
       <Button
         type="button"
@@ -3704,27 +3714,31 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         {isInvoice && compactInvoiceTypeSelector && (() => {
           const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId)) ?? null;
           const vatOk = cust ? isValidSaudiVat(cust.vatNumber) : false;
-          const addrMissing = cust ? missingNationalAddress(cust) : ["العميل غير مختار"];
+          const addrMissing = cust ? missingNationalAddress(cust) : [isRtl ? "العميل غير مختار" : "No customer selected"];
           const standardReady = vatOk && addrMissing.length === 0;
           const isStd = invoiceType === "standard";
           const isSimp = invoiceType === "simplified";
           const standardMissing = [
-            ...(!vatOk ? ["رقم ضريبي سعودي صحيح (15 رقم)"] : []),
-            ...(addrMissing.length > 0 ? [`العنوان الوطني: ${addrMissing.join("، ")}`] : []),
+            ...(!vatOk ? [isRtl ? "رقم ضريبي سعودي صحيح (15 رقم)" : "Valid Saudi VAT number (15 digits)"] : []),
+            ...(addrMissing.length > 0 ? [isRtl ? `العنوان الوطني: ${addrMissing.join("، ")}` : `National address: ${addrMissing.join(", ")}`] : []),
           ];
           const standardHint = !cust
-            ? "اختر العميل أولاً للتحقق من بيانات الفاتورة الضريبية."
+            ? (isRtl ? "اختر العميل أولاً للتحقق من بيانات الفاتورة الضريبية." : "Select a customer to validate the tax invoice.")
             : standardReady
-              ? "بيانات العميل الأساسية مكتملة. رقم السجل التجاري اختياري."
-              : `بيانات العميل الناقصة: ${standardMissing.join("، ")}. رقم السجل التجاري اختياري.`;
+              ? (isRtl ? "بيانات العميل الأساسية مكتملة. رقم السجل التجاري اختياري." : "Customer details are complete. The commercial registration number is optional.")
+              : isRtl
+                ? isRtl
+                  ? `بيانات العميل الناقصة: ${standardMissing.join("، ")}. رقم السجل التجاري اختياري.`
+                  : `Missing customer details: ${standardMissing.join(", ")}. Commercial registration number is optional.`
+                : `Missing customer details: ${standardMissing.join(", ")}. The commercial registration number is optional.`;
           const simplifiedHint = customerId
-            ? "تم اختيار العميل — الفاتورة المبسطة جاهزة للحفظ والإبلاغ إلى زاتكا."
-            : "اختر اسم العميل لإكمال الفاتورة المبسطة. يتم الإبلاغ عنها إلى زاتكا.";
+            ? (isRtl ? "تم اختيار العميل — الفاتورة المبسطة جاهزة للحفظ والإبلاغ إلى زاتكا." : "Customer selected — the simplified invoice is ready to save and report to ZATCA.")
+            : (isRtl ? "اختر اسم العميل لإكمال الفاتورة المبسطة. يتم الإبلاغ عنها إلى زاتكا." : "Select a customer to complete the simplified invoice. It will be reported to ZATCA.");
           return (
             <div
               data-testid="invoice-type-compact-switch"
               role="group"
-              aria-label="نوع الفاتورة"
+              aria-label={isRtl ? "نوع الفاتورة" : "Invoice type"}
               className="flex shrink-0 items-center gap-1 rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm"
             >
               <button
@@ -3732,7 +3746,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 data-testid="invoice-type-compact-standard"
                 aria-pressed={isStd}
                 title={standardHint}
-                aria-label={`فاتورة ضريبية B2B. ${standardHint}`}
+                aria-label={`${isRtl ? "فاتورة ضريبية" : "Tax invoice"} B2B. ${standardHint}`}
                 onClick={() => { setInvoiceType("standard"); invoiceTypeUserPickedRef.current = true; }}
                 className={cn(
                   "inline-flex h-9 min-w-[7.25rem] items-center justify-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:h-10 sm:min-w-[9rem] sm:gap-2 sm:px-3 sm:text-sm",
@@ -3742,8 +3756,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 )}
               >
                 <Receipt className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span className="hidden sm:inline">فاتورة ضريبية</span>
-                <span className="sm:hidden">ضريبية</span>
+                <span className="hidden sm:inline">{isRtl ? "فاتورة ضريبية" : "Tax invoice"}</span>
+                <span className="sm:hidden">{isRtl ? "ضريبية" : "Tax"}</span>
                 <Badge
                   variant="outline"
                   className={cn(
@@ -3758,7 +3772,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 {isStd && standardReady && (
                   <ShieldCheck
                     className="h-4 w-4 shrink-0 text-emerald-500"
-                    aria-label="جاهزة للإرسال إلى زاتكا"
+                    aria-label={isRtl ? "جاهزة للإرسال إلى زاتكا" : "Ready to submit to ZATCA"}
                   />
                 )}
               </button>
@@ -3767,7 +3781,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 data-testid="invoice-type-compact-simplified"
                 aria-pressed={isSimp}
                 title={simplifiedHint}
-                aria-label={`فاتورة ضريبية مبسطة B2C. ${simplifiedHint}`}
+                aria-label={`${isRtl ? "فاتورة ضريبية مبسطة" : "Simplified tax invoice"} B2C. ${simplifiedHint}`}
                 onClick={() => { setInvoiceType("simplified"); invoiceTypeUserPickedRef.current = true; }}
                 className={cn(
                   "inline-flex h-9 min-w-[7.25rem] items-center justify-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 sm:h-10 sm:min-w-[9rem] sm:gap-2 sm:px-3 sm:text-sm",
@@ -3777,8 +3791,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 )}
               >
                 <Receipt className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span className="hidden sm:inline">فاتورة مبسطة</span>
-                <span className="sm:hidden">مبسطة</span>
+                <span className="hidden sm:inline">{isRtl ? "فاتورة مبسطة" : "Simplified"}</span>
+                <span className="sm:hidden">{isRtl ? "مبسطة" : "Simple"}</span>
                 <Badge
                   variant="outline"
                   className={cn(
@@ -3798,7 +3812,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     )}
                     aria-hidden="true"
                   >
-                    {customerId ? "جاهزة" : "اختر العميل"}
+                    {customerId ? (isRtl ? "جاهزة" : "Ready") : (isRtl ? "اختر العميل" : "Select customer")}
                   </span>
                 )}
               </button>
@@ -3824,12 +3838,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             className="gap-1.5 shadow-sm whitespace-nowrap"
             disabled={saveMut.isPending || saveInFlightRef.current}
             onClick={() => {
-              if (!editLock && !window.confirm("قد تكون لديك تغييرات غير محفوظة. هل تريد فتح فاتورة مبيعات جديدة؟")) return;
+              if (!editLock && !window.confirm(isRtl ? "قد تكون لديك تغييرات غير محفوظة. هل تريد فتح فاتورة مبيعات جديدة؟" : "You may have unsaved changes. Do you want to open a new sales invoice?")) return;
               navigate(`${basePath}/new`);
             }}
           >
             <Plus className="h-4 w-4" />
-            فاتورة مبيعات جديدة
+            {isRtl ? "فاتورة مبيعات جديدة" : "New sales invoice"}
           </Button>
         )}
         {/* Smart prev/next + search navigator — shown for every mode.
@@ -3856,7 +3870,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId)) ?? null;
         const vatOk = cust ? isValidSaudiVat(cust.vatNumber) : false;
         const crOk = cust ? !!String(cust.crNumber ?? "").trim() : false;
-        const addrMissing = cust ? missingNationalAddress(cust) : ["العميل غير مختار"];
+        const addrMissing = cust ? missingNationalAddress(cust) : [isRtl ? "العميل غير مختار" : "No customer selected"];
         const standardReady = vatOk && addrMissing.length === 0;
         const isStd = invoiceType === "standard";
         const isSimp = invoiceType === "simplified";
@@ -3867,12 +3881,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 <Receipt className="h-4 w-4 text-primary" />
               </div>
               <div className="flex-1">
-                <p className="text-xs font-bold text-foreground">نوع الفاتورة</p>
-                <p className="text-[10px] text-muted-foreground">اختر نوع الفاتورة وفق متطلّبات هيئة الزكاة والضريبة (ZATCA)</p>
+                <p className="text-xs font-bold text-foreground">{isRtl ? "نوع الفاتورة" : "Invoice type"}</p>
+                <p className="text-[10px] text-muted-foreground">{isRtl ? "اختر نوع الفاتورة وفق متطلّبات هيئة الزكاة والضريبة (ZATCA)" : "Choose the invoice type required by the Zakat, Tax and Customs Authority (ZATCA)."}</p>
               </div>
               {standardReady && isStd && (
                 <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] gap-1">
-                  <ShieldCheck className="h-3 w-3" />جاهز للإرسال إلى زاتكا
+                  <ShieldCheck className="h-3 w-3" />{isRtl ? "جاهز للإرسال إلى زاتكا" : "Ready to submit to ZATCA"}
                 </Badge>
               )}
             </div>
@@ -3882,7 +3896,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 data-testid="invoice-type-standard"
                 onClick={() => { setInvoiceType("standard"); invoiceTypeUserPickedRef.current = true; }}
                 className={cn(
-                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
+                  "group relative text-start rounded-xl border-2 p-3 transition-all duration-150",
                   isStd
                     ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
                     : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
@@ -3901,7 +3915,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-primary/30 text-primary">B2B · Standard</Badge>
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
-                      للبيع لشركات/منشآت مسجَّلة بضريبة القيمة المضافة. تتطلّب اعتماد زاتكا (Clearance).
+                      {isRtl ? "للبيع لشركات/منشآت مسجَّلة بضريبة القيمة المضافة. تتطلّب اعتماد زاتكا (Clearance)." : "For sales to VAT-registered businesses. Requires ZATCA clearance."}
                     </p>
                     {isStd && cust && (
                       <div className="mt-2 space-y-0.5 text-[10px]">
@@ -3930,7 +3944,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 data-testid="invoice-type-simplified"
                 onClick={() => { setInvoiceType("simplified"); invoiceTypeUserPickedRef.current = true; }}
                 className={cn(
-                  "group relative text-right rounded-xl border-2 p-3 transition-all duration-150",
+                  "group relative text-start rounded-xl border-2 p-3 transition-all duration-150",
                   isSimp
                     ? "border-primary bg-primary/10 shadow-md ring-1 ring-primary/20"
                     : "border-border bg-background hover:border-primary/40 hover:bg-primary/5"
@@ -3949,11 +3963,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 border-sky-300 text-sky-700">B2C · Simplified</Badge>
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
-                      لمبيعات التجزئة والأفراد. يكفي اسم العميل فقط، ويتم الإبلاغ عنها لزاتكا (Reporting).
+                      {isRtl ? "لمبيعات التجزئة والأفراد. يكفي اسم العميل فقط، ويتم الإبلاغ عنها لزاتكا (Reporting)." : "For retail and consumer sales. The customer's name is sufficient; the invoice is reported to ZATCA."}
                     </p>
                     {isSimp && (
                       <p className="mt-2 text-[10px] text-emerald-700 flex items-center gap-1">
-                        <span>✓</span><span>{customerId ? "تم اختيار العميل — جاهزة للحفظ" : "اختر اسم العميل لإكمال الحفظ"}</span>
+                        <span>✓</span><span>{customerId ? (isRtl ? "تم اختيار العميل — جاهزة للحفظ" : "Customer selected — ready to save") : (isRtl ? "اختر اسم العميل لإكمال الحفظ" : "Select a customer to complete and save")}</span>
                       </p>
                     )}
                   </div>
@@ -4024,7 +4038,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   : activeTab === "items"
                     ? t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })
                     : activeTab === "details"
-                      ? "تفاصيل العمليات الناتجة عن هذا المستند"
+                      ? (isRtl ? "تفاصيل العمليات الناتجة عن هذا المستند" : "Transactions generated by this document")
                       : t("salesDocForm.headerHint")}
               </p>
             </div>
@@ -4053,7 +4067,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         value={docNumber}
                         onChange={e => { if (!locked) setDocNumber(e.target.value); }}
                         readOnly={locked}
-                        title={lockOnEdit ? "الرقم محفوظ — لا يمكن تعديله" : (lockOnSeq ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : (lockOnPol ? "للقراءة فقط حسب السياسة" : undefined))}
+                        title={lockOnEdit ? (isRtl ? "الرقم محفوظ — لا يمكن تعديله" : "Number is saved and cannot be changed") : (lockOnSeq ? `${isRtl ? "مسلسل" : "Sequence"}: ${seqPeek.sequenceCode ?? ""}` : (lockOnPol ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : undefined))}
                       />
                     );
                   })()}
@@ -4068,7 +4082,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     readOnly={fp.isReadOnly("date") || !!dateBounds.min}
                     min={dateBounds.min}
                     max={dateBounds.max}
-                    title={dateBounds.min ? "مقيّد بتاريخ اليوم حسب السياسة" : (fp.isReadOnly("date") ? "للقراءة فقط حسب السياسة" : undefined)}
+                    title={dateBounds.min ? (isRtl ? "مقيّد بتاريخ اليوم حسب السياسة" : "Restricted to today's date by policy") : (fp.isReadOnly("date") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : undefined)}
                   />
                 </div>
                 )}
@@ -4092,11 +4106,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         onClick={() => setQuickCustomerDialogOpen(true)}
                       >
                         <Plus className="h-3 w-3" />
-                        عميل جديد
+                        {isRtl ? "عميل جديد" : "New customer"}
                       </Button>
                     )}
                   </div>
-                  <div className={fp.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""} title={fp.isReadOnly("customer") ? "للقراءة فقط حسب السياسة" : undefined}>
+                  <div className={fp.isReadOnly("customer") ? "pointer-events-none opacity-70" : ""} title={fp.isReadOnly("customer") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : undefined}>
                     <SearchCombobox items={customerComboItems} value={customerId} onValueChange={v => {
                       setCustomerId(v);
                       if (v) setManualPrintPartyName("");
@@ -4326,11 +4340,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <span>{t("salesDocForm.salesRep")}{fp.isRequired("salesperson") && <span className="text-destructive"> *</span>}</span>
                       {repLocked && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                          مُعيَّن تلقائياً (هويتك كمندوب)
+                          {isRtl ? "مُعيَّن تلقائياً (هويتك كمندوب)" : "Assigned automatically (your salesperson profile)"}
                         </span>
                       )}
                     </Label>
-                    <div className={(repLocked || fp.isReadOnly("salesperson")) ? "opacity-90 pointer-events-none" : ""} title={repLocked ? "لا يمكنك إسناد فاتورتك لمندوب آخر" : (fp.isReadOnly("salesperson") ? "للقراءة فقط حسب السياسة" : undefined)}>
+                    <div className={(repLocked || fp.isReadOnly("salesperson")) ? "opacity-90 pointer-events-none" : ""} title={repLocked ? (isRtl ? "لا يمكنك إسناد فاتورتك لمندوب آخر" : "You cannot assign your invoice to another salesperson") : (fp.isReadOnly("salesperson") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : undefined)}>
                       <SearchCombobox
                         items={salesRepComboItems}
                         value={salesRepId}
@@ -4576,8 +4590,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             // elsewhere instead of disabling the button silently.
             if (!editId) {
               toast({
-                title: "احفظ المستند أولاً قبل الطباعة",
-                description: "يصبح زر الطباعة فعّالاً بعد حفظ المستند مرة واحدة.",
+                title: isRtl ? "احفظ المستند أولاً قبل الطباعة" : "Save the document before printing",
+                description: isRtl ? "يصبح زر الطباعة فعّالاً بعد حفظ المستند مرة واحدة." : "Printing is available after the document has been saved.",
               });
               return;
             }
@@ -4601,7 +4615,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           data-testid="button-print"
         >
           <Printer className="h-4 w-4" />
-          طباعة
+          {isRtl ? "طباعة" : "Print"}
         </Button>
         {!editLock && (
           <>
@@ -4619,7 +4633,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           onOpenChange={setQuickItemDialogOpen}
           units={units as any[]}
           companyId={cid}
-          documentName={isInvoice ? "فاتورة المبيعات" : isOrder ? "أمر البيع" : "عرض السعر"}
+          documentName={isInvoice ? (isRtl ? "فاتورة المبيعات" : "Sales invoice") : isOrder ? (isRtl ? "أمر البيع" : "Sales order") : (isRtl ? "عرض السعر" : "Sales quotation")}
           priceMode="sale"
           onCreated={(item: any) => {
             const current = qc.getQueryData<any[]>(["inventory-items", cid]) ?? inventoryItems;

@@ -60,6 +60,8 @@ import { cn } from "@/lib/utils";
 import { companyAllowsAnyModule, companyAllowsModule, companyAllowsScreen } from "@/lib/companyModuleGate";
 
 function AgentAnnouncementPrompt({ user }: { user: any }) {
+  const { i18n } = useTranslation();
+  const isEnglish = i18n.language?.startsWith("en");
   const announcement = user?.subscriptionNotice?.agentAnnouncement as {
     message?: string; frequency?: "daily" | "weekly"; repeatsPerDay?: number; updatedAt?: string | null;
   } | undefined;
@@ -115,30 +117,30 @@ function AgentAnnouncementPrompt({ user }: { user: any }) {
       {dueKey && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" data-testid="agent-announcement-overlay">
           <section
-            dir="rtl"
+            dir={isEnglish ? "ltr" : "rtl"}
             role="dialog"
             aria-modal="true"
             aria-labelledby="agent-announcement-title"
             className="w-full max-w-xl overflow-hidden rounded-3xl border border-white/30 bg-white shadow-2xl"
           >
             <div className="relative overflow-hidden bg-gradient-to-br from-emerald-700 via-teal-700 to-slate-900 px-7 py-8 text-white">
-              <div className="absolute -left-12 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
+              <div className="absolute -start-12 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
               <div className="relative flex items-center gap-3">
                 <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/30">
                   <Sparkles className="h-6 w-6" />
                 </span>
                 <div>
-                  <p className="text-xs font-medium tracking-wide text-emerald-100">رسالة من إدارة الوكيل</p>
-                  <h2 id="agent-announcement-title" className="mt-1 text-xl font-bold">مهم لك</h2>
+                  <p className="text-xs font-medium tracking-wide text-emerald-100">{isEnglish ? "Message from your agent administrator" : "رسالة من إدارة الوكيل"}</p>
+                  <h2 id="agent-announcement-title" className="mt-1 text-xl font-bold">{isEnglish ? "Important update" : "مهم لك"}</h2>
                 </div>
               </div>
-              <p className="relative mt-6 whitespace-pre-wrap text-sm leading-7 text-white/95" data-testid="agent-announcement-message">
+              <p dir="auto" className="relative mt-6 whitespace-pre-wrap text-sm leading-7 text-white/95" data-testid="agent-announcement-message">
                 {announcement?.message}
               </p>
             </div>
             <div className="flex justify-end bg-slate-50 px-6 py-4">
               <Button onClick={accept} className="min-w-32 bg-emerald-700 hover:bg-emerald-800" data-testid="button-accept-agent-announcement">
-                موافق
+                {isEnglish ? "Understood" : "موافق"}
               </Button>
             </div>
           </section>
@@ -150,7 +152,7 @@ function AgentAnnouncementPrompt({ user }: { user: any }) {
           data-testid="agent-announcement-welcome"
           className="fixed bottom-6 left-1/2 z-[130] -translate-x-1/2 rounded-2xl border border-emerald-200 bg-white px-5 py-3 text-sm font-semibold text-emerald-800 shadow-xl"
         >
-          أهلاً بك، سعداء بوجودك معنا
+          {isEnglish ? "Welcome—we're glad you're here." : "أهلاً بك، سعداء بوجودك معنا"}
         </div>
       )}
     </>
@@ -810,6 +812,8 @@ const inventoryReportsSubNav: NavDef[] = [
 // gets stranded inside a company they didn't mean to act on.
 function ActingCompanyBanner() {
   const { actingCompanyId, setActingCompany, token } = useAuth() as any;
+  const { i18n } = useTranslation();
+  const isEnglish = i18n.language?.startsWith("en");
   const [, setLocation] = useLocation();
   const [name, setName] = useState<string | null>(null);
 
@@ -821,22 +825,22 @@ function ActingCompanyBanner() {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (!cancelled) setName(d?.nameAr || d?.nameEn || `#${actingCompanyId}`); })
+      .then(d => { if (!cancelled) setName(isEnglish ? (d?.nameEn || d?.nameAr || `#${actingCompanyId}`) : (d?.nameAr || d?.nameEn || `#${actingCompanyId}`)); })
       .catch(() => { if (!cancelled) setName(`#${actingCompanyId}`); });
     return () => { cancelled = true; };
-  }, [actingCompanyId, token]);
+  }, [actingCompanyId, token, isEnglish]);
 
   if (!actingCompanyId) return null;
 
   return (
-    <div className="bg-amber-100 border-b-2 border-amber-400 text-amber-900 px-4 py-2 flex items-center justify-between gap-3 shadow-sm">
+    <div dir={isEnglish ? "ltr" : "rtl"} className="bg-amber-100 border-b-2 border-amber-400 text-amber-900 px-4 py-2 flex items-center justify-between gap-3 shadow-sm">
       <div className="flex items-center gap-2 min-w-0">
         <Building2 className="h-4 w-4 shrink-0" />
         <span className="text-sm font-semibold truncate">
-          أنت تعمل حالياً داخل شركة: {name ?? "..."}
+          {isEnglish ? `You are currently working in: ${name ?? "..."}` : `أنت تعمل حالياً داخل شركة: ${name ?? "..."}`}
         </span>
         <span className="text-[11px] opacity-80 hidden sm:inline">
-          (كل عمليات الإضافة/التعديل ستُنسب لهذه الشركة)
+          {isEnglish ? "(All additions and edits will be assigned to this company)" : "(كل عمليات الإضافة/التعديل ستُنسب لهذه الشركة)"}
         </span>
       </div>
       <Button
@@ -845,7 +849,7 @@ function ActingCompanyBanner() {
         onClick={() => { setActingCompany(null); setLocation("/companies"); }}
       >
         <LogOut className="h-3.5 w-3.5" />
-        خروج من الشركة
+        {isEnglish ? "Exit company" : "خروج من الشركة"}
       </Button>
     </div>
   );
@@ -2739,13 +2743,15 @@ function AgentTopNavNewTabAction({
   label: string;
   testId: string;
 }) {
+  const { i18n } = useTranslation();
+  const isEnglish = i18n.language?.startsWith("en");
   return (
     <a
       href={appRouteHref(href)}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`فتح ${label} في تبويب جديد`}
-      title="فتح في تبويب جديد"
+      aria-label={isEnglish ? `Open ${label} in a new tab` : `فتح ${label} في تبويب جديد`}
+      title={isEnglish ? "Open in a new tab" : "فتح في تبويب جديد"}
       className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/65 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       data-testid={testId}
     >

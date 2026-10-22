@@ -8,6 +8,7 @@ import LiveRoom from "@/components/livekit/LiveRoom";
 import { trainingApi, type JoinInfo } from "@/lib/liveRoomApi";
 import { P2PBroadcaster, type P2PChatMsg, type P2PHand } from "@/lib/p2pTree";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTranslation } from "react-i18next";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // بث قاعة التدريب على مستوى التطبيق كله:
@@ -49,6 +50,8 @@ export function useTrainingBroadcast(): Ctx {
 export function TrainingBroadcastProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { i18n } = useTranslation();
+  const isEnglish = i18n.language?.startsWith("en");
   const [live, setLive] = useState<LiveState | null>(null);
   const [minimized, setMinimized] = useState(false);
   const [ending, setEnding] = useState(false);
@@ -75,19 +78,19 @@ export function TrainingBroadcastProvider({ children }: { children: ReactNode })
     setEnding(true);
     try {
       await trainingApi.end(sessionId);
-      toast({ title: "تم إنهاء الجلسة" });
+      toast({ title: isEnglish ? "Session ended" : "تم إنهاء الجلسة" });
       setLive(prev => (prev?.session.id === sessionId ? null : prev));
       setMinimized(false);
     } catch (e: any) {
-      toast({ title: "تعذّر الإنهاء", description: e.message, variant: "destructive" });
+      toast({ title: isEnglish ? "Could not end session" : "تعذّر الإنهاء", description: e.message, variant: "destructive" });
     } finally { setEnding(false); }
-  }, [toast]);
+  }, [toast, isEnglish]);
 
   const grantMic = useCallback(async (identity: string, allow: boolean) => {
     if (!live) return;
     try { await trainingApi.mic(live.session.id, identity, allow); }
-    catch (e: any) { toast({ title: "تعذّر تحديث المايك", description: e.message, variant: "destructive" }); }
-  }, [live, toast]);
+    catch (e: any) { toast({ title: isEnglish ? "Could not update microphone access" : "تعذّر تحديث المايك", description: e.message, variant: "destructive" }); }
+  }, [live, toast, isEnglish]);
 
   // إذا سجّل المستخدم خروجه — أغلق الغرفة
   useEffect(() => { if (!user && live) { setLive(null); setMinimized(false); } }, [user, live]);
@@ -140,7 +143,7 @@ export function TrainingBroadcastProvider({ children }: { children: ReactNode })
               token={live.token} wsUrl={live.wsUrl}
               role={live.asTrainer ? "publisher" : "subscriber"}
               title={live.session.title}
-              myName={user?.username ?? "مشارك"}
+              myName={user?.username ?? (isEnglish ? "Participant" : "مشارك")}
               canGrantMic={live.asTrainer}
               onGrantMic={grantMic}
               autoPublishAv={live.asTrainer}
@@ -150,8 +153,10 @@ export function TrainingBroadcastProvider({ children }: { children: ReactNode })
                   // لا نغلق الغرفة — البث يستمر أثناء التنقل بين كل الشاشات
                   setMinimized(true);
                   toast({
-                    title: "البث مستمر في الخلفية",
-                    description: "تنقّل بين أي شاشة بحرّية — البث لن ينقطع. استخدم الشريط الأخضر أسفل الشاشة للعودة أو الإنهاء.",
+                    title: isEnglish ? "Broadcast continues in the background" : "البث مستمر في الخلفية",
+                    description: isEnglish
+                      ? "Navigate to any screen—the broadcast will continue. Use the green bar at the bottom to return or end it."
+                      : "تنقّل بين أي شاشة بحرّية — البث لن ينقطع. استخدم الشريط الأخضر أسفل الشاشة للعودة أو الإنهاء.",
                   });
                 } else {
                   leave();
@@ -164,16 +169,16 @@ export function TrainingBroadcastProvider({ children }: { children: ReactNode })
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2 text-xs font-semibold">
                   <Share2 className="h-3.5 w-3.5 text-emerald-600" />
-                  البث الموزّع (الرابط العام)
-                  <Badge variant="outline" className="gap-1"><Users className="h-3 w-3" /> {p2pCount} مشاهد</Badge>
+                  {isEnglish ? "Public broadcast" : "البث الموزّع (الرابط العام)"}
+                  <Badge variant="outline" className="gap-1"><Users className="h-3 w-3" /> {p2pCount} {isEnglish ? "viewers" : "مشاهد"}</Badge>
                   {p2pStatus === "connected"
-                    ? <Badge className="gap-1 bg-emerald-600 hover:bg-emerald-600 text-white" data-testid="badge-p2p-status">متصل</Badge>
-                    : <Badge variant="destructive" className="gap-1 animate-pulse" data-testid="badge-p2p-status">جارٍ الاتصال…</Badge>}
+                    ? <Badge className="gap-1 bg-emerald-600 hover:bg-emerald-600 text-white" data-testid="badge-p2p-status">{isEnglish ? "Connected" : "متصل"}</Badge>
+                    : <Badge variant="destructive" className="gap-1 animate-pulse" data-testid="badge-p2p-status">{isEnglish ? "Connecting…" : "جارٍ الاتصال…"}</Badge>}
                 </div>
                 {p2pHands.length > 0 && (
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-[11px] text-amber-700 font-medium flex items-center gap-1">
-                      <Hand className="h-3 w-3" /> أيدي مرفوعة:
+                      <Hand className="h-3 w-3" /> {isEnglish ? "Raised hands:" : "أيدي مرفوعة:"}
                     </span>
                     {p2pHands.map(h => (
                       <Button key={h.peerId} size="sm" variant="outline" className="h-6 px-2 text-[11px] gap-1"
@@ -195,7 +200,7 @@ export function TrainingBroadcastProvider({ children }: { children: ReactNode })
               <div className="flex gap-1 mt-1.5">
                 <Input value={p2pInput} onChange={e => setP2pInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); sendP2pChat(); } }}
-                  placeholder="رسالة لمشاهدي الرابط العام..." className="h-7 text-xs" data-testid="input-p2p-chat" />
+                  placeholder={isEnglish ? "Message public viewers…" : "رسالة لمشاهدي الرابط العام..."} className="h-7 text-xs" data-testid="input-p2p-chat" />
                 <Button size="sm" className="h-7 px-2" onClick={sendP2pChat} data-testid="btn-p2p-send"><Send className="h-3 w-3" /></Button>
               </div>
             </div>
@@ -204,7 +209,7 @@ export function TrainingBroadcastProvider({ children }: { children: ReactNode })
             <div className="flex justify-end shrink-0">
               <Button variant="destructive" size="sm" className="gap-1" disabled={ending}
                 onClick={() => { void endSession(live.session.id); }}>
-                <StopCircle className="h-4 w-4" /> إنهاء الجلسة للجميع
+                <StopCircle className="h-4 w-4" /> {isEnglish ? "End session for everyone" : "إنهاء الجلسة للجميع"}
               </Button>
             </div>
           )}
@@ -213,27 +218,27 @@ export function TrainingBroadcastProvider({ children }: { children: ReactNode })
 
       {/* ── شريط عائم في كل الصفحات أثناء البث المصغّر ── */}
       {live && minimized && (
-        <div className="fixed bottom-3 inset-x-3 md:inset-x-auto md:left-6 md:right-auto z-40 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-950 shadow-lg p-2.5 flex items-center gap-3 flex-wrap"
+        <div className="fixed bottom-3 inset-x-3 md:inset-x-auto md:start-6 md:end-auto z-40 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-950 shadow-lg p-2.5 flex items-center gap-3 flex-wrap"
           data-testid="floating-broadcast-bar">
           <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800 dark:text-emerald-200">
             <Radio className="h-4 w-4 animate-pulse text-red-600" />
-            {live.asTrainer ? "البث مستمر" : "أنت في الجلسة"} — «{live.session.title}»
+            {live.asTrainer ? (isEnglish ? "Broadcast active" : "البث مستمر") : (isEnglish ? "You are in the session" : "أنت في الجلسة")} — «{live.session.title}»
             {live.asTrainer && live.session.allowPublic && (
               <Badge variant="outline" className="gap-1"><Users className="h-3 w-3" /> {p2pCount}</Badge>
             )}
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" className="gap-1 h-7 bg-emerald-600 hover:bg-emerald-500" onClick={restore} data-testid="btn-restore-broadcast">
-              <PlayCircle className="h-4 w-4" /> العودة للبث
+              <PlayCircle className="h-4 w-4" /> {isEnglish ? "Return to broadcast" : "العودة للبث"}
             </Button>
             {live.asTrainer ? (
               <Button size="sm" variant="destructive" className="gap-1 h-7" disabled={ending}
                 onClick={() => { void endSession(live.session.id); }}>
-                <StopCircle className="h-4 w-4" /> إنهاء
+                <StopCircle className="h-4 w-4" /> {isEnglish ? "End" : "إنهاء"}
               </Button>
             ) : (
               <Button size="sm" variant="outline" className="gap-1 h-7" onClick={leave}>
-                <StopCircle className="h-4 w-4" /> مغادرة
+                <StopCircle className="h-4 w-4" /> {isEnglish ? "Leave" : "مغادرة"}
               </Button>
             )}
           </div>
