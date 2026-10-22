@@ -5002,6 +5002,16 @@ export async function ensureInvoiceCreateIdempotencySchema(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS invoice_create_idempotency_invoice_idx
        ON invoice_create_idempotency
          (company_id, invoice_kind, sales_invoice_id, purchase_invoice_id)`,
+    `CREATE TABLE IF NOT EXISTS sales_return_create_idempotency (
+       id SERIAL PRIMARY KEY,
+       company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+       client_request_id VARCHAR(128) NOT NULL,
+       return_id INTEGER REFERENCES sales_returns(id) ON DELETE CASCADE,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       UNIQUE (company_id, client_request_id)
+     )`,
+    `CREATE INDEX IF NOT EXISTS sales_return_create_idempotency_return_idx
+       ON sales_return_create_idempotency (company_id, return_id)`,
   ];
   for (const stmt of stmts) {
     try {

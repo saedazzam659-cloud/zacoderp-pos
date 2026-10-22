@@ -233,6 +233,66 @@ router.get("/connections", async (req, res) => {
   res.json({ connections: rows });
 });
 
+router.get("/zid/orders", async (req, res) => {
+  const zid = await loadAuthorizedZid(req, res);
+  if (!zid) return;
+  const page = Math.max(1, Math.min(10_000, Number.parseInt(String(req.query.page ?? "1"), 10) || 1));
+  const perPage = Math.max(1, Math.min(100, Number.parseInt(String(req.query.per_page ?? "50"), 10) || 50));
+  try {
+    const url = new URL("https://api.zid.sa/v1/managers/store/orders");
+    url.searchParams.set("payload_type", "default");
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", String(perPage));
+    const status = typeof req.query.order_status === "string" ? req.query.order_status : "";
+    if (["new", "preparing", "ready", "indelivery", "delivered", "canceled", "reversed"].includes(status)) {
+      url.searchParams.set("order_status", status);
+    }
+    const response = await fetch(url, {
+      headers: zid.headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(20_000),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      res.status(response.status === 401 || response.status === 403 ? 409 : 502).json({
+        error: "تعذر جلب طلبات Zid. تحقق من صلاحية orders.read ثم أعد ربط المتجر.",
+      });
+      return;
+    }
+    const orders = extractZidCollection(body);
+    res.json({ orders, pagination: body?.pagination ?? body?.data?.pagination ?? null, page, perPage });
+  } catch (error) {
+    req.log?.error?.({ error, connectionId: zid.connection.id }, "Zid order pull failed");
+    res.status(502).json({ error: "تعذر الاتصال بخدمة طلبات Zid" });
+  }
+});
+
+router.get("/zid/orders/:orderId/credit-notes", async (req, res) => {
+  const zid = await loadAuthorizedZid(req, res);
+  if (!zid) return;
+  const orderId = String(req.params.orderId ?? "").trim();
+  if (!orderId || orderId.length > 120 || !/^[\w-]+$/.test(orderId)) {
+    res.status(400).json({ error: "معرّف طلب Zid غير صالح" }); return;
+  }
+  try {
+    const response = await fetch(
+      `https://api.zid.sa/v1/managers/store/orders/${encodeURIComponent(orderId)}/credit-notes`,
+      { headers: zid.headers, redirect: "error", signal: AbortSignal.timeout(20_000) },
+    );
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      res.status(response.status === 401 || response.status === 403 ? 409 : 502).json({
+        error: "تعذر جلب إشعارات الطلب من Zid. تحقق من صلاحية orders.read.",
+      });
+      return;
+    }
+    res.json({ creditNotes: extractZidCollection(body) });
+  } catch (error) {
+    req.log?.error?.({ error, connectionId: zid.connection.id }, "Zid credit-note pull failed");
+    res.status(502).json({ error: "تعذر الاتصال بخدمة إشعارات Zid" });
+  }
+});
+
 router.post("/connections", async (req, res) => {
   const companyId = (req as { user?: { companyId?: number; id?: number } }).user?.companyId;
   const userId    = (req as { user?: { id?: number } }).user?.id;
@@ -405,6 +465,94 @@ inboundRouter.post("/:provider/:token", async (req, res) => {
 // ─── Helpers ────────────────────────────────────────────────────────────
 type ConnRow = typeof integrationConnectionsTable.$inferSelect;
 
+async function loadAuthorizedZid(req: any, res: any): Promise<{
+  connection: ConnRow;
+  headers: Record<string, string>;
+} | null> {
+  const user = req.user;
+  const companyId = Number(user?.companyId);
+  if (!Number.isInteger(companyId) || companyId < 1) {
+    res.status(401).json({ error: "غير مخوّل" }); return null;
+  }
+  if (user?.role !== "admin") {
+    res.status(403).json({ error: "مزامنة Zid متاحة لمدير الشركة فقط" }); return null;
+  }
+  const [company] = await db.select({ menuPermissions: companiesTable.menuPermissions })
+    .from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+  let permissions: Record<string, unknown> = {};
+  try { permissions = JSON.parse(company?.menuPermissions ?? "{}"); } catch { /* fail closed */ }
+  const erpSource = permissions.zid_invoice_source_erp === true;
+  const zidSource = permissions.zid_invoice_source_zid === true;
+  if (!company || permissions.zid_integration !== true || erpSource === zidSource) {
+    res.status(403).json({ error: "فعّل وحدة Zid واختر مصدرًا واحدًا للفواتير من صلاحيات القوائم" }); return null;
+  }
+  const [connection] = await db.select().from(integrationConnectionsTable).where(and(
+    eq(integrationConnectionsTable.companyId, companyId),
+    eq(integrationConnectionsTable.provider, "zid"),
+    eq(integrationConnectionsTable.status, "connected"),
+  )).orderBy(desc(integrationConnectionsTable.updatedAt)).limit(1);
+  if (!connection?.credentialsEnc) {
+    res.status(409).json({ error: "اربط متجر Zid أولاً" }); return null;
+  }
+  const credentials = safeParse(decryptSecret(connection.credentialsEnc) ?? "{}");
+  const expiresAt = Date.parse(String(credentials.expiresAt ?? ""));
+  if (!credentials.authorization || !credentials.accessToken || !Number.isFinite(expiresAt)) {
+    res.status(409).json({ error: "بيانات تفويض Zid غير مكتملة. أعد ربط المتجر." }); return null;
+  }
+  if (expiresAt <= Date.now() + 5 * 60_000) {
+    const clientId = process.env.ZID_CLIENT_ID;
+    const clientSecret = process.env.ZID_CLIENT_SECRET;
+    const redirectUri = process.env.ZID_REDIRECT_URI;
+    if (!clientId || !clientSecret || !redirectUri || !credentials.refreshToken) {
+      res.status(409).json({ error: "انتهت صلاحية تفويض Zid. أعد ربط المتجر." }); return null;
+    }
+    try {
+      const tokenResponse = await fetch("https://oauth.zid.sa/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+          refresh_token: credentials.refreshToken,
+        }),
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000),
+      });
+      const tokens = await tokenResponse.json() as Record<string, unknown>;
+      const expiresIn = Number(tokens.expires_in);
+      if (!tokenResponse.ok || typeof tokens.authorization !== "string" ||
+          typeof tokens.access_token !== "string" || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+        throw new Error("Invalid Zid refresh response");
+      }
+      const refreshed = {
+        authorization: tokens.authorization,
+        accessToken: tokens.access_token,
+        refreshToken: typeof tokens.refresh_token === "string" ? tokens.refresh_token : credentials.refreshToken,
+        expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      };
+      await db.update(integrationConnectionsTable).set({
+        credentialsEnc: encryptSecret(JSON.stringify(refreshed)),
+        updatedAt: new Date(),
+      }).where(eq(integrationConnectionsTable.id, connection.id));
+      Object.assign(credentials, refreshed);
+    } catch (error) {
+      req.log?.error?.({ error, connectionId: connection.id }, "Zid token refresh failed");
+      res.status(409).json({ error: "تعذر تجديد تفويض Zid. أعد ربط المتجر." }); return null;
+    }
+  }
+  return {
+    connection,
+    headers: {
+      Authorization: `Bearer ${credentials.authorization}`,
+      "X-Manager-Token": credentials.accessToken,
+      Accept: "application/json",
+      "Accept-Language": "ar",
+    },
+  };
+}
+
 async function loadConn(req: { params: { id: string }; user?: { companyId?: number } }, res: { status: (n: number) => { json: (o: unknown) => void }; json: (o: unknown) => void }): Promise<ConnRow | null> {
   const companyId = req.user?.companyId;
   const id = Number(req.params.id);
@@ -471,6 +619,17 @@ async function bumpConnectionSuccess(connectionId: number, ingested: number): Pr
 function safeParse(s: string): Record<string, string> {
   try { const j = JSON.parse(s); return j && typeof j === "object" ? j : {}; }
   catch { return {}; }
+}
+
+function extractZidCollection(body: any): any[] {
+  const candidates = [
+    body?.data?.orders,
+    body?.data?.results,
+    body?.orders,
+    body?.results,
+    body?.data,
+  ];
+  return candidates.find(Array.isArray) ?? [];
 }
 
 // Suppress unused-import warning until ZATCA forwarding is wired in Phase B.

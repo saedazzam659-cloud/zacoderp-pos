@@ -37,6 +37,13 @@ export default function IntegrationsMarketplace() {
   const [category, setCategory] = useState<string>("all");
   const [connectingTo, setConnectingTo] = useState<Provider | null>(null);
   const [connectingZid, setConnectingZid] = useState(false);
+  const [zidOrdersOpen, setZidOrdersOpen] = useState(false);
+  const [zidOrdersLoading, setZidOrdersLoading] = useState(false);
+  const [zidOrdersError, setZidOrdersError] = useState("");
+  const [zidOrders, setZidOrders] = useState<any[]>([]);
+  const [creditNotesFor, setCreditNotesFor] = useState<string | null>(null);
+  const [creditNotesLoading, setCreditNotesLoading] = useState(false);
+  const [creditNotes, setCreditNotes] = useState<any[]>([]);
 
   const { data: provData } = useQuery<{ providers: Provider[] }>({
     queryKey: ["integrations", "providers"],
@@ -70,7 +77,44 @@ export default function IntegrationsMarketplace() {
     }
   };
 
+  const loadZidOrders = async () => {
+    setZidOrdersOpen(true);
+    setZidOrdersLoading(true);
+    setZidOrdersError("");
+    try {
+      const response = await fetch("/api/integrations/zid/orders?page=1&per_page=50");
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "تعذر تحميل طلبات Zid");
+      setZidOrders(Array.isArray(data.orders) ? data.orders : []);
+    } catch (error) {
+      setZidOrdersError(error instanceof Error ? error.message : "تعذر تحميل طلبات Zid");
+      setZidOrders([]);
+    } finally {
+      setZidOrdersLoading(false);
+    }
+  };
+
+  const loadCreditNotes = async (orderId: string) => {
+    setCreditNotesFor(orderId);
+    setCreditNotesLoading(true);
+    setCreditNotes([]);
+    try {
+      const response = await fetch(`/api/integrations/zid/orders/${encodeURIComponent(orderId)}/credit-notes`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "تعذر تحميل إشعارات Zid");
+      setCreditNotes(Array.isArray(data.creditNotes) ? data.creditNotes : []);
+    } catch (error) {
+      toast({
+        title: error instanceof Error ? error.message : "تعذر تحميل إشعارات Zid",
+        variant: "destructive",
+      });
+    } finally {
+      setCreditNotesLoading(false);
+    }
+  };
+
   const filtered = providers.filter(p => {
+    if (p.id === "zid") return false;
     if (category !== "all" && p.category !== category) return false;
     if (search && !p.nameAr.includes(search) && !p.nameEn.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
@@ -147,6 +191,7 @@ export default function IntegrationsMarketplace() {
                         {c.status === "connected" ? "متصل" : "بانتظار التفويض"}
                       </div>
                     </div>
+                    <Button variant="outline" size="sm" onClick={loadZidOrders}>عرض الطلبات</Button>
                   </Card>
                 );
               }
@@ -227,6 +272,70 @@ export default function IntegrationsMarketplace() {
       {connectingTo && (
         <ConnectDialog provider={connectingTo} onClose={() => setConnectingTo(null)} />
       )}
+
+      <Dialog open={zidOrdersOpen} onOpenChange={setZidOrdersOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>طلبات متجر Zid</DialogTitle>
+            <DialogDescription>
+              هذه معاينة للطلبات وإشعاراتها. إنشاء مسودات ERP سيستخدم تسلسل النظام بعد اكتمال ربط العملاء والأصناف.
+            </DialogDescription>
+          </DialogHeader>
+          {zidOrdersLoading ? (
+            <p className="py-8 text-center text-sm text-slate-500">جارٍ تحميل الطلبات...</p>
+          ) : zidOrdersError ? (
+            <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{zidOrdersError}</div>
+          ) : zidOrders.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-500">لا توجد طلبات في هذه الصفحة.</p>
+          ) : (
+            <div className="space-y-3">
+              {zidOrders.map((order, index) => {
+                const orderId = String(order.id ?? order.order_id ?? order.uuid ?? index);
+                const customer = order.customer ?? {};
+                const amount = order.order_total ?? order.total ?? order.total_amount ?? "";
+                const status = order.order_status?.name ?? order.order_status ?? order.status ?? "—";
+                return (
+                  <div key={orderId} className="rounded-lg border p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold">{order.code ?? order.order_number ?? orderId}</div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          {customer.name ?? "عميل Zid"} · {order.created_at ?? order.createdAt ?? ""}
+                        </div>
+                      </div>
+                      <div className="text-sm text-left">
+                        <div>{amount ? `${amount} ${order.currency_code ?? order.currency ?? ""}` : "—"}</div>
+                        <Badge variant="outline" className="mt-1">{String(status)}</Badge>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <Button size="sm" variant="outline" onClick={() => loadCreditNotes(orderId)}>
+                        عرض إشعارات الطلب
+                      </Button>
+                    </div>
+                    {creditNotesFor === orderId && (
+                      <div className="mt-3 rounded-md bg-slate-50 p-3 text-sm">
+                        {creditNotesLoading ? "جارٍ تحميل الإشعارات..." : creditNotes.length === 0
+                          ? "لا توجد إشعارات دائن لهذا الطلب."
+                          : creditNotes.map((note, noteIndex) => (
+                            <div key={String(note.id ?? note.credit_note_number ?? noteIndex)} className="border-b last:border-0 py-2">
+                              <span className="font-medium">{note.number ?? note.credit_note_number ?? note.id ?? "إشعار دائن"}</span>
+                              <span className="text-slate-500 mr-2">{note.total ?? note.amount ?? ""}</span>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setZidOrdersOpen(false)}>إغلاق</Button>
+            <Button onClick={loadZidOrders} disabled={zidOrdersLoading}>تحديث القائمة</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

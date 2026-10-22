@@ -5160,6 +5160,12 @@ router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     if (!(await enforceDraftSaveMode(req, res, cid, "sales_return"))) return;
+    let clientRequestId: string | null;
+    try { clientRequestId = parseInvoiceClientRequestId(req.body); }
+    catch (error: any) {
+      res.status(error?.status ?? 400).json({ error: error?.message ?? "معرّف طلب الإعادة غير صالح" });
+      return;
+    }
     const { docNumber, returnDate, customerId, manualPrintPartyName, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId, taxId } = req.body;
@@ -5296,7 +5302,36 @@ router.post("/sales-returns", async (req, res) => {
       taxId:              taxId ? Number(taxId) : null,
       createdById: (req as any).authUser?.id ?? null,
     };
+    let idempotentReplay = false;
     const ret = await db.transaction(async (tx: any) => {
+      if (clientRequestId) {
+        const claimResult: any = await tx.execute(sql`
+          INSERT INTO sales_return_create_idempotency (company_id, client_request_id)
+          VALUES (${cid}, ${clientRequestId})
+          ON CONFLICT (company_id, client_request_id) DO NOTHING
+          RETURNING id
+        `);
+        const claimRows = Array.isArray(claimResult) ? claimResult : claimResult?.rows ?? [];
+        if (!claimRows.length) {
+          const replayResult: any = await tx.execute(sql`
+            SELECT return_id FROM sales_return_create_idempotency
+             WHERE company_id = ${cid} AND client_request_id = ${clientRequestId}
+             LIMIT 1
+          `);
+          const replayRows = Array.isArray(replayResult) ? replayResult : replayResult?.rows ?? [];
+          const replayId = Number(replayRows[0]?.return_id);
+          if (!Number.isInteger(replayId) || replayId < 1) {
+            throw Object.assign(new Error("تعذر استعادة نتيجة طلب إنشاء المرتجع"), { status: 409 });
+          }
+          const [replay] = await tx.select().from(salesReturnsTable).where(and(
+            eq(salesReturnsTable.id, replayId),
+            eq(salesReturnsTable.companyId, cid),
+          ));
+          if (!replay) throw Object.assign(new Error("المرتجع السابق لم يعد موجودًا"), { status: 409 });
+          idempotentReplay = true;
+          return replay;
+        }
+      }
       if (invoiceId) {
         const sourceInvoice = await readSalesReturnSourceInvoice(tx, cid, Number(invoiceId), true);
         if (!sourceInvoice) {
@@ -5390,9 +5425,16 @@ router.post("/sales-returns", async (req, res) => {
         );
         await tx.insert(salesReturnLinesTable).values(mappedLines);
       }
+      if (clientRequestId) {
+        await tx.execute(sql`
+          UPDATE sales_return_create_idempotency
+             SET return_id = ${created.id}
+           WHERE company_id = ${cid} AND client_request_id = ${clientRequestId}
+        `);
+      }
       return created;
     });
-    res.status(201).json(ret);
+    res.status(idempotentReplay ? 200 : 201).json({ ...ret, ...(idempotentReplay ? { idempotentReplay: true } : {}) });
   } catch (e: any) {
     logger.error({ err: e }, "sales return create failed");
     if (e?.code === "RETURN_SEQUENCE_ALLOCATION_FAILED") {
