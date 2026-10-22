@@ -1709,7 +1709,7 @@ function PurchaseInvoiceFormContent() {
                   </select>
                   <p className="text-[10px] text-muted-foreground">يُسند تلقائياً إلى كل سطور القيد عند الترحيل.</p>
                 </div>
-                {contractingModuleEnabled && <div hidden={!fieldPolicy.isVisible("warehouse")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("warehouse") && "pointer-events-none opacity-70")}>
+                {contractingModuleEnabled && <div className="space-y-1.5">
                   <Label className="text-xs">المشروع (اختياري)</Label>
                   <select aria-label="مشروع فاتورة الشراء" value={projectId} onChange={e => setProjectId(e.target.value)}
                     className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background">
@@ -1719,7 +1719,7 @@ function PurchaseInvoiceFormContent() {
                   </select>
                   <p className="text-[10px] text-muted-foreground">مشتريات المستودع لا تُحتسب مصروفاً فورياً للمشروع.</p>
                 </div>}
-                <div hidden={!fieldPolicy.isVisible("paymentMethod")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("paymentMethod") && "pointer-events-none opacity-70")}>
+                <div hidden={!fieldPolicy.isVisible("warehouse")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("warehouse") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">المستودع</Label>
                   <SearchCombobox
                     items={(warehouses as any[]).map((w: any) => ({

@@ -1852,7 +1852,7 @@ ${sections}
                   onValueChange={applyHeaderWarehouse}
                   placeholder="اختر المستودع"
                 />
-              </Field></div>}
+              </Field></div>
               {taxCatalog.length > 0 && (
                 <Field label="الضريبة">
                   <SearchCombobox
