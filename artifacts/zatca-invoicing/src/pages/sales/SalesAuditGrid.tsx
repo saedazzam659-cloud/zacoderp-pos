@@ -2135,7 +2135,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           )}
           <div className={cn("flex-1 text-center text-sm font-bold tracking-wide flex items-center justify-center gap-2", theme.text)}>
             <FileSpreadsheet className="h-4 w-4 opacity-90" />
-            الجرد الخارجي لفواتير المبيعات — مراجعة وتدقيق شامل
+            {localizeUiText("الجرد الخارجي لفواتير المبيعات — مراجعة وتدقيق شامل")}
           </div>
           <div className="flex items-center gap-1.5">
             {/* ─── Color palette picker ─────────────────────────────── */}
@@ -2534,7 +2534,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                     : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
                 )}
               >
-                {s === "all" ? "الكل" : STATUS[s]?.label}
+                {localizeUiText(s === "all" ? "الكل" : STATUS[s]?.label ?? "")}
               </button>
             ))}
           </div>
@@ -2542,16 +2542,16 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           {/* فلتر المخزن — اختر مخزناً لتصفية الفواتير التي تحتوي على بند منه */}
           {warehousesList.length > 0 && (
             <div className="flex items-center gap-1">
-              <span className="text-slate-600 text-xs">المخزن:</span>
+              <span className="text-slate-600 text-xs">{localizeUiText("المخزن:")}</span>
               <div className="w-48">
                 <SearchCombobox
                   items={[
-                    { value: "", label: "كل المخازن" },
+                    { value: "", label: localizeUiText("كل المخازن") },
                     ...warehousesList.map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr, labelEn: w.nameEn })),
                   ]}
                   value={warehouseFilter}
                   onValueChange={setWarehouseFilter}
-                  placeholder="كل المخازن"
+                  placeholder={localizeUiText("كل المخازن")}
                   searchPlaceholder={t("common.searchByCodeOrName")}
                   className="h-7 text-xs"
                 />
@@ -2565,9 +2565,9 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           )}
           {fp.isVisible("date_range") && (
           <div className="flex items-center gap-1">
-            <span className="text-slate-600">من:</span>
+            <span className="text-slate-600">{localizeUiText("من:")}</span>
             <DateField value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-7 text-xs w-32" />
-            <span className="text-slate-600">إلى:</span>
+            <span className="text-slate-600">{localizeUiText("إلى:")}</span>
             <DateField value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-7 text-xs w-32" />
             {(dateFrom || dateTo) && (
               <Button
@@ -2597,12 +2597,20 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           )}
           <div className="flex-1" />
           <span className="text-slate-700 font-medium">
-            {invoiceTotal} فاتورة
+            {isRtl
+              ? `${invoiceTotal} فاتورة`
+              : `${invoiceTotal} ${invoiceTotal === 1 ? "invoice" : "invoices"}`}
             {filtered.length !== invoices.length && (
-              <span className="text-slate-400"> — {filtered.length} ظاهرة في الصفحة</span>
+              <span className="text-slate-400">
+                {isRtl ? ` — ${filtered.length} ظاهرة في الصفحة` : ` — ${filtered.length} shown on this page`}
+              </span>
             )}
             {invoicePage?.truncated && (
-              <span className="text-amber-700"> — التصفح المباشر لأول {invoicePage.accessibleTotal.toLocaleString("en-US")} نتيجة؛ استخدم البحث للوصول للبقية</span>
+              <span className="text-amber-700">
+                {isRtl
+                  ? ` — التصفح المباشر لأول ${invoicePage.accessibleTotal.toLocaleString("en-US")} نتيجة؛ استخدم البحث للوصول للبقية`
+                  : ` — Showing the first ${invoicePage.accessibleTotal.toLocaleString("en-US")} results; use search to reach the rest`}
+              </span>
             )}
           </span>
         </div>
@@ -2612,7 +2620,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
           <div className="bg-emerald-50 border-t border-emerald-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs animate-in fade-in slide-in-from-top-1">
             <span className="font-bold text-emerald-900 flex items-center gap-1.5">
               <CheckCircle2 className="h-4 w-4" />
-              {selected.size} محدَّد
+              {isRtl ? `${selected.size} محدَّد` : `${selected.size} selected`}
             </span>
             <div className="h-5 w-px bg-emerald-300 mx-1" />
             {fp.isVisible("bulk_post") && (
