@@ -128,7 +128,9 @@ export default function AttendanceCameras() {
                   <th className="text-start p-3">النوع</th>
                   <th className="text-start p-3">الفرع</th>
                   <th className="text-start p-3">الموقع</th>
-                  <th className="text-start p-3">العنوان</th>
+                  <th className="text-start p-3">
+                    {i18n.language?.startsWith("en") ? "Address" : "العنوان"}
+                  </th>
                   <th className="text-start p-3">AI</th>
                   <th className="text-start p-3">الحالة</th>
                   <th className="text-start p-3"></th>

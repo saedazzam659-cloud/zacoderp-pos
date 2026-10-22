@@ -260,7 +260,9 @@ export default function FieldLocations() {
                 <th className="px-3 py-2 text-start font-semibold">الاسم</th>
                 <th className="px-3 py-2 text-start font-semibold">النوع</th>
                 <th className="px-3 py-2 text-start font-semibold">المدينة</th>
-                <th className="px-3 py-2 text-start font-semibold">العنوان</th>
+                <th className="px-3 py-2 text-start font-semibold">
+                  {i18n.language?.startsWith("en") ? "Address" : "العنوان"}
+                </th>
                 <th className="px-3 py-2 text-start font-semibold">جهة الاتصال</th>
                 <th className="px-3 py-2 text-start font-semibold">الإحداثيات</th>
                 <th className="px-3 py-2 text-start font-semibold">نصف القطر</th>
