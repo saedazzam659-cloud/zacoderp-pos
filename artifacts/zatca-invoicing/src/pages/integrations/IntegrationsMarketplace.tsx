@@ -10,6 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { ArrowDownToLine, ArrowUpFromLine, CheckCircle2, AlertCircle, Plug, Plus, Sparkles, Search, ExternalLink } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { companyAllowsModule } from "@/lib/companyModuleGate";
 
 interface Provider {
   id: string; nameAr: string; nameEn: string;
@@ -29,9 +31,12 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 export default function IntegrationsMarketplace() {
+  const { user } = useAuth();
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string>("all");
   const [connectingTo, setConnectingTo] = useState<Provider | null>(null);
+  const [connectingZid, setConnectingZid] = useState(false);
 
   const { data: provData } = useQuery<{ providers: Provider[] }>({
     queryKey: ["integrations", "providers"],
@@ -45,6 +50,25 @@ export default function IntegrationsMarketplace() {
   const providers = provData?.providers ?? [];
   const connections = connData?.connections ?? [];
   const connByProvider = new Map(connections.map(c => [c.provider, c]));
+  const zidConnection = connByProvider.get("zid");
+  const zidEnabled = companyAllowsModule(user, "zid_integration");
+
+  const connectZid = async () => {
+    setConnectingZid(true);
+    try {
+      const response = await fetch("/api/integrations/zid/oauth/start", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "تعذر بدء ربط Zid");
+      if (typeof data.authorizationUrl !== "string") throw new Error("استجابة ربط Zid غير صالحة");
+      window.location.assign(data.authorizationUrl);
+    } catch (error) {
+      toast({
+        title: error instanceof Error ? error.message : "تعذر بدء ربط Zid",
+        variant: "destructive",
+      });
+      setConnectingZid(false);
+    }
+  };
 
   const filtered = providers.filter(p => {
     if (category !== "all" && p.category !== category) return false;
@@ -68,6 +92,26 @@ export default function IntegrationsMarketplace() {
           <span className="flex items-center gap-1"><ArrowUpFromLine className="w-4 h-4" /> Push فوري</span>
         </div>
       </header>
+
+      {zidEnabled && (
+        <Card className="p-5 flex flex-wrap items-center justify-between gap-4 border-emerald-200 bg-emerald-50/50">
+          <div>
+            <h2 className="font-semibold">ربط متجر Zid</h2>
+            <p className="text-sm text-slate-600 mt-1">
+              التفويض يتم من Zid مباشرة؛ لا تدخل رمز وصول أو كلمة مرور في النظام.
+            </p>
+            {zidConnection?.status === "connected" && (
+              <Badge className="mt-2 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                <CheckCircle2 className="w-3 h-3 ml-1" />
+                متصل{zidConnection.displayName ? ` — ${zidConnection.displayName}` : ""}
+              </Badge>
+            )}
+          </div>
+          <Button onClick={connectZid} disabled={connectingZid}>
+            {connectingZid ? "جارٍ التحويل إلى Zid..." : zidConnection?.status === "connected" ? "إعادة الربط" : "ربط متجر Zid"}
+          </Button>
+        </Card>
+      )}
 
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-64">
@@ -93,6 +137,19 @@ export default function IntegrationsMarketplace() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {connections.map(c => {
               const p = providers.find(p => p.id === c.provider);
+              if (c.provider === "zid") {
+                return (
+                  <Card key={c.id} className="p-4 flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-lg bg-emerald-50 flex items-center justify-center text-lg font-bold text-emerald-700">Z</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold truncate">{c.displayName}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {c.status === "connected" ? "متصل" : "بانتظار التفويض"}
+                      </div>
+                    </div>
+                  </Card>
+                );
+              }
               return (
                 <Link key={c.id} href={`/integrations/connections/${c.id}`}>
                   <Card className="p-4 hover:shadow-md transition cursor-pointer flex items-center gap-3">

@@ -52,6 +52,7 @@ const DEFAULT_OFF_KEYS = new Set<string>([
   "egypt_tax", "jordan_tax", "school", "additional_accounting_reports",
   "additional_sales_reports", "additional_purchase_reports",
   "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
+  "zid_integration",
 ]);
 
 // Default for a key ABSENT from the saved JSON: legacy-baseline keys stay
@@ -677,6 +678,44 @@ export default function MenuPermissions() {
                         </label>
                       );
                     })}
+                  </div>
+                </Card>
+              )}
+
+              {draft && (
+                <Card className="border">
+                  <div className="px-4 py-3 border-b bg-muted/40">
+                    <h3 className="font-bold text-sm">مصدر فواتير مبيعات Zid</h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      اختر جهة واحدة فقط لإرسال الفواتير الضريبية؛ لا تفعّل الإرسال من Zid وERP معاً.
+                    </p>
+                  </div>
+                  <div className="p-4 flex flex-wrap gap-3">
+                    {([
+                      ["erp", "ERP يصدر الفاتورة الضريبية"],
+                      ["zid", "Zid يصدر الفاتورة الضريبية"],
+                    ] as const).map(([source, label]) => {
+                      const key = source === "erp" ? "zid_invoice_source_erp" : "zid_invoice_source_zid";
+                      const otherKey = source === "erp" ? "zid_invoice_source_zid" : "zid_invoice_source_erp";
+                      const selected = draft[key] === true && draft[otherKey] !== true;
+                      return (
+                        <Button
+                          key={source}
+                          type="button"
+                          variant={selected ? "default" : "outline"}
+                          className="justify-start"
+                          onClick={() => setDraft(current => current
+                            ? { ...current, [key]: true, [otherKey]: false }
+                            : current)}
+                        >
+                          {selected ? <CheckCircle2 className="h-4 w-4 ml-2" /> : null}
+                          {label}
+                        </Button>
+                      );
+                    })}
+                    {!draft.zid_invoice_source_erp && !draft.zid_invoice_source_zid && (
+                      <span className="self-center text-xs text-amber-700">لم يتم اختيار المصدر بعد.</span>
+                    )}
                   </div>
                 </Card>
               )}

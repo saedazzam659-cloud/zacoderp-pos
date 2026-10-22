@@ -17,8 +17,8 @@
  * connections are scoped by req.user.companyId.
  */
 import { Router } from "express";
-import { db, integrationConnectionsTable, integrationSyncRunsTable } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { db, companiesTable, integrationConnectionsTable, integrationSyncRunsTable } from "@workspace/db";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { createHash, randomBytes } from "crypto";
 import { encryptSecret, decryptSecret } from "../lib/encryption.js";
 import { PROVIDERS, findProvider } from "../lib/integrations/catalog.js";
@@ -26,6 +26,175 @@ import { getAdapter } from "../lib/integrations/adapters.js";
 import type { GatewayCanonical } from "../lib/zatca-gateway-builder.js";
 
 const router = Router();
+
+// Zid OAuth uses the same integration-connection storage as the existing
+// marketplace, but never accepts merchant-pasted access tokens.
+router.post("/zid/oauth/start", async (req, res) => {
+  const user = (req as any).user;
+  const companyId = Number(user?.companyId);
+  if (!Number.isInteger(companyId) || companyId < 1) {
+    res.status(401).json({ error: "غير مخوّل" }); return;
+  }
+  if (user?.role !== "admin") {
+    res.status(403).json({ error: "ربط Zid متاح لمدير الشركة فقط" }); return;
+  }
+  const clientId = process.env.ZID_CLIENT_ID;
+  const clientSecret = process.env.ZID_CLIENT_SECRET;
+  const redirectUri = process.env.ZID_REDIRECT_URI;
+  if (!clientId || !clientSecret || !redirectUri) {
+    res.status(503).json({ error: "إعداد تطبيق Zid غير مكتمل على الخادم" }); return;
+  }
+
+  const [company] = await db.select({
+    id: companiesTable.id,
+    menuPermissions: companiesTable.menuPermissions,
+  }).from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+  let permissions: Record<string, unknown> = {};
+  try { permissions = JSON.parse(company?.menuPermissions ?? "{}"); } catch { /* fail closed */ }
+  const erpSource = permissions.zid_invoice_source_erp === true;
+  const zidSource = permissions.zid_invoice_source_zid === true;
+  if (!company || permissions.zid_integration !== true || erpSource === zidSource) {
+    res.status(403).json({ error: "فعّل وحدة Zid واختر مصدرًا واحدًا للفواتير من صلاحيات القوائم" }); return;
+  }
+
+  const state = randomBytes(32).toString("hex");
+  const stateHash = createHash("sha256").update(state).digest("hex");
+  await db.insert(integrationConnectionsTable).values({
+    companyId,
+    provider: "zid",
+    displayName: "Zid",
+    status: "pending",
+    credentialsEnc: null,
+    config: {
+      oauthStateHash: stateHash,
+      oauthExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      invoiceSource: erpSource ? "erp" : "zid",
+    },
+    createdBy: Number.isInteger(user?.id) ? user.id : null,
+  });
+
+  const authorize = new URL("https://oauth.zid.sa/oauth/authorize");
+  authorize.searchParams.set("client_id", clientId);
+  authorize.searchParams.set("redirect_uri", redirectUri);
+  authorize.searchParams.set("response_type", "code");
+  authorize.searchParams.set("state", state);
+  res.json({ authorizationUrl: authorize.toString() });
+});
+
+router.get("/zid/oauth/callback", async (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  if (!code || !state || state.length > 256) {
+    res.status(400).send("رابط OAuth غير مكتمل. أعد بدء الربط من داخل النظام."); return;
+  }
+  const clientId = process.env.ZID_CLIENT_ID;
+  const clientSecret = process.env.ZID_CLIENT_SECRET;
+  const redirectUri = process.env.ZID_REDIRECT_URI;
+  if (!clientId || !clientSecret || !redirectUri) {
+    res.status(503).send("إعداد تطبيق Zid غير مكتمل على الخادم."); return;
+  }
+  const stateHash = createHash("sha256").update(state).digest("hex");
+  const [connection] = await db.select().from(integrationConnectionsTable).where(and(
+    eq(integrationConnectionsTable.provider, "zid"),
+    eq(integrationConnectionsTable.status, "pending"),
+    sql`${integrationConnectionsTable.config}->>'oauthStateHash' = ${stateHash}`,
+  )).limit(1);
+  const config = connection?.config ?? {};
+  const expiresAt = Date.parse(String(config.oauthExpiresAt ?? ""));
+  if (!connection || !Number.isFinite(expiresAt) || expiresAt < Date.now()) {
+    res.status(400).send("انتهت صلاحية طلب الربط أو أنه غير صالح. أعد المحاولة."); return;
+  }
+  const [company] = await db.select({
+    menuPermissions: companiesTable.menuPermissions,
+  }).from(companiesTable).where(eq(companiesTable.id, connection.companyId)).limit(1);
+  let permissions: Record<string, unknown> = {};
+  try { permissions = JSON.parse(company?.menuPermissions ?? "{}"); } catch { /* fail closed */ }
+  const erpSource = permissions.zid_invoice_source_erp === true;
+  const zidSource = permissions.zid_invoice_source_zid === true;
+  const currentSource = erpSource === zidSource ? null : (erpSource ? "erp" : "zid");
+  if (permissions.zid_integration !== true || currentSource !== config.invoiceSource) {
+    res.status(409).send("تغيّرت صلاحيات Zid أو مصدر الفاتورة. أعد ضبطهما وابدأ الربط من جديد."); return;
+  }
+  const [claimed] = await db.update(integrationConnectionsTable).set({
+    status: "exchanging",
+    config: { invoiceSource: config.invoiceSource },
+    updatedAt: new Date(),
+  }).where(and(
+    eq(integrationConnectionsTable.id, connection.id),
+    eq(integrationConnectionsTable.status, "pending"),
+  )).returning({ id: integrationConnectionsTable.id });
+  if (!claimed) {
+    res.status(409).send("تم استخدام طلب الربط بالفعل. ابدأ محاولة جديدة من النظام."); return;
+  }
+
+  try {
+    const tokenResponse = await fetch("https://oauth.zid.sa/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        code,
+      }),
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    });
+    const tokens = await tokenResponse.json() as Record<string, unknown>;
+    const expiresIn = Number(tokens.expires_in);
+    if (!tokenResponse.ok || typeof tokens.authorization !== "string" ||
+        typeof tokens.access_token !== "string" || typeof tokens.refresh_token !== "string" ||
+        !Number.isFinite(expiresIn) || expiresIn <= 0) {
+      throw new Error("تعذر إكمال تفويض Zid");
+    }
+
+    const profileResponse = await fetch("https://api.zid.sa/v1/managers/account/store", {
+      headers: {
+        Authorization: `Bearer ${tokens.authorization}`,
+        "X-Manager-Token": tokens.access_token,
+        Accept: "application/json",
+        "Accept-Language": "ar",
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!profileResponse.ok) throw new Error("تعذر التحقق من المتجر المفوض لدى Zid");
+    const profile = await profileResponse.json() as Record<string, any>;
+    const store = profile.store ?? profile.data?.store ?? profile.data ?? {};
+    const storeId = store.id ?? store.uuid ?? store.store_id;
+    if (storeId == null) throw new Error("لم يُرجع Zid هوية متجر صالحة");
+
+    const encrypted = encryptSecret(JSON.stringify({
+      authorization: tokens.authorization,
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    }));
+    await db.update(integrationConnectionsTable).set({
+      status: "connected",
+      credentialsEnc: encrypted,
+      config: {
+        invoiceSource: config.invoiceSource === "erp" ? "erp" : "zid",
+        storeId: String(storeId).slice(0, 120),
+        storeName: String(store.name ?? store.title ?? "").slice(0, 160),
+        connectedAt: new Date().toISOString(),
+      },
+      updatedAt: new Date(),
+    }).where(eq(integrationConnectionsTable.id, connection.id));
+    res.status(200).type("html").send(
+      "<!doctype html><meta charset=utf-8><title>Zid</title><p dir=rtl>تم ربط متجر Zid بنجاح. يمكنك العودة إلى النظام.</p>",
+    );
+  } catch (error) {
+    req.log?.error?.({ error, connectionId: connection.id }, "Zid OAuth callback failed");
+    await db.update(integrationConnectionsTable).set({
+      status: "error",
+      lastSyncError: "OAuth authorization failed",
+      updatedAt: new Date(),
+    }).where(eq(integrationConnectionsTable.id, connection.id));
+    res.status(502).send("لم يكتمل الربط مع Zid. أعد بدء التفويض من النظام.");
+  }
+});
 
 // ─── Catalog (no auth needed beyond the global authMiddleware) ──────────
 router.get("/providers", (_req, res) => {

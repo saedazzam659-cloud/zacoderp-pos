@@ -112,6 +112,7 @@ export const MENU_ITEMS: MenuItem[] = [
   // management. Single permission key drives the whole collapsible
   // sidebar group + the per-company MenuPermissions toggle.
   { key: "multi_link",         label: "ربط متعدد",                  section: "ربط متعدد" },
+  { key: "zid_integration",    label: "تكامل Zid",                  section: "التكاملات" },
 
   // ── أوفيس زاكود ────────────────────────────────────────────────
   // In-browser Word + Excel editor (open/read/save external DOCX, XLSX,

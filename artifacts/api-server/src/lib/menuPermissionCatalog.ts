@@ -113,6 +113,7 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   // companies, invoice intake, ZATCA dispatch, CSID management,
   // reports). Single permission key gates the entire sidebar group.
   "multi_link",
+  "zid_integration",
   // ── وحدات كانت ناقصة من الكتالوج (2026-08) ──
   // These keys existed in the web MENU_ITEMS catalog but were missing
   // here, so the registration explicit-deny fill skipped them and the
