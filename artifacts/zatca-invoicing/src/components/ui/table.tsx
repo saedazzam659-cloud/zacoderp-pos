@@ -21,9 +21,14 @@ Table.displayName = "Table"
 const TableHeader = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
->(({ className, ...props }, ref) => (
-  <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props} />
-))
+>(({ className, children, ...props }, ref) => {
+  useTranslation()
+  return (
+    <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props}>
+      {localizeUiChildren(children)}
+    </thead>
+  )
+})
 TableHeader.displayName = "TableHeader"
 
 const TableBody = React.forwardRef<
