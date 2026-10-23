@@ -12,6 +12,7 @@ import {
   type EntityCatalogItem,
   processImport,
   scanHistorical,
+  ensureFiscalYears,
   commitHistorical,
   downloadBlob,
   type HistoricalScanResult,
@@ -36,6 +37,28 @@ type FiscalPeriodRow = { id: number; name: string; startDate: string; endDate: s
 
 const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+function previewMonthlyPeriods(startDate: string, endDate: string, fiscalYear: number) {
+  if (!startDate || !endDate || endDate <= startDate) return [];
+  const [year, month, day] = startDate.split("-").map(Number);
+  const out: { fiscalYear: number; sequence: number; name: string; startDate: string; endDate: string }[] = [];
+  const addMonths = (offset: number) => {
+    const date = new Date(Date.UTC(year, month - 1 + offset, 1));
+    const last = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(Math.min(day, last)).padStart(2, "0")}`;
+  };
+  for (let sequence = 1; sequence <= 12; sequence++) {
+    const start = addMonths(sequence - 1);
+    const next = addMonths(sequence);
+    const end = new Date(`${next}T00:00:00Z`);
+    end.setUTCDate(end.getUTCDate() - 1);
+    const finalDate = end.toISOString().slice(0, 10);
+    if (start > endDate) break;
+    out.push({ fiscalYear, sequence, name: `فترة ${sequence}`, startDate: start, endDate: finalDate > endDate ? endDate : finalDate });
+    if (finalDate >= endDate) break;
+  }
+  return out;
+}
+
 export function HistoricalMigration({ entities, cid, token, toast }: {
   entities: EntityCatalogItem[]; cid?: number; token: string | null; toast: any;
 }) {
@@ -46,6 +69,8 @@ export function HistoricalMigration({ entities, cid, token, toast }: {
   const [processed, setProcessed] = useState<ProcessResult | null>(null);
   const [scan, setScan] = useState<HistoricalScanResult | null>(null);
   const [result, setResult] = useState<HistoricalCommitResult | null>(null);
+  const [periodsApproved, setPeriodsApproved] = useState(false);
+  const [yearRanges, setYearRanges] = useState<Record<number, { startDate: string; endDate: string }>>({});
   const fileRef = useRef<HTMLInputElement>(null);
 
   // ── Closing step state ──
@@ -57,6 +82,8 @@ export function HistoricalMigration({ entities, cid, token, toast }: {
 
   function reset() {
     setFileName(""); setProcessed(null); setScan(null); setResult(null);
+    setPeriodsApproved(false);
+    setYearRanges({});
     setYears(null); setActivePeriod(null);
     if (fileRef.current) fileRef.current.value = "";
   }
@@ -123,6 +150,11 @@ export function HistoricalMigration({ entities, cid, token, toast }: {
       // 4) Scan → per-year preview (no writes).
       const sc = await scanHistorical(token, { companyId: cid, rows: proc.processed });
       setScan(sc);
+      setYearRanges(Object.fromEntries(sc.yearsToCreate.map((year) => {
+        const suggested = sc.years.find((item) => item.year === year);
+        return [year, { startDate: suggested?.startDate ?? `${year}-01-01`, endDate: suggested?.endDate ?? `${year}-12-31` }];
+      })));
+      setPeriodsApproved(sc.yearsToCreate.length === 0 && sc.periodsMissing.length === 0 && sc.closedPeriodConflicts.length === 0);
       toast({ title: `تم فحص ${sc.totals.entries} قيد عبر ${sc.years.length} سنة مالية` });
     } catch (e: any) {
       toast({ title: e?.message ?? "تعذّرت قراءة الملف", variant: "destructive" });
@@ -131,9 +163,42 @@ export function HistoricalMigration({ entities, cid, token, toast }: {
     }
   }
 
+  async function onApprovePeriods() {
+    if (!scan || !processed || scan.yearsToCreate.length === 0) return;
+    if (scan.closedPeriodConflicts.length > 0) {
+      toast({ title: "تعذر إنشاء الفترات", description: "عالج تعارض الفترات المغلقة قبل المتابعة.", variant: "destructive" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const ranges = scan.yearsToCreate.map((year) => ({
+        year,
+        ...(yearRanges[year] ?? { startDate: `${year}-01-01`, endDate: `${year}-12-31` }),
+      }));
+      await ensureFiscalYears(token, { companyId: cid, years: scan.yearsToCreate, ranges });
+      const refreshed = await scanHistorical(token, { companyId: cid, rows: processed.processed });
+      setScan(refreshed);
+      setYearRanges(Object.fromEntries(refreshed.yearsToCreate.map((year) => {
+        const suggested = refreshed.years.find((item) => item.year === year);
+        return [year, { startDate: suggested?.startDate ?? `${year}-01-01`, endDate: suggested?.endDate ?? `${year}-12-31` }];
+      })));
+      const ready = refreshed.yearsToCreate.length === 0 && refreshed.periodsMissing.length === 0 && refreshed.closedPeriodConflicts.length === 0;
+      setPeriodsApproved(ready);
+      toast({
+        title: ready ? "تم إنشاء الفترات الشهرية ومراجعة التواريخ" : "تم إنشاء ما أمكن من الفترات",
+        description: ready ? undefined : "راجع الفترات الناقصة أو التعارضات قبل الترحيل.",
+        variant: ready ? undefined : "destructive",
+      });
+    } catch (e: any) {
+      toast({ title: e?.message ?? "تعذر إنشاء الفترات", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // ── Execute migration ──
   async function onMigrate() {
-    if (!processed) return;
+    if (!processed || !periodsApproved) return;
     setBusy(true);
     try {
       const res = await commitHistorical(token, { companyId: cid, rows: processed.processed, options: { skipErrors: true } });
@@ -205,7 +270,7 @@ export function HistoricalMigration({ entities, cid, token, toast }: {
             <h3 className="font-bold text-violet-900">محرك الترحيل التاريخي للقيود</h3>
             <p className="text-xs text-muted-foreground leading-relaxed">
               لترحيل سنوات سابقة من القيود المحاسبية دفعة واحدة. يستخرج النظام السنة المالية من <strong>تاريخ القيد تلقائياً</strong>،
-              يُنشئ السنوات المالية الناقصة (سنة واحدة = فترة سنوية كاملة)، يربط كل قيد بفترته، ويُرحّله <strong>مُرحَّلاً (posted)</strong> ليظهر في التقارير فوراً.
+              يقترح الفترات الشهرية الناقصة وفق نمط سنوات الشركة، ولا ينشئها إلا بعد موافقتك الصريحة. بعد ذلك يربط كل قيد بفترته ويرحّله عبر مسار القيود التاريخية.
               ثم يمكنك تشغيل دورة الإقفال السنوي لكل سنة من القسم الأخير.
             </p>
             <p className="text-[11px] text-amber-700 flex items-center gap-1 mt-1">
@@ -253,10 +318,10 @@ export function HistoricalMigration({ entities, cid, token, toast }: {
               <h3 className="font-semibold text-sm">معاينة الترحيل</h3>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <Stat label="عدد القيود" value={scan.totals.entries} icon={<Database className="h-4 w-4" />} />
               <Stat label="عدد السطور" value={scan.totals.lines} icon={<FileSpreadsheet className="h-4 w-4" />} />
-              <Stat label="سنوات ستُنشأ" value={scan.yearsToCreate.length} icon={<CalendarPlus className="h-4 w-4" />} tone="info" />
+               <Stat label="سنوات/فترات تحتاج تجهيزًا" value={scan.yearsToCreate.length} icon={<CalendarPlus className="h-4 w-4" />} tone="info" />
               <Stat label="غير متوازنة" value={scan.totals.unbalanced} icon={<AlertTriangle className="h-4 w-4" />} tone={scan.totals.unbalanced > 0 ? "error" : "muted"} />
             </div>
 
@@ -292,8 +357,8 @@ export function HistoricalMigration({ entities, cid, token, toast }: {
                       <td className="p-2" dir="ltr">{fmt(y.totalDebit)}</td>
                       <td className="p-2" dir="ltr">{fmt(y.totalCredit)}</td>
                       <td className="p-2">
-                        {y.exists
-                          ? <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600 border-slate-200">سنة موجودة</Badge>
+                         {y.exists
+                           ? <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600 border-slate-200">{scan.yearsToCreate.includes(y.year) ? "سنة موجودة — فترات ناقصة" : "سنة موجودة"}</Badge>
                           : <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">ستُنشأ</Badge>}
                         {y.unbalanced > 0 && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200 mr-1">{y.unbalanced} غير متوازن</Badge>}
                       </td>
@@ -303,8 +368,69 @@ export function HistoricalMigration({ entities, cid, token, toast }: {
               </table>
             </div>
 
+            <div className="rounded-md border bg-muted/20 p-3 text-xs">
+              <div><strong>نطاق التواريخ:</strong> <span dir="ltr">{scan.firstDate ?? "—"} → {scan.lastDate ?? "—"}</span></div>
+              <div className="mt-1"><strong>الفترات الناقصة:</strong> {scan.periodsMissing.length} تاريخًا بلا فترة مطابقة؛ <strong>التعارضات المغلقة:</strong> {scan.closedPeriodConflicts.length}</div>
+              {scan.yearsToCreate.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  <p className="text-muted-foreground">راجع تواريخ السنوات المقترحة وفق نمط الشركة؛ ستُنشأ الفترات الشهرية الناقصة فقط بعد موافقتك.</p>
+                  {scan.years.filter((y) => scan.yearsToCreate.includes(y.year)).map((y) => (
+                    <div key={y.year} className="flex flex-wrap items-center gap-2">
+                      <strong>{y.year}</strong>
+                      {y.exists ? (
+                        <span dir="ltr">{y.startDate} → {y.endDate} (لن يتم تعديل السنة الموجودة)</span>
+                      ) : (
+                        <>
+                          <label className="flex items-center gap-1">من
+                            <input aria-label={`بداية السنة المالية ${y.year}`} data-testid={`input-fiscal-year-start-${y.year}`} type="date" className="rounded border bg-background px-2 py-1" value={yearRanges[y.year]?.startDate ?? y.startDate} onChange={(e) => setYearRanges((current) => ({ ...current, [y.year]: { ...(current[y.year] ?? { startDate: y.startDate, endDate: y.endDate }), startDate: e.target.value } }))} />
+                          </label>
+                          <label className="flex items-center gap-1">إلى
+                            <input aria-label={`نهاية السنة المالية ${y.year}`} data-testid={`input-fiscal-year-end-${y.year}`} type="date" className="rounded border bg-background px-2 py-1" value={yearRanges[y.year]?.endDate ?? y.endDate} onChange={(e) => setYearRanges((current) => ({ ...current, [y.year]: { ...(current[y.year] ?? { startDate: y.startDate, endDate: y.endDate }), endDate: e.target.value } }))} />
+                          </label>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                  <div className="max-h-40 overflow-y-auto rounded border bg-background p-2">
+                    <div className="mb-1 font-medium">الفترات الشهرية المقترحة</div>
+                    {scan.yearsToCreate.flatMap((year) => {
+                      const yearStat = scan.years.find((item) => item.year === year);
+                      return yearStat && !yearStat.exists
+                        ? previewMonthlyPeriods(yearRanges[year]?.startDate ?? yearStat.startDate, yearRanges[year]?.endDate ?? yearStat.endDate, year)
+                        : scan.periodsProposed.filter((period) => period.fiscalYear === year);
+                    }).map((period) => (
+                      <div key={`${period.fiscalYear}-${period.sequence}`} className="flex justify-between gap-3 border-t py-1">
+                        <span>{period.name} — السنة {period.fiscalYear}</span>
+                        <span dir="ltr">{period.startDate} → {period.endDate}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {scan.closedPeriodConflicts.length > 0 && (
+              <div className="rounded-md p-3 bg-red-50 border border-red-200 text-xs text-red-800">
+                توجد مستندات تقع في فترات مغلقة. عالج التعارض من إعدادات الفترات المالية قبل الاستيراد.
+                {scan.closedPeriodConflicts.slice(0, 5).map((c, i) => <div key={`${c.rowIndex}-${i}`}>صف {c.rowIndex + 1}: {c.date} — {c.periodName}</div>)}
+              </div>
+            )}
+
+            {scan.yearsToCreate.length > 0 && (
+              <Button onClick={onApprovePeriods} disabled={busy || scan.closedPeriodConflicts.length > 0} variant="outline" className="gap-1">
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarPlus className="h-4 w-4" />}
+                أوافق على إنشاء الفترات الشهرية المقترحة
+              </Button>
+            )}
+
+            {scan.periodsMissing.length > 0 && scan.yearsToCreate.length === 0 && (
+              <div className="rounded-md p-3 bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                توجد تواريخ بلا فترات مطابقة داخل سنوات موجودة. لن يُنشئ النظام فترات متداخلة تلقائيًا؛ راجع إعداد السنة والفترات يدويًا.
+              </div>
+            )}
+
             {!result && (
-              <Button onClick={onMigrate} disabled={busy || scan.totals.entries === 0} className="gap-1 bg-gradient-to-l from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white">
+              <Button onClick={onMigrate} disabled={busy || scan.totals.entries === 0 || !periodsApproved} className="gap-1 bg-gradient-to-l from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white">
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} تنفيذ الترحيل
               </Button>
             )}

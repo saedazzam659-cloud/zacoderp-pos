@@ -114,6 +114,8 @@ export async function commitImport(token: string | null, body: { companyId?: num
 
 export interface HistoricalYearStat {
   year: number;
+  startDate: string;
+  endDate: string;
   entries: number;
   lines: number;
   totalDebit: number;
@@ -124,11 +126,16 @@ export interface HistoricalYearStat {
 
 export interface HistoricalScanResult {
   ok: boolean;
+  firstDate: string | null;
+  lastDate: string | null;
   years: HistoricalYearStat[];
   yearsToCreate: number[];
   yearsExisting: number[];
   totals: { entries: number; lines: number; totalDebit: number; totalCredit: number; unbalanced: number; orphans: number };
   orphans: { rowIndex: number; reason: string }[];
+  periodsMissing: { date: string; rowIndex: number; docNumber: string }[];
+  periodsProposed: { fiscalYear: number; name: string; startDate: string; endDate: string; sequence: number }[];
+  closedPeriodConflicts: { date: string; rowIndex: number; docNumber: string; periodName: string; status: string }[];
 }
 
 export interface HistoricalCommitResult {
@@ -151,9 +158,13 @@ export async function scanHistorical(token: string | null, body: { companyId?: n
   return r.json();
 }
 
-export async function ensureFiscalYears(token: string | null, body: { companyId?: number; years: number[] }): Promise<{ ok: boolean; created: number[]; existing: number[] }> {
+export async function ensureFiscalYears(token: string | null, body: {
+  companyId?: number;
+  years: number[];
+  ranges?: { year: number; startDate: string; endDate: string }[];
+}): Promise<{ ok: boolean; created: number[]; existing: number[]; periodsCreated: number }> {
   const r = await fetch(`${API}/api/data-io/import/historical/ensure-years`, {
-    method: "POST", headers: authHeaders(token), body: JSON.stringify(body),
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ ...body, approved: true }),
   });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "فشل إنشاء السنوات المالية");
   return r.json();

@@ -22,6 +22,7 @@ import {
   currenciesTable,
   journalEntriesTable, journalEntryLinesTable,
   fiscalYearsTable, fiscalPeriodsTable,
+  auditLogTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray, asc } from "drizzle-orm";
 import * as XLSX from "xlsx";
@@ -2252,6 +2253,63 @@ const isISODate = (s: any): s is string => typeof s === "string" && ISO_DATE.tes
 const rangesOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) =>
   aStart <= bEnd && aEnd >= bStart;
 
+function shiftIsoYear(date: string, years: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const nextYear = year + years;
+  const lastDay = new Date(Date.UTC(nextYear, month, 0)).getUTCDate();
+  return `${nextYear}-${String(month).padStart(2, "0")}-${String(Math.min(day, lastDay)).padStart(2, "0")}`;
+}
+
+function fiscalRangeForYear(year: number, existingYears: Array<{ startDate: string; endDate: string }>) {
+  const template = [...existingYears].sort((a, b) => {
+    const ay = Number(a.startDate.slice(0, 4));
+    const by = Number(b.startDate.slice(0, 4));
+    return Math.abs(ay - year) - Math.abs(by - year);
+  })[0];
+  if (!template) return { startDate: `${year}-01-01`, endDate: `${year}-12-31` };
+  const delta = year - Number(template.startDate.slice(0, 4));
+  return {
+    startDate: shiftIsoYear(template.startDate, delta),
+    endDate: shiftIsoYear(template.endDate, delta),
+  };
+}
+
+function fiscalStartYearForDate(date: string, existingYears: Array<{ startDate: string }>): number {
+  const year = Number(date.slice(0, 4));
+  const template = [...existingYears].sort((a, b) =>
+    Math.abs(Number(a.startDate.slice(0, 4)) - year) - Math.abs(Number(b.startDate.slice(0, 4)) - year)
+  )[0];
+  const anchorMonthDay = template?.startDate.slice(5) ?? "01-01";
+  return date.slice(5) >= anchorMonthDay ? year : year - 1;
+}
+
+function addMonthsClamped(date: string, months: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  return `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, "0")}-${String(Math.min(day, lastDay)).padStart(2, "0")}`;
+}
+
+function buildHistoricalMonthlyPeriods(startDate: string, endDate: string) {
+  const periods: { name: string; startDate: string; endDate: string; sequence: number }[] = [];
+  for (let sequence = 1; sequence <= 12; sequence++) {
+    const start = addMonthsClamped(startDate, sequence - 1);
+    const next = addMonthsClamped(startDate, sequence);
+    const end = new Date(`${next}T00:00:00Z`);
+    end.setUTCDate(end.getUTCDate() - 1);
+    const endOfPeriod = end.toISOString().slice(0, 10);
+    if (start > endDate) break;
+    periods.push({
+      name: `فترة ${sequence}`,
+      startDate: start,
+      endDate: endOfPeriod > endDate ? endDate : endOfPeriod,
+      sequence,
+    });
+    if (endOfPeriod >= endDate) break;
+  }
+  return periods;
+}
+
 type HistGroup = {
   key: string;
   docNumber: string;
@@ -2320,15 +2378,29 @@ router.post("/import/historical/scan", async (req, res) => {
     const { groups, orphans } = groupHistoricalRows(rows);
 
     const existingYears = await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.companyId, cid));
-    const yearExists = (y: number) =>
-      existingYears.some(fy => rangesOverlap(`${y}-01-01`, `${y}-12-31`, fy.startDate, fy.endDate));
+    const existingPeriods = await db.select().from(fiscalPeriodsTable).where(eq(fiscalPeriodsTable.companyId, cid));
+    const dates = groups.map((g) => g.entryDate).sort();
+    const yearExists = (y: number) => {
+      const candidate = fiscalRangeForYear(y, existingYears);
+      return existingYears.some((fy) => rangesOverlap(candidate.startDate, candidate.endDate, fy.startDate, fy.endDate));
+    };
 
-    type YearStat = { year: number; entries: number; lines: number; totalDebit: number; totalCredit: number; unbalanced: number; exists: boolean };
+    type YearStat = { year: number; startDate: string; endDate: string; entries: number; lines: number; totalDebit: number; totalCredit: number; unbalanced: number; exists: boolean };
     const byYear = new Map<number, YearStat>();
     for (const g of groups) {
-      const y = Number(g.entryDate.slice(0, 4));
+      const y = fiscalStartYearForDate(g.entryDate, existingYears);
       let s = byYear.get(y);
-      if (!s) { s = { year: y, entries: 0, lines: 0, totalDebit: 0, totalCredit: 0, unbalanced: 0, exists: yearExists(y) }; byYear.set(y, s); }
+      if (!s) {
+        const suggestedRange = fiscalRangeForYear(y, existingYears);
+        const existingYear = existingYears.find((fy) =>
+          g.entryDate >= fy.startDate && g.entryDate <= fy.endDate
+        );
+        const range = existingYear
+          ? { startDate: existingYear.startDate, endDate: existingYear.endDate }
+          : suggestedRange;
+        s = { year: y, ...range, entries: 0, lines: 0, totalDebit: 0, totalCredit: 0, unbalanced: 0, exists: Boolean(existingYear) || yearExists(y) };
+        byYear.set(y, s);
+      }
       s.entries++;
       s.lines += g.lines.length;
       const d = g.lines.reduce((a, l) => a + l.debit, 0);
@@ -2339,11 +2411,30 @@ router.post("/import/historical/scan", async (req, res) => {
     }
 
     const years = [...byYear.values()].sort((a, b) => a.year - b.year);
+    const periodsMissing = groups.filter((g) =>
+      !existingPeriods.some((p) => g.entryDate >= p.startDate && g.entryDate <= p.endDate)
+    ).map((g) => ({ date: g.entryDate, rowIndex: g.rowIndices[0], docNumber: g.docNumber }));
+    const closedPeriodConflicts = groups.flatMap((g) => existingPeriods
+      .filter((p) => g.entryDate >= p.startDate && g.entryDate <= p.endDate && p.status !== "open")
+      .map((p) => ({ date: g.entryDate, rowIndex: g.rowIndices[0], docNumber: g.docNumber, periodName: p.name, status: p.status })));
+    const yearsWithMissingPeriods = new Set(periodsMissing.map((p) => fiscalStartYearForDate(p.date, existingYears)));
+    const yearsToCreate = years.filter((y) => !y.exists || yearsWithMissingPeriods.has(y.year)).map((y) => y.year);
+    const periodsProposed = yearsToCreate.flatMap((year) => {
+      const yearStat = years.find((item) => item.year === year);
+      const range = yearStat ?? fiscalRangeForYear(year, existingYears);
+      return buildHistoricalMonthlyPeriods(range.startDate, range.endDate)
+        .filter((candidate) => !existingPeriods.some((p) =>
+          p.startDate <= candidate.startDate && p.endDate >= candidate.endDate
+        ))
+        .map((period) => ({ fiscalYear: year, ...period }));
+    });
     res.json({
       ok: true,
+      firstDate: dates[0] ?? null,
+      lastDate: dates[dates.length - 1] ?? null,
       years,
-      yearsToCreate: years.filter(y => !y.exists).map(y => y.year),
-      yearsExisting: years.filter(y => y.exists).map(y => y.year),
+      yearsToCreate,
+      yearsExisting: years.filter(y => y.exists && !yearsWithMissingPeriods.has(y.year)).map(y => y.year),
       totals: {
         entries: groups.length,
         lines: groups.reduce((a, g) => a + g.lines.length, 0),
@@ -2353,18 +2444,28 @@ router.post("/import/historical/scan", async (req, res) => {
         orphans: orphans.length,
       },
       orphans: orphans.slice(0, 50),
+      periodsMissing: periodsMissing.slice(0, 100),
+      periodsProposed,
+      closedPeriodConflicts: closedPeriodConflicts.slice(0, 100),
     });
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? "فشل الفحص" });
   }
 });
 
-// Ensure a fiscal year (as a single annual period) exists for each requested
-// calendar year that does not already overlap an existing year. Returns the
-// created/existing year numbers. Reuses the same overlap guard as POST /years.
-async function ensureAnnualFiscalYears(cid: number, years: number[]): Promise<{ created: number[]; existing: number[] }> {
+// Explicitly approved fiscal-year and missing monthly-period setup for the
+// historical migration flow. Existing periods are preserved; overlaps are
+// never replaced or rewritten.
+async function ensureApprovedFiscalYears(
+  cid: number,
+  years: number[],
+  approvedRanges: Map<number, { startDate: string; endDate: string }>,
+  req: any,
+): Promise<{ created: number[]; existing: number[]; periodsCreated: number }> {
   const created: number[] = [];
   const existing: number[] = [];
+  let periodsCreated = 0;
+  const createdPeriodRanges: Array<{ fiscalYear: number; startDate: string; endDate: string; name: string }> = [];
 
   // Serialize the whole ensure-step per company inside ONE transaction so that
   //   • the year row + its annual period row are committed atomically (no
@@ -2380,32 +2481,98 @@ async function ensureAnnualFiscalYears(cid: number, years: number[]): Promise<{ 
       existingYears.some(fy => rangesOverlap(`${y}-01-01`, `${y}-12-31`, fy.startDate, fy.endDate));
 
     for (const y of [...new Set(years)].sort((a, b) => a - b)) {
-      if (overlaps(y)) { existing.push(y); continue; }
-      const startDate = `${y}-01-01`, endDate = `${y}-12-31`;
-      const [yearRow] = await tx.insert(fiscalYearsTable).values({
-        companyId: cid, name: String(y), startDate, endDate, status: "open",
-      }).returning();
-      await tx.insert(fiscalPeriodsTable).values({
-        companyId: cid, fiscalYearId: yearRow.id, name: `سنة ${y}`,
-        startDate, endDate, sequence: 1, status: "open",
-      });
+      const suggested = fiscalRangeForYear(y, existingYears);
+      const { startDate, endDate } = approvedRanges.get(y) ?? suggested;
+      if (!isISODate(startDate) || !isISODate(endDate) || endDate <= startDate) {
+        throw new Error(`تواريخ السنة المالية ${y} غير صالحة`);
+      }
+      const suggestedPeriods = buildHistoricalMonthlyPeriods(startDate, endDate);
+      if (Number(startDate.slice(0, 4)) !== y || suggestedPeriods.length !== 12 || suggestedPeriods.at(-1)!.endDate !== endDate) {
+        throw new Error(`نطاق السنة المالية ${y} لا يمكن تقسيمه إلى فترات شهرية كاملة`);
+      }
+      if (buildHistoricalMonthlyPeriods(startDate, endDate).length === 0) {
+        throw new Error(`نطاق السنة المالية ${y} غير صالح`);
+      }
+      let yearRow = existingYears.find((fy) =>
+        startDate >= fy.startDate && endDate <= fy.endDate
+      );
+      if (!yearRow && (overlaps(y) || existingYears.some((fy) => rangesOverlap(startDate, endDate, fy.startDate, fy.endDate)))) {
+        existing.push(y);
+        continue;
+      }
+      if (!yearRow) {
+        [yearRow] = await tx.insert(fiscalYearsTable).values({
+          companyId: cid, name: String(y), startDate, endDate, status: "open",
+        }).returning();
+        created.push(y);
+        existingYears.push(yearRow);
+      } else {
+        existing.push(y);
+      }
+      const currentPeriods = await tx.select().from(fiscalPeriodsTable)
+        .where(and(
+          eq(fiscalPeriodsTable.companyId, cid),
+          eq(fiscalPeriodsTable.fiscalYearId, yearRow.id),
+        ));
+      const periods = buildHistoricalMonthlyPeriods(yearRow.startDate, yearRow.endDate)
+        .filter((candidate) => !currentPeriods.some((p) =>
+          p.startDate <= candidate.startDate && p.endDate >= candidate.endDate
+        ))
+        .filter((candidate) => !currentPeriods.some((p) =>
+          rangesOverlap(p.startDate, p.endDate, candidate.startDate, candidate.endDate)
+        ))
+        .map((p) => ({
+          ...p, companyId: cid, fiscalYearId: yearRow.id, status: "open" as const,
+        }));
+      if (periods.length) {
+        await tx.insert(fiscalPeriodsTable).values(periods);
+        periodsCreated += periods.length;
+        createdPeriodRanges.push(...periods.map((period) => ({
+          fiscalYear: y, startDate: period.startDate, endDate: period.endDate, name: period.name,
+        })));
+      }
       // keep the in-memory guard fresh so the same year isn't double-created
       existingYears.push(yearRow as any);
-      created.push(y);
+    }
+    if (created.length > 0 || periodsCreated > 0) {
+      await tx.insert(auditLogTable).values({
+        userId: req.authUser?.id ?? null,
+        username: req.authUser?.username ?? null,
+        role: req.authUser?.role ?? null,
+        companyId: cid,
+        module: "data_io",
+        action: "create",
+        method: "POST",
+        path: "/api/data-io/import/historical/ensure-years",
+        entityType: "fiscal_year",
+        entityId: null,
+        statusCode: 200,
+        ip: req.ip ?? null,
+        userAgent: req.get?.("user-agent") ?? null,
+        metadata: { approved: true, yearsCreated: created, periods: createdPeriodRanges },
+      });
     }
   });
-  return { created, existing };
+  return { created, existing, periodsCreated };
 }
 
 // ─── POST /api/data-io/import/historical/ensure-years ───────────────────────
-// Body: { companyId?, years: number[] }  → create missing annual fiscal years.
+// Body: { companyId?, approved: true, years: number[], ranges?: [...] }.
 router.post("/import/historical/ensure-years", async (req, res) => {
   try {
     const cid = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
     if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    if (req.body?.approved !== true) { res.status(400).json({ error: "الموافقة الصريحة على إنشاء الفترات مطلوبة" }); return; }
     const years = Array.isArray(req.body?.years) ? req.body.years.map((y: any) => Number(y)).filter((y: number) => Number.isInteger(y) && y >= 1900 && y <= 2200) : [];
     if (years.length === 0) { res.status(400).json({ error: "قائمة السنوات مطلوبة" }); return; }
-    const result = await ensureAnnualFiscalYears(cid, years);
+    const ranges = new Map<number, { startDate: string; endDate: string }>();
+    if (Array.isArray(req.body?.ranges)) {
+      for (const range of req.body.ranges) {
+        const year = Number(range?.year);
+        if (years.includes(year)) ranges.set(year, { startDate: String(range.startDate ?? ""), endDate: String(range.endDate ?? "") });
+      }
+    }
+    const result = await ensureApprovedFiscalYears(cid, years, ranges, req);
     res.json({ ok: true, ...result });
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? "فشل إنشاء السنوات المالية" });
@@ -2414,8 +2581,8 @@ router.post("/import/historical/ensure-years", async (req, res) => {
 
 // ─── POST /api/data-io/import/historical/commit ─────────────────────────────
 // Body: { companyId?, rows: <processed rows>, options?: { skipErrors?: boolean } }
-// 1) auto-create missing fiscal years (annual period), 2) resolve period_id per
-// entry from its date, 3) ALWAYS-INSERT header + lines and POST balanced ones.
+// Resolve an already-open period per entry date and insert balanced historical
+// headers/lines. Fiscal years and periods are never created by this endpoint.
 router.post("/import/historical/commit", async (req, res) => {
   const log: Array<{ rowIndex: number; status: "inserted" | "skipped" | "error"; id?: number; reason?: string }> = [];
   let inserted = 0, skipped = 0, errors = 0;
@@ -2428,16 +2595,25 @@ router.post("/import/historical/commit", async (req, res) => {
     const { groups, orphans } = groupHistoricalRows(rows);
     for (const o of orphans) { skipped++; log.push({ rowIndex: o.rowIndex, status: "skipped", reason: o.reason }); }
 
-    // 1) Auto-create missing fiscal years for every year present in the file.
-    const yearsInFile = [...new Set(groups.map(g => Number(g.entryDate.slice(0, 4))))];
-    const yearResult = await ensureAnnualFiscalYears(cid, yearsInFile);
-
-    // Load every period for the tenant so we can resolve period_id by date.
+    // Never create fiscal years or periods as a side effect of importing.
+    // Period setup must have been approved explicitly in the preceding step.
     const periods = await db.select({
-      id: fiscalPeriodsTable.id, startDate: fiscalPeriodsTable.startDate, endDate: fiscalPeriodsTable.endDate,
+      id: fiscalPeriodsTable.id, startDate: fiscalPeriodsTable.startDate, endDate: fiscalPeriodsTable.endDate, status: fiscalPeriodsTable.status, name: fiscalPeriodsTable.name,
     }).from(fiscalPeriodsTable).where(eq(fiscalPeriodsTable.companyId, cid));
     const periodIdForDate = (date: string): number | null =>
       periods.find(p => date >= p.startDate && date <= p.endDate)?.id ?? null;
+    const invalidPeriodGroups = groups.filter((g) => {
+      const period = periods.find((p) => g.entryDate >= p.startDate && g.entryDate <= p.endDate);
+      return !period || period.status !== "open";
+    });
+    if (invalidPeriodGroups.length) {
+      res.status(409).json({
+        error: "توجد تواريخ بلا فترة مالية مفتوحة. راجع الفترات أو وافق على إنشاء الناقص ثم أعد الفحص.",
+        periodsMissing: invalidPeriodGroups.filter((g) => !periods.some((p) => g.entryDate >= p.startDate && g.entryDate <= p.endDate)).map((g) => ({ date: g.entryDate, docNumber: g.docNumber })),
+        closedPeriodConflicts: invalidPeriodGroups.flatMap((g) => periods.filter((p) => g.entryDate >= p.startDate && g.entryDate <= p.endDate && p.status !== "open").map((p) => ({ date: g.entryDate, docNumber: g.docNumber, periodName: p.name, status: p.status }))),
+      });
+      return;
+    }
 
     // Valid tenant-owned branch ids (strip cross-tenant smuggling, parity with importer).
     const branchRows = await db.select({ id: branchesTable.id }).from(branchesTable).where(eq(branchesTable.companyId, cid));
@@ -2466,6 +2642,18 @@ router.post("/import/historical/commit", async (req, res) => {
         const branchId = g.branchId != null && validBranchIds.has(g.branchId) ? g.branchId : null;
 
         await db.transaction(async (tx) => {
+          const [currentPeriod] = await tx.select({
+            id: fiscalPeriodsTable.id,
+            status: fiscalPeriodsTable.status,
+            startDate: fiscalPeriodsTable.startDate,
+            endDate: fiscalPeriodsTable.endDate,
+          }).from(fiscalPeriodsTable).where(and(
+            eq(fiscalPeriodsTable.id, periodId),
+            eq(fiscalPeriodsTable.companyId, cid),
+          ));
+          if (!currentPeriod || currentPeriod.status !== "open" || g.entryDate < currentPeriod.startDate || g.entryDate > currentPeriod.endDate) {
+            throw new Error(`الفترة المالية للقيد ${g.docNumber} لم تعد مفتوحة أو لم تعد تغطي تاريخ المستند`);
+          }
           const [header] = await tx.insert(journalEntriesTable).values({
             companyId: cid,
             docNumber: g.docNumber,
@@ -2499,7 +2687,7 @@ router.post("/import/historical/commit", async (req, res) => {
           res.status(422).json({
             summary: { inserted, skipped, errors, total: rows.length },
             log, aborted: true, reason: "strict_mode_failed", error: msg,
-            yearsCreated: yearResult.created, yearsExisting: yearResult.existing,
+            yearsCreated: [], yearsExisting: [],
           });
           return;
         }
@@ -2510,8 +2698,8 @@ router.post("/import/historical/commit", async (req, res) => {
       ok: true,
       summary: { inserted, skipped, errors, total: rows.length },
       log,
-      yearsCreated: yearResult.created,
-      yearsExisting: yearResult.existing,
+      yearsCreated: [],
+      yearsExisting: [],
       committedAt: new Date().toISOString(),
     });
   } catch (e: any) {
