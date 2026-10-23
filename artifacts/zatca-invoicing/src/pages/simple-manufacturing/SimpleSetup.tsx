@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { GitBranch, FileText, Plus, Server, PackageOpen } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { EmployeeMultiSelect } from "@/components/EmployeeMultiSelect";
 import { Switch } from "@/components/ui/switch";
 import type { Catalog } from "./types";
 
@@ -68,7 +69,8 @@ export function SimpleSetup({
     resourceMode: "labor" | "machine" | "both";
     resourceId?: string;
     workerCount?: number;
-  }>>([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1 }]);
+    workerEmployeeIds?: string[];
+  }>>([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [] }]);
   const [template, setTemplate] = useState({ name: "", productItemId: "", plannedQty: "1", unitCode: "" });
   const [warehouse, setWarehouse] = useState({ code: "", nameAr: "", isDefault: false });
   const [internalTransportEnabled, setInternalTransportEnabled] = useState(
@@ -191,8 +193,9 @@ export function SimpleSetup({
             resourceMode: stage?.resourceMode === "machine" || stage?.resourceMode === "both" ? stage.resourceMode : "labor",
             resourceId: stage?.resourceId == null ? "" : String(stage.resourceId),
             workerCount: Number(stage?.workerCount ?? 1) || 1,
+            workerEmployeeIds: Array.isArray(stage?.workerEmployeeIds) ? stage.workerEmployeeIds.map(String) : [],
           }))
-        : [{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1 }]);
+        : [{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [] }]);
       setOpenRouting(true);
     } catch {
       // The controller owns the toast/error contract.
@@ -624,12 +627,28 @@ export function SimpleSetup({
                        <p className="text-[11px] text-slate-500">
                           تستخدم المرحلة ساعات تشغيل واحدة فقط. بيانات الطاقة مرتبطة بالآلة المختارة؛ لا توجد ساعات كهرباء أو إهلاك منفصلة.
                        </p>
+                       {(stage.resourceMode === "labor" || stage.resourceMode === "both") && (
+                         <div className="space-y-1.5">
+                           <label className="text-xs font-medium text-slate-600">الموظفون المعيّنون للمرحلة</label>
+                           <EmployeeMultiSelect
+                             employees={(catalog.employees ?? []).map(employee => ({
+                               value: String(employee.id),
+                               label: `${employee.nameAr || employee.nameEn || `موظف #${employee.id}`}${employee.code ? ` (${employee.code})` : ""}`,
+                             }))}
+                             value={stage.workerEmployeeIds ?? []}
+                             onChange={workerEmployeeIds => setRoutingStages(stages => stages.map((s, i) => i === index
+                               ? { ...s, workerEmployeeIds, workerCount: Math.max(s.workerCount ?? 0, workerEmployeeIds.length) }
+                               : s))}
+                             disabled={!canEdit}
+                           />
+                         </div>
+                       )}
                      </div>
                     );
                   })}
                   <Button type="button" variant="outline" size="sm"
                      className="h-11 w-full justify-center border-dashed border-violet-300 bg-violet-50/40 font-semibold text-violet-800 hover:bg-violet-50 dark:border-violet-800 dark:bg-violet-950/20 dark:text-violet-200 dark:hover:bg-violet-950/50"
-                     onClick={() => setRoutingStages(stages => [...stages, { nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1 }])}
+                     onClick={() => setRoutingStages(stages => [...stages, { nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [] }])}
                     disabled={!canEdit}>
                     <Plus className="mr-1 h-4 w-4" /> إضافة مرحلة
                   </Button>

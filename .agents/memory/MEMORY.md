@@ -48,7 +48,7 @@
 - [Company operational reset boundary](company-operational-reset-boundary.md) — reset only the explicitly named primary tenant; preserve setup/master data and reject demo or ZATCA-linked companies.
 - [Company hard-purge sequence boundary](company-hard-purge-sequence-boundary.md) — permanent purge may bypass protected-document deletion only in a company-scoped, transaction-local path.
 - [Wouter navigation boundaries](wouter-native-new-tab.md) — use native browser navigation for new tabs and cross-artifact routes.
-- [Variable manufacturing routes](manufacturing-route-stages.md) — stage count and sequence vary by factory and product; never assume a fixed six-stage flow.
+- [Variable manufacturing routes](manufacturing-route-stages.md) — stage counts are variable; multi-employee assignments copy to editable order snapshots while legacy attribution stays singular.
 - [Inventory-only assembly boundary](inventory-quick-assembly-boundary.md) — quick item assembly must stay inside inventory and leave production/manufacturing flows untouched.
 - [Inventory brand filter boundary](inventory-brand-filter-boundary.md) — filter by linked items in inventory reports; include full quantities without allocating stock across brands.
 - [Sales-invoice form parity](sales-invoice-form-parity.md) — keep related customer, supplier, HR, order, credit, and representative forms on the same full-width field layout.

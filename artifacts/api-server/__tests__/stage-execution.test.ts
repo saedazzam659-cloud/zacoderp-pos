@@ -91,6 +91,14 @@ test("stage execution normalizes an optional nonnegative worker count", () => {
     () => normalizeStageExecutionPayload({ workerEmployeeId: "bad" }),
     /موظف الموارد البشرية/,
   );
+  assert.deepEqual(
+    normalizeStageExecutionPayload({ workerEmployeeIds: ["7", 9, "7"] }),
+    { workerEmployeeIds: [7, 9], operatorEmployeeId: 7 },
+  );
+  assert.throws(
+    () => normalizeStageExecutionPayload({ workerEmployeeIds: [7, "bad"] }),
+    /موظف الموارد البشرية/,
+  );
 });
 
 test("stage units validate explicit factors and convert output/waste once", () => {

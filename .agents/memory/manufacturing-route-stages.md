@@ -8,3 +8,9 @@ In Smart Manufacturing, the number and sequence of production stages come from t
 **Why:** The user confirmed that production processes differ across factories and products, so the tab layout must remain usable for both short and long routes.
 
 **How to apply:** Render tabs and stage indicators from the route data, derive accessible position and total counts from the current list, and cycle visual accent colors independently of the number of stages.
+
+Routing stages may assign multiple employees. Copy those IDs into each production order's independent stage snapshot so order edits never change the reusable route. Keep the first selected employee as the legacy operator for existing cost/report attribution; retain the full list for operational assignment and stage events.
+
+**Why:** The owner needs route defaults to flow into manufacturing orders while allowing order-specific staffing changes, without changing established accounting attribution.
+
+**How to apply:** Validate every assigned employee as active and company-scoped; validate branch scope when executing an order stage. Keep assignment lists separate from singular legacy operator fields.

@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import { ProductionResourcePicker, type ResourceCatalog } from "@/components/ProductionResourcePicker";
 import { StageUnitSelector, type StageUnitCatalogOption } from "@/components/StageUnitSelector";
+import { EmployeeMultiSelect } from "@/components/EmployeeMultiSelect";
 
 type StageExecutionProps = {
   orderId: number;
@@ -33,7 +34,7 @@ type Stage = {
   status: "pending" | "in_progress" | "done" | "skipped";
   actualDurationMinutes: number;
   workerCount: number;
-  workerEmployeeId: string;
+  workerEmployeeIds: string[];
   inputQty: number;
   outputQty: number;
   quantityUnit: string | null;
@@ -186,7 +187,11 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       status: s.status || "pending",
       actualDurationMinutes: Number(s.actualDurationMinutes || s.actualMinutes || 0),
       workerCount: Number(s.workerCount ?? 0),
-       workerEmployeeId: s.workerEmployeeId ? String(s.workerEmployeeId) : s.operatorEmployeeId ? String(s.operatorEmployeeId) : "",
+       workerEmployeeIds: Array.isArray(s.workerEmployeeIds) && s.workerEmployeeIds.length
+         ? s.workerEmployeeIds.map(String)
+         : (s.workerEmployeeId ?? s.operatorEmployeeId) != null
+           ? [String(s.workerEmployeeId ?? s.operatorEmployeeId)]
+           : [],
       inputQty: Number(s.inputQty ?? plannedQty),
       outputQty: Number(s.outputQty ?? 0),
       quantityUnit,
@@ -374,7 +379,8 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         wasteUnit: stageData.wasteUnit || null,
         wasteUnitFactor: stageData.wasteUnit ? stageData.wasteUnitFactor : 1,
         workCenterId: stageData.workCenterId ? Number(stageData.workCenterId) : null,
-        workerEmployeeId: stageData.workerEmployeeId ? Number(stageData.workerEmployeeId) : null,
+        workerEmployeeIds: stageData.workerEmployeeIds.map(Number),
+        workerEmployeeId: stageData.workerEmployeeIds[0] ? Number(stageData.workerEmployeeIds[0]) : null,
         ...(isResourceCostingV1 ? {
           resourceMode: stageData.resourceMode,
           resourceId: stageData.resourceId ? Number(stageData.resourceId) : null,
@@ -643,11 +649,16 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                           <Input dir="ltr" inputMode="numeric" value={activeStage.workerCount} onChange={e => handleUpdateStage(activeStage.id, { workerCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} className="bg-white" />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold text-slate-600">الموظف المسؤول</Label>
-                          <SearchCombobox value={activeStage.workerEmployeeId} onValueChange={val => handleUpdateStage(activeStage.id, { workerEmployeeId: val })}
-                            items={[{ value: "", label: "غير محدد" }, ...employees]}
+                          <Label className="text-xs font-semibold text-slate-600">الموظفون المشاركون في المرحلة</Label>
+                          <EmployeeMultiSelect
+                            employees={employees}
+                            value={activeStage.workerEmployeeIds}
+                            onChange={workerEmployeeIds => handleUpdateStage(activeStage.id, {
+                              workerEmployeeIds,
+                              workerCount: Math.max(activeStage.workerCount, workerEmployeeIds.length),
+                            })}
                             disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"}
-                            placeholder="ابحث..." />
+                          />
                         </div>
                       </div>}
                       {isResourceCostingV1 && (

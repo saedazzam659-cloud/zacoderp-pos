@@ -6565,6 +6565,7 @@ export async function productionWizardHandler(req: any, res: any) {
         orderId: order.id, sequence: s.sequence, code: s.code, nameAr: s.nameAr, nameEn: s.nameEn,
         workCenterId: s.workCenterId, expectedWasteRatio: s.expectedWasteRatio,
         resourceMode: s.resourceMode, resourceId: s.resourceId, workerCount: s.workerCount,
+         workerEmployeeIds: s.workerEmployeeIds ?? [],
         expectedDurationMinutes: s.expectedDurationMinutes, expectedCost: s.expectedCost,
         expectedCostAccountId: s.expectedCostAccountId, icon: s.icon, color: s.color,
         inputQty: i === 0 ? String(plannedQty) : "0", fromRoutingId: routing.id,
@@ -10148,13 +10149,15 @@ async function validateStageExecutionReferences(
       throw Object.assign(new Error("العامل المحدد لا ينتمي إلى هذه الشركة"), { status: 400 });
     }
   }
-  if (execution.operatorEmployeeId != null) {
+  const employeeIds = execution.workerEmployeeIds ??
+    (execution.operatorEmployeeId != null ? [execution.operatorEmployeeId] : []);
+  for (const employeeId of employeeIds) {
     const [employee] = await db.select({
       id: employeesTable.id,
       branchId: employeesTable.branchId,
       status: employeesTable.status,
     }).from(employeesTable).where(and(
-      eq(employeesTable.id, execution.operatorEmployeeId),
+      eq(employeesTable.id, employeeId),
       eq(employeesTable.companyId, cid),
     )).limit(1);
     if (!employee || employee.status !== "active") {
@@ -10288,6 +10291,9 @@ function stageApiRow<T extends Record<string, any>>(stage: T): T {
   return {
     ...stage,
     workerEmployeeId: stage.operatorEmployeeId ?? null,
+    workerEmployeeIds: Array.isArray(stage.workerEmployeeIds) && stage.workerEmployeeIds.length
+      ? stage.workerEmployeeIds
+      : stage.operatorEmployeeId != null ? [stage.operatorEmployeeId] : [],
     quantityUnit,
     quantityUnitFactor: canonicalStageUnitFactor(
       quantityUnit,
@@ -11181,6 +11187,7 @@ productionExecutionRouter.post("/orders/:id/stages/seed", async (req, res) => {
           resourceMode: s.resourceMode,
           resourceId: s.resourceId,
           workerCount: s.workerCount,
+          workerEmployeeIds: s.workerEmployeeIds ?? [],
           expectedWasteRatio: s.expectedWasteRatio,
           expectedDurationMinutes: s.expectedDurationMinutes,
           // Routing-stage cost fields are tenant-validated already (only
@@ -11331,6 +11338,11 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
           wasteUnitFactor: String(finalWasteUnitFactor),
           actualDurationMinutes: execution.actualDurationMinutes ?? lockedStage.actualDurationMinutes,
           workerCount: execution.workerCount !== undefined ? execution.workerCount : lockedStage.workerCount,
+           workerEmployeeIds: execution.workerEmployeeIds !== undefined
+             ? execution.workerEmployeeIds
+             : execution.operatorEmployeeId !== undefined
+               ? execution.operatorEmployeeId == null ? [] : [execution.operatorEmployeeId]
+             : (lockedStage.workerEmployeeIds ?? []),
           resourceMode: execution.resourceMode !== undefined ? execution.resourceMode : lockedStage.resourceMode,
           resourceId: execution.resourceId !== undefined ? execution.resourceId : lockedStage.resourceId,
           workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : lockedStage.workCenterId,
@@ -11363,7 +11375,8 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
           wasteUnit: updated.wasteUnit,
           wasteUnitFactor: finalWasteUnitFactor,
           workerUserId: execution.operatorUserId ?? null,
-          workerEmployeeId: updated.operatorEmployeeId ?? null },
+          workerEmployeeId: updated.operatorEmployeeId ?? null,
+          workerEmployeeIds: updated.workerEmployeeIds ?? [] },
         req.authUser!.id,
         false,
         tx,
@@ -11514,6 +11527,11 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
           startedAt: lockedStage.startedAt ?? new Date(),
           actualDurationMinutes: execution.actualDurationMinutes ?? lockedStage.actualDurationMinutes,
           workerCount: execution.workerCount !== undefined ? execution.workerCount : lockedStage.workerCount,
+          workerEmployeeIds: execution.workerEmployeeIds !== undefined
+            ? execution.workerEmployeeIds
+            : execution.operatorEmployeeId !== undefined
+              ? execution.operatorEmployeeId == null ? [] : [execution.operatorEmployeeId]
+            : (lockedStage.workerEmployeeIds ?? []),
           resourceMode: execution.resourceMode !== undefined ? execution.resourceMode : lockedStage.resourceMode,
           resourceId: execution.resourceId !== undefined ? execution.resourceId : lockedStage.resourceId,
           workCenterId: execution.workCenterId !== undefined ? execution.workCenterId : lockedStage.workCenterId,
@@ -11595,6 +11613,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
           workCenterId: updated.workCenterId,
           workerUserId: updated.operatorUserId ?? null,
           workerEmployeeId: updated.operatorEmployeeId ?? null,
+          workerEmployeeIds: updated.workerEmployeeIds ?? [],
           wasteReason: wasteReason ?? null,
           wasteType: wasteType ?? null,
           wasteClassification: wasteClassification ?? null, actualHours },
@@ -11681,6 +11700,10 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (execution.actualDurationMinutes !== undefined)
       updates.actualDurationMinutes = execution.actualDurationMinutes;
     if (execution.workerCount !== undefined) updates.workerCount = execution.workerCount;
+    if (execution.workerEmployeeIds !== undefined) updates.workerEmployeeIds = execution.workerEmployeeIds;
+    else if (execution.operatorEmployeeId !== undefined) {
+      updates.workerEmployeeIds = execution.operatorEmployeeId == null ? [] : [execution.operatorEmployeeId];
+    }
     if (execution.resourceMode !== undefined) updates.resourceMode = execution.resourceMode;
     if (execution.resourceId !== undefined) updates.resourceId = execution.resourceId;
     if (execution.workCenterId !== undefined) updates.workCenterId = execution.workCenterId;

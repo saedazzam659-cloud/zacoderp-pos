@@ -226,6 +226,7 @@ router.get("/catalog", view, async (req, res) => {
         resourceMode: productionRoutingStagesTable.resourceMode,
         resourceId: productionRoutingStagesTable.resourceId,
         workerCount: productionRoutingStagesTable.workerCount,
+        workerEmployeeIds: productionRoutingStagesTable.workerEmployeeIds,
       }).from(productionRoutingStagesTable)
         .where(inArray(productionRoutingStagesTable.routingId, routingIds))
         .orderBy(asc(productionRoutingStagesTable.sequence), asc(productionRoutingStagesTable.id))
@@ -250,6 +251,7 @@ router.get("/catalog", view, async (req, res) => {
       resourceMode: string;
       resourceId: number | null;
       workerCount: number | null;
+      workerEmployeeIds: number[];
     }>>();
     for (const stage of routingStages) {
       const stages = stagesByRouting.get(stage.routingId);
@@ -262,6 +264,7 @@ router.get("/catalog", view, async (req, res) => {
         resourceMode: stage.resourceMode,
         resourceId: stage.resourceId,
         workerCount: stage.workerCount,
+        workerEmployeeIds: stage.workerEmployeeIds ?? [],
       };
       if (stages) stages.push(stageSummary);
       else stagesByRouting.set(stage.routingId, [stageSummary]);
@@ -1408,6 +1411,9 @@ async function normalizeSetupRouting(cid: number, body: any) {
       resourceMode,
       resourceId,
       workerCount,
+      workerEmployeeIds: Array.isArray(x.workerEmployeeIds)
+        ? [...new Set(x.workerEmployeeIds.map(Number))]
+        : [],
       notes: x.notes ? String(x.notes) : null,
       icon: x.icon ? String(x.icon) : null,
       color: x.color ? String(x.color) : null,
@@ -1424,6 +1430,7 @@ async function normalizeSetupRouting(cid: number, body: any) {
       (x.resourceId === null || !Number.isInteger(x.resourceId) || x.resourceId <= 0)) ||
     (x.workerCount !== null &&
       (!Number.isInteger(x.workerCount) || x.workerCount <= 0)) ||
+    x.workerEmployeeIds.some((id: number) => !Number.isInteger(id) || id <= 0) ||
     (x.expectedCostAccountId !== null &&
       (!Number.isInteger(x.expectedCostAccountId) || x.expectedCostAccountId <= 0)) ||
     !Number.isFinite(x.expectedWasteRatio) || x.expectedWasteRatio < 0 ||
@@ -1462,6 +1469,21 @@ async function normalizeSetupRouting(cid: number, body: any) {
       ));
     if (permittedResources.length !== resourceIds.length) {
       throw setupError("إحدى آلات المرحلة غير موجودة في هذه الشركة");
+    }
+  }
+  const workerEmployeeIds = [...new Set<number>(
+    normalizedStages.flatMap((stage: any) => stage.workerEmployeeIds),
+  )];
+  if (workerEmployeeIds.length) {
+    const permittedEmployees = await db.select({ id: employeesTable.id })
+      .from(employeesTable)
+      .where(and(
+        eq(employeesTable.companyId, cid),
+        eq(employeesTable.status, "active"),
+        inArray(employeesTable.id, workerEmployeeIds),
+      ));
+    if (permittedEmployees.length !== workerEmployeeIds.length) {
+      throw setupError("أحد الموظفين المعيّنين غير نشط أو لا ينتمي إلى هذه الشركة");
     }
   }
   const accountIds: number[] = [...new Set<number>(
@@ -1644,6 +1666,7 @@ router.post("/setup/routing", edit, async (req, res) => {
         resourceMode: x.resourceMode,
         resourceId: x.resourceId,
         workerCount: x.workerCount,
+        workerEmployeeIds: x.workerEmployeeIds,
       expectedDurationMinutes: x.expectedDurationMinutes,
       expectedWasteRatio: String(x.expectedWasteRatio),
       expectedCost: String(x.expectedCost),
@@ -1703,6 +1726,7 @@ router.patch("/setup/routing/:id", edit, async (req, res) => {
         resourceMode: x.resourceMode,
         resourceId: x.resourceId,
         workerCount: x.workerCount,
+        workerEmployeeIds: x.workerEmployeeIds,
         expectedDurationMinutes: x.expectedDurationMinutes,
         expectedWasteRatio: String(x.expectedWasteRatio),
         expectedCost: String(x.expectedCost),

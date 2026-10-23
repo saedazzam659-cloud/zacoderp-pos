@@ -14,6 +14,7 @@ export type StageExecutionPayload = {
   resourceMode?: "labor" | "machine" | "both";
   operatorUserId?: number | null;
   operatorEmployeeId?: number | null;
+  workerEmployeeIds?: number[];
   resourceId?: number | null;
   workCenterId?: number | null;
   wasteReason?: string | null;
@@ -241,6 +242,17 @@ export function normalizeStageExecutionPayload(
       "operatorEmployeeId" in body ? body.operatorEmployeeId : body.workerEmployeeId,
       "موظف الموارد البشرية",
     );
+  }
+  if ("workerEmployeeIds" in body) {
+    if (!Array.isArray(body.workerEmployeeIds) || body.workerEmployeeIds.length > 100) {
+      throw Object.assign(new Error("قائمة الموظفين غير صحيحة"), { status: 400 });
+    }
+    const ids = body.workerEmployeeIds.map((id) => optionalId(id, "موظف الموارد البشرية"));
+    if (ids.some((id) => id == null)) {
+      throw Object.assign(new Error("قائمة الموظفين غير صحيحة"), { status: 400 });
+    }
+    result.workerEmployeeIds = [...new Set(ids as number[])];
+    result.operatorEmployeeId = result.workerEmployeeIds[0] ?? null;
   }
   if ("resourceId" in body || "machineId" in body) {
     result.resourceId = optionalId(

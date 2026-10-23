@@ -990,6 +990,7 @@ export const productionRoutingStagesTable = pgTable(
       { onDelete: "set null" },
     ),
     workerCount: integer("worker_count"),
+    workerEmployeeIds: jsonb("worker_employee_ids").$type<number[]>(),
     expectedWasteRatio: numeric("expected_waste_ratio", {
       precision: 6,
       scale: 4,
@@ -1102,6 +1103,7 @@ export const productionOrderStagesTable = pgTable(
       () => employeesTable.id,
       { onDelete: "set null" },
     ),
+    workerEmployeeIds: jsonb("worker_employee_ids").$type<number[]>(),
     startedAt: timestamp("started_at"),
     completedAt: timestamp("completed_at"),
     notes: text("notes"),

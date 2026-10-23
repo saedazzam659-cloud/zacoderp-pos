@@ -132,7 +132,10 @@ export default function SimpleManufacturing() {
       if (!Array.isArray(executionCatalog?.machines)) {
         throw new Error("استجابة كتالوج آلات التصنيع غير صالحة");
       }
-      setCatalog({ ...nextCatalog, machines: executionCatalog.machines });
+      if (!Array.isArray(executionCatalog?.workers)) {
+        throw new Error("استجابة كتالوج موظفي التصنيع غير صالحة");
+      }
+      setCatalog({ ...nextCatalog, machines: executionCatalog.machines, employees: executionCatalog.workers });
       if (!Array.isArray(nextOrders)) throw new Error("استجابة أوامر التصنيع غير صالحة");
       setOrders(nextOrders);
     } catch (e: any) {
@@ -354,6 +357,7 @@ export default function SimpleManufacturing() {
       resourceMode: s.resourceMode,
       resourceId: s.resourceId ? Number(s.resourceId) : null,
       workerCount: s.workerCount == null ? null : Number(s.workerCount),
+      workerEmployeeIds: Array.isArray(s.workerEmployeeIds) ? s.workerEmployeeIds.map(Number) : [],
     }));
     const path = data.id
       ? `/api/simple-manufacturing/setup/routing/${Number(data.id)}`
