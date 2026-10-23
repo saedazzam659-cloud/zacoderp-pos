@@ -46,7 +46,7 @@ test("stage execution rejects invalid duration, IDs, and unclassified waste", ()
   );
   assert.throws(
     () => normalizeStageExecutionPayload({ workerUserId: "other" }),
-    /العامل/,
+    /مستخدم النظام/,
   );
   assert.throws(
     () => normalizeStageExecutionPayload({ wasteClassification: "loss" }),
@@ -83,9 +83,13 @@ test("stage execution normalizes an optional nonnegative worker count", () => {
     () => normalizeStageExecutionPayload({ workerCount: -1 }),
     /عدد العمال/,
   );
+  assert.deepEqual(
+    normalizeStageExecutionPayload({ workerEmployeeId: "7" }),
+    { operatorEmployeeId: 7 },
+  );
   assert.throws(
-    () => normalizeStageExecutionPayload({ workerEmployeeId: 7 }),
-    /مصدر الرواتب المرحّل/,
+    () => normalizeStageExecutionPayload({ workerEmployeeId: "bad" }),
+    /موظف الموارد البشرية/,
   );
 });
 

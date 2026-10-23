@@ -67,6 +67,7 @@ import {
   PRODUCTION_STATUS_TRANSITIONS,
   PRODUCTION_STAGE_STATUSES,
   usersTable,
+  employeesTable,
   payrollAllocationSnapshotsTable,
   payrollRunsTable,
   faDepreciationRunsTable,
@@ -499,16 +500,22 @@ router.get("/execution-catalog", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const branch = effectiveBranchCondition(req, productionResourcesTable.branchId, req.query.branchId);
     if ("deny" in branch) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const employeeBranch = effectiveBranchCondition(req, employeesTable.branchId, req.query.branchId);
+    if ("deny" in employeeBranch) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
     const machineWhere = branch.cond
       ? and(eq(productionResourcesTable.companyId, cid), branch.cond)
       : eq(productionResourcesTable.companyId, cid);
+    const employeeWhere = employeeBranch.cond
+      ? and(eq(employeesTable.companyId, cid), eq(employeesTable.status, "active"), employeeBranch.cond)
+      : and(eq(employeesTable.companyId, cid), eq(employeesTable.status, "active"));
     const [machines, workers] = await Promise.all([
       db.select({ id: productionResourcesTable.id, name: productionResourcesTable.name,
         type: productionResourcesTable.type, branchId: productionResourcesTable.branchId })
         .from(productionResourcesTable).where(machineWhere).orderBy(asc(productionResourcesTable.name)),
-      db.select({ id: usersTable.id, nameAr: usersTable.nameAr, nameEn: usersTable.nameEn,
-        username: usersTable.username }).from(usersTable).where(eq(usersTable.companyId, cid))
-        .orderBy(asc(usersTable.nameAr), asc(usersTable.nameEn), asc(usersTable.username)),
+      db.select({ id: employeesTable.id, nameAr: employeesTable.nameAr, nameEn: employeesTable.nameEn,
+        code: employeesTable.code, branchId: employeesTable.branchId })
+        .from(employeesTable).where(employeeWhere)
+        .orderBy(asc(employeesTable.nameAr), asc(employeesTable.nameEn), asc(employeesTable.code)),
     ]);
     res.json({ machines, workers });
   } catch (e: any) {
@@ -9631,6 +9638,23 @@ async function validateStageExecutionReferences(
       throw Object.assign(new Error("العامل المحدد لا ينتمي إلى هذه الشركة"), { status: 400 });
     }
   }
+  if (execution.operatorEmployeeId != null) {
+    const [employee] = await db.select({
+      id: employeesTable.id,
+      branchId: employeesTable.branchId,
+      status: employeesTable.status,
+    }).from(employeesTable).where(and(
+      eq(employeesTable.id, execution.operatorEmployeeId),
+      eq(employeesTable.companyId, cid),
+    )).limit(1);
+    if (!employee || employee.status !== "active") {
+      throw Object.assign(new Error("الموظف المحدد غير نشط أو لا ينتمي إلى هذه الشركة"), { status: 400 });
+    }
+    if (!rowInScope(req, employee.branchId) ||
+        (orderBranchId != null && employee.branchId != null && employee.branchId !== orderBranchId)) {
+      throw Object.assign(new Error("الموظف المحدد لا ينتمي إلى فرع أمر الإنتاج"), { status: 400 });
+    }
+  }
   // A PATCH/start/complete payload may omit either selector. Validate the
   // effective pair, not just fields present in the request, so changing a
   // stage center cannot leave its existing machine linked to another center.
@@ -9753,6 +9777,7 @@ function stageApiRow<T extends Record<string, any>>(stage: T): T {
   const wasteUnit = stage.wasteUnit ?? null;
   return {
     ...stage,
+    workerEmployeeId: stage.operatorEmployeeId ?? null,
     quantityUnit,
     quantityUnitFactor: canonicalStageUnitFactor(
       quantityUnit,
@@ -9871,9 +9896,13 @@ async function freezeStageResourceCosts(
     const [depreciation] = await tx.select({
       id: faDepreciationRunsTable.id,
       amount: faDepreciationRunsTable.depreciationAmount,
+      periodYear: faDepreciationRunsTable.periodYear,
+      periodMonth: faDepreciationRunsTable.periodMonth,
       approvedHours: fixedAssetsTable.approvedOperatingHours,
       method: fixedAssetsTable.manufacturingAllocationMethod,
       fixedRate: fixedAssetsTable.fixedManufacturingRate,
+      sourceAllocationId: productionCostAllocationsTable.id,
+      sourceAmount: productionCostAllocationsTable.sourceAmount,
     }).from(faDepreciationRunsTable)
       .innerJoin(fixedAssetsTable, and(
         eq(fixedAssetsTable.id, faDepreciationRunsTable.assetId),
@@ -9884,29 +9913,26 @@ async function freezeStageResourceCosts(
         eq(journalEntriesTable.companyId, cid),
         eq(journalEntriesTable.status, "posted"),
       ))
+      .innerJoin(productionCostAllocationsTable, and(
+        eq(productionCostAllocationsTable.companyId, cid),
+        eq(productionCostAllocationsTable.orderId, order.id),
+        eq(productionCostAllocationsTable.sourceType, "fixed_asset_depreciation"),
+        eq(productionCostAllocationsTable.sourceRecordId, faDepreciationRunsTable.id),
+      ))
       .where(and(
         eq(faDepreciationRunsTable.companyId, cid),
         eq(faDepreciationRunsTable.assetId, fixedAssetId),
-        eq(faDepreciationRunsTable.periodYear, year),
-        eq(faDepreciationRunsTable.periodMonth, month),
         eq(faDepreciationRunsTable.status, "posted"),
         eq(fixedAssetsTable.usedInManufacturing, true),
-      )).limit(1);
+        sql`(${faDepreciationRunsTable.periodYear} < ${year}
+          OR (${faDepreciationRunsTable.periodYear} = ${year}
+            AND ${faDepreciationRunsTable.periodMonth} <= ${month}))`,
+      ))
+      .orderBy(desc(faDepreciationRunsTable.periodYear), desc(faDepreciationRunsTable.periodMonth))
+      .limit(1);
     if (!depreciation) {
-      throw Object.assign(new Error("لا يوجد إهلاك أصل مرحّل ومؤهل لفترة تكلفة المرحلة"), { status: 422 });
-    }
-    const [sourceAllocation] = await tx.select({
-      id: productionCostAllocationsTable.id,
-      sourceAmount: productionCostAllocationsTable.sourceAmount,
-    }).from(productionCostAllocationsTable).where(and(
-      eq(productionCostAllocationsTable.companyId, cid),
-      eq(productionCostAllocationsTable.orderId, order.id),
-      eq(productionCostAllocationsTable.sourceType, "fixed_asset_depreciation"),
-      eq(productionCostAllocationsTable.sourceRecordId, depreciation.id),
-    )).limit(1);
-    if (!sourceAllocation) {
       throw Object.assign(
-        new Error("إهلاك الآلة يحتاج ربط مصدر الإهلاك المرحّل في تكاليف أمر التصنيع أولاً"),
+        new Error("اربط أحدث مصدر إهلاك مرحّل متاح للأصل في تكاليف أمر التصنيع أولاً"),
         { status: 422 },
       );
     }
@@ -9923,8 +9949,11 @@ async function freezeStageResourceCosts(
       amount: String(Number((hours * rate).toFixed(2))),
       snapshot: {
         hours, fixedAssetId, depreciationRunId: depreciation.id, method,
-        hourlyRate: rate, sourceAllocationId: sourceAllocation.id,
-        sourceAmount: num(sourceAllocation.sourceAmount),
+        hourlyRate: rate, sourceAllocationId: depreciation.sourceAllocationId,
+        sourceAmount: num(depreciation.sourceAmount),
+        rateSourcePeriod: `${depreciation.periodYear}-${String(depreciation.periodMonth).padStart(2, "0")}`,
+        rateSourceDays: new Date(Number(depreciation.periodYear), Number(depreciation.periodMonth), 0).getDate(),
+        rateIsFromPriorPeriod: Number(depreciation.periodYear) !== year || Number(depreciation.periodMonth) !== month,
       },
       createdBy: actorId,
     });
@@ -10622,6 +10651,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
           operatorUserId: execution.operatorUserId !== undefined
             ? execution.operatorUserId
             : (lockedStage.operatorUserId ?? req.authUser!.id),
+          operatorEmployeeId: execution.operatorEmployeeId !== undefined
+            ? execution.operatorEmployeeId
+            : lockedStage.operatorEmployeeId,
         })
         .where(and(
           eq(productionOrderStagesTable.id, stageId),
@@ -10643,7 +10675,8 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
           quantityUnitFactor: finalQuantityUnitFactor,
           wasteUnit: updated.wasteUnit,
           wasteUnitFactor: finalWasteUnitFactor,
-          workerUserId: execution.operatorUserId ?? null },
+          workerUserId: execution.operatorUserId ?? null,
+          workerEmployeeId: updated.operatorEmployeeId ?? null },
         req.authUser!.id,
         false,
         tx,
@@ -10804,6 +10837,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
           operatorUserId: execution.operatorUserId !== undefined
             ? execution.operatorUserId
             : (lockedStage.operatorUserId ?? req.authUser!.id),
+          operatorEmployeeId: execution.operatorEmployeeId !== undefined
+            ? execution.operatorEmployeeId
+            : lockedStage.operatorEmployeeId,
         })
         .where(and(
           eq(productionOrderStagesTable.id, stageId),
@@ -10871,6 +10907,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
           resourceId: updated.resourceId,
           workCenterId: updated.workCenterId,
           workerUserId: updated.operatorUserId ?? null,
+          workerEmployeeId: updated.operatorEmployeeId ?? null,
           wasteReason: wasteReason ?? null,
           wasteType: wasteType ?? null,
           wasteClassification: wasteClassification ?? null, actualHours },
@@ -10966,6 +11003,7 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
       updates.wasteClassification = execution.wasteClassification;
     if (execution.notes !== undefined) updates.notes = execution.notes;
     if (execution.operatorUserId !== undefined) updates.operatorUserId = execution.operatorUserId;
+    if (execution.operatorEmployeeId !== undefined) updates.operatorEmployeeId = execution.operatorEmployeeId;
     if (
       typeof b.status === "string" &&
       (PRODUCTION_STAGE_STATUSES as readonly string[]).includes(b.status)

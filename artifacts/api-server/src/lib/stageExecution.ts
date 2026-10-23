@@ -13,6 +13,7 @@ export type StageExecutionPayload = {
   workerCount?: number | null;
   resourceMode?: "labor" | "machine" | "both";
   operatorUserId?: number | null;
+  operatorEmployeeId?: number | null;
   resourceId?: number | null;
   workCenterId?: number | null;
   wasteReason?: string | null;
@@ -175,9 +176,9 @@ export function normalizeStageExecutionPayload(
   // HR currently publishes only approved aggregate payroll sources to
   // manufacturing. Accepting an employee/hourly-rate payload here would create
   // a parallel HR costing path and expose protected HR records.
-  if ("workerEmployeeId" in body || "laborHourlyRate" in body) {
+  if ("laborHourlyRate" in body) {
     throw Object.assign(
-      new Error("لا يدعم المصدر الحالي تسعير موظف بالساعة؛ استخدم مصدر الرواتب المرحّل"),
+      new Error("معدل تكلفة الموظف لا يُرسل من واجهة المرحلة؛ مصدر الرواتب هو المسؤول عن التسعير"),
       { status: 422 },
     );
   }
@@ -232,7 +233,13 @@ export function normalizeStageExecutionPayload(
   if ("operatorUserId" in body || "workerUserId" in body) {
     result.operatorUserId = optionalId(
       "operatorUserId" in body ? body.operatorUserId : body.workerUserId,
-      "العامل",
+      "مستخدم النظام",
+    );
+  }
+  if ("operatorEmployeeId" in body || "workerEmployeeId" in body) {
+    result.operatorEmployeeId = optionalId(
+      "operatorEmployeeId" in body ? body.operatorEmployeeId : body.workerEmployeeId,
+      "موظف الموارد البشرية",
     );
   }
   if ("resourceId" in body || "machineId" in body) {

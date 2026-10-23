@@ -33,7 +33,7 @@ type Stage = {
   status: "pending" | "in_progress" | "done" | "skipped";
   actualDurationMinutes: number;
   workerCount: number;
-  workerUserId: string;
+  workerEmployeeId: string;
   inputQty: number;
   outputQty: number;
   quantityUnit: string | null;
@@ -99,7 +99,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
   const canCreate = usePermission(permissionKey as any, "create");
   const isResourceCostingV1 = Number(resourceCostingVersion) >= 1;
   const [stages, setStages] = useState<Stage[]>([]);
-  const [users, setUsers] = useState<{value: string, label: string}[]>([]);
+  const [employees, setEmployees] = useState<{value: string, label: string}[]>([]);
   const [resourceCatalog, setResourceCatalog] = useState<ResourceCatalog>({ workCenters: [], machines: [], assets: [] });
   const [orderUnitCode, setOrderUnitCode] = useState("");
   const [unitCatalog, setUnitCatalog] = useState<StageUnitCatalogOption[]>([]);
@@ -183,7 +183,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       status: s.status || "pending",
       actualDurationMinutes: Number(s.actualDurationMinutes || s.actualMinutes || 0),
       workerCount: Number(s.workerCount ?? 0),
-       workerUserId: s.workerUserId ? String(s.workerUserId) : s.operatorUserId ? String(s.operatorUserId) : "",
+       workerEmployeeId: s.workerEmployeeId ? String(s.workerEmployeeId) : s.operatorEmployeeId ? String(s.operatorEmployeeId) : "",
       inputQty: Number(s.inputQty ?? plannedQty),
       outputQty: Number(s.outputQty ?? 0),
       quantityUnit,
@@ -241,7 +241,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       if (res.ok) {
         const data = await res.json();
         const workersList = Array.isArray(data.workers) ? data.workers : [];
-        setUsers(workersList.map((x: any) => ({ value: String(x.id), label: x.nameAr || x.nameEn || x.username || `User #${x.id}` })));
+        setEmployees(workersList.map((x: any) => ({ value: String(x.id), label: `${x.nameAr || x.nameEn || `موظف #${x.id}`}${x.code ? ` (${x.code})` : ""}` })));
       } else {
         const error = await res.json().catch(() => ({}));
         throw new Error(error.error || "تعذر تحميل قائمة الآلات");
@@ -366,7 +366,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         wasteUnit: stageData.wasteUnit || null,
         wasteUnitFactor: stageData.wasteUnit ? stageData.wasteUnitFactor : 1,
         workCenterId: stageData.workCenterId ? Number(stageData.workCenterId) : null,
-        workerUserId: stageData.workerUserId ? Number(stageData.workerUserId) : null,
+        workerEmployeeId: stageData.workerEmployeeId ? Number(stageData.workerEmployeeId) : null,
         ...(isResourceCostingV1 ? {
           resourceMode: stageData.resourceMode,
           resourceId: stageData.resourceId ? Number(stageData.resourceId) : null,
@@ -635,9 +635,9 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                           <Input dir="ltr" inputMode="numeric" value={activeStage.workerCount} onChange={e => handleUpdateStage(activeStage.id, { workerCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} className="bg-white" />
                         </div>
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold text-slate-600">العامل المسؤول</Label>
-                          <SearchCombobox value={activeStage.workerUserId} onValueChange={val => handleUpdateStage(activeStage.id, { workerUserId: val })}
-                            items={[{ value: "", label: "غير محدد" }, ...users]}
+                          <Label className="text-xs font-semibold text-slate-600">الموظف المسؤول</Label>
+                          <SearchCombobox value={activeStage.workerEmployeeId} onValueChange={val => handleUpdateStage(activeStage.id, { workerEmployeeId: val })}
+                            items={[{ value: "", label: "غير محدد" }, ...employees]}
                             disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"}
                             placeholder="ابحث..." />
                         </div>

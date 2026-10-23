@@ -1450,6 +1450,7 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
   { label: "production_order_stages execution facts",
     sql: `ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS actual_duration_minutes INTEGER NOT NULL DEFAULT 0;
           ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS worker_count INTEGER;
+          ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS operator_employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL;
           ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS resource_id INTEGER REFERENCES production_resources(id) ON DELETE SET NULL;
           ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_reason TEXT;
           ALTER TABLE production_order_stages ADD COLUMN IF NOT EXISTS waste_type TEXT;

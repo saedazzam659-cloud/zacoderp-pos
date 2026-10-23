@@ -26,7 +26,7 @@ import {
   manufacturingSettingsTable,
   stockTransfersTable,
   productionResourcesTable,
-  usersTable,
+  employeesTable,
 } from "@workspace/db";
 import {
   extractAuth,
@@ -306,6 +306,14 @@ router.get("/execution-catalog", view, async (req, res) => {
     if ("deny" in branchResult) {
       return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
     }
+    const employeeBranchResult = effectiveBranchCondition(
+      req,
+      employeesTable.branchId,
+      req.query.branchId,
+    );
+    if ("deny" in employeeBranchResult) {
+      return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    }
     const machineWhere = branchResult.cond
       ? and(
         eq(productionResourcesTable.companyId, cid),
@@ -315,6 +323,16 @@ router.get("/execution-catalog", view, async (req, res) => {
       : and(
         eq(productionResourcesTable.companyId, cid),
         eq(productionResourcesTable.type, "machine"),
+      );
+    const employeeWhere = employeeBranchResult.cond
+      ? and(
+        eq(employeesTable.companyId, cid),
+        eq(employeesTable.status, "active"),
+        employeeBranchResult.cond,
+      )
+      : and(
+        eq(employeesTable.companyId, cid),
+        eq(employeesTable.status, "active"),
       );
     const [machines, workers] = await Promise.all([
       db.select({
@@ -328,12 +346,13 @@ router.get("/execution-catalog", view, async (req, res) => {
       }).from(productionResourcesTable).where(machineWhere)
         .orderBy(asc(productionResourcesTable.name)),
       db.select({
-        id: usersTable.id,
-        nameAr: usersTable.nameAr,
-        nameEn: usersTable.nameEn,
-        username: usersTable.username,
-      }).from(usersTable).where(eq(usersTable.companyId, cid))
-        .orderBy(asc(usersTable.nameAr), asc(usersTable.nameEn), asc(usersTable.username)),
+        id: employeesTable.id,
+        nameAr: employeesTable.nameAr,
+        nameEn: employeesTable.nameEn,
+        code: employeesTable.code,
+        branchId: employeesTable.branchId,
+      }).from(employeesTable).where(employeeWhere)
+        .orderBy(asc(employeesTable.nameAr), asc(employeesTable.nameEn), asc(employeesTable.code)),
     ]);
     res.json({ machines, workers });
   } catch (e: any) {

@@ -20,6 +20,7 @@ import { fixedAssetsTable } from "./fixedAssets";
 import { itemsTable, warehousesTable, stockLedgerTable } from "./inventory";
 import { accountsTable } from "./accounts";
 import { usersTable } from "./users";
+import { employeesTable } from "./hr";
 import { suppliersTable } from "./suppliers";
 
 export const productionResourcesTable = pgTable(
@@ -1058,6 +1059,10 @@ export const productionOrderStagesTable = pgTable(
     wasteClassification: text("waste_classification"), // normal | abnormal
     operatorUserId: integer("operator_user_id").references(
       () => usersTable.id,
+      { onDelete: "set null" },
+    ),
+    operatorEmployeeId: integer("operator_employee_id").references(
+      () => employeesTable.id,
       { onDelete: "set null" },
     ),
     startedAt: timestamp("started_at"),
