@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useFmt } from "@/hooks/use-fmt";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -194,6 +195,9 @@ export function SimpleOrderWizardReadonly({
   internalTransport?: any;
 }) {
   const [tab, setTab] = useState<StepId>("basic");
+  const { fmtQty } = useFmt();
+  const savedQuantity = (value: unknown) =>
+    value == null || value === "" ? NOT_SAVED : fmtQty(value as number | string);
   const activeStepIndex = Math.max(0, steps.findIndex(step => step.id === tab));
   const detail = order.detail ?? {};
   const savedOrder = (detail.order ?? order) as Record<string, any>;
@@ -229,7 +233,7 @@ export function SimpleOrderWizardReadonly({
             />
           }
         />
-        <Field label="الكمية المخططة" value={savedNumber(savedOrder.plannedQty)} />
+        <Field label="الكمية المخططة" value={savedQuantity(savedOrder.plannedQty)} />
         <Field label="وحدة القياس المحفوظة" value={valueOrNotSaved(savedOrder.unitCode)} />
         <Field label="تاريخ البدء المتوقع" value={savedDate(savedOrder.plannedStartDate)} />
         <Field label="تاريخ الانتهاء المتوقع" value={savedDate(savedOrder.plannedEndDate)} />
@@ -267,7 +271,7 @@ export function SimpleOrderWizardReadonly({
                 </CardHeader>
                 <CardContent className="space-y-3 pt-0">
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    <SnapshotValue label="الكمية المحفوظة" value={savedNumber(item.quantity)} />
+                    <SnapshotValue label="الكمية المحفوظة" value={savedQuantity(item.quantity)} />
                     <SnapshotValue label="الوحدة المحفوظة" value={valueOrNotSaved(item.unitCode)} />
                     <SnapshotValue label="تكلفة الوحدة المحفوظة" value={savedNumber(item.unitCost)} />
                     <SnapshotValue label="إجمالي تكلفة السطر المحفوظ" value={savedNumber(item.totalCost)} />
@@ -277,14 +281,14 @@ export function SimpleOrderWizardReadonly({
                       <div className="mb-2 text-xs font-semibold text-emerald-900">لقطة الوصفة المحفوظة</div>
                       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                         <SnapshotValue label="معرّف قالب الوصفة" value={itemMeta?.fromBomTemplateId ?? basis?.templateId} />
-                        <SnapshotValue label="كمية سطر الوصفة" value={itemMeta?.bomLineQuantity ?? basis?.lineQuantity} />
+                        <SnapshotValue label="كمية سطر الوصفة" value={savedQuantity(itemMeta?.bomLineQuantity ?? basis?.lineQuantity)} />
                         <SnapshotValue label="وحدة سطر الوصفة" value={itemMeta?.bomLineUnitCode ?? basis?.lineUnitCode} />
-                        <SnapshotValue label="كمية ناتج الوصفة" value={itemMeta?.bomOutputQuantity ?? basis?.outputQuantity} />
+                        <SnapshotValue label="كمية ناتج الوصفة" value={savedQuantity(itemMeta?.bomOutputQuantity ?? basis?.outputQuantity)} />
                         <SnapshotValue label="وحدة ناتج الوصفة" value={itemMeta?.bomOutputUnitCode ?? basis?.outputUnitCode} />
-                        <SnapshotValue label="كمية الاستخدام المحفوظة" value={itemMeta?.usageQuantity} />
+                        <SnapshotValue label="كمية الاستخدام المحفوظة" value={savedQuantity(itemMeta?.usageQuantity)} />
                         <SnapshotValue label="وحدة الاستخدام المحفوظة" value={itemMeta?.usageUnitCode} />
                         <SnapshotValue label="معامل التحويل المحفوظ" value={itemMeta?.usageFactor} />
-                        <SnapshotValue label="الكمية الأساسية المحفوظة" value={itemMeta?.baseQuantity} />
+                        <SnapshotValue label="الكمية الأساسية المحفوظة" value={savedQuantity(itemMeta?.baseQuantity)} />
                         <SnapshotValue label="الوحدة الأساسية المحفوظة" value={itemMeta?.baseUnitCode} />
                       </div>
                     </div>
@@ -544,7 +548,7 @@ export function SimpleOrderWizardReadonly({
       <div className="rounded-xl border bg-slate-50 p-5 text-center">
         <h3 className="text-xl font-bold text-slate-800">{valueOrNotSaved(savedOrder.title)}</h3>
         <p className="mt-1 text-sm text-slate-600">
-          {savedNumber(savedOrder.plannedQty)} {valueOrNotSaved(savedOrder.unitCode)} —{" "}
+          {savedQuantity(savedOrder.plannedQty)} {valueOrNotSaved(savedOrder.unitCode)} —{" "}
           <CatalogReference id={productId} rows={catalog.items} kind="صنف" />
         </p>
         <p className="mt-3 text-xs text-slate-500">ملخص مراجعة مبني على القيم المحفوظة، دون تشغيل معاينات أو حسابات جديدة.</p>
@@ -555,8 +559,8 @@ export function SimpleOrderWizardReadonly({
         <Field label="تكلفة العمالة المحفوظة" value={savedNumber(savedOrder.laborCost)} />
         <Field label="التكاليف غير المباشرة المحفوظة" value={savedNumber(savedOrder.overheadCost)} />
         <Field label="تكلفة المواد الخام المحفوظة" value={savedNumber(savedOrder.rawMaterialsCost)} />
-        <Field label="الكمية المنتجة المحفوظة" value={savedNumber(savedOrder.producedQty)} />
-        <Field label="كمية الهالك المحفوظة" value={savedNumber(savedOrder.wasteQty)} />
+        <Field label="الكمية المنتجة المحفوظة" value={savedQuantity(savedOrder.producedQty)} />
+        <Field label="كمية الهالك المحفوظة" value={savedQuantity(savedOrder.wasteQty)} />
         <Field label="رقم دفعة الإنتاج المحفوظ" value={valueOrNotSaved(savedOrder.batchNumber)} />
         <Field label="رقم قيد صرف المواد" value={savedOrder.issueJournalEntryId == null ? NOT_SAVED : `#${savedOrder.issueJournalEntryId}`} />
         <Field label="رقم قيد استلام الإنتاج" value={savedOrder.receiptJournalEntryId == null ? NOT_SAVED : `#${savedOrder.receiptJournalEntryId}`} />

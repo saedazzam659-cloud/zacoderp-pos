@@ -5,6 +5,7 @@ import { Calculator, AlertCircle, CheckCircle2, ChevronDown, Split, History, Rec
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import { usePermission } from "@/hooks/usePermission";
+import { useFmt } from "@/hooks/use-fmt";
 import { ProductionTimeCosts } from "@/components/ProductionTimeCosts";
 
 type CostTraceProps = {
@@ -19,6 +20,7 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
   const canPost = usePermission("simple_manufacturing", "post");
+  const { fmtQty } = useFmt();
 
 
   if (!costDrilldown) {
@@ -63,7 +65,7 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
   };
   const formatQuantity = (val: any) => {
     const num = Number(val);
-    return Number.isFinite(num) ? num.toLocaleString("en-US", { maximumFractionDigits: 6 }) : "—";
+    return Number.isFinite(num) ? fmtQty(num) : "—";
   };
   const fallbackStageWaste = stageWaste.length > 0
     ? stageWaste

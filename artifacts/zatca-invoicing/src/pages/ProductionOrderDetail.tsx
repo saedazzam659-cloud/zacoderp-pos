@@ -3,6 +3,7 @@ import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { useParams, Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { useFmt } from "@/hooks/use-fmt";
 import { fmtNum } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -312,6 +313,12 @@ export default function ProductionOrderDetail() {
   const apiPrefix = `${API}/api${routePrefix}`;
   const { t } = useTranslation();
   const { token, user, actingCompanyId } = useAuth() as any;
+  const { fmtQty } = useFmt();
+  const formatQuantity = (value: unknown) => {
+    if (value == null || value === "") return "—";
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? fmtQty(numeric) : "—";
+  };
   const { toast } = useToast();
   const tenantKey = actingCompanyId ?? user?.companyId ?? user?.company?.id ?? "current";
   const orderIdentity = `${tenantKey}:${orderId}`;
@@ -1166,9 +1173,9 @@ export default function ProductionOrderDetail() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-4">
           <div className="rounded-lg border bg-white dark:bg-slate-900 p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <Stat label={t("production.plannedQty")} value={`${Number(order.plannedQty).toLocaleString("en-US")} ${order.unitCode}`} />
-            <Stat label={t("production.producedQty")} value={Number(order.producedQty).toLocaleString("en-US")} />
-            <Stat label={t("production.wasteQty")} value={Number(order.wasteQty).toLocaleString("en-US")} />
+            <Stat label={t("production.plannedQty")} value={`${formatQuantity(order.plannedQty)} ${order.unitCode}`} />
+            <Stat label={t("production.producedQty")} value={formatQuantity(order.producedQty)} />
+            <Stat label={t("production.wasteQty")} value={formatQuantity(order.wasteQty)} />
             <Stat label={t("production.actualCost")} value={Number(order.actualCost).toLocaleString("en-US")} />
             <Stat label="تكلفة الخامات" value={Number(order.rawMaterialsCost).toLocaleString("en-US")} />
             <Stat label="أجور الإنتاج" value={Number(order.laborCost).toLocaleString("en-US")} />
@@ -1272,11 +1279,11 @@ export default function ProductionOrderDetail() {
                     <div className="mt-2 space-y-2 text-[11px] text-slate-600">
                       <div>
                         هالك المراحل بعد التحويل:{" "}
-                        <span className="font-semibold">{completionStageMetrics.stageWasteQty.toLocaleString("en-US")} {order.unitCode}</span>
+                        <span className="font-semibold">{fmtQty(completionStageMetrics.stageWasteQty)} {order.unitCode}</span>
                         {" — "}
-                        طبيعي: <span className="font-semibold text-emerald-700">{completionStageMetrics.normalWasteQty.toLocaleString("en-US")}</span>
+                        طبيعي: <span className="font-semibold text-emerald-700">{fmtQty(completionStageMetrics.normalWasteQty)}</span>
                         {" — "}
-                        غير طبيعي: <span className="font-semibold text-rose-700">{completionStageMetrics.abnormalWasteQty.toLocaleString("en-US")}</span>
+                        غير طبيعي: <span className="font-semibold text-rose-700">{fmtQty(completionStageMetrics.abnormalWasteQty)}</span>
                       </div>
                       <div className="rounded-md border border-amber-200 bg-amber-50/60 p-2">
                         <Label htmlFor="input-additional-waste-qty" className="text-[11px] font-semibold text-amber-900">
@@ -1287,7 +1294,7 @@ export default function ProductionOrderDetail() {
                           type="number"
                           min="0"
                           step="0.01"
-                          value={formatWasteQuantity(extraUnclassifiedWaste)}
+                          value={fmtQty(extraUnclassifiedWaste)}
                           onChange={(e) => updateAdditionalHeaderWaste(e.target.value)}
                           data-testid="input-additional-waste-qty"
                           className="mt-1 h-8 bg-white text-xs"
@@ -1501,12 +1508,12 @@ export default function ProductionOrderDetail() {
                           )}
                         </td>
                         <td className="p-2 text-end">
-                          <div>{Number(it.quantity).toLocaleString("en-US")} {unitLabel}</div>
+                          <div>{formatQuantity(it.quantity)} {unitLabel}</div>
                           {basis && (
                             <div className="text-xs text-slate-500 mt-0.5">
-                              أساس الوصفة: {Number(basis.lineQuantity).toLocaleString("en-US")} {basis.lineUnitCode}
+                              أساس الوصفة: {formatQuantity(basis.lineQuantity)} {basis.lineUnitCode}
                               {" لكل "}
-                              {Number(basis.outputQuantity).toLocaleString("en-US")} {basis.outputUnitCode}
+                              {formatQuantity(basis.outputQuantity)} {basis.outputUnitCode}
                             </div>
                           )}
                         </td>
@@ -2575,6 +2582,12 @@ function IssuePreviewPanel({
   token: string;
   apiPrefix: string;
 }) {
+  const { fmtQty } = useFmt();
+  const formatQuantity = (value: unknown) => {
+    if (value == null || value === "") return "—";
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? fmtQty(numeric) : "—";
+  };
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any | null>(null);
@@ -2653,11 +2666,11 @@ function IssuePreviewPanel({
                   </span>
                 </div>
                 <div className="text-slate-600 dark:text-slate-400">
-                  مطلوب {Number(ln.requestedQty).toLocaleString("en-US")} {ln.unitCode || ""}
-                  {" — "}متاح {Number(ln.available).toLocaleString("en-US")} {ln.unitCode || ""}
+                  مطلوب {formatQuantity(ln.requestedQty)} {ln.unitCode || ""}
+                  {" — "}متاح {formatQuantity(ln.available)} {ln.unitCode || ""}
                   {Number(ln.shortfall) > 0 && (
                     <span className="text-red-600 ms-2">
-                      نقص {Number(ln.shortfall).toLocaleString("en-US")} {ln.unitCode || ""}
+                      نقص {formatQuantity(ln.shortfall)} {ln.unitCode || ""}
                     </span>
                   )}
                 </div>
@@ -2677,7 +2690,7 @@ function IssuePreviewPanel({
                       <tr key={`${ln.lineId}-${i}`} className="border-t">
                         <td className="py-1 font-mono">{p.batchNumber ?? <span className="text-slate-400">— غير مرمَّز —</span>}</td>
                         <td className="py-1">{p.expiryDate ?? <span className="text-slate-400">—</span>}</td>
-                        <td className="py-1 text-end">{Number(p.takeQty).toLocaleString("en-US")}</td>
+                        <td className="py-1 text-end">{formatQuantity(p.takeQty)}</td>
                         <td className="py-1 text-end">{p.costPrice != null ? fmtNum(p.costPrice, 4) : "—"}</td>
                       </tr>
                     ))}
@@ -2818,6 +2831,12 @@ function WasteRecordsTab({
   apiPrefix: string;
   disabled: boolean;
 }) {
+  const { fmtQty } = useFmt();
+  const formatQuantity = (value: unknown) => {
+    if (value == null || value === "") return "—";
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? fmtQty(numeric) : "—";
+  };
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2932,7 +2951,7 @@ function WasteRecordsTab({
                 {t.labelAr}
               </div>
               <div className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100">
-                {summary[t.value].qty.toLocaleString("en-US")}
+                {formatQuantity(summary[t.value].qty)}
               </div>
               <div className="text-[11px] text-slate-500">
                 {summary[t.value].count} سجل · {summary[t.value].cost.toLocaleString("en-US")} ر.س
@@ -2941,7 +2960,7 @@ function WasteRecordsTab({
           ))}
           <div className="rounded-lg border border-slate-300 bg-slate-50 dark:bg-slate-800/50 p-2.5">
             <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">الإجمالي</div>
-            <div className="mt-1 text-sm font-bold">{totalQty.toLocaleString("en-US")}</div>
+            <div className="mt-1 text-sm font-bold">{formatQuantity(totalQty)}</div>
             <div className="text-[11px] text-slate-500">{totalCost.toLocaleString("en-US")} ر.س</div>
           </div>
         </div>
@@ -3060,7 +3079,7 @@ function WasteRecordsTab({
                         {t?.labelAr ?? r.wasteType}
                       </span>
                     </td>
-                    <td className="px-3 py-2 font-medium">{Number(r.qty).toLocaleString("en-US")} {r.unitCode}</td>
+                    <td className="px-3 py-2 font-medium">{formatQuantity(r.qty)} {r.unitCode}</td>
                     <td className="px-3 py-2">{Number(r.costImpact).toLocaleString("en-US")}</td>
                     <td className="px-3 py-2 text-xs text-slate-600">{r.reason ?? "—"}</td>
                     <td className="px-3 py-2 text-xs text-slate-500">

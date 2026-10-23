@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useFmt } from "@/hooks/use-fmt";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,6 +53,7 @@ export function SimpleSetup({
     internalTransportEnabled?: boolean;
   }) => Promise<unknown>;
 }) {
+  const { fmtQty } = useFmt();
   const [material, setMaterial] = useState({ code: "", nameAr: "", itemNature: "raw", unitId: "" });
   const [bom, setBom] = useState({ productItemId: "", nameAr: "", outputQty: "1", outputUnitCode: "" });
   const [bomLines, setBomLines] = useState<Array<{ itemId: string; quantity: string; unitCode: string }>>([{ itemId: "", quantity: "1", unitCode: "" }]);
@@ -815,7 +817,7 @@ export function SimpleSetup({
                 tabIndex={canEdit ? 0 : undefined}
               >
                 <span className="font-semibold">{t.name}</span>
-                <span className="text-xs text-slate-500 mt-1">الكمية: {t.configuration?.plannedQty || 1} {t.configuration?.unitCode ? `(${t.configuration.unitCode})` : ""}</span>
+                <span className="text-xs text-slate-500 mt-1">الكمية: {fmtQty(t.configuration?.plannedQty || 1)} {t.configuration?.unitCode ? `(${t.configuration.unitCode})` : ""}</span>
               </div>
             ))}
             {catalog.templates.length === 0 && <span className="text-sm text-slate-400">لا توجد قوالب محفوظة.</span>}

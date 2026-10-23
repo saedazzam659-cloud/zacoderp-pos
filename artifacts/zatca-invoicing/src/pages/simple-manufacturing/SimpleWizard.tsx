@@ -18,6 +18,7 @@ import type {
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import { useAuth } from "@/contexts/AuthContext";
+import { useFmt } from "@/hooks/use-fmt";
 import { saveUiPrefs } from "@/lib/uiPrefsApi";
 import {
   DEFAULT_SIMPLE_MANUFACTURING_COST_MODES,
@@ -60,6 +61,7 @@ export function SimpleWizard({
 }) {
   const { toast } = useToast();
   const { actingCompanyId, user, setUser } = useAuth();
+  const { fmtQty } = useFmt();
   const [tab, setTab] = useState<"basic" | "materials" | "routing" | "resources" | "costs" | "review">("basic");
   const [form, setForm] = useState<WizardState>({
     title: "", productItemId: "", plannedQty: "1", unitCode: "PCE", notes: "",
@@ -1121,7 +1123,7 @@ export function SimpleWizard({
                   <CardHeader className="bg-emerald-50/30 pb-3 border-b border-emerald-100">
                     <CardTitle className="text-emerald-800 text-base">{bomPreview.template?.nameAr || bomPreview.nameAr}</CardTitle>
                     <CardDescription>
-                      كميات المواد المطلوبة لإنتاج {Number(form.plannedQty || 0).toLocaleString("en-US", { maximumFractionDigits: 4 })} {form.unitCode} — تتحدث تلقائياً بنفس نسب الوصفة.
+                      كميات المواد المطلوبة لإنتاج {fmtQty(form.plannedQty || 0)} {form.unitCode} — تتحدث تلقائياً بنفس نسب الوصفة.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pt-4">
@@ -1134,13 +1136,13 @@ export function SimpleWizard({
                           <div className="flex flex-col items-end gap-1">
                             <span className="font-mono bg-emerald-50 text-emerald-900 px-2 py-0.5 rounded border border-emerald-200" data-testid={`material-required-${l.itemId}`}>
                                {materialScale != null && Number.isFinite(Number(l.quantity)) && l.usageFactor != null
-                                 ? (Number(l.quantity) * materialScale * Number(l.usageFactorNumeric ?? l.usageFactor)).toLocaleString("en-US", { maximumFractionDigits: 6 })
+                                 ? fmtQty(Number(l.quantity) * materialScale * Number(l.usageFactorNumeric ?? l.usageFactor))
                                  : "—"} {l.baseUnitCode || l.usageUnitCode || l.unitCode}
                             </span>
                             <span className="text-slate-400 text-xs">
-                               أساس الاستخدام: {Number(l.quantity).toLocaleString("en-US", { maximumFractionDigits: 4 })} {l.usageUnitCode || l.unitCode}
-                               {l.usageFactor != null ? ` × ${l.usageFactor} = ${(Number(l.quantity) * Number(l.usageFactorNumeric ?? l.usageFactor)).toLocaleString("en-US", { maximumFractionDigits: 6 })} ${l.baseUnitCode || ""}` : " — لا يوجد ارتباط تحويل صالح"}
-                               {" لكل "}{Number.isFinite(recipeOutputQty) && recipeOutputQty > 0 ? bomPreview.outputQty : "—"} {recipeOutputUnit}
+                                أساس الاستخدام: {fmtQty(l.quantity)} {l.usageUnitCode || l.unitCode}
+                                {l.usageFactor != null ? ` × ${l.usageFactor} = ${fmtQty(Number(l.quantity) * Number(l.usageFactorNumeric ?? l.usageFactor))} ${l.baseUnitCode || ""}` : " — لا يوجد ارتباط تحويل صالح"}
+                                {" لكل "}{Number.isFinite(recipeOutputQty) && recipeOutputQty > 0 ? fmtQty(bomPreview.outputQty) : "—"} {recipeOutputUnit}
                             </span>
                           </div>
                         </div>
@@ -1814,7 +1816,7 @@ export function SimpleWizard({
               <div className="bg-slate-50 rounded-xl p-6 border text-center space-y-2">
                 <h3 className="text-xl font-bold text-slate-800">{form.title || "بدون عنوان"}</h3>
                 <p className="text-slate-500">
-                  سيتم تصنيع <strong className="text-slate-900">{form.plannedQty} {form.unitCode}</strong> من <strong className="text-slate-900">{catalog.items.find(i=>String(i.id)===form.productItemId)?.nameAr || "—"}</strong>
+                  سيتم تصنيع <strong className="text-slate-900">{fmtQty(form.plannedQty)} {form.unitCode}</strong> من <strong className="text-slate-900">{catalog.items.find(i=>String(i.id)===form.productItemId)?.nameAr || "—"}</strong>
                 </p>
               </div>
 
@@ -1861,8 +1863,8 @@ export function SimpleWizard({
                  ) : (
                    <>
                      <p className="text-xs text-slate-500 mb-3">
-                       تنتج الوصفة {bomPreview?.outputQty} {recipeOutputUnit}. المطلوب =
-                       كمية السطر × ({form.plannedQty} ÷ {bomPreview?.outputQty}).
+                        تنتج الوصفة {fmtQty(bomPreview?.outputQty)} {recipeOutputUnit}. المطلوب =
+                        كمية السطر × ({fmtQty(form.plannedQty)} ÷ {fmtQty(bomPreview?.outputQty)}).
                        هذه معاينة كمية فقط؛ لا تُنشئ رصيداً ولا تتجاوز تحقق المخزون.
                        بعد الحفظ افتح تفاصيل الأمر ووسّع «معاينة سحب التشغيلات» لرؤية المتاح في مخزن السحب قبل البدء.
                      </p>
@@ -1872,7 +1874,7 @@ export function SimpleWizard({
                            <span>{line.itemNameAr || line.description || `صنف #${line.itemId}`}</span>
                            <span className="font-mono font-semibold">
                              {Number.isFinite(Number(line.quantity))
-                                ? (Number(line.quantity) * materialScale * Number(line.usageFactorNumeric ?? line.usageFactor)).toLocaleString(undefined, { maximumFractionDigits: 6 })
+                                 ? fmtQty(Number(line.quantity) * materialScale * Number(line.usageFactorNumeric ?? line.usageFactor))
                                : "—"}
                               {" "}{line.baseUnitCode || line.unitCode || ""}
                            </span>

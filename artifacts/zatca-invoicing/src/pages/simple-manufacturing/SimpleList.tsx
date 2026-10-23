@@ -5,6 +5,7 @@ import { ChevronLeft, Play, Pause, RotateCcw, Boxes, Truck, AlertCircle } from "
 import { Link } from "wouter";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useFmt } from "@/hooks/use-fmt";
 import type { Order, Catalog } from "./types";
 import { ProductionTimeCosts } from "@/components/ProductionTimeCosts";
 import { SimpleOrderWizardReadonly } from "./SimpleOrderWizardReadonly";
@@ -71,6 +72,12 @@ export function SimpleOrderList({
   executionPanel?: import("react").ReactNode;
 }) {
   const { token, actingCompanyId } = useAuth();
+  const { fmtQty } = useFmt();
+  const formatQuantity = (value: unknown) => {
+    if (value == null || value === "") return "—";
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? fmtQty(numeric) : "—";
+  };
   const [internalDeliveries, setInternalDeliveries] = useState<any[]>([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [deliveriesError, setDeliveriesError] = useState<string | null>(null);
@@ -195,7 +202,7 @@ export function SimpleOrderList({
               </div>
               <div className="space-y-1">
                 <span className="text-muted-foreground text-xs uppercase">الكمية المخططة</span>
-                <div className="font-semibold text-base">{selectedOrder.plannedQty}</div>
+                <div className="font-semibold text-base">{formatQuantity(selectedOrder.plannedQty)}</div>
               </div>
               <div className="space-y-1">
                 <span className="text-muted-foreground text-xs uppercase">التكلفة التقديرية</span>
@@ -218,23 +225,23 @@ export function SimpleOrderList({
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
                   <div>
                     <span className="block text-xs text-slate-500">الإنتاج الفعلي</span>
-                    <b>{formatMoney(selectedOrder.producedQty)} {selectedOrder.unitCode || ""}</b>
+                    <b>{formatQuantity(selectedOrder.producedQty)} {selectedOrder.unitCode || ""}</b>
                   </div>
                   <div>
                     <span className="block text-xs text-slate-500">إجمالي هالك رأس الأمر</span>
-                    <b>{formatMoney(selectedOrder.wasteQty)} {selectedOrder.unitCode || ""}</b>
+                    <b>{formatQuantity(selectedOrder.wasteQty)} {selectedOrder.unitCode || ""}</b>
                   </div>
                   <div>
                     <span className="block text-xs text-slate-500">هالك مراحل طبيعي</span>
-                    <b className="text-emerald-700">{formatMoney(selectedStageWaste.normal)} {selectedOrder.unitCode || ""}</b>
+                    <b className="text-emerald-700">{fmtQty(selectedStageWaste.normal)} {selectedOrder.unitCode || ""}</b>
                   </div>
                   <div>
                     <span className="block text-xs text-slate-500">هالك مراحل غير طبيعي</span>
-                    <b className="text-rose-700">{formatMoney(selectedStageWaste.abnormal)} {selectedOrder.unitCode || ""}</b>
+                    <b className="text-rose-700">{fmtQty(selectedStageWaste.abnormal)} {selectedOrder.unitCode || ""}</b>
                   </div>
                   <div>
                     <span className="block text-xs text-slate-500">هالك إضافي غير مصنف</span>
-                    <b className="text-amber-700">{formatMoney(selectedAdditionalWaste)} {selectedOrder.unitCode || ""}</b>
+                    <b className="text-amber-700">{fmtQty(selectedAdditionalWaste)} {selectedOrder.unitCode || ""}</b>
                   </div>
                 </div>
               </div>
@@ -432,7 +439,7 @@ export function SimpleOrderList({
                     <div key={item.id} className="p-3 flex flex-wrap justify-between gap-2 text-sm">
                       <span className="font-medium text-slate-700">{item.description || `صنف #${item.itemId}`}</span>
                       <span className="text-slate-600">
-                        {Number(item.quantity || 0).toLocaleString()} {item.unitCode || ""}
+                        {fmtQty(item.quantity || 0)} {item.unitCode || ""}
                         {item.totalCost != null && ` • ${Number(item.totalCost).toLocaleString()}`}
                       </span>
                     </div>
@@ -495,7 +502,7 @@ export function SimpleOrderList({
                   <tr key={order.id} className="border-b hover:bg-slate-50/80 transition-colors">
                     <td className="px-4 py-3 font-semibold text-violet-700">{order.orderNumber}</td>
                     <td className="px-4 py-3 font-medium">{productName(order.productItemId)}</td>
-                    <td className="px-4 py-3">{order.plannedQty}</td>
+                    <td className="px-4 py-3">{formatQuantity(order.plannedQty)}</td>
                     <td className="px-4 py-3">
                       <Badge variant="outline" className="bg-white">{statusLabel(order.status)}</Badge>
                     </td>
