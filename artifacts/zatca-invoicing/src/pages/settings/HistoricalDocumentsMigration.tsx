@@ -341,6 +341,84 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     return { issues, party, branch, lines, cashBox, bank, sourceInvoiceId };
   }
 
+  async function preflightAnnualSequences(refs: Array<{ doc: HistoricalDoc; branch: any }>) {
+    const [sequenceRows, years] = await Promise.all([
+      requestJson(`/api/sequences?companyId=${cid}`, token) as Promise<any[]>,
+      requestJson(`/api/fiscal-years/years?companyId=${cid}`, token) as Promise<any[]>,
+    ]);
+    const yearDetails = await Promise.all(years.map((year) =>
+      requestJson(`/api/fiscal-years/years/${year.id}?companyId=${cid}`, token) as Promise<any>,
+    ));
+    const periods = yearDetails.flatMap((detail) => detail.periods ?? []);
+    const periodsById = new Map(periods.map((period: any) => [Number(period.id), period]));
+    const groups = new Map<string, { doc: HistoricalDoc; branch: any; docs: HistoricalDoc[] }>();
+    for (const { doc, branch } of refs) {
+      const key = JSON.stringify([doc.kind, doc.date, Number(branch.id), doc.paymentType]);
+      const group = groups.get(key);
+      if (group) group.docs.push(doc);
+      else groups.set(key, { doc, branch, docs: [doc] });
+    }
+
+    const problems: Array<{ sourceNumber: string; status: string; detail: string }> = [];
+    const checks = [...groups.values()];
+    for (let offset = 0; offset < checks.length; offset += 12) {
+      const batch = checks.slice(offset, offset + 12);
+      const previews = await Promise.all(batch.map(async (group) => {
+        const { doc, branch } = group;
+        const period = periods.find((candidate: any) =>
+          String(candidate.startDate) <= doc.date && String(candidate.endDate) >= doc.date,
+        );
+        if (!period) return { group, period: null, preview: null };
+        const query = new URLSearchParams({
+          companyId: String(cid),
+          date: doc.date,
+          branchId: String(branch.id),
+          paymentType: doc.paymentType,
+        });
+        const preview = await requestJson(
+          `/api/sequences/peek/${encodeURIComponent(doc.kind)}?${query.toString()}`,
+          token,
+        ) as any;
+        return { group, period, preview };
+      }));
+
+      for (const { group, period, preview } of previews) {
+        let problem = "";
+        if (!period) {
+          problem = "لا توجد فترة مالية مفتوحة تغطي تاريخ المستند؛ أضف السنة والفترات يدويًا ثم أعد الفحص.";
+        } else if (!preview?.hasSequence || !preview.sequenceCode || !preview.number) {
+          problem = "لا يوجد مسلسل صالح ومتاح لهذا النوع والتاريخ والفرع.";
+        } else {
+          const selected = sequenceRows.find((row: any) => String(row.code) === String(preview.sequenceCode));
+          const scopedIds = Array.isArray(selected?.fiscalPeriodIds)
+            ? selected.fiscalPeriodIds.map(Number)
+            : [];
+          if (!selected || !selected.isActive) {
+            problem = "تعذر التحقق من المسلسل الذي اختاره النظام.";
+          } else if (!scopedIds.includes(Number(period.id))) {
+            problem = `المسلسل ${preview.sequenceCode} ليس مخصصًا للفترة المالية لهذا المستند؛ لن نستخدم مسلسلًا عامًا كبديل.`;
+          } else {
+            const scopedYearIds = new Set(scopedIds
+              .map((id: number) => periodsById.get(id)?.fiscalYearId)
+              .filter((id: unknown) => id != null)
+              .map(Number));
+            if (scopedYearIds.size !== 1 || !scopedYearIds.has(Number(period.fiscalYearId))) {
+              problem = `المسلسل ${preview.sequenceCode} مربوط بأكثر من سنة مالية؛ أنشئ مسلسلًا مستقلًا لهذه السنة.`;
+            } else if (Number(selected.startNumber) !== 1 || Number(selected.padLength) !== 5 || selected.monthlyReset) {
+              problem = `إعداد المسلسل ${preview.sequenceCode} لا يطابق بداية 00001 بدون تصفير شهري.`;
+            }
+          }
+        }
+        if (problem) {
+          for (const doc of group.docs) {
+            problems.push({ sourceNumber: doc.sourceNumber, status: "أُوقف قبل الإنشاء", detail: problem });
+          }
+        }
+      }
+    }
+    return problems;
+  }
+
   async function scanPeriods() {
     if (!docs.length) return;
     setBusy(true);
@@ -407,6 +485,26 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     const nextResults: Array<{ sourceNumber: string; status: string; detail: string }> = [];
     const nextSourceIds = { ...sourceInvoiceIds };
     try {
+      let sequenceProblems: Array<{ sourceNumber: string; status: string; detail: string }>;
+      try {
+        sequenceProblems = await preflightAnnualSequences(refs);
+      } catch (error: any) {
+        toast({
+          title: "تعذر فحص المسلسلات السنوية",
+          description: error?.message ?? "أوقفنا الاستيراد قبل إنشاء أي مستند.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (sequenceProblems.length) {
+        setResults(sequenceProblems);
+        toast({
+          title: `أُوقف الاستيراد قبل إنشاء أي مستند (${sequenceProblems.length})`,
+          description: "صحح إعدادات المسلسلات السنوية ثم أعد المحاولة.",
+          variant: "destructive",
+        });
+        return;
+      }
       const ordered = [...refs].sort((a, b) =>
         Number(a.doc.kind.endsWith("_return")) - Number(b.doc.kind.endsWith("_return"))
         || a.doc.date.localeCompare(b.doc.date)
@@ -486,7 +584,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       <CardContent className="space-y-4 p-4" dir="rtl">
         <div>
           <h3 className="font-bold">استيراد المستندات التاريخية</h3>
-          <p className="text-xs text-muted-foreground">يُنشأ كل مستند كمسودة ثم يُرحّل عبر واجهة النظام المعتادة. لا تُعاد بيانات التأسيس. استورد فواتير الشراء قبل المبيعات عند الحاجة للمخزون؛ والمرتجعات تتطلب استيراد فواتيرها المصدر أولاً في الجلسة نفسها.</p>
+          <p className="text-xs text-muted-foreground">يُنشأ كل مستند برقمه الرسمي من المسلسل المطابق لتاريخ المستند، ثم يُرحّل عبر واجهة النظام المعتادة. لا تُعاد بيانات التأسيس أو إعدادات الفترات والمسلسلات. استورد فواتير الشراء قبل المبيعات عند الحاجة للمخزون؛ والمرتجعات تتطلب استيراد فواتيرها المصدر أولاً في الجلسة نفسها.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={kind} onValueChange={(value) => { setKind(value as Kind); setDocs([]); setPeriodScan(null); setResults([]); }}>
