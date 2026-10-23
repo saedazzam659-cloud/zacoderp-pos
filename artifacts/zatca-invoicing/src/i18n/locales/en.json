@@ -2981,7 +2981,8 @@
       "pay": "Pay",
       "cancel": "Cancel",
       "overrun": "Approve overrun",
-      "correct": "Posted correction"
+      "correct": "Posted correction",
+      "execute_stages": "Record stage execution"
     },
     "modules": {
       "dashboard": "Dashboard",

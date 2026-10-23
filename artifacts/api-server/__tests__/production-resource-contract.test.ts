@@ -30,3 +30,19 @@ test("shared execution router exposes the scoped resource setup contract", async
   assert.match(source, /fixedAssetsTable\.code/);
   assert.doesNotMatch(source, /fixedAssetsTable\.purchaseValue[\s\S]*resource-catalog/);
 });
+
+test("new production orders copy linked machine and labor assignments from active routes", async () => {
+  const source = await readFile(
+    new URL("../src/routes/production.ts", import.meta.url),
+    "utf8",
+  );
+  const automaticCopy = source.slice(
+    source.indexOf("// ─── PHASE C: Auto-copy active production routing"),
+    source.indexOf("routingLoaded = rs.length;", source.indexOf("// ─── PHASE C: Auto-copy active production routing")),
+  );
+
+  assert.match(automaticCopy, /resourceMode:\s*s\.resourceMode/);
+  assert.match(automaticCopy, /resourceId:\s*s\.resourceId/);
+  assert.match(automaticCopy, /workerCount:\s*s\.workerCount/);
+  assert.match(automaticCopy, /workerEmployeeIds:\s*s\.workerEmployeeIds\s*\?\?\s*\[\]/);
+});

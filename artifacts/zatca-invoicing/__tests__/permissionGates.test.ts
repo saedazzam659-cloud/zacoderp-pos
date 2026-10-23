@@ -68,6 +68,14 @@ test("manufacturing inventory view is available when either manufacturing module
   );
 });
 
+test("stage execution grant is limited to Smart Manufacturing", () => {
+  const simple = PERMISSION_MODULES.find(module => module.key === "simple_manufacturing");
+  const advanced = PERMISSION_MODULES.find(module => module.key === "production");
+
+  assert.ok(simple?.actions.includes("execute_stages"));
+  assert.equal(advanced?.actions.includes("execute_stages"), false);
+});
+
 test("legacy child flags cannot override an explicit company-module disable", () => {
   const menuPermissions = {
     purchases_module: false,

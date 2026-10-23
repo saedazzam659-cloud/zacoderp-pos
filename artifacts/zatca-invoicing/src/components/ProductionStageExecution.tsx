@@ -100,6 +100,8 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
   }), [token, actingCompanyId]);
   const canEdit = usePermission(permissionKey as any, "edit");
+  const canExecuteStages = usePermission(permissionKey as any, "execute_stages" as any);
+  const canExecute = canEdit || (isSimple && canExecuteStages);
   const canCreate = usePermission(permissionKey as any, "create");
   const isResourceCostingV1 = Number(resourceCostingVersion) >= 1;
   const [stages, setStages] = useState<Stage[]>([]);
@@ -340,7 +342,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     (!unit || (Number.isFinite(factor) && factor > 0));
 
   const sendStageAction = async (stageId: string, action: "start" | "complete" | "update", stageData: Stage) => {
-    if (!canEdit || !isExecuting) return;
+    if (!canExecute || !isExecuting) return;
     if (
       (stageData.quantityUnitCustomMode && !stageData.quantityUnit) ||
       (stageData.wasteUnitCustomMode && !stageData.wasteUnit) ||
@@ -571,7 +573,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                       {activeStage.status === "done" && isResourceCostingV1 && (
                         <p className="max-w-xs text-xs leading-5 text-amber-800">لقطة تكلفة الموارد مجمّدة. للتصحيح استخدم عكس أمر الإنتاج ومسار التسوية القائم؛ لا تعِد فتح المرحلة.</p>
                       )}
-                      {activeStage.status !== "done" && activeStage.status !== "skipped" && isExecuting && canEdit && (
+                      {activeStage.status !== "done" && activeStage.status !== "skipped" && isExecuting && canExecute && (
                         <>
                           {activeStage.status === "pending" && (
                             <Button 
@@ -617,11 +619,11 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><ArrowDownToLine className="h-3.5 w-3.5 text-slate-400" /> الكمية المدخلة</Label>
-                          <Input type="number" step="0.01" value={activeStage.inputQty} onChange={e => handleUpdateStage(activeStage.id, { inputQty: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
+                          <Input type="number" step="0.01" value={activeStage.inputQty} onChange={e => handleUpdateStage(activeStage.id, { inputQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><ArrowUpFromLine className="h-3.5 w-3.5 text-slate-400" /> الكمية المنتجة</Label>
-                          <Input type="number" step="0.01" value={activeStage.outputQty} onChange={e => handleUpdateStage(activeStage.id, { outputQty: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
+                          <Input type="number" step="0.01" value={activeStage.outputQty} onChange={e => handleUpdateStage(activeStage.id, { outputQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
                         </div>
                       </div>
 
@@ -633,7 +635,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                             const hours = Number(e.target.value);
                             handleUpdateStage(activeStage.id, { actualDurationMinutes: Number.isFinite(hours) && hours >= 0 ? Math.round(hours * 60) : 0 });
                           }}
-                          disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} />
+                          disabled={!isExecuting || !canExecute || activeStage.status === "done" || activeStage.status === "skipped"} />
                         <p className="text-[11px] leading-5 text-slate-500">إدخال تشغيلي واحد فقط؛ يحفظ بالدقائق ويقود جميع مكونات المورد دون ساعات عمالة أو إهلاك أو كهرباء منفصلة.</p>
                       </div>
                       {isResourceCostingV1 && <div className="space-y-1.5">
@@ -646,7 +648,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                       {(!isResourceCostingV1 || activeStage.resourceMode === "labor" || activeStage.resourceMode === "both") && <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold text-slate-600">عدد العمالة المشاركة</Label>
-                          <Input dir="ltr" inputMode="numeric" value={activeStage.workerCount} onChange={e => handleUpdateStage(activeStage.id, { workerCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped"} className="bg-white" />
+                          <Input dir="ltr" inputMode="numeric" value={activeStage.workerCount} onChange={e => handleUpdateStage(activeStage.id, { workerCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} disabled={!isExecuting || !canExecute || activeStage.status === "done" || activeStage.status === "skipped"} className="bg-white" />
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold text-slate-600">الموظفون المشاركون في المرحلة</Label>
@@ -736,7 +738,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-rose-900">كمية الهالك</Label>
-                            <Input type="number" step="0.01" value={activeStage.wasteQty} onChange={e => handleUpdateStage(activeStage.id, { wasteQty: Number(e.target.value) })} disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
+                            <Input type="number" step="0.01" value={activeStage.wasteQty} onChange={e => handleUpdateStage(activeStage.id, { wasteQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-rose-900">طبيعي أم تالف</Label>
@@ -747,16 +749,16 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                                  { value: "normal", label: "فاقد طبيعي (مخطط — بلا مصروف مستقل)" },
                                  { value: "abnormal", label: "تالف/فاقد غير طبيعي (استثنائي)" }
                               ]}
-                              disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")}
+                           disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")}
                             />
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-rose-900">نوع الفاقد (wasteType)</Label>
-                            <Input placeholder="مثال: تلف خام أو فاقد حراري" value={activeStage.wasteType} onChange={e => handleUpdateStage(activeStage.id, { wasteType: e.target.value })} disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
+                            <Input placeholder="مثال: تلف خام أو فاقد حراري" value={activeStage.wasteType} onChange={e => handleUpdateStage(activeStage.id, { wasteType: e.target.value })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-rose-900">سبب الهالك</Label>
-                            <Input placeholder="مثال: خطأ في الحرارة..." value={activeStage.wasteReason} onChange={e => handleUpdateStage(activeStage.id, { wasteReason: e.target.value })} disabled={!isExecuting || !canEdit || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
+                            <Input placeholder="مثال: خطأ في الحرارة..." value={activeStage.wasteReason} onChange={e => handleUpdateStage(activeStage.id, { wasteReason: e.target.value })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
                           </div>
                         </div>
                       </div>
@@ -798,7 +800,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                         </Button>
                       </div>
 
-                      {isExecuting && canEdit && activeStage.status !== "done" && activeStage.status !== "skipped" && (
+                      {isExecuting && canExecute && activeStage.status !== "done" && activeStage.status !== "skipped" && (
                         <Button 
                           disabled={busyStage === activeStage.id} 
                           onClick={() => sendStageAction(activeStage.id, "update", activeStage)} 

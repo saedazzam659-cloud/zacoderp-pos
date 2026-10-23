@@ -5,9 +5,45 @@ import { readFile } from "node:fs/promises";
 import {
   nextStageInputQuantity,
   normalizeStageExecutionPayload,
+  restrictStageExecutionPayload,
   resolvedStageInputQuantity,
   stageWasteTotals,
 } from "../src/lib/stageExecution.ts";
+
+test("execution-only stage payload keeps operational facts and strips route configuration", () => {
+  const restricted = restrictStageExecutionPayload({
+    inputQty: 100,
+    outputQty: 96,
+    wasteQty: 4,
+    actualDurationMinutes: 90,
+    workerCount: 3,
+    wasteReason: "حرارة",
+    wasteType: "quality",
+    wasteClassification: "abnormal",
+    resourceId: 22,
+    resourceMode: "machine",
+    workerEmployeeIds: [7, 9],
+    workCenterId: 4,
+    quantityUnit: "box",
+    notes: "must not be editable",
+    status: "done",
+  });
+
+  assert.deepEqual(restricted, {
+    inputQty: 100,
+    outputQty: 96,
+    wasteQty: 4,
+    actualDurationMinutes: 90,
+    workerCount: 3,
+    wasteReason: "حرارة",
+    wasteType: "quality",
+    wasteClassification: "abnormal",
+  });
+  assert.throws(
+    () => normalizeStageExecutionPayload(restrictStageExecutionPayload({ costAmount: 100 })),
+    /محرك تكلفة فقط/,
+  );
+});
 
 test("stage execution normalizes aliases without creating a cost amount", async () => {
   const execution = normalizeStageExecutionPayload({

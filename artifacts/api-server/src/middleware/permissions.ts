@@ -25,7 +25,8 @@ import { DEMO_OPERATIONAL_MODULES } from "../lib/demoOperationalPolicy.js";
 
 export type PermAction =
   | "view" | "create" | "edit" | "delete" | "post" | "unpost" | "export"
-  | "review" | "approve" | "pay" | "cancel" | "overrun" | "correct";
+  | "review" | "approve" | "pay" | "cancel" | "overrun" | "correct"
+  | "execute_stages";
 
 // Maps the granular per-action module key (used by users.permissions and by
 // every requirePermission(...) call below) to the high-level company-module

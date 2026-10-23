@@ -5,7 +5,8 @@
 
 export type Action =
   | "view" | "create" | "edit" | "delete" | "post" | "unpost" | "export"
-  | "review" | "approve" | "pay" | "cancel" | "overrun" | "correct";
+  | "review" | "approve" | "pay" | "cancel" | "overrun" | "correct"
+  | "execute_stages";
 
 export interface ModuleDef {
   key: string;
@@ -142,7 +143,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "production",           label: "perms.modules.production",           group: G.production,  actions: MANUFACTURING_ALL },
   // Separate regular-user grants for the compact facade. The server maps
   // these actions to the simple_manufacturing company gate only.
-  { key: "simple_manufacturing", label: "perms.modules.simple_manufacturing", group: G.simpleManufacturing, actions: MANUFACTURING_ALL },
+  { key: "simple_manufacturing", label: "perms.modules.simple_manufacturing", group: G.simpleManufacturing, actions: [...MANUFACTURING_ALL, "execute_stages"] },
 
   // Occupational Safety & Health (OSH / ISO 45001) — per-screen permission
   // keys. All three roll up to the single company-level `safety` module gate
@@ -252,6 +253,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   cancel: "perms.actions.cancel",
   overrun: "perms.actions.overrun",
   correct: "perms.actions.correct",
+  execute_stages: "perms.actions.execute_stages",
 };
 
 export type PermissionMap = Record<string, Partial<Record<Action, boolean>>>;

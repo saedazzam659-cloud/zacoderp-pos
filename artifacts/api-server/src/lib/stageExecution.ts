@@ -23,6 +23,34 @@ export type StageExecutionPayload = {
   notes?: string | null;
 };
 
+const EXECUTION_ONLY_STAGE_FIELDS = [
+  "inputQty",
+  "outputQty",
+  "wasteQty",
+  "actualDurationMinutes",
+  "workerCount",
+  "wasteReason",
+  "wasteType",
+  "wasteClassification",
+] as const;
+
+/**
+ * Keep execution-only users from changing the copied route configuration.
+ * Cost fields are preserved so normalizeStageExecutionPayload can reject them
+ * explicitly rather than silently treating an attempted cost as a valid edit.
+ */
+export function restrictStageExecutionPayload(value: unknown): Record<string, unknown> {
+  const body = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const result: Record<string, unknown> = {};
+  for (const key of EXECUTION_ONLY_STAGE_FIELDS) {
+    if (key in body) result[key] = body[key];
+  }
+  for (const key of ["costAmount", "stageCost", "actualCost", "amount", "laborHourlyRate"]) {
+    if (key in body) result[key] = body[key];
+  }
+  return result;
+}
+
 function nonNegative(value: unknown, field: string): number {
   const number = Number(value);
   if (!Number.isFinite(number) || number < 0) {

@@ -50,6 +50,7 @@
 - [Company hard-purge sequence boundary](company-hard-purge-sequence-boundary.md) — permanent purge may bypass protected-document deletion only in a company-scoped, transaction-local path.
 - [Wouter navigation boundaries](wouter-native-new-tab.md) — use native browser navigation for new tabs and cross-artifact routes.
 - [Variable manufacturing routes](manufacturing-route-stages.md) — stage counts are variable; multi-employee assignments copy to editable order snapshots while legacy attribution stays singular.
+- [Smart manufacturing stage permissions](smart-manufacturing-stage-permissions.md) — split route editing from execution entry per user; preserve existing edit access.
 - [Manufacturing cost-source defaults](manufacturing-cost-source-defaults.md) — new orders default source categories to linked; supervision remains in payroll unless allocation can split rather than duplicate it.
 - [Inventory-only assembly boundary](inventory-quick-assembly-boundary.md) — quick item assembly must stay inside inventory and leave production/manufacturing flows untouched.
 - [Inventory brand filter boundary](inventory-brand-filter-boundary.md) — filter by linked items in inventory reports; include full quantities without allocating stock across brands.

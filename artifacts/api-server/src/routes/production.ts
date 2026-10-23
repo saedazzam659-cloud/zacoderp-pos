@@ -135,6 +135,7 @@ import {
 } from "../lib/manualManufacturingCosts.js";
 import {
   normalizeStageExecutionPayload,
+  restrictStageExecutionPayload,
   canonicalStageUnitFactor,
   nextStageInputQuantity,
   positiveFiniteFactor,
@@ -2702,8 +2703,29 @@ function executionAction(req: any): "view" | "create" | "edit" | "delete" {
   return "edit";
 }
 
+function isStageExecutionMutation(req: any): boolean {
+  const path = String(req.path ?? "");
+  return (
+    req.method === "PATCH" &&
+    /^\/orders\/[^/]+\/stages\/[^/]+\/?$/.test(path)
+  ) || (
+    req.method === "POST" &&
+    /^\/orders\/[^/]+\/stages\/[^/]+\/(start|complete)\/?$/.test(path)
+  );
+}
+
+function stageExecutionRequestBody(req: any): unknown {
+  return canAccessModule(req.authUser, lifecycleModuleKey(), "edit")
+    ? req.body
+    : restrictStageExecutionPayload(req.body);
+}
+
 productionExecutionRouter.use((req, res, next) => {
-  if (!canAccessModule(req.authUser, lifecycleModuleKey(), executionAction(req))) {
+  const hasAction = canAccessModule(req.authUser, lifecycleModuleKey(), executionAction(req));
+  const canRecordStageExecution =
+    isStageExecutionMutation(req) &&
+    canAccessModule(req.authUser, lifecycleModuleKey(), "execute_stages");
+  if (!hasAction && !canRecordStageExecution) {
     res.status(403).json({ error: "ليس لديك صلاحية لتسجيل تنفيذ مراحل التصنيع" });
     return;
   }
@@ -6893,6 +6915,10 @@ router.post("/orders", async (req, res) => {
                 nameAr: s.nameAr,
                 nameEn: s.nameEn,
                 workCenterId: s.workCenterId,
+                resourceMode: s.resourceMode,
+                resourceId: s.resourceId,
+                workerCount: s.workerCount,
+                workerEmployeeIds: s.workerEmployeeIds ?? [],
                 expectedWasteRatio: s.expectedWasteRatio,
                 expectedDurationMinutes: s.expectedDurationMinutes,
                 expectedCost: s.expectedCost,
@@ -11259,7 +11285,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/start", async (req, 
       res.status(400).json({ error: "أكمل المراحل السابقة أولاً" });
       return;
     }
-    const execution = normalizeStageExecutionPayload(req.body);
+    const execution = normalizeStageExecutionPayload(stageExecutionRequestBody(req));
     await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId,
       ctx.order.resourceCostingVersion, stage);
     const inputQty = execution.inputQty !== undefined
@@ -11398,7 +11424,7 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
     if (!ctx) return;
     assertStageExecutionMutable(ctx.order);
     const stageId = Number(req.params.stageId);
-    const execution = normalizeStageExecutionPayload(req.body, { requireOutput: true });
+    const execution = normalizeStageExecutionPayload(stageExecutionRequestBody(req), { requireOutput: true });
     const [stage] = await db
       .select()
       .from(productionOrderStagesTable)
@@ -11635,7 +11661,7 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (!ctx) return;
     assertStageExecutionMutable(ctx.order);
     const stageId = Number(req.params.stageId);
-    const b = req.body ?? {};
+    const b = stageExecutionRequestBody(req) as Record<string, any>;
     const execution = normalizeStageExecutionPayload(b);
     const [current] = await db.select().from(productionOrderStagesTable).where(and(
       eq(productionOrderStagesTable.id, stageId),
