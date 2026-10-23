@@ -10,6 +10,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { ArrowRight, Save, Truck, MapPin, Phone, AlertTriangle, BookMarked } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Link } from "wouter";
@@ -124,7 +125,7 @@ export default function SupplierNew() {
         </Button>
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Truck className="h-6 w-6 text-primary" />إضافة مورد جديد
+            <Truck className="h-6 w-6 text-primary" />{localizeUiText("إضافة مورد جديد")}
           </h1>
           <p className="text-muted-foreground mt-0.5 text-sm">بيانات المورد / الموزع لاستخدامها في الفواتير</p>
         </div>
@@ -290,36 +291,36 @@ export default function SupplierNew() {
             <CardContent className="pt-5 space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">الفرع الافتراضي</label>
+                  <label className="text-sm font-medium">{localizeUiText("الفرع الافتراضي")}</label>
                   <select
                     value={branchId}
                     onChange={e => setBranchId(e.target.value)}
                     className="w-full h-10 border border-input rounded-md px-3 text-sm bg-background"
                     data-testid="supplier-branch"
                   >
-                    <option value="">— بدون فرع محدد —</option>
+                    <option value="">{localizeUiText("— بدون فرع محدد —")}</option>
                     {(branches as any[]).map((b: any) => (
                       <option key={b.id} value={b.id}>
                         {b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}
                       </option>
                     ))}
                   </select>
-                  <p className="text-xs text-muted-foreground">اختياري — الفرع الافتراضي عند إنشاء فاتورة شراء لهذا المورد</p>
+                  <p className="text-xs text-muted-foreground">{localizeUiText("اختياري — الفرع الافتراضي عند إنشاء فاتورة شراء لهذا المورد")}</p>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">حساب الدائنين (المورد)</label>
+                  <label className="text-sm font-medium">{localizeUiText("حساب الدائنين (المورد)")}</label>
                   <AccountCombobox
                     value={accountId}
                     onValueChange={setAccountId}
-                    placeholder="— اختر حساب الدائنين —"
+                    placeholder={localizeUiText("— اختر حساب الدائنين —")}
                   />
-                  <p className="text-xs text-muted-foreground">الحساب المرتبط بهذا المورد في دفتر الأستاذ</p>
+                  <p className="text-xs text-muted-foreground">{localizeUiText("الحساب المرتبط بهذا المورد في دفتر الأستاذ")}</p>
                 </div>
               </div>
 
               {!accountId && (
                 <div className="space-y-1.5 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-4">
-                  <label className="text-sm font-medium">تصنيف المورد (للإنشاء التلقائي للحساب)</label>
+                  <label className="text-sm font-medium">{localizeUiText("تصنيف المورد (للإنشاء التلقائي للحساب)")}</label>
                   <select
                     value={accountCategory}
                     onChange={e => setAccountCategory(e.target.value as "local" | "foreign")}

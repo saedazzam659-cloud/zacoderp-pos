@@ -2,6 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useFormatters, fmt2 } from "@/lib/format";
 import { localizedName } from "@/lib/localizedName";
 import { safeLogoSrc } from "@/lib/export";
@@ -131,9 +132,9 @@ export default function JournalEntries() {
     // Audit columns — show who created and who posted each entry. Pure
     // display columns, populated by the LIST endpoint via a username join;
     // older rows that pre-date the audit columns render an em-dash.
-    { key: "createdBy", label: t("journalEntries.createdBy", { defaultValue: "أنشأه" }),
+    { key: "createdBy", label: localizeUiText(t("journalEntries.createdBy", { defaultValue: "أنشأه" })),
       type: "text", valueOf: (e) => e.createdByName ?? "—" },
-    { key: "postedBy",  label: t("journalEntries.postedBy",  { defaultValue: "رحّله" }),
+    { key: "postedBy",  label: localizeUiText(t("journalEntries.postedBy",  { defaultValue: "رحّله" })),
       type: "text", valueOf: (e) => e.postedByName  ?? "—" },
     { key: "_act",   label: t("journalEntries.actions"), type: "none", valueOf: () => "" },
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1354,7 +1355,7 @@ ${wrapWithLetterhead(letterhead, sections)}
               "h-3.5 w-3.5",
               (dateFrom || dateTo) ? "text-blue-700" : "text-slate-500",
             )} />
-            <span className="text-[11px] text-slate-600 font-medium">من</span>
+            <span className="text-[11px] text-slate-600 font-medium">{localizeUiText("من")}</span>
             <DateField
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
@@ -1362,7 +1363,7 @@ ${wrapWithLetterhead(letterhead, sections)}
               className="h-6 text-[11px] w-[115px] px-1.5 border-slate-300 bg-white"
               data-testid="filter-date-from"
             />
-            <span className="text-[11px] text-slate-600 font-medium">إلى</span>
+            <span className="text-[11px] text-slate-600 font-medium">{localizeUiText("إلى")}</span>
             <DateField
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
@@ -1385,7 +1386,7 @@ ${wrapWithLetterhead(letterhead, sections)}
                   className="px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 hover:bg-blue-100 hover:text-blue-800 transition-colors"
                   data-testid={`filter-date-preset-${p.k}`}
                 >
-                  {p.label}
+                  {localizeUiText(p.label)}
                 </button>
               ))}
             </div>
@@ -1688,14 +1689,14 @@ ${wrapWithLetterhead(letterhead, sections)}
                         title={sortable ? "اضغط للترتيب — تصاعدي / تنازلي / إلغاء" : undefined}
                       >
                         <span className="inline-flex items-center justify-center gap-1">
-                          {col.label}
+                          {localizeUiText(col.label || col.key)}
                           {SortIcon && (
                             <SortIcon className={cn("h-3 w-3", isSorted ? "text-blue-700" : "text-slate-400 opacity-60")} />
                           )}
                           {col.type !== "none" && (
                             <span onClick={(e) => e.stopPropagation()}>
                               <AdvFilterPopover
-                                colLabel={col.label || col.key}
+                                colLabel={localizeUiText(col.label || col.key)}
                                 colType={col.type}
                                 value={colAdv[col.key]}
                                 active={isAdvActive(colAdv[col.key])}

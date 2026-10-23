@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -536,21 +537,21 @@ export default function FixedAssets() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Package className="h-6 w-6 text-emerald-600" />
-            سجل الأصول الثابتة
+            {localizeUiText("سجل الأصول الثابتة")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            جميع الأصول مع الإهلاك والتأمين والحالة — {rows.length} أصل
+            {localizeUiText("جميع الأصول مع الإهلاك والتأمين والحالة")} — {rows.length} {localizeUiText("أصل")}
           </p>
         </div>
         <Button onClick={openNew} data-testid="btn-new-asset" className="bg-emerald-600 hover:bg-emerald-700">
-          <Plus className="h-4 w-4 ms-2" />أصل جديد
+          <Plus className="h-4 w-4 ms-2" />{localizeUiText("أصل جديد")}
         </Button>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute end-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="بحث بالاسم/الكود/الشاسيه/اللوحة…" value={search}
+          <Input placeholder={localizeUiText("بحث بالاسم/الكود/الشاسيه/اللوحة…")} value={search}
             onChange={(e)=>setSearch(e.target.value)} className="pe-8" data-testid="input-search" />
         </div>
         <span className="text-sm text-muted-foreground">{filtered.length} من {rows.length}</span>
@@ -558,12 +559,12 @@ export default function FixedAssets() {
 
       {showForm && (
         <FormPanel icon={editing?Pencil:Plus}
-          title={editing?`تعديل: ${assetName(editing)}`:"أصل جديد"}
-          subtitle={editing?`الكود: ${editing.code}`:"الكود يُولَّد تلقائياً (AST0001)"}
+          title={editing?`${localizeUiText("تعديل: ")}${assetName(editing)}`:localizeUiText("أصل جديد")}
+          subtitle={editing?`${localizeUiText("الكود: ")}${editing.code}`:localizeUiText("الكود يُولَّد تلقائياً (AST0001)")}
           width="6xl"
           onClose={()=>{ setShowForm(false); setEditing(null); resetImport(); }}
           onSave={()=>saveMut.mutate()} saving={saveMut.isPending}
-          saveLabel="حفظ" cancelLabel="إلغاء"
+          saveLabel={localizeUiText("حفظ")} cancelLabel={localizeUiText("إلغاء")}
         >
           <div className="space-y-4">
             {/* ─── Tab strip ─── */}
@@ -580,7 +581,7 @@ export default function FixedAssets() {
                         : `bg-white ${t.text} border border-slate-200 hover:shadow-sm hover:scale-[1.01]`
                     }`}>
                     <Icon className="h-4 w-4" />
-                    <span>{t.label}</span>
+                    <span>{localizeUiText(t.label)}</span>
                   </button>
                 );
               })}
@@ -615,14 +616,14 @@ export default function FixedAssets() {
             {activeTab === "basic" && (
             <fieldset className="border border-emerald-200 rounded-lg p-4 bg-emerald-50/20">
               <legend className="px-2 text-sm font-bold text-emerald-700 flex items-center gap-1">
-                <Info className="h-4 w-4" /> البيانات الأساسية
+                <Info className="h-4 w-4" /> {localizeUiText("البيانات الأساسية")}
               </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div><Label>الكود</Label>
                   <Input value={form.code} onChange={(e)=>setForm({...form,code:e.target.value})} placeholder="تلقائي AST0001" /></div>
-                <div><Label>اسم الأصل (عربي) *</Label>
+                <div><Label>{localizeUiText("اسم الأصل (عربي)")} *</Label>
                   <Input value={form.nameAr} onChange={(e)=>setForm({...form,nameAr:e.target.value})} data-testid="input-nameAr" /></div>
-                <div><Label>اسم الأصل (إنجليزي)</Label>
+                <div><Label>{localizeUiText("اسم الأصل (إنجليزي)")}</Label>
                   <Input value={form.nameEn} onChange={(e)=>setForm({...form,nameEn:e.target.value})} /></div>
                 <div><Label>الفئة</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
@@ -630,8 +631,8 @@ export default function FixedAssets() {
                     <option value="">— بدون —</option>
                     {cats.map(c => <option key={c.id} value={c.id}>{localizedName(c.nameAr, (c as any).nameEn, i18n.language)}</option>)}
                   </select>
-                  <p className="text-[11px] text-muted-foreground mt-1">اختيار الفئة يملأ بيانات الإهلاك (العمر / الطريقة / الخردة) تلقائياً في تبويب «الإهلاك».</p></div>
-                <div><Label>المجموعة</Label>
+                  <p className="text-[11px] text-muted-foreground mt-1">{localizeUiText("اختيار الفئة يملأ بيانات الإهلاك (العمر / الطريقة / الخردة) تلقائياً في تبويب «الإهلاك».")}</p></div>
+                <div><Label>{localizeUiText("المجموعة")}</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.groupId} onChange={(e)=>setForm({...form,groupId:e.target.value})}>
                     <option value="">— بدون —</option>
@@ -651,7 +652,7 @@ export default function FixedAssets() {
                     {branches.filter((b:any)=>b.isActive!==false).map((b:any) =>
                       <option key={b.id} value={b.id}>{b.code ? `${b.code} — ${localizedName(b.nameAr, b.nameEn ?? b.name, i18n.language)}` : localizedName(b.nameAr, b.nameEn ?? b.name, i18n.language)}</option>)}
                   </select>
-                  <p className="text-[11px] text-muted-foreground mt-1">الفرع التابع له الأصل (يُستخدم في تخصيص الأصل وقيوده على الفرع).</p></div>
+                  <p className="text-[11px] text-muted-foreground mt-1">{localizeUiText("الفرع التابع له الأصل (يُستخدم في تخصيص الأصل وقيوده على الفرع).")}</p></div>
                 <div><Label>مركز التكلفة</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.costCenterId} onChange={(e)=>setForm({...form,costCenterId:e.target.value})}
@@ -660,7 +661,7 @@ export default function FixedAssets() {
                     {costCenters.filter((c:any)=>c.isActive!==false).map((c:any) =>
                       <option key={c.id} value={c.id}>{c.code ? `${c.code} — ${localizedName(c.nameAr, c.nameEn, i18n.language)}` : localizedName(c.nameAr, c.nameEn, i18n.language)}</option>)}
                   </select>
-                  <p className="text-[11px] text-muted-foreground mt-1">يُستخدم في توزيع مصروف الإهلاك على مراكز التكلفة.</p></div>
+                  <p className="text-[11px] text-muted-foreground mt-1">{localizeUiText("يُستخدم في توزيع مصروف الإهلاك على مراكز التكلفة.")}</p></div>
                 <div><Label>الموقع</Label>
                   <Input value={form.location} onChange={(e)=>setForm({...form,location:e.target.value})} /></div>
               </div>
@@ -1042,24 +1043,24 @@ export default function FixedAssets() {
             {activeTab === "depreciation" && (
             <fieldset className="border border-violet-200 rounded-lg p-4 bg-violet-50/20">
               <legend className="px-2 text-sm font-bold text-violet-700 flex items-center gap-1">
-                <TrendingDown className="h-4 w-4" /> بيانات الإهلاك
+                <TrendingDown className="h-4 w-4" /> {localizeUiText("بيانات الإهلاك")}
               </legend>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <YearMonthInput value={form.lifeYears} onChange={(v)=>{setDepTouched(t=>({...t,lifeYears:true}));setForm({...form,lifeYears:v});}} />
-                <div><Label>طريقة الإهلاك</Label>
+                <div><Label>{localizeUiText("طريقة الإهلاك")}</Label>
                   <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     value={form.depreciationMethod} onChange={(e)=>{setDepTouched(t=>({...t,depreciationMethod:true}));setForm({...form,depreciationMethod:e.target.value});}}>
                     {METHODS.map(([v,l])=> <option key={v} value={v}>{l}</option>)}
                   </select></div>
-                <div><Label>قيمة الخردة</Label>
+                <div><Label>{localizeUiText("قيمة الخردة")}</Label>
                   <Input type="text" inputMode="decimal" dir="ltr" value={form.scrapValue} onChange={(e)=>{setDepTouched(t=>({...t,scrapValue:true}));setForm({...form,scrapValue:e.target.value.replace(/[^0-9.]/g,"")});}} /></div>
-                <div><Label>تاريخ بداية الإهلاك</Label>
+                <div><Label>{localizeUiText("تاريخ بداية الإهلاك")}</Label>
                   <DateField value={form.depreciationStart} onChange={(e)=>setForm({...form,depreciationStart:e.target.value})} /></div>
-                <div><Label>الإهلاك المتراكم</Label>
+                <div><Label>{localizeUiText("الإهلاك المتراكم")}</Label>
                   <Input type="text" inputMode="decimal" dir="ltr" value={form.accumulatedDepreciation} onChange={(e)=>setForm({...form,accumulatedDepreciation:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
-                <div><Label>المجمع حتى تاريخ <span className="text-xs text-muted-foreground">(اختياري — يُكمل الإهلاك من اليوم التالي)</span></Label>
+                <div><Label>{localizeUiText("المجمع حتى تاريخ")} <span className="text-xs text-muted-foreground">({localizeUiText("اختياري — يُكمل الإهلاك من اليوم التالي")})</span></Label>
                   <DateField value={form.accumAsOf ?? ""} onChange={(e)=>setForm({...form,accumAsOf:e.target.value})} /></div>
-                <div><Label>القيمة الدفترية</Label>
+                <div><Label>{localizeUiText("القيمة الدفترية")}</Label>
                   <Input type="text" inputMode="decimal" dir="ltr" value={form.bookValue} onChange={(e)=>setForm({...form,bookValue:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
               </div>
 
@@ -1067,7 +1068,7 @@ export default function FixedAssets() {
                 <DepreciationScheduleTimeline
                   assetId={editing?.id}
                   projection={!editing}
-                  title={editing ? "الجدول الزمني للإهلاك (المُرحَّل والمتبقّي)" : "الجدول الزمني المتوقع للإهلاك"}
+                  title={localizeUiText(editing ? "الجدول الزمني للإهلاك (المُرحَّل والمتبقّي)" : "الجدول الزمني المتوقع للإهلاك")}
                   purchaseValue={form.purchaseValue}
                   scrapValue={form.scrapValue}
                   lifeYears={form.lifeYears}
@@ -1207,7 +1208,7 @@ export default function FixedAssets() {
       {/* Mobile cards (md-hidden) */}
       <div className="md:hidden space-y-3">
         {isLoading && <div className="text-center py-8 text-muted-foreground text-sm">جاري التحميل…</div>}
-        {!isLoading && filtered.length === 0 && <div className="text-center py-8 text-muted-foreground text-sm">لا توجد أصول</div>}
+        {!isLoading && filtered.length === 0 && <div className="text-center py-8 text-muted-foreground text-sm">{localizeUiText("لا توجد أصول")}</div>}
         {filtered.map(a => (
           <div key={a.id} className="rounded-2xl bg-white border border-teal-100 shadow-sm overflow-hidden">
             <div className="bg-gradient-to-r from-teal-500 to-teal-600 px-4 py-2.5 flex items-center justify-between">
@@ -1244,7 +1245,7 @@ export default function FixedAssets() {
       </div>
 
       {/* Mobile FAB */}
-      <button onClick={openNew} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label="أصل جديد">
+      <button onClick={openNew} className="md:hidden fixed bottom-6 end-6 z-40 group" aria-label={localizeUiText("أصل جديد")}>
         <span className="absolute inset-0 rounded-full bg-teal-400/40 animate-ping" />
         <span className="relative h-14 w-14 rounded-full bg-gradient-to-br from-teal-500 to-teal-600 ring-4 ring-white shadow-2xl grid place-items-center text-white">
           <Plus className="h-7 w-7" />
@@ -1269,7 +1270,7 @@ export default function FixedAssets() {
             </thead>
             <tbody className="divide-y">
               {isLoading && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
-              {!isLoading && filtered.length===0 && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">لا توجد أصول</td></tr>}
+              {!isLoading && filtered.length===0 && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">{localizeUiText("لا توجد أصول")}</td></tr>}
               {filtered.map(a => (
                 <tr key={a.id} className="hover:bg-emerald-50/40" data-testid={`row-asset-${a.id}`}>
                   <td className="px-3 py-2 font-mono">{a.code}</td>

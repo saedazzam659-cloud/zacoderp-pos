@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -760,11 +761,11 @@ export default function Suppliers() {
             className="gap-2"
             onClick={() => repairMutation.mutate()}
             disabled={repairMutation.isPending}
-            title="إعادة إنشاء/ربط حسابات الدائنين للموردين الذين حُذفت حساباتهم من شجرة الحسابات"
+            title={localizeUiText("إعادة إنشاء/ربط حسابات الدائنين للموردين الذين حُذفت حساباتهم من شجرة الحسابات")}
             data-testid="button-repair-supplier-accounts"
           >
             <Wrench className="h-4 w-4" />
-            {repairMutation.isPending ? "جارٍ الإصلاح..." : "إصلاح الربط المحاسبي"}
+            {localizeUiText(repairMutation.isPending ? "جارٍ الإصلاح..." : "إصلاح الربط المحاسبي")}
           </Button>
           <Button onClick={openCreate} className="gap-2">
             <Plus className="h-4 w-4" />{t("common.add")} {t("pages.suppliers.supplier")}
@@ -978,20 +979,20 @@ export default function Suppliers() {
           };
           const items: LegendItem[] = [
             { kind: "active",    count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && s.vatNumber).length,
-              labelOverride: "مسجَّل ضريبياً بدون رصيد",
-              hintOverride: "مورد لديه رقم تسجيل ضريبي ورصيده صفر — جاهز للتعامل" },
+              labelOverride: localizeUiText("مسجَّل ضريبياً بدون رصيد"),
+              hintOverride: localizeUiText("مورد لديه رقم تسجيل ضريبي ورصيده صفر — جاهز للتعامل") },
             { kind: "inactive",  count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && !s.vatNumber).length,
-              labelOverride: "غير مسجَّل بدون رصيد",
-              hintOverride: "مورد بدون تسجيل ضريبي ورصيده صفر — لا تُخصم منه ضريبة مدخلات" },
+              labelOverride: localizeUiText("غير مسجَّل بدون رصيد"),
+              hintOverride: localizeUiText("مورد بدون تسجيل ضريبي ورصيده صفر — لا تُخصم منه ضريبة مدخلات") },
             { kind: "debit",     count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) > 0).length,
-              labelOverride: "مدين (دفعنا له زيادة)",
-              hintOverride: "موردون لنا عليهم رصيد مدين — دفعنا أكثر من المستحق" },
+              labelOverride: localizeUiText("مدين (دفعنا له زيادة)"),
+              hintOverride: localizeUiText("موردون لنا عليهم رصيد مدين — دفعنا أكثر من المستحق") },
             { kind: "credit",    count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) < 0 && !isOver(s)).length,
-              labelOverride: "دائن (لنا عليهم)",
-              hintOverride: "موردون لهم علينا رصيد دائن ضمن حد الائتمان الممنوح لنا" },
+              labelOverride: localizeUiText("دائن (لنا عليهم)"),
+              hintOverride: localizeUiText("موردون لهم علينا رصيد دائن ضمن حد الائتمان الممنوح لنا") },
             { kind: "overLimit", count: filtered.filter(isOver).length,
-              labelOverride: "تجاوز الائتمان",
-              hintOverride: "تجاوزنا حدَّ الائتمان الممنوح لنا منه — يجب السداد قبل أي شراء جديد" },
+              labelOverride: localizeUiText("تجاوز الائتمان"),
+              hintOverride: localizeUiText("تجاوزنا حدَّ الائتمان الممنوح لنا منه — يجب السداد قبل أي شراء جديد") },
           ];
           return <div className="px-4 pt-2"><DocColorLegend items={items} separatorAfter={[3]} /></div>;
         })()}

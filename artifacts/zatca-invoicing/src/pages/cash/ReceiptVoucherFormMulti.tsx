@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useFormatters, fmt2, fmtNum } from "@/lib/format";
@@ -842,7 +843,7 @@ export default function ReceiptVoucherFormMulti() {
               <ArrowDownCircle className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-lg font-bold">{isNew ? t(`${NS}.newLong`) : t(`${NS}.editVoucher`)}{t(`${NS}.multiSuffix`, " (عمليات متعددة)")}</h1>
+              <h1 className="text-lg font-bold">{isNew ? t(`${NS}.newLong`) : t(`${NS}.editVoucher`)}{localizeUiText(t(`${NS}.multiSuffix`, " (عمليات متعددة)"))}</h1>
               <p className="text-xs text-muted-foreground">
                 {isNew
                   ? t(`${NS}.subtitle`)
@@ -930,9 +931,9 @@ export default function ReceiptVoucherFormMulti() {
           {/* ── Left column: TABBED form ──────────────────── */}
           <Tabs defaultValue="voucher" dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
             <TabsList className="grid grid-cols-3 w-full h-auto gap-1 p-1">
-              <TabsTrigger value="voucher" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_header`, "بيانات السند")}</TabsTrigger>
-              <TabsTrigger value="party" className="py-2.5 text-sm md:text-base">{t(`${NS}.tab_party`, "العميل ووسيلة القبض")}</TabsTrigger>
-              <TabsTrigger value="lines" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_lines`, "بنود القبض")}</TabsTrigger>
+              <TabsTrigger value="voucher" className="py-2.5 text-sm md:text-base">{localizeUiText(t(`${NS}.section_header`, "بيانات السند"))}</TabsTrigger>
+              <TabsTrigger value="party" className="py-2.5 text-sm md:text-base">{localizeUiText(t(`${NS}.tab_party`, "العميل ووسيلة القبض"))}</TabsTrigger>
+              <TabsTrigger value="lines" className="py-2.5 text-sm md:text-base">{localizeUiText(t(`${NS}.section_lines`, "بنود القبض"))}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="voucher" className="mt-0">
@@ -941,7 +942,7 @@ export default function ReceiptVoucherFormMulti() {
               <CardHeader className="py-3 px-4 border-b bg-muted/30">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <FileText className="h-4 w-4 text-amber-700" />
-                  {t(`${NS}.section_header`, "بيانات السند")}
+                  {localizeUiText(t(`${NS}.section_header`, "بيانات السند"))}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-4">
@@ -1051,7 +1052,7 @@ export default function ReceiptVoucherFormMulti() {
               <CardHeader className="py-3 px-4 border-b bg-green-50/40">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2 text-green-900">
                   <Wallet className="h-4 w-4" />
-                  {t(`${NS}.tab_party`, "العميل والمبلغ")}
+                  {localizeUiText(t(`${NS}.tab_party`, "العميل والمبلغ"))}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-4">
@@ -1155,11 +1156,11 @@ export default function ReceiptVoucherFormMulti() {
                     }));
                   }}
                   placeholder={t(`${NS}.selectCustomer`, "— اختر العميل —")}
-                  searchPlaceholder={t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود...")}
+                  searchPlaceholder={localizeUiText(t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود..."))}
                   emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
                 />
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  {t(`${NS}.customerHintOptional`, "اختياري — يُستخدم لتصفية فواتير المبيعات القابلة للربط في البنود.")}
+                  {localizeUiText(t(`${NS}.customerHintOptional`, "اختياري — يُستخدم لتصفية فواتير المبيعات القابلة للربط في البنود."))}
                 </p>
               </CardContent>
             </Card>
@@ -1172,12 +1173,12 @@ export default function ReceiptVoucherFormMulti() {
               <CardHeader className="py-3 px-4 border-b bg-green-50/40">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2 text-green-900">
                   <Layers className="h-4 w-4" />
-                  {t(`${NS}.section_lines`, "بنود القبض")}
+                  {localizeUiText(t(`${NS}.section_lines`, "بنود القبض"))}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t(`${NS}.generalDescription`, "البيان العام")}</Label>
+                  <Label className="text-xs font-medium">{localizeUiText(t(`${NS}.generalDescription`, "البيان العام"))}</Label>
                   <Textarea value={form.description} onChange={e => {
                     if (fp.isReadOnly("description")) return;
                     const next = e.target.value;
@@ -1187,8 +1188,8 @@ export default function ReceiptVoucherFormMulti() {
                 </div>
                 <div className="border rounded-lg overflow-hidden">
                   <div className="grid grid-cols-[28px_2fr_1fr_1.5fr_1.2fr_28px] gap-2 px-3 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
-                    <span /><span>{t(`${NS}.colAccount`, "الحساب")}</span><span>{t(`${NS}.colAmount`, "المبلغ")}</span>
-                    <span>{t(`${NS}.colDescription`, "البيان")}</span><span>{t(`${NS}.colCostCenter`, "مركز التكلفة")}</span><span />
+                    <span /><span>{localizeUiText(t(`${NS}.colAccount`, "الحساب"))}</span><span>{localizeUiText(t(`${NS}.colAmount`, "المبلغ"))}</span>
+                    <span>{localizeUiText(t(`${NS}.colDescription`, "البيان"))}</span><span>{localizeUiText(t(`${NS}.colCostCenter`, "مركز التكلفة"))}</span><span />
                   </div>
                   <div className="divide-y">
                   {form.lines.map((l, idx) => (
@@ -1201,15 +1202,15 @@ export default function ReceiptVoucherFormMulti() {
                         <span className="text-[10px] text-muted-foreground text-center font-mono">{idx + 1}</span>
                         {l.contractingAllocation ? <span className="text-xs text-muted-foreground">حساب المقاولات يحدده النظام</span> :
                           <SearchCombobox items={postableAccounts} value={l.accountId} onValueChange={aid => updateLine(l.key, { accountId: aid })}
-                            placeholder={t(`${NS}.selectAccountPh`, "— اختر الحساب —")} searchPlaceholder="ابحث بالاسم أو الكود..." />}
+                            placeholder={localizeUiText(t(`${NS}.selectAccountPh`, "— اختر الحساب —"))} searchPlaceholder={localizeUiText("ابحث بالاسم أو الكود...")} />}
                         <Input type="text" inputMode="decimal" placeholder="0.00" dir="ltr" value={l.amount}
                           onChange={e => updateLine(l.key, { amount: e.target.value.replace(/[^0-9.]/g, "") })}
                           className="h-8 text-sm text-left font-mono" data-testid={`rv-line-amount-${idx}`} />
                         <Input value={l.description} onChange={e => updateLine(l.key, { description: e.target.value })}
-                          placeholder={t(`${NS}.colDescription`, "البيان")} className="h-8 text-sm" />
+                          placeholder={localizeUiText(t(`${NS}.colDescription`, "البيان"))} className="h-8 text-sm" />
                         <select value={l.costCenter} onChange={e => updateLine(l.key, { costCenter: e.target.value })}
                           className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background">
-                          <option value="">— {t(`${NS}.noCostCenter`, "بدون")} —</option>
+                          <option value="">— {localizeUiText(t(`${NS}.noCostCenter`, "بدون"))} —</option>
                           {(costCentersList as any[]).filter((c: any) => c.isActive !== false).map((c: any) =>
                             <option key={c.id} value={c.code}>{c.code} — {c.nameAr}</option>)}
                         </select>
@@ -1264,7 +1265,7 @@ export default function ReceiptVoucherFormMulti() {
                           ...(allocation ? { accountId: "", salesInvoiceId: "" } : {}) })} />}
 
                       <div className="flex justify-end text-xs text-muted-foreground">
-                        {t(`${NS}.colLineTotal`, "إجمالي البند")}: <span className="font-mono font-semibold text-green-700 mr-1" data-testid={`rv-line-total-${idx}`}>{fmt(Number(l.amount) || 0)}</span>
+                        {localizeUiText(t(`${NS}.colLineTotal`, "إجمالي البند"))}: <span className="font-mono font-semibold text-green-700 mr-1" data-testid={`rv-line-total-${idx}`}>{fmt(Number(l.amount) || 0)}</span>
                       </div>
                     </div>
                   ))}
@@ -1278,14 +1279,14 @@ export default function ReceiptVoucherFormMulti() {
                   data-testid="rv-add-line"
                 >
                   <Plus className="h-4 w-4" />
-                  {t(`${NS}.addLine`, "إضافة بند")}
+                  {localizeUiText(t(`${NS}.addLine`, "إضافة بند"))}
                 </Button>
 
                 {/* Totals footer */}
                 <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t pt-3 mt-1 text-sm">
                   <div className="flex items-center gap-2">
                     <Banknote className="h-4 w-4 text-green-600" />
-                    <span className="text-muted-foreground text-xs">{t(`${NS}.grandTotal`, "الإجمالي")}</span>
+                    <span className="text-muted-foreground text-xs">{localizeUiText(t(`${NS}.grandTotal`, "الإجمالي"))}</span>
                     <span className="font-mono font-bold text-base tabular-nums text-green-700" data-testid="rv-grand-total">{fmt(totals.grand)}</span>
                   </div>
                 </div>
@@ -1326,7 +1327,7 @@ export default function ReceiptVoucherFormMulti() {
                 )}
                 {fp.isVisible("costCenter") && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">مركز التكلفة{fp.isRequired("costCenter") && <span className="text-destructive"> *</span>}</Label>
+                  <Label className="text-xs font-medium">{localizeUiText("مركز التكلفة")}{fp.isRequired("costCenter") && <span className="text-destructive"> *</span>}</Label>
                   <select
                     value={form.costCenter}
                     onChange={e => setForm(p => ({ ...p, costCenter: e.target.value }))}
@@ -1344,7 +1345,7 @@ export default function ReceiptVoucherFormMulti() {
                       ))}
                   </select>
                   <p className="text-[11px] text-muted-foreground">
-                    سيُسند هذا المركز إلى كل سطور القيد عند الترحيل ليظهر في تقارير مراكز التكلفة.
+                    {localizeUiText("سيُسند هذا المركز إلى كل سطور القيد عند الترحيل ليظهر في تقارير مراكز التكلفة.")}
                   </p>
                 </div>
                 )}

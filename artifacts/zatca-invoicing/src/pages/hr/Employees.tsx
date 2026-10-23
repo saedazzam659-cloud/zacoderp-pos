@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
 import { fmt2 } from "@/lib/format";
@@ -71,7 +72,7 @@ export default function Employees() {
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
-  const tr = (k: string, opts?: any) => t(`hrPages.employees.${k}`, opts) as string;
+  const tr = (k: string, opts?: any) => localizeUiText(t(`hrPages.employees.${k}`, opts) as string);
   const pickName = (ar?: string, en?: string) => localizedName(ar, en, i18n.language);
 
   const STATUS: Record<string, { label: string; cls: string }> = {

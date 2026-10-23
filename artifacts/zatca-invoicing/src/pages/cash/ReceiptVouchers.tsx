@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useLocation } from "wouter";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useAuth } from "@/contexts/AuthContext";
@@ -200,7 +201,7 @@ export default function ReceiptVouchers({ variant = "simple" }: { variant?: "sim
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><ArrowDownCircle className="h-6 w-6 text-green-600" />{t(`${NS}.title`)}{isMultiList && " — عمليات متعددة"}</h1>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><ArrowDownCircle className="h-6 w-6 text-green-600" />{t(`${NS}.title`)}{isMultiList && ` — ${localizeUiText("عمليات متعددة")}`}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t(`${NS}.subtitle`)}</p>
         </div>
         <Button onClick={openAdd} className="gap-2"><Plus className="h-4 w-4" />{t(`${NS}.newVoucher`)}</Button>

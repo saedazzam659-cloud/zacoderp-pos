@@ -1,4 +1,5 @@
 // Accounting standards browser + AI Q&A.
+import { localizeUiText } from "@/lib/localizedUiText";
 //
 // Reads from /api/accounting-ai/standards (filterable list) and
 // /api/accounting-ai/ask (RAG-style answer with citations).
@@ -119,7 +120,7 @@ export default function AccountingStandards() {
       <div className="flex items-center gap-3">
         <Library className="h-7 w-7 text-primary" />
         <div>
-          <h1 className="text-2xl font-bold">مكتبة المعايير المحاسبية</h1>
+          <h1 className="text-2xl font-bold">{localizeUiText("مكتبة المعايير المحاسبية")}</h1>
           <p className="text-sm text-muted-foreground">
             مرجع سريع لمعايير IFRS و US GAAP ولوائح زاتكا — مع مستشار ذكي مجاني للأسئلة المحاسبية.
           </p>
@@ -135,7 +136,7 @@ export default function AccountingStandards() {
             variant={tab === t.id ? "default" : "outline"}
             onClick={() => setTab(t.id)}
           >
-            {t.labelAr}
+            {localizeUiText(t.labelAr)}
             {tab === "all" && t.id !== "all" && counts[t.id] !== undefined && (
               <Badge variant="secondary" className="ms-2">{counts[t.id]}</Badge>
             )}
@@ -149,19 +150,19 @@ export default function AccountingStandards() {
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <BookOpen className="h-5 w-5 text-primary" />
-              المعايير ({items.length})
+              {localizeUiText(`المعايير (${items.length})`)}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <Input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="ابحث برمز المعيار أو الاسم أو الكلمة المفتاحية…"
+              placeholder={localizeUiText("ابحث برمز المعيار أو الاسم أو الكلمة المفتاحية…")}
             />
             {loading ? (
-              <p className="text-sm text-muted-foreground text-center py-8">جارٍ التحميل…</p>
+              <p className="text-sm text-muted-foreground text-center py-8">{localizeUiText("جارٍ التحميل…")}</p>
             ) : items.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">لا توجد نتائج.</p>
+              <p className="text-sm text-muted-foreground text-center py-8">{localizeUiText("لا توجد نتائج.")}</p>
             ) : (
               <ScrollArea className="h-[520px] pr-2">
                 <div className="space-y-2">
@@ -199,7 +200,7 @@ export default function AccountingStandards() {
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <Sparkles className="h-5 w-5 text-amber-500" />
-              اسأل المستشار المحاسبي
+              {localizeUiText("اسأل المستشار المحاسبي")}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -207,7 +208,7 @@ export default function AccountingStandards() {
               value={question}
               onChange={e => setQuestion(e.target.value)}
               rows={3}
-              placeholder="مثال: متى أعترف بإيراد مشروع طويل الأجل وفقاً لـ IFRS 15؟"
+              placeholder={localizeUiText("مثال: متى أعترف بإيراد مشروع طويل الأجل وفقاً لـ IFRS 15؟")}
             />
             <Button onClick={ask} disabled={asking || !question.trim()} className="w-full gap-2">
               {asking ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}

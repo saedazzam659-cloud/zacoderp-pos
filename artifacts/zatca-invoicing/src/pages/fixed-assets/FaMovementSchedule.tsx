@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useQuery } from "@tanstack/react-query";
+import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { DateField } from "@/components/ui/date-field";
 import ExportButtons from "@/components/ExportButtons";
@@ -61,6 +63,7 @@ function defaultRange() {
 }
 
 export default function FaMovementSchedule() {
+  const { isRtl } = useFormatters();
     const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const cid = user?.companyId;
@@ -224,7 +227,7 @@ export default function FaMovementSchedule() {
     bookValue: totals.bookValue,
   } : null, [totals]);
 
-  const reportTitle = "جدول الإهلاك وحركة الأصول الثابتة";
+  const reportTitle = localizeUiText("جدول الإهلاك وحركة الأصول الثابتة");
   const reportSubtitle = `من ${from} إلى ${to}`;
   const reportFilename = `جدول-الإهلاك_${from}_${to}`;
 
@@ -267,16 +270,16 @@ export default function FaMovementSchedule() {
   const th = "px-2 py-2 text-center font-semibold border border-slate-300";
 
   return (
-    <div className="p-4 space-y-4" dir="rtl">
+    <div className="p-4 space-y-4" dir={isRtl ? "rtl" : "ltr"}>
       {/* Header / controls */}
       <div className="flex flex-wrap items-end justify-between gap-3 print:hidden">
         <div>
           <h1 className="text-xl font-bold text-emerald-800 flex items-center gap-2">
             <CalendarRange className="h-6 w-6 text-emerald-600" />
-            جدول الإهلاك وحركة الأصول الثابتة
+            {localizeUiText("جدول الإهلاك وحركة الأصول الثابتة")}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            مبني على القيود المحاسبية المُرحّلة — يشمل الأصول من الموديول ومن فواتير المشتريات والقيود اليدوية.
+            {localizeUiText("مبني على القيود المحاسبية المُرحّلة — يشمل الأصول من الموديول ومن فواتير المشتريات والقيود اليدوية.")}
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -315,18 +318,18 @@ export default function FaMovementSchedule() {
                 disabled={flatCount === 0 || printing}
                 className="h-9 px-3 rounded-md bg-slate-700 text-white text-sm flex items-center gap-1 hover:bg-slate-800 disabled:opacity-50"
               >
-                {printing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} طباعة
+                {printing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} {localizeUiText("طباعة")}
                 <ChevronDown className="h-3 w-3 opacity-70" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handlePrint("summary")}>
                 <Layers className="h-4 w-4 text-emerald-600" />
-                <span>طباعة إجمالية (بدون تفاصيل)</span>
+                <span>{localizeUiText("طباعة إجمالية (بدون تفاصيل)")}</span>
               </DropdownMenuItem>
               <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handlePrint("detailed")}>
                 <ListTree className="h-4 w-4 text-sky-600" />
-                <span>طباعة تفصيلية (بالأصول)</span>
+                <span>{localizeUiText("طباعة تفصيلية (بالأصول)")}</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -359,7 +362,7 @@ export default function FaMovementSchedule() {
 
       {/* Print title */}
       <div className="hidden print:block text-center mb-2">
-        <div className="text-lg font-bold">جدول الإهلاك وحركة الأصول الثابتة</div>
+        <div className="text-lg font-bold">{localizeUiText("جدول الإهلاك وحركة الأصول الثابتة")}</div>
         <div className="text-sm">من {from} إلى {to}</div>
       </div>
 
@@ -373,7 +376,7 @@ export default function FaMovementSchedule() {
       )}
       {!isFetching && !isError && flatCount === 0 && (
         <div className="text-slate-500 text-sm border border-dashed rounded-lg p-8 text-center">
-          لا توجد حركة أصول ثابتة في الفترة المحددة.
+          {localizeUiText("لا توجد حركة أصول ثابتة في الفترة المحددة.")}
         </div>
       )}
 

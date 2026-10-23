@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useQuery } from "@tanstack/react-query";
+import { useFormatters } from "@/lib/format";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { DateField } from "@/components/ui/date-field";
@@ -49,6 +51,7 @@ function defaultRange() {
 }
 
 export default function AdjustmentsSchedule() {
+  const { isRtl } = useFormatters();
     const gate = useDemoActionGate();
   const { user, token } = useAuth() as any;
   const cid = user?.companyId;
@@ -224,63 +227,63 @@ export default function AdjustmentsSchedule() {
   const th = "px-2 py-2 text-center font-semibold border border-slate-300";
 
   return (
-    <div className="p-4 space-y-4" dir="rtl">
+    <div className="p-4 space-y-4" dir={isRtl ? "rtl" : "ltr"}>
       {/* Header / controls */}
       <div className="flex flex-wrap items-end justify-between gap-3 print:hidden">
         <div>
           <h1 className="text-xl font-bold text-emerald-800 flex items-center gap-2">
             <CalendarRange className="h-6 w-6 text-emerald-600" />
-            جدول التسويات وحركة المصروف المقدم والمستحق
+            {localizeUiText("جدول التسويات وحركة المصروف المقدم والمستحق")}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            مبني على القيود المحاسبية المُرحّلة فقط — يطابق ميزان المراجعة، بنفس فكرة جدول الإهلاك.
+            {localizeUiText("مبني على القيود المحاسبية المُرحّلة فقط — يطابق ميزان المراجعة، بنفس فكرة جدول الإهلاك.")}
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
           <label className="text-xs text-slate-600">
-            النوع
+            {localizeUiText("النوع")}
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
               className="block mt-1 h-9 w-32 px-2 rounded-md border border-slate-300 bg-white text-sm"
             >
-              <option value="">الكل</option>
-              <option value="prepaid">مصروف مقدم</option>
-              <option value="accrued">مصروف مستحق</option>
+              <option value="">{localizeUiText("الكل")}</option>
+              <option value="prepaid">{localizeUiText("مصروف مقدم")}</option>
+              <option value="accrued">{localizeUiText("مصروف مستحق")}</option>
             </select>
           </label>
           <label className="text-xs text-slate-600">
-            مركز التكلفة
+            {localizeUiText("مركز التكلفة")}
             <select
               value={ccFilter}
               onChange={(e) => setCcFilter(e.target.value)}
               className="block mt-1 h-9 w-36 px-2 rounded-md border border-slate-300 bg-white text-sm"
             >
-              <option value="">الكل</option>
+              <option value="">{localizeUiText("الكل")}</option>
               {costCenters.map((c: any) => (
                 <option key={c.id} value={String(c.id)}>{c.nameAr ?? c.name}</option>
               ))}
             </select>
           </label>
           <label className="text-xs text-slate-600">
-            السنة
+            {localizeUiText("السنة")}
             <select
               value={selectedYear}
               onChange={(e) => pickYear(e.target.value)}
               className="block mt-1 h-9 w-24 px-2 rounded-md border border-slate-300 bg-white text-sm"
             >
-              <option value="">مخصص</option>
+              <option value="">{localizeUiText("مخصص")}</option>
               {yearOptions.map((y) => (
                 <option key={y} value={String(y)}>{y}</option>
               ))}
             </select>
           </label>
           <label className="text-xs text-slate-600">
-            من
+            {localizeUiText("من")}
             <DateField value={from} onChange={(e) => setFrom(e.target.value)} className="block mt-1 w-36" />
           </label>
           <label className="text-xs text-slate-600">
-            إلى
+            {localizeUiText("إلى")}
             <DateField value={to} onChange={(e) => setTo(e.target.value)} className="block mt-1 w-36" />
           </label>
           <button
@@ -289,7 +292,7 @@ export default function AdjustmentsSchedule() {
             className="h-9 px-3 rounded-md border border-slate-300 bg-white text-slate-700 text-sm flex items-center gap-1 hover:bg-slate-50 disabled:opacity-50"
           >
             {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
-            {allExpanded ? "طي الكل" : "توسيع الكل"}
+            {localizeUiText(allExpanded ? "طي الكل" : "توسيع الكل")}
           </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -347,15 +350,15 @@ export default function AdjustmentsSchedule() {
 
       {isFetching && (
         <div className="flex items-center gap-2 text-slate-500 text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> جارٍ التحميل…
+          <Loader2 className="h-4 w-4 animate-spin" /> {localizeUiText("جارٍ التحميل…")}
         </div>
       )}
       {isError && (
-        <div className="text-red-600 text-sm">تعذّر تحميل التقرير. حاول مرة أخرى.</div>
+        <div className="text-red-600 text-sm">{localizeUiText("تعذّر تحميل التقرير. حاول مرة أخرى.")}</div>
       )}
       {!isFetching && !isError && flatCount === 0 && (
         <div className="text-slate-500 text-sm border border-dashed rounded-lg p-8 text-center">
-          لا توجد تسويات شهرية في الفترة المحددة.
+          {localizeUiText("لا توجد تسويات شهرية في الفترة المحددة.")}
         </div>
       )}
 

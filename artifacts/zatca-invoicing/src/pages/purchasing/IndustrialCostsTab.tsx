@@ -1,4 +1,5 @@
 import { Factory, Link2, Zap } from "lucide-react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
@@ -77,17 +78,16 @@ export default function IndustrialCostsTab({
       <div className="flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50/60 p-4 text-sky-950">
         <div className="mt-0.5 rounded-lg bg-sky-100 p-2"><Zap className="h-4 w-4 text-sky-700" /></div>
         <div className="min-w-0">
-          <h3 className="text-sm font-bold">مصادر التكاليف الصناعية الفعلية</h3>
+          <h3 className="text-sm font-bold">{localizeUiText("مصادر التكاليف الصناعية الفعلية")}</h3>
           <p className="mt-1 text-xs leading-relaxed text-sky-800">
-            اختيار السطر يحفظ مصدر التكلفة الأصلي فقط. تُحتسب الفواتير المعتمدة ناقص المرتجعات المعتمدة؛
-            سندات الدفع لا تُنشئ تكلفة جديدة ولا يتم إنشاء قيد تصنيع من هنا.
+            {localizeUiText("اختيار السطر يحفظ مصدر التكلفة الأصلي فقط. تُحتسب الفواتير المعتمدة ناقص المرتجعات المعتمدة؛ سندات الدفع لا تُنشئ تكلفة جديدة ولا يتم إنشاء قيد تصنيع من هنا.")}
           </p>
         </div>
       </div>
 
       {lines.length === 0 ? (
         <div className="rounded-xl border border-dashed bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
-          أضف سطر مشتريات أولاً ثم حدده كمصدر تكلفة صناعية عند الحاجة.
+          {localizeUiText("أضف سطر مشتريات أولاً ثم حدده كمصدر تكلفة صناعية عند الحاجة.")}
         </div>
       ) : (
         <div className="space-y-3">

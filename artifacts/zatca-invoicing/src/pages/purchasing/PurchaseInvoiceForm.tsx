@@ -11,6 +11,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useScreenItemModes, annotateItemCombo } from "@/lib/itemUsageClient";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { useFieldPolicy } from "@/hooks/useInvoiceFieldPolicy";
 import { isAccountNoteVisible } from "@/lib/accountNoteVisibility";
@@ -1559,41 +1560,41 @@ function PurchaseInvoiceFormContent() {
               {useTabbedLayout ? (
                 <TabsList className={cn("h-8 bg-background border gap-1 shrink-0", colorfulInvoiceTabs && COLORFUL_INVOICE_TAB_LIST_CLASS)}>
                   <TabsTrigger value="basic" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("basic", colorfulInvoiceTabs))}>
-                    <FileText className="h-3.5 w-3.5" />البيانات الأساسية
+                    <FileText className="h-3.5 w-3.5" />{localizeUiText("البيانات الأساسية")}
                   </TabsTrigger>
                   <TabsTrigger value="items" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("items", colorfulInvoiceTabs), !basicFieldsValid && "opacity-50")}>
-                    <ListOrdered className="h-3.5 w-3.5" />الأصناف
+                    <ListOrdered className="h-3.5 w-3.5" />{localizeUiText("الأصناف")}
                   </TabsTrigger>
                   <TabsTrigger value="industrialCosts" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("industrialCosts", colorfulInvoiceTabs))}>
-                    <TrendingUp className="h-3.5 w-3.5" />التكاليف الصناعية
+                    <TrendingUp className="h-3.5 w-3.5" />{localizeUiText("التكاليف الصناعية")}
                   </TabsTrigger>
                   {/* Linked-ops tabs stay VISIBLE on a new invoice but disabled
                       until it is saved (they need a persisted invoice id). */}
                   <TabsTrigger value="debitNote" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("debitNote", colorfulInvoiceTabs))}>
-                    <FileText className="h-3.5 w-3.5" />إشعار مدين
+                    <FileText className="h-3.5 w-3.5" />{localizeUiText("إشعار مدين")}
                   </TabsTrigger>
                   {showSupplierCreditNotes && <TabsTrigger value="creditNote" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("creditNote", colorfulInvoiceTabs))}>
-                    <FileText className="h-3.5 w-3.5" />إشعار دائن
+                    <FileText className="h-3.5 w-3.5" />{localizeUiText("إشعار دائن")}
                   </TabsTrigger>}
                   <TabsTrigger value="payments" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("payments", colorfulInvoiceTabs))}>
-                    <Wallet className="h-3.5 w-3.5" />السداد
+                    <Wallet className="h-3.5 w-3.5" />{localizeUiText("السداد")}
                   </TabsTrigger>
                   <TabsTrigger value="returns" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("returns", colorfulInvoiceTabs))}>
-                    <Undo2 className="h-3.5 w-3.5" />الإرجاع
+                    <Undo2 className="h-3.5 w-3.5" />{localizeUiText("الإرجاع")}
                   </TabsTrigger>
                   {lines.some(l => isDeferredLine(l)) && (
                     <TabsTrigger value="deferred" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("deferred", colorfulInvoiceTabs))}>
-                      <ClipboardList className="h-3.5 w-3.5" />مصروف مرحّل
+                      <ClipboardList className="h-3.5 w-3.5" />{localizeUiText("مصروف مرحّل")}
                     </TabsTrigger>
                   )}
                   <TabsTrigger value="archive" disabled={!editId} className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("archive", colorfulInvoiceTabs))}>
                     <Archive className="h-3.5 w-3.5" />أرشفة
                   </TabsTrigger>
                   <TabsTrigger value="expenses" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("expenses", colorfulInvoiceTabs))}>
-                    <ReceiptIcon_ className="h-3.5 w-3.5" />المصروفات والتكاليف
+                    <ReceiptIcon_ className="h-3.5 w-3.5" />{localizeUiText("المصروفات والتكاليف")}
                   </TabsTrigger>
                   <TabsTrigger value="details" className={cn("h-7 px-3 text-xs gap-1.5 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground", getInvoiceTabColorClass("details", colorfulInvoiceTabs))}>
-                    <ClipboardList className="h-3.5 w-3.5" />التفاصيل
+                    <ClipboardList className="h-3.5 w-3.5" />{localizeUiText("التفاصيل")}
                   </TabsTrigger>
                 </TabsList>
               ) : (
@@ -2139,7 +2140,7 @@ function PurchaseInvoiceFormContent() {
                 <div className="divide-y">
                 {lines.length === 0 && (
                   <div className="px-3 py-10 text-center text-sm text-muted-foreground">
-                    لا توجد أصناف بعد — أضف صنفًا من الشريط بالأعلى.
+                    {localizeUiText("لا توجد أصناف بعد — أضف صنفًا من الشريط بالأعلى.")}
                   </div>
                 )}
                 {lines.map((l, idx) => (

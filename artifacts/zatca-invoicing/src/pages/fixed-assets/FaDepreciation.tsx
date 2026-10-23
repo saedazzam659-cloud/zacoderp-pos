@@ -1,4 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
+import { useFormatters } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -22,6 +24,7 @@ type Run = {
 };
 
 export default function FaDepreciation() {
+  const { isRtl } = useFormatters();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -111,15 +114,15 @@ export default function FaDepreciation() {
   });
 
   return (
-    <div className="space-y-4 p-4" dir="rtl">
+    <div className="space-y-4 p-4" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <TrendingUp className="h-6 w-6 text-violet-600" />
-            إهلاك الأصول الثابتة
+            {localizeUiText("إهلاك الأصول الثابتة")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            عرض الإهلاك المتوقع لكل أصل وترحيله شهرياً
+            {localizeUiText("عرض الإهلاك المتوقع لكل أصل وترحيله شهرياً")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -135,7 +138,7 @@ export default function FaDepreciation() {
           </select>
           <Button onClick={()=>postMut.mutate()} disabled={postMut.isPending} className="bg-violet-600 hover:bg-violet-700">
             <PlayCircle className="h-4 w-4 ms-2" />
-            {postMut.isPending ? "جاري الترحيل…" : "ترحيل الإهلاك الشهري"}
+            {postMut.isPending ? localizeUiText("جاري الترحيل…") : localizeUiText("ترحيل الإهلاك الشهري")}
           </Button>
         </div>
       </div>
@@ -147,11 +150,11 @@ export default function FaDepreciation() {
               <Clock className="h-5 w-5" />
             </div>
             <div>
-              <div className="font-bold text-violet-900">الترحيل التلقائي للإهلاك الشهري</div>
+              <div className="font-bold text-violet-900">{localizeUiText("الترحيل التلقائي للإهلاك الشهري")}</div>
               <div className="text-xs text-violet-700 mt-1 leading-relaxed">
-                يقوم النظام بترحيل إهلاك الشهر السابق تلقائياً لكل الأصول النشطة في اليوم المحدد من كل شهر — لا حاجة لضغط زر يدوي.
+                {localizeUiText("يقوم النظام بترحيل إهلاك الشهر السابق تلقائياً لكل الأصول النشطة في اليوم المحدد من كل شهر — لا حاجة لضغط زر يدوي.")}
                 {" "}
-                <span className="font-semibold">الموعد القادم: {nextRunHint}</span>
+                <span className="font-semibold">{localizeUiText("الموعد القادم:")} {nextRunHint}</span>
               </div>
             </div>
           </div>
@@ -163,10 +166,10 @@ export default function FaDepreciation() {
                 onChange={(e) => setAutoEnabled(e.target.checked)}
                 className="h-4 w-4 accent-violet-600"
               />
-              <span className="font-semibold text-violet-900">تفعيل الترحيل التلقائي</span>
+              <span className="font-semibold text-violet-900">{localizeUiText("تفعيل الترحيل التلقائي")}</span>
             </label>
             <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-violet-700">يوم الترحيل من كل شهر</label>
+              <label className="text-[11px] text-violet-700">{localizeUiText("يوم الترحيل من كل شهر")}</label>
               <select
                 value={autoDay}
                 onChange={(e) => setAutoDay(Number(e.target.value))}
@@ -184,7 +187,7 @@ export default function FaDepreciation() {
               className="bg-violet-600 hover:bg-violet-700"
             >
               <Save className="h-4 w-4 ms-2" />
-              {saveAutoMut.isPending ? "جاري الحفظ…" : "حفظ"}
+              {saveAutoMut.isPending ? localizeUiText("جاري الحفظ…") : localizeUiText("حفظ")}
             </Button>
           </div>
         </div>
@@ -192,19 +195,19 @@ export default function FaDepreciation() {
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="border rounded-lg p-4 bg-emerald-50">
-          <div className="text-xs text-emerald-700">إجمالي الإهلاك الشهري</div>
+          <div className="text-xs text-emerald-700">{localizeUiText("إجمالي الإهلاك الشهري")}</div>
           <div className="text-xl font-bold mt-1 text-emerald-800 font-mono">
             {fmtQty(totalMonthly)} ر.س
           </div>
         </div>
         <div className="border rounded-lg p-4 bg-amber-50">
-          <div className="text-xs text-amber-700">إجمالي الإهلاك المتراكم</div>
+          <div className="text-xs text-amber-700">{localizeUiText("إجمالي الإهلاك المتراكم")}</div>
           <div className="text-xl font-bold mt-1 text-amber-800 font-mono">
             {fmtQty(totalAccum)} ر.س
           </div>
         </div>
         <div className="border rounded-lg p-4 bg-violet-50">
-          <div className="text-xs text-violet-700">إجمالي القيمة الدفترية</div>
+          <div className="text-xs text-violet-700">{localizeUiText("إجمالي القيمة الدفترية")}</div>
           <div className="text-xl font-bold mt-1 text-violet-800 font-mono">
             {fmtQty(totalBook)} ر.س
           </div>
@@ -213,26 +216,26 @@ export default function FaDepreciation() {
 
       <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="px-4 py-2 border-b bg-violet-50 text-sm font-semibold text-violet-800">
-          الإهلاك المتوقع للأصول النشطة
+          {localizeUiText("الإهلاك المتوقع للأصول النشطة")}
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-xs" dir="rtl">
+          <table className="w-full text-xs" dir={isRtl ? "rtl" : "ltr"}>
             <thead className="bg-gradient-to-b from-violet-50 to-violet-100 text-violet-900 border-b">
               <tr>
-                <th className="px-3 py-2 text-start font-semibold">الكود</th>
-                <th className="px-3 py-2 text-start font-semibold">الاسم</th>
-                <th className="px-3 py-2 text-start font-semibold">قيمة الشراء</th>
-                <th className="px-3 py-2 text-start font-semibold">قيمة الخردة</th>
-                <th className="px-3 py-2 text-start font-semibold">المتراكم</th>
-                <th className="px-3 py-2 text-start font-semibold">الدفترية</th>
-                <th className="px-3 py-2 text-start font-semibold">الإهلاك الشهري</th>
-                <th className="px-3 py-2 text-start font-semibold">المطبق</th>
-                <th className="px-3 py-2 text-center font-semibold">الجدول الزمني</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الكود")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الاسم")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("قيمة الشراء")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("قيمة الخردة")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("المتراكم")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الدفترية")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الإهلاك الشهري")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("المطبق")}</th>
+                <th className="px-3 py-2 text-center font-semibold">{localizeUiText("الجدول الزمني")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {isLoading && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
-              {!isLoading && preview.length===0 && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">لا توجد أصول نشطة</td></tr>}
+              {isLoading && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">{localizeUiText("جاري التحميل…")}</td></tr>}
+              {!isLoading && preview.length===0 && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">{localizeUiText("لا توجد أصول نشطة")}</td></tr>}
               {preview.map(p => (
                 <Fragment key={p.id}>
                   <tr className="hover:bg-violet-50/40">
@@ -251,7 +254,7 @@ export default function FaDepreciation() {
                         className="inline-flex items-center gap-1 text-violet-600 hover:text-violet-800 font-semibold"
                       >
                         <CalendarDays className="h-4 w-4" />
-                        {expandedAsset === p.id ? "إخفاء" : "عرض"}
+                        {localizeUiText(expandedAsset === p.id ? "إخفاء" : "عرض")}
                       </button>
                     </td>
                   </tr>
@@ -260,7 +263,7 @@ export default function FaDepreciation() {
                       <td colSpan={9} className="px-4 py-3 bg-violet-50/40">
                         <DepreciationScheduleTimeline
                           assetId={p.id}
-                          title={`الجدول الزمني للإهلاك — ${p.nameAr}`}
+                          title={`${localizeUiText("الجدول الزمني للإهلاك")} — ${p.nameAr}`}
                         />
                       </td>
                     </tr>
@@ -274,24 +277,24 @@ export default function FaDepreciation() {
 
       <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="px-4 py-2 border-b bg-slate-50 text-sm font-semibold text-slate-800">
-          سجل ترحيل الإهلاك ({runs.length})
+          {localizeUiText("سجل ترحيل الإهلاك")} ({runs.length})
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-xs" dir="rtl">
+          <table className="w-full text-xs" dir={isRtl ? "rtl" : "ltr"}>
             <thead className="bg-slate-50 text-slate-800 border-b">
               <tr>
-                <th className="px-3 py-2 text-start font-semibold">رقم</th>
-                <th className="px-3 py-2 text-start font-semibold">رقم الأصل</th>
-                <th className="px-3 py-2 text-start font-semibold">الفترة</th>
-                <th className="px-3 py-2 text-start font-semibold">قيمة الإهلاك</th>
-                <th className="px-3 py-2 text-start font-semibold">قبل</th>
-                <th className="px-3 py-2 text-start font-semibold">بعد</th>
-                <th className="px-3 py-2 text-start font-semibold">المرحّل بواسطة</th>
-                <th className="px-3 py-2 text-start font-semibold">التاريخ</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("رقم")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("رقم الأصل")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الفترة")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("قيمة الإهلاك")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("قبل")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("بعد")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("المرحّل بواسطة")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{localizeUiText("التاريخ")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {runs.length===0 && <tr><td colSpan={8} className="text-center py-6 text-muted-foreground">لا توجد ترحيلات سابقة</td></tr>}
+              {runs.length===0 && <tr><td colSpan={8} className="text-center py-6 text-muted-foreground">{localizeUiText("لا توجد ترحيلات سابقة")}</td></tr>}
               {runs.slice(0, 50).map(r => (
                 <tr key={r.id} className="hover:bg-slate-50">
                   <td className="px-3 py-1.5 font-mono">{r.id}</td>

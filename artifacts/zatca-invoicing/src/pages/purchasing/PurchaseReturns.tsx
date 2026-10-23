@@ -1777,10 +1777,10 @@ ${sections}
                 <ListOrdered className="h-3.5 w-3.5" />{tr("linesTitle")}
               </TabsTrigger>
               <TabsTrigger value="industrialCosts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <TrendingUp className="h-3.5 w-3.5" />التكاليف الصناعية
+                <TrendingUp className="h-3.5 w-3.5" />{localizeUiText("التكاليف الصناعية")}
               </TabsTrigger>
               <TabsTrigger value="expenses" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <ReceiptIcon_ className="h-3.5 w-3.5" />المصروفات والتكاليف
+                <ReceiptIcon_ className="h-3.5 w-3.5" />{localizeUiText("المصروفات والتكاليف")}
               </TabsTrigger>
               <TabsTrigger value="details" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <Info className="h-3.5 w-3.5" />التفاصيل
@@ -1843,7 +1843,7 @@ ${sections}
                     .map(p => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
                 </select>
               </Field>}
-              <div hidden={!fieldPolicy.isVisible("warehouse")} className={fieldPolicy.isReadOnly("warehouse") ? "pointer-events-none opacity-70" : ""}><Field label="المستودع">
+              <div hidden={!fieldPolicy.isVisible("warehouse")} className={fieldPolicy.isReadOnly("warehouse") ? "pointer-events-none opacity-70" : ""}><Field label={localizeUiText("المستودع")}>
                 <SearchCombobox
                   items={(warehouses as any[]).map((w: any) => ({
                     value: String(w.id),
@@ -1851,16 +1851,16 @@ ${sections}
                   }))}
                   value={headerWarehouseId}
                   onValueChange={applyHeaderWarehouse}
-                  placeholder="اختر المستودع"
+                  placeholder={localizeUiText("اختر المستودع")}
                 />
               </Field></div>
               {taxCatalog.length > 0 && (
-                <Field label="الضريبة">
+                <Field label={localizeUiText("الضريبة")}>
                   <SearchCombobox
                     items={taxComboItems}
                     value={headerTaxId}
                     onValueChange={applyHeaderTax}
-                    placeholder="اختر الضريبة"
+                    placeholder={localizeUiText("اختر الضريبة")}
                   />
                 </Field>
               )}

@@ -15,6 +15,7 @@
  * progress to the user.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -273,6 +274,7 @@ export default function PostingCenter() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const fmt = useFormatters();
+  const isRtl = fmt.isRtl;
 
   const [, setLocation] = useLocation();
 
@@ -829,7 +831,7 @@ export default function PostingCenter() {
     .reduce((s, r) => s + r.amount, 0);
 
   return (
-    <div className="p-3 sm:p-4 space-y-3" dir="rtl">
+    <div className="p-3 sm:p-4 space-y-3" dir={isRtl ? "rtl" : "ltr"}>
       {/* Page title */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -837,9 +839,9 @@ export default function PostingCenter() {
             <Layers className="size-5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-800">مركز الترحيل</h1>
+            <h1 className="text-xl font-bold text-slate-800">{localizeUiText("مركز الترحيل")}</h1>
               <p className="text-xs text-slate-500">
-              ترحيل وفك ترحيل وإلغاء مسودات المستندات واستعادتها من مكان واحد
+              {localizeUiText("ترحيل وفك ترحيل وإلغاء مسودات المستندات واستعادتها من مكان واحد")}
             </p>
           </div>
         </div>
@@ -849,7 +851,7 @@ export default function PostingCenter() {
                   title={selectedModule === ALL_MODULES_KEY ? "اختر نوع حركة محدد لعرض التحليل الذكي" : undefined}
                   className="border-violet-300 text-violet-700 hover:bg-violet-50"
                   data-testid="button-ai-summary">
-            <Sparkles className="size-4 me-1.5" /> تحليل ذكي
+            <Sparkles className="size-4 me-1.5" /> {localizeUiText("تحليل ذكي")}
           </Button>
           <Button variant="outline" size="sm" onClick={() => refetch()}
                   disabled={isFetching}
@@ -857,7 +859,7 @@ export default function PostingCenter() {
             {isFetching
               ? <Loader2 className="size-4 me-1.5 animate-spin" />
               : <RefreshCw className="size-4 me-1.5" />}
-            تحديث
+            {localizeUiText("تحديث")}
           </Button>
           <Button variant="outline" size="sm" onClick={doExportExcel}
                   data-testid="button-export-excel"
@@ -876,7 +878,7 @@ export default function PostingCenter() {
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-3 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">نوع الحركة</label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">{localizeUiText("نوع الحركة")}</label>
             {/* Searchable combobox — lets the accountant type "نقاط" or
                 "POS" or "مشتريات" instead of scrolling 13 items. Items
                 are grouped by domain (مبيعات / مشتريات / نقدية / محاسبة /
@@ -886,29 +888,29 @@ export default function PostingCenter() {
                 items={MODULE_COMBOBOX_ITEMS_WITH_ALL}
                 value={selectedModule}
                 onValueChange={(v) => { if (v) setSelectedModule(v as SelectableModule); }}
-                placeholder="اختر نوع الحركة"
-                searchPlaceholder="ابحث عن نوع الحركة..."
-                emptyText="لا يوجد نوع حركة بهذا الاسم"
+                placeholder={localizeUiText("اختر نوع الحركة")}
+                searchPlaceholder={localizeUiText("ابحث عن نوع الحركة...")}
+                emptyText={localizeUiText("لا يوجد نوع حركة بهذا الاسم")}
                 grouped
               />
             </div>
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">الحالة</label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">{localizeUiText("الحالة")}</label>
             <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
               <SelectTrigger data-testid="select-status">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="unposted">غير مرحّل</SelectItem>
-                <SelectItem value="posted">مرحّل</SelectItem>
-                <SelectItem value="cancelled">ملغى</SelectItem>
-                <SelectItem value="all">الكل</SelectItem>
+                <SelectItem value="unposted">{localizeUiText("غير مرحّل")}</SelectItem>
+                <SelectItem value="posted">{localizeUiText("مرحّل")}</SelectItem>
+                <SelectItem value="cancelled">{localizeUiText("ملغى")}</SelectItem>
+                <SelectItem value="all">{localizeUiText("الكل")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">الفرع</label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">{localizeUiText("الفرع")}</label>
             {/* Searchable branch combobox — defaults to "all branches" so the
                 accountant sees company-wide totals out of the box. Picking a
                 specific branch sends ?branchId=N to the server, which combines
@@ -917,7 +919,7 @@ export default function PostingCenter() {
             <div data-testid="select-branch">
               <SearchCombobox
                 items={[
-                  { value: "all", label: "كل الفروع" },
+                  { value: "all", label: localizeUiText("كل الفروع") },
                   ...(branchesQuery.data ?? []).map(b => ({
                     value: String(b.id),
                     label: b.nameAr || b.nameEn || b.code,
@@ -925,9 +927,9 @@ export default function PostingCenter() {
                 ]}
                 value={branchId}
                 onValueChange={(v) => setBranchId(v || "all")}
-                placeholder="كل الفروع"
-                searchPlaceholder="ابحث عن فرع..."
-                emptyText="لا يوجد فرع بهذا الاسم"
+                placeholder={localizeUiText("كل الفروع")}
+                searchPlaceholder={localizeUiText("ابحث عن فرع...")}
+                emptyText={localizeUiText("لا يوجد فرع بهذا الاسم")}
               />
             </div>
           </div>
@@ -1042,19 +1044,19 @@ export default function PostingCenter() {
           <Button onClick={selectAllPostable} disabled={bulkBusy}
                   variant="outline" className="border-teal-300 text-teal-800 hover:bg-teal-50"
                   data-testid="button-select-all-postable">
-            <CheckSquare className="size-4 me-1.5" /> اظهار الكل
+            <CheckSquare className="size-4 me-1.5" /> {localizeUiText("اظهار الكل")}
           </Button>
           <Button onClick={clearSelection} disabled={bulkBusy || selected.size === 0}
                   variant="outline" data-testid="button-clear-selection">
-            <Square className="size-4 me-1.5" /> الغاء الكل
+            <Square className="size-4 me-1.5" /> {localizeUiText("الغاء الكل")}
           </Button>
           <div className="ms-auto flex items-center gap-3 text-sm">
             <span className="text-slate-600">
-              المحدد: <span className="font-bold text-teal-700">{fmtInt0(selected.size)}</span>
+              {localizeUiText("المحدد:")} <span className="font-bold text-teal-700">{fmtInt0(selected.size)}</span>
             </span>
             {selected.size > 0 && (
               <span className="text-slate-600">
-                إجمالي المحدد:{" "}
+                {localizeUiText("إجمالي المحدد:")}{" "}
                 <span className="font-bold text-teal-700 font-mono">{fmt.fmtMoney(selectedAmount)}</span>
               </span>
             )}

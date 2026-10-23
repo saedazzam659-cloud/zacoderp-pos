@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -270,13 +271,13 @@ export default function CashBoxes() {
                     {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {isRtl ? c.nameAr : (c.nameEn || c.nameAr)}</option>)}
                   </select>
                 </Field>
-                <Field label="الفرع" required hint={errors.branchId && <span className="text-destructive">{errors.branchId}</span>}>
+                <Field label={localizeUiText("الفرع")} required hint={errors.branchId && <span className="text-destructive">{errors.branchId}</span>}>
                   <select
                     className={`w-full h-9 border border-input rounded-md px-3 text-sm bg-background ${errors.branchId ? errCls : ""}`}
                     value={form.branchId}
                     onChange={e => { const v = e.target.value; setForm(p => ({ ...p, branchId: v })); if (errors.branchId) setErrors(p => { const n = { ...p }; delete n.branchId; return n; }); }}
                   >
-                    <option value="">— اختر الفرع —</option>
+                    <option value="">{localizeUiText("— اختر الفرع —")}</option>
                     {(branches as any[]).map((b: any) => (
                       <option key={b.id} value={b.id}>{b.code} — {isRtl ? b.nameAr : (b.nameEn || b.nameAr)}</option>
                     ))}

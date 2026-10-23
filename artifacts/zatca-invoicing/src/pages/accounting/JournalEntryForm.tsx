@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -1853,7 +1854,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
               <BookOpen className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-lg font-bold">{isNew ? "قيد جديد" : "تعديل القيد"}</h1>
+              <h1 className="text-lg font-bold">{localizeUiText(isNew ? "قيد جديد" : "تعديل القيد")}</h1>
               <p className="text-xs text-muted-foreground">
                 {isNew ? "إنشاء قيد يومية جديد" : `تعديل القيد رقم ${existing?.docNumber ?? editId}`}
               </p>
@@ -2248,7 +2249,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
               {/* Left: context hint */}
               <p className="text-[11px] text-muted-foreground">
                 {activeTab === "header"
-                  ? "أدخل بيانات الرأسية ثم انتقل إلى سطور القيد"
+                  ? localizeUiText("أدخل بيانات الرأسية ثم انتقل إلى سطور القيد")
                   : `${lines.filter(l => l.accountId).length} سطر — مدين: ${fmt2(totalDebit)} | دائن: ${fmt2(totalCredit)}`}
               </p>
 
@@ -2401,7 +2402,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                 )}
                 {isNew && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">نوع القيد</Label>
+                    <Label className="text-xs font-medium">{localizeUiText("نوع القيد")}</Label>
                     <Select
                       value={specialKind}
                       onValueChange={v => {
@@ -2428,7 +2429,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                 {fp.isVisible("branch") && (
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">
-                      الفرع
+                      {localizeUiText("الفرع")}
                       {fp.isRequired("branch") && <span className="text-destructive"> *</span>}
                     </Label>
                     <Select
@@ -2437,7 +2438,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                       disabled={fp.isReadOnly("branch")}
                     >
                       <SelectTrigger className={cn("h-9 text-sm", fp.isReadOnly("branch") && "bg-muted/40")}>
-                        <SelectValue placeholder="— اختر الفرع —" />
+                        <SelectValue placeholder={localizeUiText("— اختر الفرع —")} />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__none">— بدون فرع —</SelectItem>
@@ -2509,7 +2510,7 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
                       }));
                       setDescription(next);
                     }}
-                    placeholder="وصف القيد..."
+                    placeholder={localizeUiText("وصف القيد...")}
                     className={cn("text-sm resize-none", fp.isReadOnly("description") && "bg-muted/40 cursor-not-allowed")}
                     readOnly={fp.isReadOnly("description")}
                     required={fp.isRequired("description")}

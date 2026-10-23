@@ -2,6 +2,7 @@
 // المخالفات: سجل تأديبي فعلي (نوع/سبب/قيمة/خصم من الراتب) بجانب جدول مخالفات
 // الحضور المحسوبة. الخروج والعودة: تتبع سفر الموظف مع تنبيه قبل العودة بأسبوع.
 import { useState, useMemo } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
 import { parseError } from "@/lib/parseError";
@@ -95,24 +96,24 @@ export function RegisteredViolationsSection({ employees, pickName, isRtl }: Comm
     <div className="rounded-lg border bg-card">
       <div className="flex items-center justify-between p-3 border-b flex-wrap gap-2">
         <div className="flex items-center gap-2 font-medium">
-          <AlertTriangle className="size-4 text-amber-600" /> المخالفات المسجلة
-          <span className="text-xs text-muted-foreground font-normal">(مخالفات تأديبية بقرار — يمكن خصمها من الراتب)</span>
+          <AlertTriangle className="size-4 text-amber-600" /> {localizeUiText("المخالفات المسجلة")}
+          <span className="text-xs text-muted-foreground font-normal">({localizeUiText("مخالفات تأديبية بقرار — يمكن خصمها من الراتب")})</span>
         </div>
         <Button size="sm" onClick={() => { setEditingId(null); setForm(V_EMPTY); setOpen(true); }} data-testid="btn-new-violation">
-          <Plus className="size-3.5 me-1" /> مخالفة جديدة
+          <Plus className="size-3.5 me-1" /> {localizeUiText("مخالفة جديدة")}
         </Button>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-xs uppercase">
             <tr>
-              <th className="p-2 text-start">الموظف</th>
-              <th className="p-2">النوع</th>
-              <th className="p-2">التاريخ</th>
-              <th className="p-2 text-start">السبب</th>
-              <th className="p-2">القيمة</th>
-              <th className="p-2">خصم من الراتب</th>
-              <th className="p-2">الحالة</th>
+              <th className="p-2 text-start">{localizeUiText("الموظف")}</th>
+              <th className="p-2">{localizeUiText("النوع")}</th>
+              <th className="p-2">{localizeUiText("التاريخ")}</th>
+              <th className="p-2 text-start">{localizeUiText("السبب")}</th>
+              <th className="p-2">{localizeUiText("القيمة")}</th>
+              <th className="p-2">{localizeUiText("خصم من الراتب")}</th>
+              <th className="p-2">{localizeUiText("الحالة")}</th>
               <th className="p-2"></th>
             </tr>
           </thead>
@@ -120,7 +121,7 @@ export function RegisteredViolationsSection({ employees, pickName, isRtl }: Comm
             {isLoading ? (
               <tr><td colSpan={8} className="p-4"><Skeleton className="h-10" /></td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={8} className="p-5 text-center text-muted-foreground">لا توجد مخالفات مسجلة</td></tr>
+              <tr><td colSpan={8} className="p-5 text-center text-muted-foreground">{localizeUiText("لا توجد مخالفات مسجلة")}</td></tr>
             ) : rows.map((v: any) => {
               const st = V_STATUS[v.status] || V_STATUS.pending;
               return (

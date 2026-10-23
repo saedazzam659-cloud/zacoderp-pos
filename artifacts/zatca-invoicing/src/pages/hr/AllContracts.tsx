@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -78,26 +79,26 @@ export default function AllContracts() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <FileSignature className="size-6 text-primary" />
-          <h1 className="text-xl font-semibold">العقود — كل الموظفين</h1>
+          <h1 className="text-xl font-semibold">{localizeUiText("العقود — كل الموظفين")}</h1>
         </div>
         <Link href="/hr/employees">
           <Button variant="outline" size="sm">
-            <ExternalLink className="size-4 me-1" /> الذهاب للموظفين
+            <ExternalLink className="size-4 me-1" /> {localizeUiText("الذهاب للموظفين")}
           </Button>
         </Link>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <div className="rounded-lg border p-3 bg-card">
-          <div className="text-xs text-muted-foreground">إجمالي العقود</div>
+          <div className="text-xs text-muted-foreground">{localizeUiText("إجمالي العقود")}</div>
           <div className="text-2xl font-semibold">{stats.total}</div>
         </div>
         <div className="rounded-lg border p-3 bg-card">
-          <div className="text-xs text-muted-foreground">التزام شهري للأجور النشطة</div>
+          <div className="text-xs text-muted-foreground">{localizeUiText("التزام شهري للأجور النشطة")}</div>
           <div className="text-2xl font-semibold tabular-nums">{fmt2(stats.totalSalaries)} <span className="text-sm text-muted-foreground">ر.س</span></div>
         </div>
         <div className="rounded-lg border p-3 bg-amber-50/50 border-amber-200">
-          <div className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle className="size-3.5" /> عقود تنتهي خلال 90 يوم</div>
+          <div className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle className="size-3.5" /> {localizeUiText("عقود تنتهي خلال 90 يوم")}</div>
           <div className="text-2xl font-semibold text-amber-700">{stats.expiring}</div>
         </div>
       </div>
@@ -105,15 +106,15 @@ export default function AllContracts() {
       <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-3">
         <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute start-2 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="ابحث بالاسم، الكود، رقم العقد، المسمى…" className="ps-8" data-testid="contract-search" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder={localizeUiText("ابحث بالاسم، الكود، رقم العقد، المسمى…")} className="ps-8" data-testid="contract-search" />
         </div>
-        <span className="text-xs text-muted-foreground">الحالة:</span>
+        <span className="text-xs text-muted-foreground">{localizeUiText("الحالة:")}</span>
         {[["all","الكل"],["active","نشط"],["expired","منتهي"],["renewed","مجدّد"]].map(([v,l]) => (
-          <Button key={v} variant={statusFilter === v ? "default" : "outline"} size="sm" onClick={() => setStatusFilter(v)} data-testid={`flt-${v}`}>{l}</Button>
+          <Button key={v} variant={statusFilter === v ? "default" : "outline"} size="sm" onClick={() => setStatusFilter(v)} data-testid={`flt-${v}`}>{localizeUiText(l)}</Button>
         ))}
-        <span className="text-xs text-muted-foreground ms-2">الانتهاء:</span>
+        <span className="text-xs text-muted-foreground ms-2">{localizeUiText("الانتهاء:")}</span>
         {[["all", null, "الكل"], ["soon", 90, "خلال 90 يوم"], ["urgent", 30, "خلال 30 يوم"]].map(([k, d, l]: any) => (
-          <Button key={k} variant={expFilter === d ? "default" : "outline"} size="sm" onClick={() => setExpFilter(d)} data-testid={`expflt-${k}`}>{l}</Button>
+          <Button key={k} variant={expFilter === d ? "default" : "outline"} size="sm" onClick={() => setExpFilter(d)} data-testid={`expflt-${k}`}>{localizeUiText(l)}</Button>
         ))}
       </div>
 
@@ -138,7 +139,7 @@ export default function AllContracts() {
             {isLoading ? (
               <tr><td colSpan={11} className="p-4"><Skeleton className="h-12" /></td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={11} className="p-6 text-center text-muted-foreground">لا توجد عقود مطابقة</td></tr>
+              <tr><td colSpan={11} className="p-6 text-center text-muted-foreground">{localizeUiText("لا توجد عقود مطابقة")}</td></tr>
             ) : filtered.map((c: any) => {
               const total = Number(c.basicSalary || 0) + Number(c.housingAllow || 0) + Number(c.transportAllow || 0) + Number(c.otherAllow || 0);
               const st = STATUS[c.status] || STATUS.active;

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { fmt2 } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -463,8 +464,8 @@ export default function Adjustments() {
             <CalendarClock className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">تسويات شهرية</h1>
-            <p className="text-sm text-muted-foreground">المصاريف المدفوعة مقدماً والمستحقة بقيود توليد آلي</p>
+            <h1 className="text-2xl font-bold">{localizeUiText("تسويات شهرية")}</h1>
+            <p className="text-sm text-muted-foreground">{localizeUiText("المصاريف المدفوعة مقدماً والمستحقة بقيود توليد آلي")}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -475,7 +476,7 @@ export default function Adjustments() {
             className="gap-2"
           >
             <Repeat className="h-4 w-4" />
-            تشغيل التسويات المستحقة
+            {localizeUiText("تشغيل التسويات المستحقة")}
           </Button>
           <Button
             size="lg"
@@ -483,7 +484,7 @@ export default function Adjustments() {
             className="gap-2 bg-gradient-to-l from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-md"
           >
             <Plus className="h-5 w-5" />
-            تسوية جديدة
+            {localizeUiText("تسوية جديدة")}
           </Button>
         </div>
       </div>
@@ -492,8 +493,8 @@ export default function Adjustments() {
       {showForm && (
         <FormPanel
           icon={Sparkles}
-          title={editing ? "تعديل التسوية" : "تسوية جديدة"}
-          subtitle="ستُولّد قيود الاستهلاك تلقائياً كل شهر بقيمة موزّعة بالتساوي"
+          title={localizeUiText(editing ? "تعديل التسوية" : "تسوية جديدة")}
+          subtitle={localizeUiText("ستُولّد قيود الاستهلاك تلقائياً كل شهر بقيمة موزّعة بالتساوي")}
           width="2xl"
           onClose={() => { setShowForm(false); closeImport(); }}
           onSave={() => saveMut.mutate()}
@@ -506,7 +507,7 @@ export default function Adjustments() {
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2 text-sm font-medium text-emerald-900">
                   <Link2 className="h-4 w-4" />
-                  تعبئة من مستند موجود (اختياري)
+                  {localizeUiText("تعبئة من مستند موجود (اختياري)")}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
@@ -532,7 +533,7 @@ export default function Adjustments() {
               {importKind && !pickedJe && (
                 <div className="mt-3 space-y-2">
                   <Input
-                    placeholder={importKind === "invoice" ? "ابحث برقم الفاتورة أو رقم فاتورة المورد…" : "ابحث برقم القيد أو الوصف…"}
+                placeholder={localizeUiText(importKind === "invoice" ? "ابحث برقم الفاتورة أو رقم فاتورة المورد…" : "ابحث برقم القيد أو الوصف…")}
                     value={importSearch}
                     onChange={(e) => setImportSearch(e.target.value)}
                     className="h-9"
@@ -639,7 +640,7 @@ export default function Adjustments() {
             </Field>
             <Field label="المسمى" required>
               <Input
-                placeholder="مثال: إيجار المعرض - السنة 2026"
+                placeholder={localizeUiText("مثال: إيجار المعرض - السنة 2026")}
                 value={form.name}
                 onChange={(e) => setForm(p => ({ ...p, name: e.target.value }))}
               />
@@ -650,7 +651,7 @@ export default function Adjustments() {
                 onValueChange={(v) => setForm(p => ({ ...p, expenseAccountId: v }))}
                 filterTypes={["expense"]}
                 allowEmpty={false}
-                placeholder="— اختر حساب المصروف —"
+                placeholder={localizeUiText("— اختر حساب المصروف —")}
               />
             </Field>
             <Field
@@ -662,7 +663,7 @@ export default function Adjustments() {
                 onValueChange={(v) => setForm(p => ({ ...p, contraAccountId: v }))}
                 filterTypes={form.type === "prepaid" ? ["asset"] : ["liability"]}
                 allowEmpty={false}
-                placeholder={form.type === "prepaid" ? "— حساب أصل (مدفوع مقدمًا) —" : "— حساب التزام (مستحق) —"}
+                placeholder={localizeUiText(form.type === "prepaid" ? "— حساب أصل (مدفوع مقدمًا) —" : "— حساب التزام (مستحق) —")}
               />
             </Field>
             <Field label="مركز التكلفة (اختياري — على حساب المصروف)">
@@ -718,7 +719,7 @@ export default function Adjustments() {
                 rows={2}
                 value={form.notes}
                 onChange={(e) => setForm(p => ({ ...p, notes: e.target.value }))}
-                placeholder="اختياري"
+                placeholder={localizeUiText("اختياري")}
               />
             </Field>
             <Field label="" className="md:col-span-2">
@@ -797,11 +798,11 @@ export default function Adjustments() {
       ) : adjustments.length === 0 ? (
         <Card className="p-12 text-center">
           <CalendarClock className="h-16 w-16 mx-auto mb-3 opacity-10" />
-          <p className="text-sm font-semibold mb-1">لا توجد تسويات</p>
-          <p className="text-xs text-muted-foreground mb-3">أنشئ تسوية لتوزيع مصاريف على عدة أشهر تلقائياً</p>
+          <p className="text-sm font-semibold mb-1">{localizeUiText("لا توجد تسويات")}</p>
+          <p className="text-xs text-muted-foreground mb-3">{localizeUiText("أنشئ تسوية لتوزيع مصاريف على عدة أشهر تلقائياً")}</p>
           <Button size="sm" variant="outline" onClick={openCreate}>
             <Plus className="h-4 w-4 ml-1" />
-            تسوية جديدة
+            {localizeUiText("تسوية جديدة")}
           </Button>
         </Card>
       ) : (

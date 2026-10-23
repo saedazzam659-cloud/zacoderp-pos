@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useFormatters, fmt2, fmtNum } from "@/lib/format";
@@ -1042,7 +1043,7 @@ export default function PaymentVoucherForm() {
               <ArrowUpCircle className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-lg font-bold">{(isNew ? t(`${NS}.newLong`) : t(`${NS}.editVoucher`)) + t(`${NS}.multiSuffix`, " (عمليات متعددة)")}</h1>
+              <h1 className="text-lg font-bold">{(isNew ? t(`${NS}.newLong`) : t(`${NS}.editVoucher`)) + localizeUiText(t(`${NS}.multiSuffix`, " (عمليات متعددة)"))}</h1>
               <p className="text-xs text-muted-foreground">
                 {isNew
                   ? t(`${NS}.subtitle`)
@@ -1133,9 +1134,9 @@ export default function PaymentVoucherForm() {
           {/* ── Left column: TABBED form ──────────────────── */}
           <Tabs defaultValue="voucher" dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
             <TabsList className="grid grid-cols-3 w-full h-auto gap-1 p-1">
-              <TabsTrigger value="voucher" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_header`, "بيانات السند")}</TabsTrigger>
-              <TabsTrigger value="party" className="py-2.5 text-sm md:text-base">{t(`${NS}.tab_paymentMethod`, "وسيلة الدفع")}</TabsTrigger>
-              <TabsTrigger value="lines" className="py-2.5 text-sm md:text-base">{t(`${NS}.section_lines`, "بنود الصرف")}</TabsTrigger>
+              <TabsTrigger value="voucher" className="py-2.5 text-sm md:text-base">{localizeUiText(t(`${NS}.section_header`, "بيانات السند"))}</TabsTrigger>
+              <TabsTrigger value="party" className="py-2.5 text-sm md:text-base">{localizeUiText(t(`${NS}.tab_paymentMethod`, "وسيلة الدفع"))}</TabsTrigger>
+              <TabsTrigger value="lines" className="py-2.5 text-sm md:text-base">{localizeUiText(t(`${NS}.section_lines`, "بنود الصرف"))}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="voucher" className="mt-0">
@@ -1145,7 +1146,7 @@ export default function PaymentVoucherForm() {
               <CardHeader className="py-3 px-4 border-b bg-muted/30">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <FileText className="h-4 w-4 text-amber-700" />
-                  {t(`${NS}.section_header`, "بيانات السند")}
+                  {localizeUiText(t(`${NS}.section_header`, "بيانات السند"))}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-4">
@@ -1162,7 +1163,7 @@ export default function PaymentVoucherForm() {
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">
-                      {t(`${NS}.branch`, "الفرع")} <span className="text-destructive">*</span>
+                      {localizeUiText(t(`${NS}.branch`, "الفرع"))} <span className="text-destructive">*</span>
                     </Label>
                     <select
                       value={form.branchId}
@@ -1170,7 +1171,7 @@ export default function PaymentVoucherForm() {
                       data-testid="pv-branch"
                       className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
                     >
-                      <option value="">{t(`${NS}.selectBranch`, "اختر الفرع")}</option>
+                      <option value="">{localizeUiText(t(`${NS}.selectBranch`, "اختر الفرع"))}</option>
                       {(branches as any[]).map((b: any) => (
                         <option key={b.id} value={b.id}>
                           {b.code} — {isRtl ? b.nameAr : (b.nameEn || b.nameAr)}
@@ -1237,7 +1238,7 @@ export default function PaymentVoucherForm() {
             <fieldset disabled={isLockedSourceEntry} className="m-0 p-0 border-0 disabled:opacity-75">
             <Card>
               <CardContent className="pt-4 space-y-2">
-                <Label className="text-xs font-medium">المورد (اختياري؛ مطلوب لبنود المقاولات)</Label>
+                <Label className="text-xs font-medium">{localizeUiText("المورد (اختياري؛ مطلوب لبنود المقاولات)")}</Label>
                 <SearchCombobox items={supplierItems} value={form.entityId}
                   onValueChange={v => {
                     const supplier = suppliers.find((s: any) => String(s.id) === v);
@@ -1249,7 +1250,7 @@ export default function PaymentVoucherForm() {
                           ? { kind: l.contractingAllocation.kind, projectId: 0, contractId: 0 } : null,
                       })) }));
                   }}
-                  placeholder="اختر المورد" searchPlaceholder="بحث عن مورد..." />
+                  placeholder={localizeUiText("اختر المورد")} searchPlaceholder={localizeUiText("بحث عن مورد...")} />
               </CardContent>
             </Card>
             {/* Section: Payment method + treasury (money source) */}
@@ -1336,7 +1337,7 @@ export default function PaymentVoucherForm() {
               <CardHeader className="py-3 px-4 border-b bg-red-50/40">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-900">
                   <Layers className="h-4 w-4" />
-                  {t(`${NS}.section_lines`, "بنود الصرف")}
+                  {localizeUiText(t(`${NS}.section_lines`, "بنود الصرف"))}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-4">
@@ -1344,7 +1345,7 @@ export default function PaymentVoucherForm() {
                     empty or still equals the previous general description, so
                     the user has a single source of truth (same as the قيد). */}
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t(`${NS}.generalDescription`, "البيان العام")}</Label>
+                  <Label className="text-xs font-medium">{localizeUiText(t(`${NS}.generalDescription`, "البيان العام"))}</Label>
                   <Textarea
                     value={form.description}
                     onChange={e => {
@@ -1370,10 +1371,10 @@ export default function PaymentVoucherForm() {
                   {/* Column headers */}
                   <div className="grid grid-cols-[28px_2fr_1fr_1.5fr_1.2fr_28px] gap-2 px-3 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
                     <span />
-                    <span>{t(`${NS}.colAccount`, "الحساب")}</span>
-                    <span>{t(`${NS}.colAmount`, "المبلغ")}</span>
-                    <span>{t(`${NS}.colDescription`, "البيان")}</span>
-                    <span>{t(`${NS}.colCostCenter`, "مركز التكلفة")}</span>
+                    <span>{localizeUiText(t(`${NS}.colAccount`, "الحساب"))}</span>
+                    <span>{localizeUiText(t(`${NS}.colAmount`, "المبلغ"))}</span>
+                    <span>{localizeUiText(t(`${NS}.colDescription`, "البيان"))}</span>
+                    <span>{localizeUiText(t(`${NS}.colCostCenter`, "مركز التكلفة"))}</span>
                     <span />
                   </div>
 
@@ -1389,9 +1390,9 @@ export default function PaymentVoucherForm() {
                               items={postableAccounts}
                               value={l.accountId}
                               onValueChange={(aid) => updateLine(l.key, { accountId: aid })}
-                              placeholder={t(`${NS}.selectAccountPh`, "— اختر الحساب —")}
-                              searchPlaceholder={t(`${NS}.searchAccountPh`, "ابحث بالاسم أو الكود...")}
-                              emptyText={t(`${NS}.noAccounts`, "لا توجد حسابات")}
+                              placeholder={localizeUiText(t(`${NS}.selectAccountPh`, "— اختر الحساب —"))}
+                              searchPlaceholder={localizeUiText(t(`${NS}.searchAccountPh`, "ابحث بالاسم أو الكود..."))}
+                              emptyText={localizeUiText(t(`${NS}.noAccounts`, "لا توجد حسابات"))}
                             />}
                             <Input
                               type="text" inputMode="decimal" placeholder="0.00" dir="ltr"
@@ -1404,7 +1405,7 @@ export default function PaymentVoucherForm() {
                             <Input
                               value={l.description}
                               onChange={e => updateLine(l.key, { description: e.target.value })}
-                              placeholder={t(`${NS}.colDescription`, "البيان")}
+                              placeholder={localizeUiText(t(`${NS}.colDescription`, "البيان"))}
                               className="h-8 text-sm"
                             />
                             <select
@@ -1412,7 +1413,7 @@ export default function PaymentVoucherForm() {
                               onChange={e => updateLine(l.key, { costCenter: e.target.value })}
                               className="w-full h-8 border border-input rounded-md px-2 text-sm bg-background"
                             >
-                              <option value="">— {t(`${NS}.noCostCenter`, "بدون")} —</option>
+                              <option value="">— {localizeUiText(t(`${NS}.noCostCenter`, "بدون"))} —</option>
                               {(costCentersList as any[])
                                 .filter((c: any) => c.isActive !== false)
                                 .map((c: any) => (
@@ -1824,7 +1825,7 @@ export default function PaymentVoucherForm() {
                               {/* running line total */}
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="ml-auto text-xs text-muted-foreground">
-                                  {t(`${NS}.colLineTotal`, "إجمالي البند")}:{" "}
+                                  {localizeUiText(t(`${NS}.colLineTotal`, "إجمالي البند"))}:{" "}
                                   <span className="font-mono font-semibold tabular-nums text-red-700" data-testid={`pv-line-total-${idx}`}>{fmt(lineTotal)}</span>
                                 </span>
                               </div>
@@ -1845,23 +1846,23 @@ export default function PaymentVoucherForm() {
                     data-testid="pv-add-line"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    {t(`${NS}.addLine`, "إضافة بند صرف")}
+                    {localizeUiText(t(`${NS}.addLine`, "إضافة بند صرف"))}
                   </Button>
                 </div>
 
                 {/* Totals footer */}
                 <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t pt-3 mt-1 text-sm">
                   <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground text-xs">{t(`${NS}.totalNet`, "إجمالي الصافي")}</span>
+                    <span className="text-muted-foreground text-xs">{localizeUiText(t(`${NS}.totalNet`, "إجمالي الصافي"))}</span>
                     <span className="font-mono font-semibold tabular-nums">{fmt(totals.net)}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground text-xs">{t(`${NS}.totalTax`, "إجمالي الضريبة")}</span>
+                    <span className="text-muted-foreground text-xs">{localizeUiText(t(`${NS}.totalTax`, "إجمالي الضريبة"))}</span>
                     <span className="font-mono font-semibold tabular-nums">{fmt(totals.tax)}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Banknote className="h-4 w-4 text-red-600" />
-                    <span className="text-muted-foreground text-xs">{t(`${NS}.grandTotal`, "الإجمالي")}</span>
+                    <span className="text-muted-foreground text-xs">{localizeUiText(t(`${NS}.grandTotal`, "الإجمالي"))}</span>
                     <span className="font-mono font-bold text-base tabular-nums text-red-700" data-testid="pv-grand-total">{fmt(totals.grand)}</span>
                   </div>
                 </div>

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -92,12 +93,12 @@ export default function TaxesList() {
             <Percent className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">إدارة الضرائب</h1>
-            <p className="text-sm text-muted-foreground">عرّف ضرائب ديناميكية تُطبَّق على المبيعات والمشتريات والقيود</p>
+            <h1 className="text-2xl font-bold">{localizeUiText("إدارة الضرائب")}</h1>
+            <p className="text-sm text-muted-foreground">{localizeUiText("عرّف ضرائب ديناميكية تُطبَّق على المبيعات والمشتريات والقيود")}</p>
           </div>
         </div>
         <Button size="lg" onClick={() => navigate("/accounting/taxes/new")} className="gap-2 bg-gradient-to-l from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-md">
-          <Plus className="h-5 w-5" /> ضريبة جديدة
+          <Plus className="h-5 w-5" /> {localizeUiText("ضريبة جديدة")}
         </Button>
       </div>
 
@@ -105,7 +106,7 @@ export default function TaxesList() {
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 min-w-[240px]">
           <Search className="absolute top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground right-3" />
-          <Input placeholder="ابحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} className="pr-9" />
+          <Input placeholder={localizeUiText("ابحث بالكود أو الاسم...")} value={search} onChange={e => setSearch(e.target.value)} className="pr-9" />
         </div>
         <div className="flex items-center gap-1 border rounded-md p-1 bg-muted/30">
           {[
@@ -115,11 +116,11 @@ export default function TaxesList() {
           ].map(o => (
             <button key={o.v} onClick={() => setFilter(o.v as any)}
               className={cn("px-3 py-1.5 text-xs rounded transition-all", filter === o.v ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted/50")}>
-              {o.l}
+              {localizeUiText(o.l)}
             </button>
           ))}
         </div>
-        <Badge variant="secondary" className="text-xs">{`الإجمالي: ${taxes.length}`}</Badge>
+        <Badge variant="secondary" className="text-xs">{localizeUiText("الإجمالي:")} {taxes.length}</Badge>
       </div>
 
       {/* List */}

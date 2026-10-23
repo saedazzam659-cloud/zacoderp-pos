@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -161,7 +162,7 @@ export default function BalanceSheet() {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
             <Checkbox checked={showZero} onCheckedChange={(c) => setShowZero(c === true)} />
-            {t("accountingReports.showZeroAccounts", "عرض الحسابات الصفرية")}
+            {localizeUiText(t("accountingReports.showZeroAccounts", "عرض الحسابات الصفرية"))}
           </label>
           <Button className="gap-2" onClick={() => { setSearched(true); refetch(); }} disabled={isLoading}>
             <Search className="h-4 w-4" />

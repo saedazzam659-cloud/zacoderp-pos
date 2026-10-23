@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import MultiBranchFilter from "@/components/MultiBranchFilter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -15,7 +16,6 @@ import { TablePagination, usePagination } from "@/components/TablePagination";
 import { Landmark, Plus, Pencil, Trash2, Search, CheckCircle2, XCircle, TrendingUp, CreditCard, AlertTriangle, Check, X, ChevronsUpDown, Building2 } from "lucide-react";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { localizeUiText } from "@/lib/localizedUiText";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const EMPTY = { code: "", nameAr: "", nameEn: "", bankName: "", bankNameEn: "", accountNumber: "", iban: "", swiftCode: "", currencyId: "", branchIds: [] as number[], notes: "", isActive: true };
@@ -376,7 +376,7 @@ export default function BankAccounts() {
                 {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {isRtl ? c.nameAr : (c.nameEn || c.nameAr)}</option>)}
               </select>
             </Field>
-            <Field label="الفروع" required hint={<span className="text-muted-foreground text-xs">يجب ربط الحساب بفرع واحد على الأقل</span>}>
+            <Field label={localizeUiText("الفروع")} required hint={<span className="text-muted-foreground text-xs">{localizeUiText("يجب ربط الحساب بفرع واحد على الأقل")}</span>}>
               <BranchMultiSelect
                 branches={branches as any[]}
                 value={form.branchIds}

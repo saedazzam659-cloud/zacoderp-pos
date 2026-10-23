@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -12,7 +13,7 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Pencil, Trash2, Wrench, Search } from "lucide-react";
-import { fmt2 } from "@/lib/format";
+import { fmt2, useFormatters } from "@/lib/format";
 import { DateField } from "@/components/ui/date-field";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -34,6 +35,7 @@ const EMPTY = { code:"", assetId:"", type:"periodic",
   kmAtService:"", approved:false, notes:"" };
 
 export default function FaMaintenance() {
+  const { isRtl } = useFormatters();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -109,96 +111,96 @@ export default function FaMaintenance() {
   });
 
   const totalCost = rows.reduce((s,m)=>s+Number(m.cost||0), 0);
-  const typeLabel = (t:string) => TYPES.find(x=>x[0]===t)?.[1] ?? t;
+  const typeLabel = (t:string) => localizeUiText(TYPES.find(x=>x[0]===t)?.[1] ?? t);
 
   return (
-    <div className="space-y-4 p-4" dir="rtl">
+    <div className="space-y-4 p-4" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Wrench className="h-6 w-6 text-orange-600" />
-            صيانة الأصول
+            {localizeUiText("صيانة الأصول")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            سجل الصيانة الدورية والطارئة — {rows.length} عملية بإجمالي {fmt2(totalCost)} ر.س
+            {localizeUiText("سجل الصيانة الدورية والطارئة")} — {rows.length} {localizeUiText("عملية بإجمالي")} {fmt2(totalCost)} {localizeUiText("ر.س")}
           </p>
         </div>
         <Button onClick={openNew} className="bg-orange-600 hover:bg-orange-700">
-          <Plus className="h-4 w-4 ms-2" />صيانة جديدة
+          <Plus className="h-4 w-4 ms-2" />{localizeUiText("صيانة جديدة")}
         </Button>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute end-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="بحث بالكود أو الأصل…" value={search}
+          <Input placeholder={localizeUiText("بحث بالكود أو الأصل…")} value={search}
             onChange={(e)=>setSearch(e.target.value)} className="pe-8" />
         </div>
-        <span className="text-sm text-muted-foreground">{filtered.length} من {rows.length}</span>
+        <span className="text-sm text-muted-foreground">{filtered.length} {localizeUiText("من")} {rows.length}</span>
       </div>
 
       {showForm && (
         <FormPanel icon={editing?Pencil:Plus}
-          title={editing?`تعديل: ${editing.code}`:"عملية صيانة جديدة"}
+          title={editing?`${localizeUiText("تعديل: ")}${editing.code}`:localizeUiText("عملية صيانة جديدة")}
           width="4xl"
           onClose={()=>{ setShowForm(false); setEditing(null); }}
           onSave={()=>saveMut.mutate()} saving={saveMut.isPending}
-          saveLabel="حفظ" cancelLabel="إلغاء"
+          saveLabel={localizeUiText("حفظ")} cancelLabel={localizeUiText("إلغاء")}
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div><Label>الكود</Label>
-              <Input value={form.code} onChange={(e)=>setForm({...form,code:e.target.value})} placeholder="تلقائي FAM0001" /></div>
-            <div><Label>الأصل *</Label>
+            <div><Label>{localizeUiText("الكود")}</Label>
+              <Input value={form.code} onChange={(e)=>setForm({...form,code:e.target.value})} placeholder={localizeUiText("تلقائي")} /></div>
+            <div><Label>{localizeUiText("الأصل")} *</Label>
               <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.assetId} onChange={(e)=>setForm({...form,assetId:e.target.value})}>
-                <option value="">— اختر —</option>
+                <option value="">— {localizeUiText("اختر")} —</option>
                 {assets.map(a => <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
               </select></div>
-            <div><Label>نوع الصيانة</Label>
+            <div><Label>{localizeUiText("نوع الصيانة")}</Label>
               <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.type} onChange={(e)=>setForm({...form,type:e.target.value})}>
-                {TYPES.map(([v,l])=> <option key={v} value={v}>{l}</option>)}
+                {TYPES.map(([v,l])=> <option key={v} value={v}>{localizeUiText(l)}</option>)}
               </select></div>
-            <div><Label>التاريخ</Label>
+            <div><Label>{localizeUiText("التاريخ")}</Label>
               <DateField value={form.serviceDate} onChange={(e)=>setForm({...form,serviceDate:e.target.value})} /></div>
-            <div><Label>التكلفة</Label>
+            <div><Label>{localizeUiText("التكلفة")}</Label>
               <Input type="text" inputMode="decimal" dir="ltr" value={form.cost} onChange={(e)=>setForm({...form,cost:e.target.value.replace(/[^0-9.]/g,"")})} /></div>
-            <div><Label>المورد / الورشة</Label>
+            <div><Label>{localizeUiText("المورد / الورشة")}</Label>
               <Input value={form.vendorName} onChange={(e)=>setForm({...form,vendorName:e.target.value})} /></div>
-            <div><Label>الفني</Label>
+            <div><Label>{localizeUiText("الفني")}</Label>
               <Input value={form.technicianName} onChange={(e)=>setForm({...form,technicianName:e.target.value})} /></div>
-            <div><Label>كم وقت الصيانة</Label>
+            <div><Label>{localizeUiText("كم وقت الصيانة")}</Label>
               <Input type="text" inputMode="numeric" dir="ltr" value={form.kmAtService} onChange={(e)=>setForm({...form,kmAtService:e.target.value.replace(/[^0-9]/g,"")})} /></div>
-            <div className="md:col-span-2"><Label>وصف العطل / العمل المنجز</Label>
+            <div className="md:col-span-2"><Label>{localizeUiText("وصف العطل / العمل المنجز")}</Label>
               <Input value={form.description} onChange={(e)=>setForm({...form,description:e.target.value})} /></div>
             <div className="flex items-center gap-2">
               <input type="checkbox" id="appr" checked={form.approved}
                 onChange={(e)=>setForm({...form,approved:e.target.checked})} className="h-4 w-4" />
-              <Label htmlFor="appr">معتمدة</Label>
+              <Label htmlFor="appr">{localizeUiText("معتمدة")}</Label>
             </div>
-            <div><Label>ملاحظات</Label>
+            <div><Label>{localizeUiText("ملاحظات")}</Label>
               <Input value={form.notes} onChange={(e)=>setForm({...form,notes:e.target.value})} /></div>
           </div>
         </FormPanel>
       )}
 
       <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
-        <table className="w-full text-xs" dir="rtl">
+        <table className="w-full text-xs" dir={isRtl ? "rtl" : "ltr"}>
           <thead className="bg-gradient-to-b from-orange-50 to-orange-100 text-orange-900 border-b">
             <tr>
-              <th className="px-3 py-2 text-start font-semibold">الكود</th>
-              <th className="px-3 py-2 text-start font-semibold">الأصل</th>
-              <th className="px-3 py-2 text-start font-semibold">النوع</th>
-              <th className="px-3 py-2 text-start font-semibold">التاريخ</th>
-              <th className="px-3 py-2 text-start font-semibold">التكلفة</th>
-              <th className="px-3 py-2 text-start font-semibold">المورد</th>
-              <th className="px-3 py-2 text-start font-semibold">الحالة</th>
-              <th className="px-3 py-2 text-center font-semibold w-24">إجراءات</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الكود")}</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الأصل")}</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("النوع")}</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("التاريخ")}</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("التكلفة")}</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("المورد")}</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الحالة")}</th>
+              <th className="px-3 py-2 text-center font-semibold w-24">{localizeUiText("إجراءات")}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
-            {isLoading && <tr><td colSpan={8} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
-            {!isLoading && filtered.length===0 && <tr><td colSpan={8} className="text-center py-8 text-muted-foreground">لا توجد سجلات</td></tr>}
+            {isLoading && <tr><td colSpan={8} className="text-center py-8 text-muted-foreground">{localizeUiText("جاري التحميل…")}</td></tr>}
+            {!isLoading && filtered.length===0 && <tr><td colSpan={8} className="text-center py-8 text-muted-foreground">{localizeUiText("لا توجد سجلات")}</td></tr>}
             {filtered.map(m => (
               <tr key={m.id} className="hover:bg-orange-50/40">
                 <td className="px-3 py-2 font-mono">{m.code}</td>
@@ -209,7 +211,7 @@ export default function FaMaintenance() {
                 <td className="px-3 py-2">{m.vendorName || "—"}</td>
                 <td className="px-3 py-2">
                   <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${m.approved ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
-                    {m.approved ? "معتمدة" : "بانتظار اعتماد"}
+                    {localizeUiText(m.approved ? "معتمدة" : "بانتظار اعتماد")}
                   </span>
                 </td>
                 <td className="px-3 py-2">
@@ -229,14 +231,14 @@ export default function FaMaintenance() {
       </div>
 
       <AlertDialog open={!!del} onOpenChange={(o)=>!o && setDel(null)}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={isRtl ? "rtl" : "ltr"}>
           <AlertDialogHeader>
-            <AlertDialogTitle>حذف سجل الصيانة</AlertDialogTitle>
-            <AlertDialogDescription>هل تريد حذف «{del?.code}» نهائياً؟</AlertDialogDescription>
+            <AlertDialogTitle>{localizeUiText("حذف سجل الصيانة")}</AlertDialogTitle>
+            <AlertDialogDescription>{localizeUiText("هل تريد حذف")} «{del?.code}» {localizeUiText("نهائياً؟")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>إلغاء</AlertDialogCancel>
-            <AlertDialogAction onClick={()=>delMut.mutate()} className="bg-rose-600 hover:bg-rose-700">حذف</AlertDialogAction>
+            <AlertDialogCancel>{localizeUiText("إلغاء")}</AlertDialogCancel>
+            <AlertDialogAction onClick={()=>delMut.mutate()} className="bg-rose-600 hover:bg-rose-700">{localizeUiText("حذف")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { localizedName } from "@/lib/localizedName";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -390,7 +391,7 @@ export default function LetterOfCredit() {
   }
 
   const supplierItems = [{ value: "", label: tr("supplierNone") }, ...suppliers.map((s: any) => ({ value: String(s.id), label: pickName(s.nameAr, s.nameEn) }))];
-  const branchItems = [{ value: "", label: "— بدون فرع —" }, ...branches.map((b: any) => ({ value: String(b.id), label: pickName(b.nameAr, b.nameEn) }))];
+  const branchItems = [{ value: "", label: localizeUiText("— بدون فرع —") }, ...branches.map((b: any) => ({ value: String(b.id), label: pickName(b.nameAr, b.nameEn) }))];
   const accountItems  = [{ value: "", label: tr("accountNone") }, ...accounts.filter((a: any) => a.isPosting).map((a: any) => ({ value: String(a.id), label: `${a.code} — ${pickName(a.nameAr, a.nameEn)}` }))];
   const currencyItems = currencies.length > 0
     ? currencies.map((c: any) => ({
@@ -438,7 +439,7 @@ export default function LetterOfCredit() {
                 <Field label={tr("fLcNumber")} required><Input placeholder={tr("fLcNumberPh")} dir="ltr" className="h-9 text-sm text-left" value={form.lcNumber} onChange={e => setForm((p: any) => ({ ...p, lcNumber: e.target.value }))} /></Field>
                 <Field label={tr("fDate")} required><DateField className="h-9 text-sm" value={form.lcDate} onChange={e => setForm((p: any) => ({ ...p, lcDate: e.target.value }))} /></Field>
                 <Field label={tr("fSupplier")}><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder={tr("fSupplierPh")} /></Field>
-                <Field label="الفرع"><SearchCombobox items={branchItems} value={form.branchId ?? ""} onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))} placeholder="— بدون فرع —" /></Field>
+                <Field label={localizeUiText("الفرع")}><SearchCombobox items={branchItems} value={form.branchId ?? ""} onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))} placeholder={localizeUiText("— بدون فرع —")} /></Field>
                 <Field label={tr("fBank")}><Input className="h-9 text-sm" placeholder={tr("fBankPh")} value={form.bankName} onChange={e => setForm((p: any) => ({ ...p, bankName: e.target.value }))} /></Field>
                 <Field label={tr("fAmount")} required><Input className="h-9 text-sm text-left" type="text" inputMode="decimal" placeholder="0.00" dir="ltr" value={form.totalAmount} onChange={e => setForm((p: any) => ({ ...p, totalAmount: e.target.value.replace(/[^0-9.]/g, "") }))} /></Field>
                 <Field label={tr("fCurrency")}><SearchCombobox items={currencyItems} value={form.currencyCode} onValueChange={v => setForm((p: any) => ({ ...p, currencyCode: v }))} placeholder={tr("fCurrencyPh")} /></Field>

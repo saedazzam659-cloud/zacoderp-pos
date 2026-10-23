@@ -546,7 +546,7 @@ export default function ChartOfAccounts() {
             title={t("chartOfAccounts.export_title")}
           >
             <Printer className="h-4 w-4" />
-            طباعة الجرد الخارجي
+            {localizeUiText("طباعة الجرد الخارجي")}
           </Button>
           <div className="inline-flex rounded-md border bg-background overflow-hidden shadow-sm">
             <button
@@ -558,7 +558,7 @@ export default function ChartOfAccounts() {
               title={localizeUiText("عرض شجري")}
             >
               <ListTree className="h-3.5 w-3.5" />
-              شجري
+              {localizeUiText("شجري")}
             </button>
             <button
               onClick={() => setView("table")}
@@ -566,10 +566,10 @@ export default function ChartOfAccounts() {
                 "px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors border-r",
                 viewMode === "table" ? "bg-emerald-600 text-white" : "bg-background text-muted-foreground hover:bg-muted"
               )}
-              title="عرض جدولي"
+              title={localizeUiText("عرض جدولي")}
             >
               <LayoutGrid className="h-3.5 w-3.5" />
-              جدول
+              {localizeUiText("جدول")}
             </button>
           </div>
           <ExportButtons rows={exportRows} columns={EXPORT_COLS} filename={`${t("chartOfAccounts.filename_prefix")}-${new Date().toISOString().slice(0,10)}`} title={t("chartOfAccounts.export_title")} />

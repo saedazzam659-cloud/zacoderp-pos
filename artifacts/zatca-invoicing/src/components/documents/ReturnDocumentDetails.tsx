@@ -112,7 +112,7 @@ export default function ReturnDocumentDetails({
           <Info className="h-7 w-7 text-muted-foreground" />
         </div>
         <p className="text-sm font-semibold text-foreground">{localizeUiText("لا توجد تفاصيل بعد")}</p>
-        <p className="max-w-md text-xs leading-relaxed text-muted-foreground">{emptyStateText}</p>
+        <p className="max-w-md text-xs leading-relaxed text-muted-foreground">{localizeUiText(emptyStateText)}</p>
       </div>
     );
   }

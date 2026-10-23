@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -55,6 +57,7 @@ function toTree(rows: Group[]): { row: Group; depth: number }[] {
 }
 
 export default function FaGroups() {
+  const { isRtl } = useFormatters();
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -106,10 +109,10 @@ export default function FaGroups() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey:["fa/groups", cid] });
-      toast({ title: editing ? "تم التحديث" : "تم الإضافة" });
+      toast({ title: localizeUiText(editing ? "تم التحديث" : "تم الإضافة") });
       setShowForm(false); setEditing(null); setForm(EMPTY);
     },
-    onError: (e:any) => toast({ title:"خطأ", description: e?.message, variant:"destructive" }),
+    onError: (e:any) => toast({ title:localizeUiText("خطأ"), description: e?.message, variant:"destructive" }),
   });
 
   const delMut = useMutation({
@@ -119,71 +122,71 @@ export default function FaGroups() {
       if (!r.ok) { const j = await r.json().catch(()=>({})); throw new Error(j.error || "تعذّر الحذف"); }
       return r.json();
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey:["fa/groups", cid] }); toast({ title:"تم الحذف" }); setDel(null); },
-    onError: (e:any) => { toast({ title:"تعذّر الحذف", description: e?.message, variant:"destructive" }); setDel(null); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey:["fa/groups", cid] }); toast({ title:localizeUiText("تم الحذف") }); setDel(null); },
+    onError: (e:any) => { toast({ title:localizeUiText("تعذّر الحذف"), description: e?.message, variant:"destructive" }); setDel(null); },
   });
 
   return (
-    <div className="space-y-4 p-4" dir="rtl">
+    <div className="space-y-4 p-4" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <FolderTree className="h-6 w-6 text-cyan-600" />
-            مجموعات الأصول
+            {localizeUiText("مجموعات الأصول")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            تصنيف هرمي للأصول (مجموعة رئيسية ← مجموعة فرعية) على المنوال العالمي — {rows.length} مجموعة
+            {localizeUiText("تصنيف هرمي للأصول (مجموعة رئيسية ← مجموعة فرعية) على المنوال العالمي")} — {rows.length} {localizeUiText("مجموعة")}
           </p>
         </div>
         <Button onClick={openNew} className="bg-cyan-600 hover:bg-cyan-700">
-          <Plus className="h-4 w-4 ms-2" />مجموعة جديدة
+          <Plus className="h-4 w-4 ms-2" />{localizeUiText("مجموعة جديدة")}
         </Button>
       </div>
 
       {showForm && (
         <FormPanel icon={editing?Pencil:Plus}
-          title={editing?`تعديل: ${editing.nameAr}`:"مجموعة جديدة"} width="2xl"
+          title={editing?`${localizeUiText("تعديل: ")}${editing.nameAr}`:localizeUiText("مجموعة جديدة")} width="2xl"
           onClose={()=>{ setShowForm(false); setEditing(null); }}
           onSave={()=>saveMut.mutate()} saving={saveMut.isPending}
-          saveLabel="حفظ" cancelLabel="إلغاء"
+          saveLabel={localizeUiText("حفظ")} cancelLabel={localizeUiText("إلغاء")}
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div><Label>الكود</Label>
-              <Input value={form.code} onChange={(e)=>setForm({...form,code:e.target.value})} placeholder="تلقائي FAG0001" /></div>
-            <div><Label>الاسم (عربي) *</Label>
-              <Input value={form.nameAr} onChange={(e)=>setForm({...form,nameAr:e.target.value})} placeholder="أصول ثابتة، عقارات…" /></div>
-            <div><Label>الاسم (إنجليزي)</Label>
+            <div><Label>{localizeUiText("الكود")}</Label>
+              <Input value={form.code} onChange={(e)=>setForm({...form,code:e.target.value})} placeholder={localizeUiText("تلقائي")} /></div>
+            <div><Label>{localizeUiText("الاسم (عربي)")} *</Label>
+              <Input value={form.nameAr} onChange={(e)=>setForm({...form,nameAr:e.target.value})} placeholder={localizeUiText("أصول ثابتة، عقارات…")} /></div>
+            <div><Label>{localizeUiText("الاسم (إنجليزي)")}</Label>
               <Input value={form.nameEn} onChange={(e)=>setForm({...form,nameEn:e.target.value})} /></div>
-            <div><Label>المجموعة الرئيسية</Label>
+            <div><Label>{localizeUiText("المجموعة الرئيسية")}</Label>
               <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.parentId} onChange={(e)=>setForm({...form,parentId:e.target.value})}>
-                <option value="">— بدون (مجموعة رئيسية) —</option>
+                <option value="">— {localizeUiText("بدون (مجموعة رئيسية)")} —</option>
                 {parentOptions.map(g => <option key={g.id} value={g.id}>{g.nameAr}</option>)}
               </select>
-              <p className="text-[11px] text-muted-foreground mt-1">اتركها فارغة لتكون مجموعة رئيسية في أعلى الشجرة.</p></div>
+              <p className="text-[11px] text-muted-foreground mt-1">{localizeUiText("اتركها فارغة لتكون مجموعة رئيسية في أعلى الشجرة.")}</p></div>
             <div className="flex items-center gap-2 mt-6">
               <input type="checkbox" id="active-grp" checked={form.isActive}
                 onChange={(e)=>setForm({...form,isActive:e.target.checked})} className="h-4 w-4" />
-              <Label htmlFor="active-grp">نشطة</Label>
+              <Label htmlFor="active-grp">{localizeUiText("نشطة")}</Label>
             </div>
           </div>
         </FormPanel>
       )}
 
       <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
-        <table className="w-full text-xs" dir="rtl">
+        <table className="w-full text-xs" dir={isRtl ? "rtl" : "ltr"}>
           <thead className="bg-gradient-to-b from-cyan-50 to-cyan-100 text-cyan-900 border-b">
             <tr>
-              <th className="px-3 py-2 text-start font-semibold">الكود</th>
-              <th className="px-3 py-2 text-start font-semibold">الاسم</th>
-              <th className="px-3 py-2 text-start font-semibold">المجموعة الرئيسية</th>
-              <th className="px-3 py-2 text-start font-semibold">الحالة</th>
-              <th className="px-3 py-2 text-center font-semibold w-24">إجراءات</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الكود")}</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الاسم")}</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("المجموعة الرئيسية")}</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الحالة")}</th>
+              <th className="px-3 py-2 text-center font-semibold w-24">{localizeUiText("إجراءات")}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
-            {isLoading && <tr><td colSpan={5} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
-            {!isLoading && rows.length===0 && <tr><td colSpan={5} className="text-center py-8 text-muted-foreground">لا توجد مجموعات</td></tr>}
+            {isLoading && <tr><td colSpan={5} className="text-center py-8 text-muted-foreground">{localizeUiText("جاري التحميل…")}</td></tr>}
+            {!isLoading && rows.length===0 && <tr><td colSpan={5} className="text-center py-8 text-muted-foreground">{localizeUiText("لا توجد مجموعات")}</td></tr>}
             {tree.map(({ row: g, depth }) => (
               <tr key={g.id} className="hover:bg-cyan-50/40">
                 <td className="px-3 py-2 font-mono">{g.code}</td>
@@ -198,7 +201,7 @@ export default function FaGroups() {
                 </td>
                 <td className="px-3 py-2">
                   <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${g.isActive ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>
-                    {g.isActive ? "نشطة" : "متوقفة"}
+                    {localizeUiText(g.isActive ? "نشطة" : "متوقفة")}
                   </span>
                 </td>
                 <td className="px-3 py-2">
@@ -218,14 +221,14 @@ export default function FaGroups() {
       </div>
 
       <AlertDialog open={!!del} onOpenChange={(o)=>!o && setDel(null)}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={isRtl ? "rtl" : "ltr"}>
           <AlertDialogHeader>
-            <AlertDialogTitle>حذف المجموعة</AlertDialogTitle>
-            <AlertDialogDescription>هل تريد حذف المجموعة «{del?.nameAr}»؟</AlertDialogDescription>
+            <AlertDialogTitle>{localizeUiText("حذف المجموعة")}</AlertDialogTitle>
+            <AlertDialogDescription>{localizeUiText("هل تريد حذف المجموعة")} «{del?.nameAr}»؟</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>إلغاء</AlertDialogCancel>
-            <AlertDialogAction onClick={()=>delMut.mutate()} className="bg-rose-600 hover:bg-rose-700">حذف</AlertDialogAction>
+            <AlertDialogCancel>{localizeUiText("إلغاء")}</AlertDialogCancel>
+            <AlertDialogAction onClick={()=>delMut.mutate()} className="bg-rose-600 hover:bg-rose-700">{localizeUiText("حذف")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -25,6 +25,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import imageCompression from "browser-image-compression";
 import { jsPDF } from "jspdf";
@@ -555,11 +556,11 @@ export function JournalScanArchive({
           variant="outline"
           size="sm"
           className={className ?? (compact ? "relative h-8 w-8 p-0" : "h-8 gap-1.5 text-xs relative")}
-          title={isCloud ? "أرشفة مستندات (تخزين سحابي)" : "أرشفة مستندات (تخزين على جهازك المحلي)"}
-          aria-label="أرشفة مستند"
+          title={localizeUiText(isCloud ? "أرشفة مستندات (تخزين سحابي)" : "أرشفة مستندات (تخزين على جهازك المحلي)")}
+          aria-label={localizeUiText("أرشفة مستند")}
         >
           {isCloud ? <Cloud className="h-3.5 w-3.5" /> : <Paperclip className="h-3.5 w-3.5" />}
-          {compact ? <span className="sr-only">أرشفة مستند</span> : "أرشفة مستند"}
+          {compact ? <span className="sr-only">{localizeUiText("أرشفة مستند")}</span> : localizeUiText("أرشفة مستند")}
           {badgeCount > 0 && (
             <span className="absolute -top-1.5 -left-1.5 h-4 min-w-[16px] rounded-full bg-emerald-500 text-white text-[10px] font-bold leading-none flex items-center justify-center px-1">
               {badgeCount}

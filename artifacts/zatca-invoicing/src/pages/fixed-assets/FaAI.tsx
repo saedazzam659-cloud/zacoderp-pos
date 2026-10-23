@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -86,7 +87,7 @@ export default function FaAI() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Sparkles className="h-6 w-6 text-pink-600" />
-            التحليل الذكي للأصول
+            {localizeUiText("التحليل الذكي للأصول")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             تقييم المخاطر، التوصيات، تنبيهات التأمين والصيانة الدورية، وتوقع الإهلاك
@@ -95,11 +96,11 @@ export default function FaAI() {
         <div className="flex gap-2 flex-wrap">
           <Button onClick={()=>analyzeMut.mutate()} disabled={analyzeMut.isPending} className="bg-pink-600 hover:bg-pink-700">
             <Brain className="h-4 w-4 ms-2" />
-            {analyzeMut.isPending ? "جاري التحليل…" : "تحليل كل الأصول"}
+            {analyzeMut.isPending ? localizeUiText("جاري التحليل…") : localizeUiText("تحليل كل الأصول")}
           </Button>
           <Button variant="outline" onClick={()=>adviceMut.mutate()} disabled={adviceMut.isPending}>
             <Sparkles className="h-4 w-4 ms-2" />
-            {adviceMut.isPending ? "…" : "نصيحة ذكية"}
+            {adviceMut.isPending ? "…" : localizeUiText("نصيحة ذكية")}
           </Button>
         </div>
       </div>
@@ -124,7 +125,7 @@ export default function FaAI() {
             انتهاء وثائق التأمين القريبة
           </div>
           <div className="p-3">
-            {!alerts?.insuranceAlerts.length && <div className="text-center text-muted-foreground py-4">لا توجد تنبيهات</div>}
+            {!alerts?.insuranceAlerts.length && <div className="text-center text-muted-foreground py-4">{localizeUiText("لا توجد تنبيهات")}</div>}
             {alerts?.insuranceAlerts.map(a => (
               <div key={a.id} className={`flex items-center justify-between border-b py-2 text-sm ${a.daysLeft < 0 ? "text-rose-700" : a.daysLeft < 14 ? "text-amber-700" : ""}`}>
                 <div className="space-y-1">
@@ -150,7 +151,7 @@ export default function FaAI() {
             تنبيهات صيانة دورية متأخرة
           </div>
           <div className="p-3">
-            {!alerts?.maintenanceAlerts.length && <div className="text-center text-muted-foreground py-4">لا توجد تنبيهات</div>}
+            {!alerts?.maintenanceAlerts.length && <div className="text-center text-muted-foreground py-4">{localizeUiText("لا توجد تنبيهات")}</div>}
             {alerts?.maintenanceAlerts.map(a => (
               <div key={a.id} className="flex items-center justify-between border-b py-2 text-sm">
                 <div>
@@ -169,7 +170,7 @@ export default function FaAI() {
       {forecast?.series && forecast.series.length > 0 && (
         <div className="border rounded-lg bg-white shadow-sm overflow-hidden">
           <div className="px-4 py-2 border-b bg-violet-50 text-sm font-semibold text-violet-800">
-            توقع الإهلاك للـ {forecast.months} شهر القادمة
+            {localizeUiText("توقع الإهلاك للـ")} {forecast.months} {localizeUiText("شهر القادمة")}
           </div>
           <div className="overflow-x-auto p-3">
             <div className="flex items-end gap-2 h-40">

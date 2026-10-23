@@ -617,7 +617,7 @@ ${sections}
         <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir={isRtl ? "rtl" : "ltr"}>
           <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
             <ShoppingCart className="h-4 w-4 opacity-90" />
-            جرد فواتير المشتريات
+            {localizeUiText("جرد فواتير المشتريات")}
           </div>
           <div className="flex items-center gap-1.5">
             <HeaderColorPicker layout={layout} isRtl={isRtl} />
@@ -633,7 +633,7 @@ ${sections}
 
         <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs" dir={isRtl ? "rtl" : "ltr"}>
           <Input
-            placeholder="بحث (مستند، مورد، عملة)…"
+            placeholder={localizeUiText("بحث (مستند، مورد، عملة)…")}
             value={tableSearch}
             onChange={(e) => setTableSearch(e.target.value)}
             className="h-7 text-xs w-56"
@@ -648,7 +648,7 @@ ${sections}
                     ? "bg-primary text-primary-foreground border-primary"
                     : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
                 )}>
-                {s === "all" ? "الكل" : statusLabel(s)}
+                {s === "all" ? localizeUiText("الكل") : statusLabel(s)}
               </button>
             ))}
           </div>

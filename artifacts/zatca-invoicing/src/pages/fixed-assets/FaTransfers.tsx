@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -149,23 +150,23 @@ export default function FaTransfers() {
             نقل الأصول
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            تحويل الأصول بين الفروع/الأقسام — {rows.length} عملية نقل
+            {localizeUiText("تحويل الأصول بين الفروع/الأقسام")} — {rows.length} {localizeUiText("عملية نقل")}
           </p>
         </div>
         <Button onClick={openNew} className="bg-indigo-600 hover:bg-indigo-700">
-          <Plus className="h-4 w-4 ms-2" />نقل جديد
+          <Plus className="h-4 w-4 ms-2" />{localizeUiText("نقل جديد")}
         </Button>
       </div>
 
       {showForm && (
         <FormPanel icon={Plus}
-          title="نقل أصل جديد" width="3xl"
+          title={localizeUiText("نقل أصل جديد")} width="3xl"
           onClose={()=>setShowForm(false)}
           onSave={()=>saveMut.mutate()} saving={saveMut.isPending}
-          saveLabel="نقل" cancelLabel="إلغاء"
+          saveLabel={localizeUiText("نقل")} cancelLabel={localizeUiText("إلغاء")}
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div><Label>الأصل *</Label>
+            <div><Label>{localizeUiText("الأصل")} *</Label>
               <select className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.assetId} onChange={(e)=>selectAsset(e.target.value)}>
                 <option value="">— اختر —</option>
@@ -216,19 +217,19 @@ export default function FaTransfers() {
           <thead className="bg-gradient-to-b from-indigo-50 to-indigo-100 text-indigo-900 border-b">
             <tr>
               <th className="px-3 py-2 text-start font-semibold">الكود</th>
-              <th className="px-3 py-2 text-start font-semibold">الأصل</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("الأصل")}</th>
               <th className="px-3 py-2 text-start font-semibold">من فرع</th>
               <th className="px-3 py-2 text-start font-semibold">إلى فرع</th>
               <th className="px-3 py-2 text-start font-semibold">من مركز تكلفة</th>
               <th className="px-3 py-2 text-start font-semibold">إلى مركز تكلفة</th>
-              <th className="px-3 py-2 text-start font-semibold">التاريخ</th>
+              <th className="px-3 py-2 text-start font-semibold">{localizeUiText("التاريخ")}</th>
               <th className="px-3 py-2 text-start font-semibold">السبب</th>
               <th className="px-3 py-2 text-center font-semibold w-16">إجراءات</th>
             </tr>
           </thead>
           <tbody className="divide-y">
             {isLoading && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">جاري التحميل…</td></tr>}
-            {!isLoading && rows.length===0 && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">لا توجد سجلات</td></tr>}
+            {!isLoading && rows.length===0 && <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">{localizeUiText("لا توجد سجلات")}</td></tr>}
             {rows.map(t => (
               <tr key={t.id} className="hover:bg-indigo-50/40">
                 <td className="px-3 py-2 font-mono">{t.code}</td>
@@ -254,10 +255,10 @@ export default function FaTransfers() {
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle>حذف سجل النقل</AlertDialogTitle>
-            <AlertDialogDescription>سيتم حذف سجل النقل «{del?.code}» — لن يتم إرجاع الأصل تلقائياً.</AlertDialogDescription>
+            <AlertDialogDescription>{localizeUiText("سيتم حذف سجل النقل")} «{del?.code}» — {localizeUiText("لن يتم إرجاع الأصل تلقائياً.")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogCancel>{localizeUiText("إلغاء")}</AlertDialogCancel>
             <AlertDialogAction onClick={()=>delMut.mutate()} className="bg-rose-600 hover:bg-rose-700">حذف</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

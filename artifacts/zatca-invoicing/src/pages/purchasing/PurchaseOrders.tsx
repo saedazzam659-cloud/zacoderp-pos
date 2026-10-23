@@ -568,7 +568,7 @@ ${sections}
         <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir={isRtl ? "rtl" : "ltr"}>
           <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
             <ClipboardList className="h-4 w-4 opacity-90" />
-            جرد أوامر الشراء
+            {localizeUiText("جرد أوامر الشراء")}
           </div>
           <div className="flex items-center gap-1.5">
             <HeaderColorPicker layout={layout} isRtl={isRtl} />
@@ -584,7 +584,7 @@ ${sections}
 
         <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs" dir={isRtl ? "rtl" : "ltr"}>
           <Input
-            placeholder="بحث (مستند، مورد، عملة)…"
+            placeholder={localizeUiText("بحث (مستند، مورد، عملة)…")}
             value={tableSearch}
             onChange={(e) => setTableSearch(e.target.value)}
             className="h-7 text-xs w-56"
