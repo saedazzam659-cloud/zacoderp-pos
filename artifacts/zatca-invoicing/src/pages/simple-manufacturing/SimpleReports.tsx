@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, FileText, TrendingUp, TrendingDown, Layers } from "lucide-react";
+import { Loader2, FileText, TrendingUp, TrendingDown, Layers, Calculator, Users, Wrench, Zap, AlertTriangle } from "lucide-react";
 import { MonthlyOverheadClosures } from "@/components/MonthlyOverheadClosures";
 
 function statusLabel(status: string) {
@@ -16,6 +16,9 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
   const [report, setReport] = useState<any>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [resourceEstimate, setResourceEstimate] = useState<any>(null);
+  const [resourceEstimateError, setResourceEstimateError] = useState("");
+  const [resourceEstimateLoading, setResourceEstimateLoading] = useState(true);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -39,6 +42,32 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
         if (requestId === requestIdRef.current) setLoading(false);
       });
     return () => controller.abort();
+  }, [request]);
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    setResourceEstimate(null);
+    setResourceEstimateLoading(true);
+    setResourceEstimateError("");
+    request("/api/simple-manufacturing/reports/resource-estimates", { signal: controller.signal })
+      .then(data => {
+        if (!active) return;
+        if (!data || !Array.isArray(data.orders) || !data.totals) {
+          throw new Error("استجابة تقدير الموارد غير صالحة");
+        }
+        setResourceEstimate(data);
+      })
+      .catch((e: any) => {
+        if (active && e?.name !== "AbortError") setResourceEstimateError(e.message);
+      })
+      .finally(() => {
+        if (active) setResourceEstimateLoading(false);
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [request]);
 
   if (error) {
@@ -106,6 +135,123 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
         </Card>
       </div>
 
+      <Card className="border-indigo-200">
+        <CardHeader className="border-b bg-indigo-50/60">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Calculator className="h-5 w-5 text-indigo-600" />
+            تقدير موارد مسارات أوامر الإنتاج
+          </CardTitle>
+          <p className="text-sm text-slate-600">
+            تقدير قراءة فقط من لقطة المراحل المحفوظة: رواتب الموظفين من مسيراتهم الفردية، وإهلاك الآلة، وكهرباؤها عند توفر البيانات.
+            لا يُضاف إلى التكلفة الفعلية ولا ينشئ قيوداً محاسبية.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4 p-4">
+          {resourceEstimateLoading ? (
+            <div className="flex items-center justify-center gap-2 py-8 text-slate-500">
+              <Loader2 className="h-5 w-5 animate-spin" /> جاري حساب التقدير...
+            </div>
+          ) : resourceEstimateError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              تعذر حساب تقدير موارد المسارات: {resourceEstimateError}
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {[
+                  { key: "labor", label: "العمالة حسب الموظف", Icon: Users, color: "text-blue-700" },
+                  { key: "depreciation", label: "إهلاك الآلات", Icon: Wrench, color: "text-violet-700" },
+                  { key: "electricity", label: "كهرباء الآلات", Icon: Zap, color: "text-amber-700" },
+                  { key: "total", label: "إجمالي الموارد المقدّرة", Icon: Calculator, color: "text-indigo-800" },
+                ].map(({ key, label, Icon, color }) => (
+                  <div key={key} className="rounded-lg border bg-white p-3">
+                    <div className={`flex items-center gap-2 text-xs ${color}`}>
+                      <Icon className="h-4 w-4" />{label}
+                    </div>
+                    <div className={`mt-2 text-xl font-bold font-mono ${color}`}>
+                      {Number(resourceEstimate.totals?.[key] || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">
+                سعر ساعة الموظف = راتبه الإجمالي في آخر مسير مرحّل مناسب ÷ (30 يوماً × ساعات دوامه اليومية في العقد الساري). الإهلاك يعتمد على معدل الأصل وساعات المرحلة المتوقعة.
+                الأوامر التي ينقصها مسير أو معدل إهلاك تظهر تفاصيل النقص بدلاً من اعتبارها تكلفة صفرية.
+              </p>
+              {resourceEstimate.truncated && (
+                <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-800">
+                  عُرضت تقديرات آخر 1000 أمر فقط.
+                </p>
+              )}
+              <div className="max-h-[34rem] space-y-2 overflow-auto">
+                {(resourceEstimate.orders ?? []).filter((order: any) => order.stages?.length).map((order: any) => (
+                  <details key={order.id} className="rounded-lg border bg-white">
+                    <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 p-3">
+                      <span className="font-semibold text-slate-800">
+                        {order.orderNumber} — {order.title}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        فترة السعر: {order.period} · تقدير الموارد:{" "}
+                        {Number(order.stages.reduce((sum: number, stage: any) => sum + Number(stage.total || 0), 0))
+                          .toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </span>
+                    </summary>
+                    <div className="overflow-x-auto border-t">
+                      <table className="w-full min-w-[760px] text-xs">
+                        <thead className="bg-slate-50 text-slate-600">
+                          <tr>
+                            <th className="p-2 text-right">المرحلة / المورد</th>
+                            <th className="p-2 text-right">المدة المتوقعة</th>
+                            <th className="p-2 text-right">العمالة</th>
+                            <th className="p-2 text-right">تكلفة العمالة</th>
+                            <th className="p-2 text-right">الإهلاك</th>
+                            <th className="p-2 text-right">الكهرباء</th>
+                            <th className="p-2 text-right">الإجمالي التقديري</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {order.stages.map((stage: any, index: number) => (
+                            <tr key={`${order.id}-${stage.sequence}-${index}`} className="border-t align-top">
+                              <td className="p-2">
+                                <div className="font-medium">{stage.nameAr}</div>
+                                {stage.resourceName && <div className="text-slate-500">{stage.resourceName}</div>}
+                                {!!stage.laborSourcePeriods?.length && (
+                                  <div className="text-slate-500">مسير الرواتب: {stage.laborSourcePeriods.join("، ")}</div>
+                                )}
+                                {stage.depreciationSourcePeriod && (
+                                  <div className="text-slate-500">أساس الإهلاك: {stage.depreciationSourcePeriod}</div>
+                                )}
+                                {!!stage.missing?.length && (
+                                  <div className="mt-1 flex items-start gap-1 text-amber-700">
+                                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                                    <span>{stage.missing.join("، ")}</span>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="p-2">{stage.durationMinutes == null ? "غير محددة" : `${stage.durationMinutes} دقيقة`}</td>
+                              <td className="p-2">{stage.assignedEmployeeCount}/{stage.workerCount ?? "—"} موظف</td>
+                              <td className="p-2 font-mono">{Number(stage.labor || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                              <td className="p-2 font-mono">{Number(stage.depreciation || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                              <td className="p-2 font-mono">{Number(stage.electricity || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                              <td className="p-2 font-mono font-semibold">{Number(stage.total || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                ))}
+                {!(resourceEstimate.orders ?? []).some((order: any) => order.stages?.length) && (
+                  <div className="rounded-lg border border-dashed p-6 text-center text-sm text-slate-500">
+                    لا توجد أوامر محفوظة بمراحل إنتاج لعرض تقدير الموارد.
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader className="border-b bg-slate-50/50">
           <CardTitle className="text-lg flex items-center gap-2">
@@ -121,7 +267,9 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
                   <th className="p-4 font-medium">رقم الأمر</th>
                   <th className="p-4 font-medium">المنتج / العنوان</th>
                   <th className="p-4 font-medium">الحالة</th>
+                  <th className="p-4 font-medium">المعياري المحفوظ</th>
                   <th className="p-4 font-medium">التكلفة الفعلية</th>
+                  <th className="p-4 font-medium">الانحراف</th>
                 </tr>
               </thead>
               <tbody>
@@ -130,12 +278,19 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
                     <td className="p-4 font-semibold text-violet-700">{row.orderNumber}</td>
                     <td className="p-4">{row.productName || row.title}</td>
                     <td className="p-4"><Badge variant="outline">{statusLabel(row.status)}</Badge></td>
+                    <td className="p-4 font-mono">{Number(row.estimatedCost || 0).toLocaleString()}</td>
                     <td className="p-4 font-mono font-medium">{Number(row.actualCost || 0).toLocaleString()}</td>
+                    <td className={`p-4 font-mono font-semibold ${
+                      Number(row.actualCost || 0) > Number(row.estimatedCost || 0)
+                        ? "text-red-600" : "text-emerald-700"
+                    }`}>
+                      {(Number(row.actualCost || 0) - Number(row.estimatedCost || 0)).toLocaleString()}
+                    </td>
                   </tr>
                 ))}
                 {!(report.rows?.length) && (
                   <tr>
-                    <td colSpan={4} className="p-8 text-center text-slate-500">لا توجد بيانات للأوامر</td>
+                    <td colSpan={6} className="p-8 text-center text-slate-500">لا توجد بيانات للأوامر</td>
                   </tr>
                 )}
               </tbody>

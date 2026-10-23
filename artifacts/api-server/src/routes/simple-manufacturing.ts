@@ -13,7 +13,9 @@ import {
   unitsTable,
   warehousesTable,
   productionOrdersTable,
+  productionOrderStagesTable,
   productionStageResourceCostsTable,
+  productionOrderItemsTable,
   productionPendingSourceSettlementsTable,
   productionCostAllocationsTable,
   productionWizardTemplatesTable,
@@ -29,7 +31,12 @@ import {
   stockTransfersTable,
   productionResourcesTable,
   employeesTable,
+  employeeContractsTable,
   fixedAssetsTable,
+  payrollRunsTable,
+  payrollLinesTable,
+  journalEntriesTable,
+  faDepreciationRunsTable,
 } from "@workspace/db";
 import {
   extractAuth,
@@ -1888,5 +1895,254 @@ const simpleReportHandler = async (req: any, res: any) => {
 
 router.get("/reports", view, simpleReportHandler);
 router.get("/reports/export", exportReport, simpleReportHandler);
+
+// Read-only planning estimate from the saved stage snapshot. It deliberately
+// does not update order costs, allocations, WIP, or journal entries.
+router.get("/reports/resource-estimates", view, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  try {
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, req.query.branchId);
+    if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    const conditions: any[] = [eq(productionOrdersTable.companyId, cid)];
+    if (branchResult.cond) conditions.push(branchResult.cond);
+    const orders = await db.select({
+      id: productionOrdersTable.id,
+      orderNumber: productionOrdersTable.orderNumber,
+      title: productionOrdersTable.title,
+      status: productionOrdersTable.status,
+      plannedStartDate: productionOrdersTable.plannedStartDate,
+      createdAt: productionOrdersTable.createdAt,
+      meta: productionOrdersTable.meta,
+    }).from(productionOrdersTable)
+      .where(and(...conditions))
+      .orderBy(desc(productionOrdersTable.createdAt)).limit(1000);
+    if (!orders.length) return void res.json({ orders: [], totals: { labor: 0, depreciation: 0, electricity: 0, total: 0 } });
+
+    const orderIds = orders.map((order) => order.id);
+    const stageRows = await db.select({
+      orderId: productionOrderStagesTable.orderId,
+      sequence: productionOrderStagesTable.sequence,
+      nameAr: productionOrderStagesTable.nameAr,
+      expectedDurationMinutes: productionOrderStagesTable.expectedDurationMinutes,
+      resourceMode: productionOrderStagesTable.resourceMode,
+      resourceId: productionOrderStagesTable.resourceId,
+      workerCount: productionOrderStagesTable.workerCount,
+      workerEmployeeIds: productionOrderStagesTable.workerEmployeeIds,
+      resourceName: productionResourcesTable.name,
+      fixedAssetId: productionResourcesTable.fixedAssetId,
+      resourceMeta: productionResourcesTable.meta,
+      electricityEnabled: productionResourcesTable.electricityEnabled,
+      electricityKw: productionResourcesTable.electricityKw,
+      allocationMethod: fixedAssetsTable.manufacturingAllocationMethod,
+      approvedOperatingHours: fixedAssetsTable.approvedOperatingHours,
+      fixedManufacturingRate: fixedAssetsTable.fixedManufacturingRate,
+      usedInManufacturing: fixedAssetsTable.usedInManufacturing,
+    }).from(productionOrderStagesTable)
+      .innerJoin(productionOrdersTable, and(
+        eq(productionOrdersTable.id, productionOrderStagesTable.orderId),
+        eq(productionOrdersTable.companyId, cid),
+      ))
+      .leftJoin(productionResourcesTable, and(
+        eq(productionResourcesTable.id, productionOrderStagesTable.resourceId),
+        eq(productionResourcesTable.companyId, cid),
+      ))
+      .leftJoin(fixedAssetsTable, and(
+        eq(fixedAssetsTable.id, productionResourcesTable.fixedAssetId),
+        eq(fixedAssetsTable.companyId, cid),
+      ))
+      .where(inArray(productionOrderStagesTable.orderId, orderIds))
+      .orderBy(asc(productionOrderStagesTable.orderId), asc(productionOrderStagesTable.sequence));
+
+    const employeeIds = [...new Set(stageRows.flatMap((stage) =>
+      Array.isArray(stage.workerEmployeeIds)
+        ? stage.workerEmployeeIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+        : [],
+    ))];
+    const payrollRows = employeeIds.length ? await db.select({
+      employeeId: payrollLinesTable.employeeId,
+      grossSalary: payrollLinesTable.grossSalary,
+      year: payrollRunsTable.year,
+      month: payrollRunsTable.month,
+      periodEnd: payrollRunsTable.periodEnd,
+    }).from(payrollLinesTable)
+      .innerJoin(payrollRunsTable, and(
+        eq(payrollRunsTable.id, payrollLinesTable.payrollRunId),
+        eq(payrollRunsTable.companyId, cid),
+      ))
+      .innerJoin(journalEntriesTable, and(
+        eq(journalEntriesTable.id, payrollRunsTable.postedJournalId),
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.status, "posted"),
+      ))
+      .innerJoin(employeesTable, and(
+        eq(employeesTable.id, payrollLinesTable.employeeId),
+        eq(employeesTable.companyId, cid),
+      ))
+      .where(and(
+        inArray(payrollRunsTable.status, ["posted", "paid"]),
+        inArray(payrollLinesTable.employeeId, employeeIds),
+      ))
+      .orderBy(desc(payrollRunsTable.year), desc(payrollRunsTable.month))
+      : [];
+    const employeeContracts = employeeIds.length ? await db.select({
+      employeeId: employeeContractsTable.employeeId,
+      startDate: employeeContractsTable.startDate,
+      endDate: employeeContractsTable.endDate,
+      workingHours: employeeContractsTable.workingHours,
+    }).from(employeeContractsTable).where(and(
+      eq(employeeContractsTable.companyId, cid),
+      inArray(employeeContractsTable.employeeId, employeeIds),
+    )) : [];
+    const depreciationAssetIds = [...new Set(stageRows
+      .filter((stage) => (stage.resourceMode === "machine" || stage.resourceMode === "both") &&
+        stage.fixedAssetId && stage.usedInManufacturing)
+      .map((stage) => Number(stage.fixedAssetId)))];
+    const depreciationRows = depreciationAssetIds.length ? await db.select({
+      assetId: faDepreciationRunsTable.assetId,
+      amount: faDepreciationRunsTable.depreciationAmount,
+      year: faDepreciationRunsTable.periodYear,
+      month: faDepreciationRunsTable.periodMonth,
+    }).from(faDepreciationRunsTable)
+      .innerJoin(journalEntriesTable, and(
+        eq(journalEntriesTable.id, faDepreciationRunsTable.journalEntryId),
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.status, "posted"),
+      ))
+      .where(and(
+        eq(faDepreciationRunsTable.companyId, cid),
+        eq(faDepreciationRunsTable.status, "posted"),
+        inArray(faDepreciationRunsTable.assetId, depreciationAssetIds),
+      ))
+      .orderBy(desc(faDepreciationRunsTable.periodYear), desc(faDepreciationRunsTable.periodMonth))
+      : [];
+    const [settings] = await db.select({
+      electricityTariffPerKwh: manufacturingSettingsTable.electricityTariffPerKwh,
+    }).from(manufacturingSettingsTable)
+      .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
+
+    const employeePayroll = new Map<number, typeof payrollRows>();
+    for (const row of payrollRows) {
+      const list = employeePayroll.get(row.employeeId) ?? [];
+      list.push(row);
+      employeePayroll.set(row.employeeId, list);
+    }
+    const depreciationByAsset = new Map<number, typeof depreciationRows>();
+    for (const row of depreciationRows) {
+      const list = depreciationByAsset.get(row.assetId) ?? [];
+      list.push(row);
+      depreciationByAsset.set(row.assetId, list);
+    }
+    const orderMap = new Map(orders.map((order) => [order.id, order]));
+    const totals = { labor: 0, depreciation: 0, electricity: 0, total: 0 };
+    const byOrder = new Map<number, any>();
+    for (const order of orders) {
+      const meta = order.meta && typeof order.meta === "object" ? order.meta as Record<string, any> : {};
+      const fallbackDate = order.plannedStartDate || order.createdAt.toISOString().slice(0, 10);
+      byOrder.set(order.id, {
+        id: order.id, orderNumber: order.orderNumber, title: order.title, status: order.status,
+        period: String(meta.costPeriod || fallbackDate.slice(0, 7)),
+        stages: [],
+      });
+    }
+    for (const stage of stageRows) {
+      const order = orderMap.get(stage.orderId);
+      const period = byOrder.get(stage.orderId)?.period ?? "";
+      const stageHours = Number(stage.expectedDurationMinutes || 0) / 60;
+      const ids = Array.isArray(stage.workerEmployeeIds)
+        ? [...new Set(stage.workerEmployeeIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))]
+        : [];
+      const missing: string[] = [];
+      let labor = 0;
+      const laborSourcePeriods: string[] = [];
+      if (stage.resourceMode === "labor" || stage.resourceMode === "both") {
+        if (!stageHours || !ids.length) missing.push("مدة أو موظفون غير محددين");
+        for (const employeeId of ids) {
+          const pay = employeePayroll.get(employeeId)?.find((row) =>
+            `${row.year}-${String(row.month).padStart(2, "0")}` <= period,
+          );
+          if (!pay) { missing.push("لا يوجد مسير مرحّل لهذا الموظف"); continue; }
+          const payPeriod = `${pay.year}-${String(pay.month).padStart(2, "0")}`;
+          const contract = employeeContracts
+            .filter((row) => row.employeeId === employeeId &&
+              row.startDate <= String(pay.periodEnd) &&
+              (!row.endDate || row.endDate >= String(pay.periodEnd)))
+            .sort((a, b) => String(b.startDate).localeCompare(String(a.startDate)))[0];
+          if (!(Number(contract?.workingHours) > 0)) {
+            missing.push("ساعات الدوام اليومية غير محددة في عقد الموظف");
+            continue;
+          }
+          if (!(Number(pay.grossSalary) > 0)) {
+            missing.push("راتب الموظف في المسير غير متاح");
+            continue;
+          }
+          // Use the selected standard monthly denominator: 30 paid days ×
+          // this employee's contractual daily hours, not a company-wide rate.
+          labor += stageHours * Number(pay.grossSalary) /
+            (30 * Number(contract.workingHours));
+          laborSourcePeriods.push(payPeriod);
+        }
+        if (stage.workerCount != null && Number(stage.workerCount) !== ids.length)
+          missing.push("عدد الموظفين لا يطابق الموظفين المعيّنين");
+      }
+      let depreciation = 0;
+      let electricity = 0;
+      let depreciationSourcePeriod: string | null = null;
+      if (stage.resourceMode === "machine" || stage.resourceMode === "both") {
+        if (!stage.resourceId || !stage.resourceName) missing.push("الآلة غير محددة");
+        if (stage.fixedAssetId && stage.usedInManufacturing && stageHours > 0) {
+          const method = String(stage.allocationMethod || "");
+          let rate = method === "fixed_hourly_rate" ? Number(stage.fixedManufacturingRate) : 0;
+          if (method === "operating_hours") {
+            const run = depreciationByAsset.get(Number(stage.fixedAssetId))?.find((row) =>
+              `${row.year}-${String(row.month).padStart(2, "0")}` <= period,
+            );
+            rate = run && Number(stage.approvedOperatingHours) > 0
+              ? Number(run.amount) / Number(stage.approvedOperatingHours) : 0;
+            if (run) depreciationSourcePeriod = `${run.year}-${String(run.month).padStart(2, "0")}`;
+          }
+          if (rate > 0) {
+            depreciation = stageHours * rate;
+            if (String(stage.allocationMethod) === "fixed_hourly_rate")
+              depreciationSourcePeriod = "معدل الساعة المحدد على الأصل";
+          }
+          else missing.push("معدل إهلاك الساعة غير متاح");
+        }
+        if (stage.electricityEnabled) {
+          const tariff = Number(settings?.electricityTariffPerKwh);
+          const kw = Number(stage.electricityKw);
+          if (tariff > 0 && kw > 0 && stageHours > 0) electricity = stageHours * tariff * kw;
+          else missing.push("قدرة الآلة أو تعريفة الكهرباء غير مكتملة");
+        }
+      }
+      const stageTotal = labor + depreciation + electricity;
+      const row = {
+        sequence: stage.sequence, nameAr: stage.nameAr, period,
+        durationMinutes: stage.expectedDurationMinutes,
+        resourceMode: stage.resourceMode, resourceName: stage.resourceName,
+        workerCount: stage.workerCount, assignedEmployeeCount: ids.length,
+        labor: Number(labor.toFixed(2)), depreciation: Number(depreciation.toFixed(2)),
+        electricity: Number(electricity.toFixed(2)), total: Number(stageTotal.toFixed(2)),
+        laborSourcePeriods: [...new Set(laborSourcePeriods)],
+        depreciationSourcePeriod,
+        missing: [...new Set(missing)],
+      };
+      byOrder.get(stage.orderId)?.stages.push(row);
+      totals.labor += labor;
+      totals.depreciation += depreciation;
+      totals.electricity += electricity;
+      totals.total += stageTotal;
+    }
+    res.json({
+      orders: [...byOrder.values()],
+      totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, Number(value.toFixed(2))])),
+      truncated: orders.length === 1000,
+      basis: "employee_payroll_gross_per_employee_working_hour_and_saved_order_stage_snapshot",
+    });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "GET /simple-manufacturing/reports/resource-estimates failed");
+    res.status(e?.status ?? 500).json({ error: e?.message || "تعذر حساب تقدير الموارد" });
+  }
+});
 
 export default router;

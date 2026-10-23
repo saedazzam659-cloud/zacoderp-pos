@@ -52,6 +52,7 @@
 - [Variable manufacturing routes](manufacturing-route-stages.md) — stage counts are variable; multi-employee assignments copy to editable order snapshots while legacy attribution stays singular.
 - [Smart manufacturing stage permissions](smart-manufacturing-stage-permissions.md) — split route editing from execution entry per user; preserve existing edit access.
 - [Manufacturing assets as route machines](manufacturing-asset-machine-link.md) — the asset's manufacturing flag should provide its linked machine automatically, without a manual resource step.
+- [Manufacturing estimate versus actual](manufacturing-estimate-actual-boundary.md) — show route-based estimates separately; use each employee's payroll rate and never create accounting entries.
 - [Manufacturing cost-source defaults](manufacturing-cost-source-defaults.md) — new orders default source categories to linked; supervision remains in payroll unless allocation can split rather than duplicate it.
 - [Inventory-only assembly boundary](inventory-quick-assembly-boundary.md) — quick item assembly must stay inside inventory and leave production/manufacturing flows untouched.
 - [Inventory brand filter boundary](inventory-brand-filter-boundary.md) — filter by linked items in inventory reports; include full quantities without allocating stock across brands.

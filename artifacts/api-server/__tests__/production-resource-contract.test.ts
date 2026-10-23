@@ -68,3 +68,21 @@ test("manufacturing-enabled assets synchronize to one linked machine resource", 
   assert.match(assetsRoute, /ensureProductionMachineForAsset\(tx,\s*(?:created|updated)\)/);
   assert.match(simpleRoute, /backfillProductionMachinesForAssets\(cid,\s*manufacturingAssets\)/);
 });
+
+test("route resource estimates use employee payroll rates and stay read-only", async () => {
+  const source = await readFile(
+    new URL("../src/routes/simple-manufacturing.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf('router.get("/reports/resource-estimates"');
+  const end = source.indexOf("export default router", start);
+  const handler = source.slice(start, end);
+
+  assert.ok(start >= 0);
+  assert.match(handler, /payrollLinesTable\.employeeId/);
+  assert.match(handler, /Number\(pay\.grossSalary\)\s*\/\s*\(\s*30\s*\*\s*Number\(contract\.workingHours\)\s*\)/);
+  assert.match(handler, /productionOrderStagesTable\.expectedDurationMinutes/);
+  assert.match(handler, /fixed_hourly_rate/);
+  assert.match(handler, /approvedOperatingHours/);
+  assert.doesNotMatch(handler, /db\.(?:insert|update|delete)|\.insert\(|\.update\(|\.delete\(/);
+});
