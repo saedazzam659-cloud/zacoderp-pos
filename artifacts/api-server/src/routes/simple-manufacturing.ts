@@ -13,6 +13,8 @@ import {
   unitsTable,
   warehousesTable,
   productionOrdersTable,
+  productionStageResourceCostsTable,
+  productionPendingSourceSettlementsTable,
   productionCostAllocationsTable,
   productionWizardTemplatesTable,
   bomTemplatesTable,
@@ -101,6 +103,7 @@ router.get("/", view, (_req, res) => {
     endpoints: [
       "/catalog", "/execution-catalog", "/resource-costing-readiness", "/cost-sources", "/bom-templates", "/routings", "/work-centers",
       "/orders", "/templates", "/setup/materials", "/setup/products",
+      "/orders/pending-source-settlements",
       "/setup/warehouses", "/setup/accounting", "/setup/bom", "/setup/bom/:id",
       "/setup/routing", "/setup/routing/:id", "/templates/:id", "/reports",
       "/orders/:id/stages", "/orders/:id/stages/:stageId/start",
@@ -757,6 +760,79 @@ router.get("/orders", view, async (req, res) => {
     res.json(rows);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/orders/pending-source-settlements", view, async (req, res): Promise<void> => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  try {
+    const branchResult = effectiveBranchCondition(req, productionOrdersTable.branchId, req.query.branchId);
+    if ("deny" in branchResult) {
+      res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+      return;
+    }
+    const conditions: any[] = [
+      eq(productionStageResourceCostsTable.companyId, cid),
+      inArray(productionStageResourceCostsTable.sourceType, [
+        "pending_payroll", "pending_fixed_asset_depreciation",
+      ]),
+      sql`${productionStageResourceCostsTable.snapshot}->>'pendingSourceSettlement' = 'true'`,
+      eq(productionOrdersTable.resourceCostingVersion, 1),
+      inArray(productionOrdersTable.status, ["in_production", "paused", "quality_check", "completed"]),
+    ];
+    if (branchResult.cond) conditions.push(branchResult.cond);
+    const rows = await db.select({
+      id: productionStageResourceCostsTable.id,
+      orderId: productionOrdersTable.id,
+      orderNumber: productionOrdersTable.orderNumber,
+      orderStatus: productionOrdersTable.status,
+      sourceType: productionStageResourceCostsTable.sourceType,
+      component: productionStageResourceCostsTable.component,
+      amount: productionStageResourceCostsTable.amount,
+      snapshot: productionStageResourceCostsTable.snapshot,
+      createdAt: productionStageResourceCostsTable.createdAt,
+    }).from(productionStageResourceCostsTable)
+      .innerJoin(productionOrdersTable, and(
+        eq(productionOrdersTable.id, productionStageResourceCostsTable.orderId),
+        eq(productionOrdersTable.companyId, productionStageResourceCostsTable.companyId),
+      ))
+      .where(and(...conditions))
+      .orderBy(desc(productionStageResourceCostsTable.createdAt))
+      .limit(500);
+    if (!rows.length) {
+      res.json([]);
+      return;
+    }
+    const claims = await db.select({
+      stageResourceCostId: productionPendingSourceSettlementsTable.stageResourceCostId,
+    }).from(productionPendingSourceSettlementsTable).where(and(
+      eq(productionPendingSourceSettlementsTable.companyId, cid),
+      eq(productionPendingSourceSettlementsTable.status, "posted"),
+      sql`${productionPendingSourceSettlementsTable.reversalJournalEntryId} IS NULL`,
+      inArray(productionPendingSourceSettlementsTable.stageResourceCostId, rows.map(row => row.id)),
+    ));
+    const settledIds = new Set(claims.map(row => Number(row.stageResourceCostId)));
+    res.json(rows.filter(row => !settledIds.has(row.id)).map(row => {
+      const snapshot = (row.snapshot ?? {}) as Record<string, unknown>;
+      const period = typeof snapshot.productionPeriod === "string" ? snapshot.productionPeriod : null;
+      const completed = row.orderStatus === "completed";
+      return {
+        id: row.id,
+        orderId: row.orderId,
+        orderNumber: row.orderNumber,
+        period,
+        component: row.component,
+        sourceType: row.sourceType,
+        estimatedAmount: Number(row.amount),
+        state: completed ? "inventory_safety_check" : "waiting_for_source",
+        reason: completed
+          ? "يلزم توفر المصدر المرحّل والتحقق من سعته وإثبات بقاء كامل التشغيلة قبل التسوية."
+          : "بانتظار المصدر الشهري المرحّل والتحقق من سعة التخصيص.",
+      };
+    }));
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "تعذر تحميل التسويات المعلّقة" });
   }
 });
 

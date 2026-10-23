@@ -1013,6 +1013,20 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ManufacturingDeliveryEvidence"
+  /simple-manufacturing/orders/pending-source-settlements:
+    get:
+      operationId: listManufacturingPendingSourceSettlements
+      tags: [simple-manufacturing]
+      summary: List provisional production costs that remain unsettled
+      responses:
+        "200":
+          description: Company-scoped provisional costs still awaiting source or inventory-safety checks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ManufacturingPendingSourceSettlement"
   /items/{id}/bundle/components/bulk:
     post:
       operationId: addBundleComponentsBulk
@@ -4714,6 +4728,19 @@ components:
         associationState: { type: string, enum: [current, historical] }
         allocatedAmount: { type: string }
         active: { type: boolean }
+    ManufacturingPendingSourceSettlement:
+      type: object
+      required: [id, orderId, orderNumber, period, component, sourceType, estimatedAmount, state, reason]
+      properties:
+        id: { type: integer }
+        orderId: { type: integer }
+        orderNumber: { type: string }
+        period: { type: ["string", "null"] }
+        component: { type: string }
+        sourceType: { type: string, enum: [pending_payroll, pending_fixed_asset_depreciation] }
+        estimatedAmount: { type: number, format: double }
+        state: { type: string, enum: [waiting_for_source, inventory_safety_check] }
+        reason: { type: string }
     InternalDeliveryPostResult:
       type: object
       required: [ok]

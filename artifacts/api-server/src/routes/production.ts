@@ -160,6 +160,7 @@ import {
 } from "../lib/pendingUtilitySettlement.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
+import { logger } from "../lib/logger.js";
 // Manufacturing deliberately consumes the central item-unit engine.  Keep
 // this import at the route boundary so recipe/stage/stock paths cannot drift
 // back to the legacy global units.conversionFactor field.
@@ -619,7 +620,7 @@ export async function runPendingResourceSettlementSweep() {
     )).orderBy(asc(productionStageResourceCostsTable.id)).limit(500);
   for (const row of evidence) {
     try { await settlePendingResourceEvidence(row.id); }
-    catch (err) { console.error("[production-source-settlement] deferred", row.id, err); }
+    catch (err) { logger.error({ err, stageResourceCostId: row.id }, "production source settlement deferred"); }
   }
   return evidence.length;
 }
@@ -629,10 +630,10 @@ export function startPendingResourceSettlementScheduler() {
   if (pendingSourceSettlementTimer || process.env.NODE_ENV === "test" || process.env.VITEST) return;
   const initial = setTimeout(() => {
     void runPendingResourceSettlementSweep().catch((err) =>
-      console.error("[production-source-settlement] initial sweep failed", err));
+      logger.error({ err }, "production source settlement initial sweep failed"));
     pendingSourceSettlementTimer = setInterval(() => {
       void runPendingResourceSettlementSweep().catch((err) =>
-        console.error("[production-source-settlement] scheduled sweep failed", err));
+        logger.error({ err }, "production source settlement scheduled sweep failed"));
     }, PENDING_SOURCE_SWEEP_MS);
   }, 60_000);
   pendingSourceSettlementTimer = initial;

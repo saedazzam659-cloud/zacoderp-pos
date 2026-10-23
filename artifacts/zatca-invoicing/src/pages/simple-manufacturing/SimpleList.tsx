@@ -33,6 +33,9 @@ function formatMoney(value: unknown) {
 
 export function SimpleOrderList({
   orders,
+  pendingSettlements,
+  pendingSettlementsLoading,
+  pendingSettlementsFailed,
   catalog,
   busy,
   selectedOrder,
@@ -49,6 +52,9 @@ export function SimpleOrderList({
   executionPanel,
 }: {
   orders: Order[];
+  pendingSettlements: any[];
+  pendingSettlementsLoading: boolean;
+  pendingSettlementsFailed: boolean;
   catalog: Catalog;
   busy: boolean;
   selectedOrder: (Order & { detail?: any }) | null;
@@ -128,6 +134,49 @@ export function SimpleOrderList({
 
   return (
     <div className="space-y-4">
+      {(pendingSettlements.length > 0 || pendingSettlementsLoading || pendingSettlementsFailed) && (
+        <Card className="border-amber-300 bg-amber-50/70 shadow-sm" data-testid="card-pending-source-settlements">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base text-amber-950">
+              <AlertCircle className="h-4 w-4 text-amber-700" />
+              تسويات تكلفة إنتاج معلّقة ({pendingSettlements.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 pt-0">
+            <p className="text-xs text-amber-900">
+              لا تُرحّل هذه التكاليف حتى يتأكد النظام من المصدر وسلامة التخصيص. تكلفة المبيعات التاريخية لا تتغير.
+            </p>
+            {pendingSettlementsLoading && (
+              <div className="text-sm text-amber-900" data-testid="status-pending-source-settlements-loading">
+                جارٍ تحميل حالة التسويات…
+              </div>
+            )}
+            {pendingSettlementsFailed && (
+              <div className="text-sm text-rose-700" data-testid="status-pending-source-settlements-error">
+                تعذر تحميل حالة التسويات المعلّقة.
+              </div>
+            )}
+            <div className="divide-y rounded-lg border border-amber-200 bg-white">
+              {pendingSettlements.map((row: any) => (
+                <div key={row.id} className="flex flex-wrap items-start justify-between gap-3 p-3 text-sm" data-testid={`row-pending-source-settlement-${row.id}`}>
+                  <div>
+                    <div className="font-semibold text-slate-900">
+                      {row.orderNumber} · {row.component === "labor" ? "عمالة" : "إهلاك"}
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      الفترة {row.period || "غير محددة"} · {row.sourceType === "pending_payroll" ? "مصدر الرواتب" : "مصدر إهلاك الأصول"}
+                    </div>
+                    <div className="mt-1 text-xs text-amber-800">{row.reason}</div>
+                  </div>
+                  <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">
+                    {formatMoney(row.estimatedAmount)} ر.س معلّق
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
       {selectedOrder && (
         <Card className="border-violet-200 shadow-sm relative overflow-hidden">
           <div className="absolute top-0 end-0 w-24 h-24 bg-gradient-to-br from-violet-500/10 to-transparent rounded-bl-full pointer-events-none" />

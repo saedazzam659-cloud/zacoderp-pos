@@ -16,6 +16,7 @@ import { SimpleWizard } from "./simple-manufacturing/SimpleWizard";
 import { SimpleSetup } from "./simple-manufacturing/SimpleSetup";
 import { SimpleReports } from "./simple-manufacturing/SimpleReports";
 import { ProductionStageExecution } from "@/components/ProductionStageExecution";
+import { useListManufacturingPendingSourceSettlements } from "@workspace/api-client-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -147,6 +148,17 @@ export default function SimpleManufacturing() {
   // tenant. Clear all local screen state before loading the new tenant so a
   // late response can never leak the previous company's catalog/order data.
   const tenantScope = `${user?.id ?? "anonymous"}:${user?.companyId ?? ""}:${actingCompanyId ?? ""}`;
+  const {
+    data: pendingSettlements = [],
+    isLoading: pendingSettlementsLoading,
+    isError: pendingSettlementsFailed,
+  } = useListManufacturingPendingSourceSettlements({
+    query: {
+      enabled: Boolean(token),
+      queryKey: ["simple-manufacturing-pending-source-settlements", tenantScope],
+      refetchInterval: 60_000,
+    },
+  });
   const tenantScopeRef = useRef(tenantScope);
   tenantScopeRef.current = tenantScope;
   useEffect(() => {
@@ -468,6 +480,9 @@ export default function SimpleManufacturing() {
         <TabsContent value="orders" className="mt-0">
           <SimpleOrderList
             orders={orders}
+            pendingSettlements={pendingSettlements}
+            pendingSettlementsLoading={pendingSettlementsLoading}
+            pendingSettlementsFailed={pendingSettlementsFailed}
             catalog={catalog}
             busy={busy}
             selectedOrder={selectedOrder}
