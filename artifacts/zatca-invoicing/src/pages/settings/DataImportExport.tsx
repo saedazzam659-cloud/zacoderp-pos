@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HistoricalMigration } from "./HistoricalMigration";
+import { HistoricalDocumentsMigration } from "./HistoricalDocumentsMigration";
 import {
   Database, Upload, Download, FileSpreadsheet, FileJson, Sparkles, AlertTriangle,
   CheckCircle2, X, Eye, ArrowLeft, ArrowRight, Loader2, FileDown, Copy, Printer,
@@ -458,7 +459,20 @@ export default function DataImportExport() {
         </TabsContent>
 
         <TabsContent value="historical" className="mt-4">
-          <HistoricalMigration entities={entities} cid={cid} token={token} toast={toast} />
+          <Tabs defaultValue="documents" dir={isAr ? "rtl" : "ltr"}>
+            <TabsList className="grid w-full max-w-lg grid-cols-2">
+              <TabsTrigger value="documents">المستندات التاريخية</TabsTrigger>
+              <TabsTrigger value="journal">قيود اليومية</TabsTrigger>
+            </TabsList>
+            <TabsContent value="documents" className="mt-4">
+              {cid
+                ? <HistoricalDocumentsMigration cid={cid} token={token} toast={toast} />
+                : <Card className="p-4 text-sm text-muted-foreground">اختر شركة قبل استيراد المستندات التاريخية.</Card>}
+            </TabsContent>
+            <TabsContent value="journal" className="mt-4">
+              <HistoricalMigration entities={entities} cid={cid} token={token} toast={toast} />
+            </TabsContent>
+          </Tabs>
         </TabsContent>
         <TabsContent value="master-transfer" className="mt-4">
           <MasterDataTransferPanel
