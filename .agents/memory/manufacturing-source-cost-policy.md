@@ -177,3 +177,11 @@ Transport source ownership belongs to the delivery's explicit order link, not th
 **Why:** Allowing both a transfer link and a separate manual source selection creates two independent ways to capitalize the same transport charge. A zero-charge delivery must remain linkable without creating a financial allocation.
 
 **How to apply:** Keep original transport expense independent of order cancellation. For open-order relinks, preserve every standalone reclassification delta, including round trips back to the same order; lifecycle reversal must invert the full saved delta history rather than only the latest link.
+
+## Stage-time labor and depreciation costing
+
+Production-stage cost must be visible as work is performed; waiting until month-end to recognize labor or depreciation makes in-progress and completed order costs misleading. Use dated execution evidence and approved provisional hourly/daily rates, then post an immutable true-up against the actual payroll and depreciation sources when they are posted. Use each period's actual calendar-day count; never assume every month has 30 days.
+
+**Why:** The user clarified that production must carry labor and machine depreciation during stage execution, even though payroll and depreciation source entries post at month-end. This supersedes the earlier preference to defer all costs until source posting.
+
+**How to apply:** Stage completion must not require the current month's payroll or depreciation journal. Do not merely remove that validation: preserve provisional WIP evidence, source/rate provenance, the actual machine and employee work drivers, exactly-once month-end settlement, and exact reversals. Do not double-count employer insurance already included in payroll.
