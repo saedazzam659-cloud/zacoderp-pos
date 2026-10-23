@@ -446,7 +446,6 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           totalExpensesLoaded: doc.totalExpensesLoaded.toFixed(2),
           priceIncludesVat: doc.priceIncludesVat, notes: `استيراد تاريخي — رقم المصدر: ${doc.sourceNumber}`,
           lines: mappedLines,
-          saveAsDraft: true,
         };
         if (doc.kind === "sales_invoice") {
           Object.assign(payload, { invoiceDate: doc.date, customerId: party.id });

@@ -5,6 +5,8 @@ description: Scope rule for the current company's historical transaction migrati
 
 For this migration, customers, suppliers, items, and the chart of accounts have already been loaded into the target ERP. The import should match documents to these existing records and must not duplicate or recreate the master data.
 
-**Why:** The user confirmed these records are already in the target system and the migration focus is historical source documents.
+The user will manually create the fiscal years and annual document sequences in the ERP before importing. Use one annual sequence per document type and preserve the existing independent counter for each branch; the importer should consume these settings, not create or reset them.
 
-**How to apply:** Resolve relationships using stable company-local codes/identifiers. Flag missing or ambiguous matches for correction; never silently create duplicate masters or guess a financial relationship.
+**Why:** The user confirmed that target master data, fiscal years, and annual sequences are managed manually; historical import should use the normal document lifecycle without altering company setup.
+
+**How to apply:** Resolve relationships using stable company-local codes/identifiers. Flag missing or ambiguous matches for correction; never silently create duplicate masters or guess a financial relationship. Require fiscal periods and sequences to be configured before import; do not create or reset them automatically.
