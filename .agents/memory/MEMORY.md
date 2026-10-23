@@ -44,6 +44,7 @@
 - [Compact sales branch stock](sales-branch-stock-compact-ui.md) — show branch balances without changing invoice item-field width or line height.
 - [Item import requirements](item-import-requirements.md) — imports require code, Arabic name, and a valid company unit; reject the whole file before writes when required data is incomplete.
 - [Company master-data transfer boundary](master-data-transfer-boundary.md) — transfer only setup data; exclude transactions and balances, and remap relationships by company-local codes.
+- [Historical migration uses existing masters](historical-migration-existing-masters.md) — current migration company already has customers, suppliers, items, and chart of accounts; import transactions by matching, never recreate masters.
 - [Company operational reset boundary](company-operational-reset-boundary.md) — reset only the explicitly named primary tenant; preserve setup/master data and reject demo or ZATCA-linked companies.
 - [Company hard-purge sequence boundary](company-hard-purge-sequence-boundary.md) — permanent purge may bypass protected-document deletion only in a company-scoped, transaction-local path.
 - [Wouter navigation boundaries](wouter-native-new-tab.md) — use native browser navigation for new tabs and cross-artifact routes.
