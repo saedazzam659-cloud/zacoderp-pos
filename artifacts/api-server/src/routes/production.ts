@@ -413,6 +413,13 @@ async function settlePendingResourceEvidence(evidenceId: number) {
         eq(productionCostAllocationsTable.sourceRecordId, source.id),
       )).limit(1);
     if (existingAllocation) return;
+    const [lockedSourceJournal] = await tx.select({
+      id: journalEntriesTable.id, status: journalEntriesTable.status,
+    }).from(journalEntriesTable).where(and(
+      eq(journalEntriesTable.id, source.journalId),
+      eq(journalEntriesTable.companyId, evidence.companyId),
+    )).for("update").limit(1);
+    if (!lockedSourceJournal || lockedSourceJournal.status !== "posted") return;
     const usedRows = await tx.select({ amount: productionCostAllocationsTable.allocatedAmount })
       .from(productionCostAllocationsTable)
       .innerJoin(productionOrdersTable, eq(productionOrdersTable.id, productionCostAllocationsTable.orderId))
@@ -450,8 +457,12 @@ async function settlePendingResourceEvidence(evidenceId: number) {
     if (!debits.length || !(totalDebit > 0)) return;
     let completedFgDelta = 0;
     let completedBalance: any = null;
+    let completedProductItemId: number | null = null;
+    let completedWarehouseId: number | null = null;
     if (completedOrder) {
-      if (!order.receiptJournalEntryId || !order.productItemId || !order.finishedWarehouseId ||
+      completedProductItemId = order.productItemId;
+      completedWarehouseId = order.finishedWarehouseId;
+      if (!order.receiptJournalEntryId || !completedProductItemId || !completedWarehouseId ||
           !order.finishedGoodsAccountId || !order.batchNumber || !(Number(order.producedQty) > 0)) {
         throw Object.assign(new Error(`لا يمكن تسوية الأمر المكتمل ${order.orderNumber}: بيانات استلام المخزون غير مكتملة`), { status: 422 });
       }
@@ -466,12 +477,12 @@ async function settlePendingResourceEvidence(evidenceId: number) {
         throw Object.assign(new Error(`لا يمكن تسوية الأمر المكتمل ${order.orderNumber}: قيود الصرف والاستلام الأصلية غير مرحّلة`), { status: 422 });
       }
       await lockStockBalances([{
-        companyId: evidence.companyId, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
+        companyId: evidence.companyId, itemId: completedProductItemId, warehouseId: completedWarehouseId,
       }], tx);
       const receipt = await tx.execute(sql`
         select id, qty from stock_ledger
-        where company_id = ${evidence.companyId} and item_id = ${order.productItemId}
-          and warehouse_id = ${order.finishedWarehouseId} and ref_id = ${order.id}
+        where company_id = ${evidence.companyId} and item_id = ${completedProductItemId}
+          and warehouse_id = ${completedWarehouseId} and ref_id = ${order.id}
           and ref_type = 'production_order' and tx_type = 'production_receipt'
           and batch_number = ${order.batchNumber}
         order by id asc limit 1
@@ -479,19 +490,41 @@ async function settlePendingResourceEvidence(evidenceId: number) {
       const receiptRow: any = receipt.rows?.[0];
       const downstream = receiptRow ? await tx.execute(sql`
         select id from stock_ledger
-        where company_id = ${evidence.companyId} and item_id = ${order.productItemId}
-          and warehouse_id = ${order.finishedWarehouseId} and batch_number = ${order.batchNumber}
+        where company_id = ${evidence.companyId} and item_id = ${completedProductItemId}
+          and warehouse_id = ${completedWarehouseId} and batch_number = ${order.batchNumber}
           and qty < 0 and id > ${Number(receiptRow.id)}
           and ref_type is distinct from 'production_order_reversal'
         order by id asc limit 1
       `) : { rows: [] };
+      const priorSameOrderSettlements = await tx.select({
+        stageResourceCostId: productionPendingSourceSettlementsTable.stageResourceCostId,
+      }).from(productionPendingSourceSettlementsTable).where(and(
+        eq(productionPendingSourceSettlementsTable.companyId, evidence.companyId),
+        eq(productionPendingSourceSettlementsTable.orderId, order.id),
+        eq(productionPendingSourceSettlementsTable.status, "posted"),
+        isNull(productionPendingSourceSettlementsTable.reversalJournalEntryId),
+      ));
+      const allowedSettlementIds = [
+        evidence.id,
+        ...priorSameOrderSettlements.map((row: any) => Number(row.stageResourceCostId)),
+      ].filter((id: number) => Number.isInteger(id) && id > 0);
+      const laterStockMovement = receiptRow ? await tx.execute(sql`
+        select id from stock_ledger
+        where company_id = ${evidence.companyId} and item_id = ${completedProductItemId}
+          and warehouse_id = ${completedWarehouseId} and id > ${Number(receiptRow.id)}
+          and not (
+            ref_type = 'production_pending_source_settlement'
+            and ref_id in (${sql.join(allowedSettlementIds.map((id: number) => sql`${id}`), sql`, `)})
+          )
+        order by id asc limit 1
+      `) : { rows: [] };
       const [balance] = await tx.select().from(stockBalanceTable).where(and(
         eq(stockBalanceTable.companyId, evidence.companyId),
-        eq(stockBalanceTable.itemId, order.productItemId),
-        eq(stockBalanceTable.warehouseId, order.finishedWarehouseId),
+        eq(stockBalanceTable.itemId, completedProductItemId),
+        eq(stockBalanceTable.warehouseId, completedWarehouseId),
       )).for("update");
       if (!receiptRow || Math.abs(Number(receiptRow.qty) - Number(order.producedQty)) > 0.0001 ||
-          Boolean((downstream.rows ?? [])[0]) || !balance ||
+          Boolean((downstream.rows ?? [])[0]) || Boolean((laterStockMovement.rows ?? [])[0]) || !balance ||
           Math.abs(Number(balance.qty) - Number(order.producedQty)) > 0.0001) {
         throw Object.assign(new Error(`لا يمكن تسوية الأمر المكتمل ${order.orderNumber}: لا يمكن عزل كامل تشغيلة المنتج في المخزون`), { status: 422 });
       }
@@ -532,9 +565,9 @@ async function settlePendingResourceEvidence(evidenceId: number) {
       await tx.update(stockBalanceTable).set({
         avgCost: String(newAverage.toFixed(4)), updatedAt: new Date(),
       }).where(eq(stockBalanceTable.id, completedBalance.id));
-      await refreshItemCost(evidence.companyId, order.productItemId, tx);
+      await refreshItemCost(evidence.companyId, completedProductItemId!, tx);
       await addStockLedgerEntry({
-        companyId: evidence.companyId, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
+        companyId: evidence.companyId, itemId: completedProductItemId!, warehouseId: completedWarehouseId!,
         txDate: correctionDate, txType: "production_receipt", qty: "0",
         costPrice: String(newAverage.toFixed(4)), totalCost: String(completedFgDelta.toFixed(2)),
         balanceQty: String(completedBalance.qty), refId: evidence.id,
@@ -581,7 +614,7 @@ export async function runPendingResourceSettlementSweep() {
         "pending_payroll", "pending_fixed_asset_depreciation",
       ]),
       sql`${productionStageResourceCostsTable.snapshot}->>'pendingSourceSettlement' = 'true'`,
-      inArray(productionOrdersTable.status, ["in_production", "paused", "quality_check"]),
+      inArray(productionOrdersTable.status, ["in_production", "paused", "quality_check", "completed"]),
       eq(productionOrdersTable.resourceCostingVersion, 1),
     )).orderBy(asc(productionStageResourceCostsTable.id)).limit(500);
   for (const row of evidence) {
@@ -595,9 +628,11 @@ let pendingSourceSettlementTimer: NodeJS.Timeout | null = null;
 export function startPendingResourceSettlementScheduler() {
   if (pendingSourceSettlementTimer || process.env.NODE_ENV === "test" || process.env.VITEST) return;
   const initial = setTimeout(() => {
-    void runPendingResourceSettlementSweep();
+    void runPendingResourceSettlementSweep().catch((err) =>
+      console.error("[production-source-settlement] initial sweep failed", err));
     pendingSourceSettlementTimer = setInterval(() => {
-      void runPendingResourceSettlementSweep();
+      void runPendingResourceSettlementSweep().catch((err) =>
+        console.error("[production-source-settlement] scheduled sweep failed", err));
     }, PENDING_SOURCE_SWEEP_MS);
   }, 60_000);
   pendingSourceSettlementTimer = initial;
@@ -612,6 +647,7 @@ async function reversePendingSourceSettlements(
     eq(productionPendingSourceSettlementsTable.status, "posted"),
     isNull(productionPendingSourceSettlementsTable.reversalJournalEntryId),
   )).for("update");
+  const claimStageIds = claims.map((claim: any) => Number(claim.stageResourceCostId)).filter((id: number) => id > 0);
   let amountToRemove = 0;
   for (const claim of claims) {
     if (!claim.journalEntryId) throw Object.assign(new Error("قيد تسوية مصدر الإنتاج غير موجود"), { status: 409 });
@@ -635,17 +671,19 @@ async function reversePendingSourceSettlements(
     const meta = (claim.snapshotMeta ?? {}) as Record<string, any>;
     const completedFgDelta = Number(meta.completedFgDelta ?? 0);
     if (order.status === "completed" && Math.abs(completedFgDelta) >= 0.005) {
-      if (!order.productItemId || !order.finishedWarehouseId || !order.batchNumber) {
+      const productItemId = order.productItemId as number | null;
+      const warehouseId = order.finishedWarehouseId as number | null;
+      if (!productItemId || !warehouseId || !order.batchNumber) {
         throw Object.assign(new Error("لا يمكن عكس تعديل تكلفة البضاعة التامة: بيانات المخزون غير مكتملة"), { status: 409 });
       }
       await lockStockBalances([{
-        companyId, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
+        companyId, itemId: productItemId, warehouseId,
       }], tx);
       const adjustment = await tx.execute(sql`
         select id from stock_ledger
         where company_id = ${companyId} and ref_id = ${claim.stageResourceCostId}
           and ref_type = 'production_pending_source_settlement'
-          and item_id = ${order.productItemId} and warehouse_id = ${order.finishedWarehouseId}
+          and item_id = ${productItemId} and warehouse_id = ${warehouseId}
           and batch_number = ${order.batchNumber} and qty = 0
         order by id desc limit 1
       `);
@@ -653,8 +691,13 @@ async function reversePendingSourceSettlements(
       if (!adjustmentId) throw Object.assign(new Error("تعديل تكلفة البضاعة التامة غير موجود ولا يمكن عكسه بأمان"), { status: 409 });
       const laterLedger = await tx.execute(sql`
         select id from stock_ledger
-        where company_id = ${companyId} and item_id = ${order.productItemId}
-          and warehouse_id = ${order.finishedWarehouseId} and id > ${adjustmentId}
+        where company_id = ${companyId} and item_id = ${productItemId}
+          and warehouse_id = ${warehouseId} and id > ${adjustmentId}
+          and not (
+            ref_type in ('production_pending_source_settlement',
+              'production_pending_source_settlement_reversal')
+            and ref_id in (${sql.join(claimStageIds.map((stageId: number) => sql`${stageId}`), sql`, `)})
+          )
         order by id asc limit 1
       `);
       if ((laterLedger.rows ?? [])[0]) {
@@ -662,8 +705,8 @@ async function reversePendingSourceSettlements(
       }
       const [balance] = await tx.select().from(stockBalanceTable).where(and(
         eq(stockBalanceTable.companyId, companyId),
-        eq(stockBalanceTable.itemId, order.productItemId),
-        eq(stockBalanceTable.warehouseId, order.finishedWarehouseId),
+        eq(stockBalanceTable.itemId, productItemId),
+        eq(stockBalanceTable.warehouseId, warehouseId),
       )).for("update");
       if (!balance || !(Number(balance.qty) > 0)) throw Object.assign(new Error("لا يمكن عكس التسوية: رصيد البضاعة التامة الحالي غير صالح"), { status: 409 });
       const newAverage = (Number(balance.avgCost) * Number(balance.qty) - completedFgDelta) / Number(balance.qty);
@@ -671,9 +714,9 @@ async function reversePendingSourceSettlements(
       await tx.update(stockBalanceTable).set({
         avgCost: String(newAverage.toFixed(4)), updatedAt: new Date(),
       }).where(eq(stockBalanceTable.id, balance.id));
-      await refreshItemCost(companyId, order.productItemId, tx);
+      await refreshItemCost(companyId, productItemId, tx);
       await addStockLedgerEntry({
-        companyId, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
+        companyId, itemId: productItemId, warehouseId,
         txDate: reversalDate, txType: "production_issue", qty: "0",
         costPrice: String(newAverage.toFixed(4)), totalCost: String((-completedFgDelta).toFixed(2)),
         balanceQty: String(balance.qty), refId: claim.stageResourceCostId,
@@ -8394,6 +8437,9 @@ export async function productionStatusHandler(req: any, res: any) {
         companyId: cid, itemId: line.itemId, warehouseId: line.warehouseId,
       })), tx);
 
+      // Reverse late source settlements before reducing the finished-goods
+      // quantity, while the exact stock balance needed to restore WAC exists.
+      await reversePendingSourceSettlements(tx, cid, order, todayIso, req, false);
       await upsertBalance(cid, order.productItemId, order.finishedWarehouseId,
         -producedQty, fgUnitCost, tx);
       const fgBalance = await getBalance(cid, order.productItemId, order.finishedWarehouseId, tx);
@@ -8477,7 +8523,6 @@ export async function productionStatusHandler(req: any, res: any) {
           reversalJournalEntryId: reversalId,
         }).where(eq(productionDriverReconciliationsTable.id, reconciliation.id));
       }
-      await reversePendingSourceSettlements(tx, cid, order, todayIso, req, false);
       // The completed-order reversal already inverts the original issue and
       // receipt journals.  It does not contain a transport allocation added
       // later, so reverse only those separately evidenced WIP deltas here.
