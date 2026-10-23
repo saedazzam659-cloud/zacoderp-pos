@@ -23,6 +23,7 @@ import {
   productionCostAllocationsTable,
   productionStageResourceCostsTable,
   productionPendingUtilityClaimsTable,
+  productionPendingSourceSettlementsTable,
   productionDriverReconciliationsTable,
   productionOverheadClosuresTable,
   productionCommercialAccrualsTable,
@@ -7623,6 +7624,7 @@ export async function productionStatusHandler(req: any, res: any) {
       const provisionalAccruals = new Map<number, number>();
       if (Number(order.resourceCostingVersion) >= 1) {
         const resourceEvidence = await tx.select({
+          id: productionStageResourceCostsTable.id,
           amount: productionStageResourceCostsTable.amount,
           snapshot: productionStageResourceCostsTable.snapshot,
         }).from(productionStageResourceCostsTable).where(and(
@@ -7634,7 +7636,19 @@ export async function productionStatusHandler(req: any, res: any) {
             "pending_fixed_asset_depreciation",
           ]),
         ));
+        const settledEvidence = resourceEvidence.length
+          ? await tx.select({
+            stageResourceCostId: productionPendingSourceSettlementsTable.stageResourceCostId,
+          }).from(productionPendingSourceSettlementsTable).where(and(
+            eq(productionPendingSourceSettlementsTable.companyId, cid),
+            inArray(productionPendingSourceSettlementsTable.stageResourceCostId, resourceEvidence.map((row: any) => row.id)),
+            eq(productionPendingSourceSettlementsTable.status, "posted"),
+            isNull(productionPendingSourceSettlementsTable.reversalJournalEntryId),
+          ))
+          : [];
+        const settledStageCostIds = new Set(settledEvidence.map((row: any) => Number(row.stageResourceCostId)));
         for (const evidence of resourceEvidence) {
+          if (settledStageCostIds.has(Number(evidence.id))) continue;
           const snapshot = (evidence.snapshot ?? {}) as Record<string, unknown>;
           const accountId = Number(snapshot.provisionalAccrualAccountId);
           const amount = num(snapshot.provisionalAccrualAmount ?? evidence.amount);

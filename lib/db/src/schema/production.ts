@@ -369,6 +369,43 @@ export const productionPendingUtilityClaimsTable = pgTable(
   }),
 );
 
+// One immutable, source-period settlement claim per pending stage fact and
+// attempt. Reversals are retained as history; a later retry can create the
+// next attempt without allowing two active settlements to claim the same fact.
+export const productionPendingSourceSettlementsTable = pgTable(
+  "production_pending_source_settlements",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+    orderId: integer("order_id").notNull().references(() => productionOrdersTable.id, { onDelete: "restrict" }),
+    stageResourceCostId: integer("stage_resource_cost_id").notNull().references(() => productionStageResourceCostsTable.id, { onDelete: "restrict" }),
+    sourceType: text("source_type").notNull(), // payroll | fixed_asset_depreciation
+    sourceRecordId: integer("source_record_id").notNull(),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    accruedAmount: numeric("accrued_amount", { precision: 18, scale: 2 }).notNull(),
+    actualAmount: numeric("actual_amount", { precision: 18, scale: 2 }).notNull(),
+    deltaAmount: numeric("delta_amount", { precision: 18, scale: 2 }).notNull(),
+    status: text("status").notNull().default("posted"), // posted | reversed
+    journalEntryId: integer("journal_entry_id"),
+    reversalJournalEntryId: integer("reversal_journal_entry_id"),
+    snapshotMeta: jsonb("snapshot_meta").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    attemptDedup: uniqueIndex("prod_pending_source_settlement_attempt_uniq")
+      .on(t.stageResourceCostId, t.sourceType, t.sourceRecordId, t.attempt),
+    activeStage: uniqueIndex("prod_pending_source_settlement_active_stage_uniq")
+      .on(t.stageResourceCostId)
+      .where(sql`${t.reversalJournalEntryId} IS NULL`),
+    bySource: index("prod_pending_source_settlement_source_idx")
+      .on(t.companyId, t.sourceType, t.sourceRecordId),
+    byOrder: index("prod_pending_source_settlement_order_idx")
+      .on(t.companyId, t.orderId),
+  }),
+);
+
 export type ProductionStageResourceCost =
   typeof productionStageResourceCostsTable.$inferSelect;
 

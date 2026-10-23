@@ -1532,6 +1532,35 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
       ON production_pending_utility_claims(stage_resource_cost_id);
     CREATE INDEX IF NOT EXISTS prod_pending_utility_claim_closure_idx
       ON production_pending_utility_claims(company_id, closure_id);` },
+  { label: "production pending actual-source settlement ledger",
+    sql: `CREATE TABLE IF NOT EXISTS production_pending_source_settlements (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      order_id INTEGER NOT NULL REFERENCES production_orders(id) ON DELETE RESTRICT,
+      stage_resource_cost_id INTEGER NOT NULL REFERENCES production_stage_resource_costs(id) ON DELETE RESTRICT,
+      source_type TEXT NOT NULL,
+      source_record_id INTEGER NOT NULL,
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      attempt INTEGER NOT NULL DEFAULT 1,
+      accrued_amount NUMERIC(18,2) NOT NULL,
+      actual_amount NUMERIC(18,2) NOT NULL,
+      delta_amount NUMERIC(18,2) NOT NULL,
+      status TEXT NOT NULL DEFAULT 'posted',
+      journal_entry_id INTEGER,
+      reversal_journal_entry_id INTEGER,
+      snapshot_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS prod_pending_source_settlement_attempt_uniq
+      ON production_pending_source_settlements(stage_resource_cost_id, source_type, source_record_id, attempt);
+    CREATE UNIQUE INDEX IF NOT EXISTS prod_pending_source_settlement_active_stage_uniq
+      ON production_pending_source_settlements(stage_resource_cost_id)
+      WHERE reversal_journal_entry_id IS NULL;
+    CREATE INDEX IF NOT EXISTS prod_pending_source_settlement_source_idx
+      ON production_pending_source_settlements(company_id, source_type, source_record_id);
+    CREATE INDEX IF NOT EXISTS prod_pending_source_settlement_order_idx
+      ON production_pending_source_settlements(company_id, order_id);` },
   { label: "production actual driver reconciliation ledger",
     sql: `CREATE TABLE IF NOT EXISTS production_driver_reconciliations (
       id SERIAL PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
