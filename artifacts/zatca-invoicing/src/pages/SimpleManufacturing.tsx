@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
+import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { Factory, RefreshCw, Boxes, Plus, Settings2, FileText, BarChart3 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 import { companyAllowsScreen } from "@/lib/companyModuleGate";
@@ -36,7 +37,7 @@ export default function SimpleManufacturing() {
   const isAgentDomain = useIsAgentDomain();
   const moduleScreensAsTiles = useAgentModuleScreensAsTiles();
   const { toast } = useToast();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
 
   const emptyCatalog = (): Catalog => ({ items: [], warehouses: [], templates: [], routings: [] });
   const [catalog, setCatalog] = useState<Catalog>(() => emptyCatalog());
@@ -77,6 +78,8 @@ export default function SimpleManufacturing() {
   const loadAbortRef = useRef<AbortController | null>(null);
   const orderRequestRef = useRef(0);
   const orderAbortRef = useRef<AbortController | null>(null);
+  const catalogLoadedRef = useRef(false);
+  const wasOnManufacturingPageRef = useRef(location === "/simple-manufacturing");
 
   const headers = useMemo(() => ({
     Authorization: `Bearer ${token ?? ""}`,
@@ -109,12 +112,12 @@ export default function SimpleManufacturing() {
     return body;
   }, [headers]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     const requestId = ++loadRequestRef.current;
     loadAbortRef.current?.abort();
     const controller = new AbortController();
     loadAbortRef.current = controller;
-    setBusy(true);
+    if (!silent) setBusy(true);
     try {
       const [nextCatalog, nextOrders, executionCatalog] = await Promise.all([
         request("/api/simple-manufacturing/catalog", { signal: controller.signal }),
@@ -136,6 +139,7 @@ export default function SimpleManufacturing() {
         throw new Error("استجابة كتالوج موظفي التصنيع غير صالحة");
       }
       setCatalog({ ...nextCatalog, machines: executionCatalog.machines, employees: executionCatalog.workers });
+      catalogLoadedRef.current = true;
       if (!Array.isArray(nextOrders)) throw new Error("استجابة أوامر التصنيع غير صالحة");
       setOrders(nextOrders);
     } catch (e: any) {
@@ -143,9 +147,23 @@ export default function SimpleManufacturing() {
         toast({ title: e.message, variant: "destructive" });
       }
     } finally {
-      if (requestId === loadRequestRef.current) setBusy(false);
+      if (!silent && requestId === loadRequestRef.current) setBusy(false);
     }
   }, [request, toast]);
+
+  const refreshWithoutBlocking = useCallback(() => load({ silent: true }), [load]);
+  useRefetchOnFocus(refreshWithoutBlocking);
+
+  // Some app navigation paths keep the page mounted while another module is
+  // shown. Refresh reference data when returning to this route, not just on a
+  // full browser reload. The initial load below already handles first entry.
+  useEffect(() => {
+    const isOnManufacturingPage = location === "/simple-manufacturing";
+    if (isOnManufacturingPage && !wasOnManufacturingPageRef.current && catalogLoadedRef.current) {
+      void load({ silent: true });
+    }
+    wasOnManufacturingPageRef.current = isOnManufacturingPage;
+  }, [location, load]);
 
   // The same page can stay mounted while a SuperAdmin changes the acting
   // tenant. Clear all local screen state before loading the new tenant so a
@@ -169,6 +187,7 @@ export default function SimpleManufacturing() {
     loadAbortRef.current?.abort();
     orderRequestRef.current += 1;
     orderAbortRef.current?.abort();
+    catalogLoadedRef.current = false;
     setCatalog(emptyCatalog());
     setOrders([]);
     setSelectedOrder(null);

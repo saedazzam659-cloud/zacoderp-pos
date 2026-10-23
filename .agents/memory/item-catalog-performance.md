@@ -26,3 +26,9 @@ Apply item-search loading and race handling consistently across every operationa
 **Why:** Users use the same item catalog across sales, purchasing, inventory, and production screens; fixing only one screen leaves the same disappearance or stale-result behavior elsewhere.
 
 **How to apply:** Prefer the shared item-search hook and keep its loading flag tied to the first result for the active query. When a screen has a bespoke search request, abort superseded requests and keep selected-item state synchronized with edits to the search field.
+
+Manufacturing item catalogs must refresh when the user returns to the module or the browser tab regains focus, without requiring a full page reload or blocking an active form.
+
+**Why:** Employees may add an item in another module and immediately need it in an existing manufacturing screen.
+
+**How to apply:** Refresh on mount, module re-entry, and browser focus; keep refreshes quiet when prior catalog data exists, and preserve the current tenant and in-progress form state.
