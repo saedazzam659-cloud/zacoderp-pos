@@ -9831,16 +9831,86 @@ async function freezeStageResourceCosts(
       eq(productionCostAllocationsTable.sourceType, "payroll"),
       sql`${productionCostAllocationsTable.snapshotMeta}->>'includeInManufacturing' IS DISTINCT FROM 'false'`,
     ));
-    if (payrollSources.length !== 1) {
+    if (payrollSources.length > 1) {
       throw Object.assign(
-        new Error("تكلفة عمالة الموارد تتطلب مصدر رواتب واحداً مرحّلاً ومختاراً للأمر"),
+        new Error("اربط مصدر رواتب واحداً فقط بالأمر لحساب تكلفة العمالة"),
         { status: 422 },
       );
     }
+    if (payrollSources.length === 0) {
+      const period = String((order.meta as any)?.costPeriod ?? new Date().toISOString().slice(0, 7));
+      const [periodYear, periodMonth] = period.split("-").map(Number);
+      const [lastPayroll] = Number.isInteger(periodYear) && Number.isInteger(periodMonth)
+        ? await tx.select({
+          id: payrollRunsTable.id,
+          year: payrollRunsTable.year,
+          month: payrollRunsTable.month,
+          approvedHours: payrollRunsTable.approvedManufacturingHours,
+          sourceAmount: sql<string>`coalesce(sum(${payrollAllocationSnapshotsTable.allocatedAmount}), 0)`,
+        }).from(payrollRunsTable)
+          .innerJoin(payrollAllocationSnapshotsTable, eq(
+            payrollAllocationSnapshotsTable.payrollRunId, payrollRunsTable.id,
+          ))
+          .innerJoin(journalEntriesTable, and(
+            eq(journalEntriesTable.id, payrollRunsTable.postedJournalId),
+            eq(journalEntriesTable.companyId, cid),
+            eq(journalEntriesTable.status, "posted"),
+          ))
+          .where(and(
+            eq(payrollRunsTable.companyId, cid),
+            inArray(payrollRunsTable.status, ["posted", "paid"]),
+            eq(payrollRunsTable.manufacturingEligible, true),
+            eq(payrollRunsTable.manufacturingAllocationMethod, "operating_hours"),
+            sql`${payrollRunsTable.approvedManufacturingHours} > 0`,
+            sql`(${payrollRunsTable.year} < ${periodYear}
+              OR (${payrollRunsTable.year} = ${periodYear}
+                AND ${payrollRunsTable.month} <= ${periodMonth}))`,
+          ))
+          .groupBy(payrollRunsTable.id)
+          .orderBy(desc(payrollRunsTable.year), desc(payrollRunsTable.month))
+          .limit(1)
+        : [];
+      const workers = Number(stage.workerCount);
+      const personHours = hours * (Number.isInteger(workers) && workers > 0 ? workers : 0);
+      const hourlyRate = lastPayroll && num(lastPayroll.approvedHours) > 0
+        ? num(lastPayroll.sourceAmount) / num(lastPayroll.approvedHours)
+        : 0;
+      const sourcePeriod = lastPayroll
+        ? `${lastPayroll.year}-${String(lastPayroll.month).padStart(2, "0")}`
+        : null;
+      const estimatedAmount = Number((personHours * hourlyRate).toFixed(2));
+      // Operational execution must not wait for month-end payroll posting.
+      // This row is explicitly provisional, does not consume the reference
+      // payroll source, and is never another salary journal.
+      rows.push({
+        companyId: cid, orderId: order.id, stageId: stage.id, component: "labor",
+        sourceType: "pending_payroll", sourceRecordId: order.id, amount: String(estimatedAmount),
+        snapshot: {
+          pendingSourceSettlement: true,
+          costStatus: "pending_payroll",
+          productionPeriod: period,
+          rateSourceRunId: lastPayroll?.id ?? null,
+          rateSourcePeriod: sourcePeriod,
+          rateSourceDays: lastPayroll
+            ? new Date(Number(lastPayroll.year), Number(lastPayroll.month), 0).getDate()
+            : null,
+          hourlyRate,
+          provisionalAmount: estimatedAmount,
+          rateIsFromPriorPeriod: Boolean(sourcePeriod && sourcePeriod !== period),
+          stageHours: hours,
+          workerCount: Number(stage.workerCount),
+          personHours,
+          employeeId: stage.operatorEmployeeId ?? null,
+          driver: "actual_duration_hours_times_worker_count",
+        },
+        createdBy: actorId,
+      });
+    }
+    if (payrollSources.length === 1) {
     const payroll = payrollSources[0];
+    const payrollMeta = (payroll.snapshotMeta ?? {}) as Record<string, unknown>;
     const approvedPersonHours = num(
-      (payroll.snapshotMeta as Record<string, unknown>)?.approvedManufacturingHours ??
-      (payroll.snapshotMeta as Record<string, unknown>)?.formulaDenominator,
+      payrollMeta.approvedManufacturingHours ?? payrollMeta.formulaDenominator,
     );
     const workers = Number(stage.workerCount);
     if (!Number.isInteger(workers) || workers <= 0 || !(approvedPersonHours > 0)) {
@@ -9851,6 +9921,11 @@ async function freezeStageResourceCosts(
     }
     const personHours = hours * workers;
     const hourlyRate = num(payroll.sourceAmount) / approvedPersonHours;
+    const productionPeriod = String((order.meta as any)?.costPeriod ?? "");
+    const payrollSourcePeriod = String(payrollMeta.periodEnd ?? payrollMeta.periodStart ?? "").slice(0, 7);
+    const payrollRateIsPriorPeriod = Boolean(
+      productionPeriod && payrollSourcePeriod && productionPeriod !== payrollSourcePeriod,
+    );
     rows.push({
       companyId: cid, orderId: order.id, stageId: stage.id, component: "labor",
       sourceType: "payroll", sourceRecordId: payroll.sourceRecordId,
@@ -9863,10 +9938,16 @@ async function freezeStageResourceCosts(
         workerCount: workers,
         personHours,
         hourlyRate,
+        rateSourcePeriod: payrollSourcePeriod || null,
+        rateIsFromPriorPeriod: payrollRateIsPriorPeriod,
+        costStatus: payrollRateIsPriorPeriod
+          ? "provisional_prior_period_rate"
+          : "calculated_from_linked_payroll_source",
         driver: "actual_duration_hours_times_worker_count",
       },
       createdBy: actorId,
     });
+    }
   }
 
   if (mode === "machine" || mode === "both") {
@@ -9884,16 +9965,15 @@ async function freezeStageResourceCosts(
     if (!machine) throw Object.assign(new Error("آلة المرحلة غير صالحة للتكلفة"), { status: 422 });
     const fixedAssetId = machine.fixedAssetId ??
       resourceRelationshipId(machine.meta, "fixedAssetId");
-    if (!fixedAssetId) {
-      throw Object.assign(new Error("آلة المرحلة غير مرتبطة بأصل ثابت؛ لا يمكن احتساب الإهلاك"), { status: 422 });
-    }
+    // Rented/unlinked machines have no fixed-asset depreciation source. Their
+    // rent remains an indirect source allocation; do not block stage execution.
     const period = String((order.meta as any)?.costPeriod ??
       new Date().toISOString().slice(0, 7));
     const [year, month] = period.split("-").map(Number);
     if (!Number.isInteger(year) || !Number.isInteger(month)) {
       throw Object.assign(new Error("فترة تكلفة الأمر غير صالحة"), { status: 422 });
     }
-    const [depreciation] = await tx.select({
+    let [depreciation] = await tx.select({
       id: faDepreciationRunsTable.id,
       amount: faDepreciationRunsTable.depreciationAmount,
       periodYear: faDepreciationRunsTable.periodYear,
@@ -9930,12 +10010,75 @@ async function freezeStageResourceCosts(
       ))
       .orderBy(desc(faDepreciationRunsTable.periodYear), desc(faDepreciationRunsTable.periodMonth))
       .limit(1);
-    if (!depreciation) {
-      throw Object.assign(
-        new Error("اربط أحدث مصدر إهلاك مرحّل متاح للأصل في تكاليف أمر التصنيع أولاً"),
-        { status: 422 },
-      );
+    let provisionalDepreciation: any = null;
+    if (!depreciation && fixedAssetId) {
+      const [latestPosted] = await tx.select({
+        id: faDepreciationRunsTable.id,
+        amount: faDepreciationRunsTable.depreciationAmount,
+        periodYear: faDepreciationRunsTable.periodYear,
+        periodMonth: faDepreciationRunsTable.periodMonth,
+        approvedHours: fixedAssetsTable.approvedOperatingHours,
+        method: fixedAssetsTable.manufacturingAllocationMethod,
+        fixedRate: fixedAssetsTable.fixedManufacturingRate,
+      }).from(faDepreciationRunsTable)
+        .innerJoin(fixedAssetsTable, and(
+          eq(fixedAssetsTable.id, faDepreciationRunsTable.assetId),
+          eq(fixedAssetsTable.companyId, cid),
+        ))
+        .innerJoin(journalEntriesTable, and(
+          eq(journalEntriesTable.id, faDepreciationRunsTable.journalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.status, "posted"),
+        ))
+        .where(and(
+          eq(faDepreciationRunsTable.companyId, cid),
+          eq(faDepreciationRunsTable.assetId, fixedAssetId),
+          eq(faDepreciationRunsTable.status, "posted"),
+          eq(fixedAssetsTable.usedInManufacturing, true),
+          sql`(${faDepreciationRunsTable.periodYear} < ${year}
+            OR (${faDepreciationRunsTable.periodYear} = ${year}
+              AND ${faDepreciationRunsTable.periodMonth} <= ${month}))`,
+        ))
+        .orderBy(desc(faDepreciationRunsTable.periodYear), desc(faDepreciationRunsTable.periodMonth))
+        .limit(1);
+      provisionalDepreciation = latestPosted ?? null;
     }
+    if (!depreciation && fixedAssetId) {
+      const reference = provisionalDepreciation;
+      const method = String(reference?.method ?? "");
+      const hourlyRate = method === "fixed_hourly_rate"
+        ? num(reference?.fixedRate)
+        : num(reference?.amount) / num(reference?.approvedHours);
+      const rateValid = Number.isFinite(hourlyRate) && hourlyRate > 0;
+      const estimatedAmount = rateValid ? Number((hours * hourlyRate).toFixed(2)) : 0;
+      const sourcePeriod = reference
+        ? `${reference.periodYear}-${String(reference.periodMonth).padStart(2, "0")}`
+        : null;
+      rows.push({
+        companyId: cid, orderId: order.id, stageId: stage.id, component: "depreciation",
+        sourceType: "pending_fixed_asset_depreciation", sourceRecordId: order.id,
+        amount: String(estimatedAmount),
+        snapshot: {
+          pendingSourceSettlement: true,
+          costStatus: "pending_depreciation",
+          productionPeriod: period,
+          fixedAssetId,
+          rateSourceRunId: reference?.id ?? null,
+          rateSourcePeriod: sourcePeriod,
+          rateSourceDays: reference
+            ? new Date(Number(reference.periodYear), Number(reference.periodMonth), 0).getDate()
+            : null,
+          hourlyRate: rateValid ? hourlyRate : 0,
+          provisionalAmount: estimatedAmount,
+          rateIsFromPriorPeriod: Boolean(sourcePeriod && sourcePeriod !== period),
+          hours,
+          resourceId: stage.resourceId,
+          driver: "actual_machine_operating_hours",
+        },
+        createdBy: actorId,
+      });
+    }
+    if (depreciation) {
     const method = String(depreciation.method);
     const rate = method === "fixed_hourly_rate"
       ? num(depreciation.fixedRate)
@@ -9954,9 +10097,13 @@ async function freezeStageResourceCosts(
         rateSourcePeriod: `${depreciation.periodYear}-${String(depreciation.periodMonth).padStart(2, "0")}`,
         rateSourceDays: new Date(Number(depreciation.periodYear), Number(depreciation.periodMonth), 0).getDate(),
         rateIsFromPriorPeriod: Number(depreciation.periodYear) !== year || Number(depreciation.periodMonth) !== month,
+        costStatus: Number(depreciation.periodYear) !== year || Number(depreciation.periodMonth) !== month
+          ? "provisional_prior_period_rate"
+          : "calculated_from_linked_depreciation_source",
       },
       createdBy: actorId,
     });
+    }
 
     if (machine.electricityEnabled) {
       const [settings] = await tx.select({
@@ -10398,12 +10545,55 @@ productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
       .from(productionOrderStagesTable)
       .where(eq(productionOrderStagesTable.orderId, ctx.order.id))
       .orderBy(asc(productionOrderStagesTable.sequence));
+    const resourceCosts = await db.select({
+      stageId: productionStageResourceCostsTable.stageId,
+      amount: productionStageResourceCostsTable.amount,
+      snapshot: productionStageResourceCostsTable.snapshot,
+    }).from(productionStageResourceCostsTable).where(and(
+      eq(productionStageResourceCostsTable.companyId, ctx.cid),
+      eq(productionStageResourceCostsTable.orderId, ctx.order.id),
+    ));
+    const costsByStage = new Map<number, Array<{ amount: unknown; snapshot: Record<string, unknown> }>>();
+    for (const cost of resourceCosts) {
+      const values = costsByStage.get(cost.stageId) ?? [];
+      values.push({
+        amount: cost.amount,
+        snapshot: (cost.snapshot ?? {}) as Record<string, unknown>,
+      });
+      costsByStage.set(cost.stageId, values);
+    }
     const unitCatalog = await loadStageUnitCatalog(ctx.cid, {
       unitCode: ctx.order.unitCode,
       productItemId: ctx.order.productItemId,
     });
     res.json({
-      stages: stages.map(stageApiRow),
+      stages: stages.map((stage) => {
+        const rows = costsByStage.get(stage.id) ?? [];
+        const snapshots = rows.map((row) => row.snapshot);
+        const pending = snapshots.some((snapshot) =>
+          snapshot.pendingSourceSettlement === true || snapshot.pendingUtilitySettlement === true);
+        const priorRate = snapshots.some((snapshot) =>
+          snapshot.costStatus === "provisional_prior_period_rate");
+        const resourceCostAmount = Number(rows.reduce((sum, row) => sum + num(row.amount), 0).toFixed(2));
+        const provisionalCostEstimate = Number(rows.reduce((sum, row) => {
+          const provisional = row.snapshot.pendingSourceSettlement === true ||
+            row.snapshot.pendingUtilitySettlement === true ||
+            row.snapshot.costStatus === "provisional_prior_period_rate";
+          return sum + (provisional ? num(row.amount) : 0);
+        }, 0).toFixed(2));
+        return {
+          ...stageApiRow(stage),
+          resourceCostStatus: pending
+            ? "pending"
+            : priorRate
+              ? "review"
+              : snapshots.length
+                ? "calculated"
+                : "not_calculated",
+          resourceCostAmount,
+          provisionalCostEstimate,
+        };
+      }),
       unitCatalog,
       orderUnitCode: ctx.order.unitCode ?? null,
     });

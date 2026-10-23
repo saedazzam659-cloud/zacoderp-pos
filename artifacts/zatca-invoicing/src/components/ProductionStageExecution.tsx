@@ -51,6 +51,9 @@ type Stage = {
   resourceId: string;
   machineId: string;
   workCenterId: string;
+  resourceCostStatus: "pending" | "review" | "calculated" | "not_calculated";
+  resourceCostAmount: number;
+  provisionalCostEstimate: number;
   notes: string;
 };
 
@@ -201,6 +204,11 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
        resourceId: s.resourceId ? String(s.resourceId) : s.machineId ? String(s.machineId) : "",
        machineId: s.machineId ? String(s.machineId) : s.resourceId ? String(s.resourceId) : "",
       workCenterId: s.workCenterId ? String(s.workCenterId) : "",
+       resourceCostStatus: ["pending", "review", "calculated"].includes(s.resourceCostStatus)
+         ? s.resourceCostStatus
+         : "not_calculated",
+       resourceCostAmount: Number(s.resourceCostAmount ?? 0),
+       provisionalCostEstimate: Number(s.provisionalCostEstimate ?? 0),
       notes: s.notes || ""
       };
     });
@@ -642,10 +650,29 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                             placeholder="ابحث..." />
                         </div>
                       </div>}
-                       {isResourceCostingV1 && (activeStage.resourceMode === "labor" || activeStage.resourceMode === "both") && (
+                      {isResourceCostingV1 && (
                          <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs leading-5 text-violet-950">
-                           <p className="font-semibold">جاهزية تكلفة العمالة</p>
-                           <p>قبل إنهاء المرحلة، يجب أن يحتوي الأمر على تخصيص رواتب واحد فقط، مرحّل ومضمّن في التصنيع، مع «ساعات شخص-تصنيع معتمدة» موجبة في إعداد تشغيل الرواتب. لا تُحتسب تكلفة من راتب أو إعداد موارد بشرية غير مرحّل؛ سيعرض الخادم سبب المنع الدقيق إن لم تكتمل الجاهزية.</p>
+                           <div className="flex items-center justify-between gap-2">
+                             <p className="font-semibold">حالة تكلفة موارد المرحلة</p>
+                             {activeStage.status === "done" && <Badge variant="outline" className="border-violet-300 bg-white text-violet-800">
+                               {activeStage.resourceCostStatus === "pending" ? "معلّقة"
+                                 : activeStage.resourceCostStatus === "review" ? "تحتاج مراجعة"
+                                   : activeStage.resourceCostStatus === "calculated" ? "محسوبة"
+                                     : "غير محسوبة"}
+                             </Badge>}
+                           </div>
+                           <p>{activeStage.resourceCostStatus === "pending"
+                             ? "تم حفظ التنفيذ دون انتظار ترحيل المصدر. المبلغ المعروض تقديري وغير مرحّل محاسبيًا."
+                             : activeStage.resourceCostStatus === "review"
+                               ? "تم استخدام معدل مرجعي من فترة سابقة؛ القيمة ليست تسوية نهائية للفترة الحالية."
+                               : activeStage.resourceCostStatus === "calculated"
+                                 ? "تم حساب التكلفة من مصدر مرحّل مرتبط بأمر الإنتاج."
+                                 : "ستُحدّث حالة التكلفة بعد إتمام المرحلة."}</p>
+                           {activeStage.status === "done" && <p className="mt-1 font-semibold tabular-nums" dir="rtl">
+                             {activeStage.resourceCostStatus === "pending" || activeStage.resourceCostStatus === "review"
+                               ? `تقدير مرحلي: ${activeStage.provisionalCostEstimate.toFixed(2)}`
+                               : `تكلفة موارد محسوبة: ${activeStage.resourceCostAmount.toFixed(2)}`}
+                           </p>}
                          </div>
                        )}
                       
