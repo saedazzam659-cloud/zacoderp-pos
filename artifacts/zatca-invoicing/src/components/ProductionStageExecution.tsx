@@ -460,6 +460,10 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
               const isActive = stage.id === activeTabId;
               const isDone = stage.status === "done";
               const stageTone = STAGE_TAB_TONES[idx % STAGE_TAB_TONES.length];
+              const stageMachineId = isResourceCostingV1 ? stage.resourceId : stage.machineId;
+              const stageMachine = stageMachineId
+                ? resourceCatalog.machines.find(machine => String(machine.id) === stageMachineId)
+                : null;
               return (
                 <button
                   key={stage.id}
@@ -488,7 +492,16 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                   }`}>
                     {isDone ? <Check className="h-4 w-4" strokeWidth={3} /> : (idx + 1)}
                   </span>
-                  <span>{stage.nameAr}</span>
+                  <span className="flex flex-col items-start gap-0.5">
+                    <span>{stage.nameAr}</span>
+                    {stageMachineId && (
+                      <span className={`max-w-44 truncate text-[10px] font-normal ${
+                        isActive ? "text-white/80" : "text-slate-500"
+                      }`} title={stageMachine?.name ?? `آلة #${stageMachineId}`}>
+                        آلة: {stageMachine?.name ?? `#${stageMachineId}`}
+                      </span>
+                    )}
+                  </span>
                   <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium sm:text-xs ${
                     isDone ? "bg-emerald-50 text-emerald-700" :
                     stage.status === "in_progress" ? "bg-amber-50 text-amber-800" :
