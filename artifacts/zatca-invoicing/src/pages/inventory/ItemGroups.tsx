@@ -2,6 +2,7 @@ import { useState } from "react";
 import { localizedName } from "@/lib/localizedName";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { parseError } from "@/lib/parseError";
@@ -139,7 +140,7 @@ export default function ItemGroups() {
           <Plus className="h-4 w-4" />{tr("newGroup")}
         </Button>
         <Link href="/inventory/item-subgroups" className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted">
-          إدارة المجموعات الفرعية
+          {localizeUiText("إدارة المجموعات الفرعية")}
         </Link>
       </div>
 

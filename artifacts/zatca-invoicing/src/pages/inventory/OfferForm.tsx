@@ -19,6 +19,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
@@ -294,19 +295,19 @@ export default function OfferForm() {
           </div>
           <div>
             <h1 className="text-xl font-bold">
-              {editingId ? t("offers.editTitle", "تعديل العرض") : t("offers.newTitle", "عرض جديد")}
+              {localizeUiText(editingId ? t("offers.editTitle", "تعديل العرض") : t("offers.newTitle", "عرض جديد"))}
             </h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {t("offers.formSubtitle", "حدد النطاقات واحفظ كمسوّدة أو فعّل العرض مباشرة")}
+              {localizeUiText(t("offers.formSubtitle", "حدد النطاقات واحفظ كمسوّدة أو فعّل العرض مباشرة"))}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={() => navigate("/inventory/offers")}>
-            <ArrowRight className="h-4 w-4 ml-1" /> {t("common.back", "رجوع")}
+            <ArrowRight className="h-4 w-4 ml-1" /> {localizeUiText(t("common.back", "رجوع"))}
           </Button>
           <Button onClick={submit} disabled={save.isPending} className="gap-1">
-            <Save className="h-4 w-4" /> {save.isPending ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ")}
+            <Save className="h-4 w-4" /> {localizeUiText(save.isPending ? t("common.saving", "جارٍ الحفظ...") : t("common.save", "حفظ"))}
           </Button>
         </div>
       </div>
@@ -314,10 +315,10 @@ export default function OfferForm() {
       {/* Tabbed form body */}
       <Tabs defaultValue="basic" className="w-full">
         <TabsList className="grid grid-cols-4 w-full">
-          <TabsTrigger value="basic"   className="gap-1.5"><Settings2 className="h-3.5 w-3.5" /> {t("offers.tab.basic", "الأساسي")}</TabsTrigger>
-          <TabsTrigger value="discount" className="gap-1.5"><Percent className="h-3.5 w-3.5" /> {t("offers.tab.discount", "نوع الخصم")}</TabsTrigger>
-          <TabsTrigger value="usage"   className="gap-1.5"><Ticket className="h-3.5 w-3.5" /> {t("offers.tab.usage", "الاستخدام والكوبون")}</TabsTrigger>
-          <TabsTrigger value="scopes"  className="gap-1.5"><Layers className="h-3.5 w-3.5" /> {t("offers.tab.scopes", "النطاقات")}</TabsTrigger>
+          <TabsTrigger value="basic"   className="gap-1.5"><Settings2 className="h-3.5 w-3.5" /> {localizeUiText(t("offers.tab.basic", "الأساسي"))}</TabsTrigger>
+          <TabsTrigger value="discount" className="gap-1.5"><Percent className="h-3.5 w-3.5" /> {localizeUiText(t("offers.tab.discount", "نوع الخصم"))}</TabsTrigger>
+          <TabsTrigger value="usage"   className="gap-1.5"><Ticket className="h-3.5 w-3.5" /> {localizeUiText(t("offers.tab.usage", "الاستخدام والكوبون"))}</TabsTrigger>
+          <TabsTrigger value="scopes"  className="gap-1.5"><Layers className="h-3.5 w-3.5" /> {localizeUiText(t("offers.tab.scopes", "النطاقات"))}</TabsTrigger>
         </TabsList>
 
         {/* ────────────────────────────────  BASIC  ──────────────────────── */}
@@ -327,41 +328,41 @@ export default function OfferForm() {
                 header tab so the two forms feel identical. */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="space-y-1.5">
-                <Label className="text-xs">{t("offers.f.name", "اسم العرض (اختياري)")}</Label>
-                <Input className="h-9 text-sm" value={nameAr} onChange={(e) => setNameAr(e.target.value)} placeholder={t("offers.f.namePh", "مثال: عرض رمضان") as string} />
+                <Label className="text-xs">{localizeUiText(t("offers.f.name", "اسم العرض (اختياري)"))}</Label>
+                <Input className="h-9 text-sm" value={nameAr} onChange={(e) => setNameAr(e.target.value)} placeholder={localizeUiText(t("offers.f.namePh", "مثال: عرض رمضان"))} />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">{t("offers.f.priority", "الأولوية (1-10)")}</Label>
+                <Label className="text-xs">{localizeUiText(t("offers.f.priority", "الأولوية (1-10)"))}</Label>
                 <Input className="h-9 text-sm" type="number" min={1} max={10} value={priority}
                   onChange={(e) => setPriority(Math.max(1, Math.min(10, Number(e.target.value) || 1)))} />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">{t("offers.f.status", "الحالة")}</Label>
+                <Label className="text-xs">{localizeUiText(t("offers.f.status", "الحالة"))}</Label>
                 <select
                   className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                   value={status}
                   onChange={(e) => setStatus(e.target.value as any)}
                 >
-                  <option value="draft">{t("offers.statusVal.draft", "مسوّدة")}</option>
-                  <option value="active">{t("offers.statusVal.active", "مفعّل")}</option>
+                  <option value="draft">{localizeUiText(t("offers.statusVal.draft", "مسوّدة"))}</option>
+                  <option value="active">{localizeUiText(t("offers.statusVal.active", "مفعّل"))}</option>
                 </select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">{t("offers.f.applyTo", "قناة التطبيق")}</Label>
+                <Label className="text-xs">{localizeUiText(t("offers.f.applyTo", "قناة التطبيق"))}</Label>
                 <select
                   className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                   value={applyTo}
                   onChange={(e) => setApplyTo(e.target.value as OfferApplyTo)}
                 >
-                  <option value="all">{t("offers.applyToVal.all", "كل القنوات")}</option>
-                  <option value="invoice">{t("offers.applyToVal.invoice", "فواتير المبيعات فقط")}</option>
-                  <option value="pos">{t("offers.applyToVal.pos", "نقاط البيع فقط")}</option>
+                  <option value="all">{localizeUiText(t("offers.applyToVal.all", "كل القنوات"))}</option>
+                  <option value="invoice">{localizeUiText(t("offers.applyToVal.invoice", "فواتير المبيعات فقط"))}</option>
+                  <option value="pos">{localizeUiText(t("offers.applyToVal.pos", "نقاط البيع فقط"))}</option>
                 </select>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center gap-1">
                   <Calendar className="h-3 w-3 text-muted-foreground" />
-                  {t("offers.f.startDate", "تاريخ البداية")}
+                  {localizeUiText(t("offers.f.startDate", "تاريخ البداية"))}
                 </Label>
                 <DateField className="h-9 text-sm" value={startDate}
                   onChange={(e) => setStartDate(e.target.value)} />
@@ -369,24 +370,24 @@ export default function OfferForm() {
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center gap-1">
                   <Calendar className="h-3 w-3 text-muted-foreground" />
-                  {t("offers.f.expiry", "تاريخ الانتهاء")}
+                  {localizeUiText(t("offers.f.expiry", "تاريخ الانتهاء"))}
                 </Label>
                 <DateField className="h-9 text-sm" value={expiryDate}
                   onChange={(e) => setExpiryDate(e.target.value)} />
               </div>
               <div className="space-y-1.5 col-span-2 lg:col-span-2">
-                <Label className="text-xs">{t("offers.f.stackable", "السماح بدمج هذا العرض مع عروض أخرى")}</Label>
+                <Label className="text-xs">{localizeUiText(t("offers.f.stackable", "السماح بدمج هذا العرض مع عروض أخرى"))}</Label>
                 <div className="h-9 px-3 rounded-md border border-input bg-background flex items-center gap-2">
                   <Switch checked={stackable} onCheckedChange={setStackable} />
                   <span className="text-xs text-muted-foreground">
                     {stackable
-                      ? t("offers.stackable.on", "يمكن دمجه مع عروض أخرى على نفس السطر")
-                      : t("offers.stackable.off", "لا يُدمج — يُختار عرض واحد لكل سطر")}
+                      ? localizeUiText(t("offers.stackable.on", "يمكن دمجه مع عروض أخرى على نفس السطر"))
+                      : localizeUiText(t("offers.stackable.off", "لا يُدمج — يُختار عرض واحد لكل سطر"))}
                   </span>
                 </div>
               </div>
               <div className="space-y-1.5 col-span-2 lg:col-span-4">
-                <Label className="text-xs">{t("offers.f.description", "الوصف")}</Label>
+                <Label className="text-xs">{localizeUiText(t("offers.f.description", "الوصف"))}</Label>
                 <Input className="h-9 text-sm" value={description} onChange={(e) => setDescription(e.target.value)} />
               </div>
             </div>
@@ -399,7 +400,7 @@ export default function OfferForm() {
             {/* Type picker — radios as cards, same idiom as the scope toggles
                 in the existing scopes tab. */}
             <div>
-              <Label className="text-xs mb-2 block">{t("offers.f.discountType", "نوع الخصم")}</Label>
+              <Label className="text-xs mb-2 block">{localizeUiText(t("offers.f.discountType", "نوع الخصم"))}</Label>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
                 {(["line_pricing", "percentage_total", "fixed_total", "buy_x_get_y"] as OfferDiscountType[]).map((typ) => (
                   <button
@@ -412,9 +413,9 @@ export default function OfferForm() {
                         : "border-border bg-card hover:border-primary/40"
                     }`}
                   >
-                    <div className="text-sm font-medium">{t(`offers.discountTypeVal.${typ}.label`, typ)}</div>
+                    <div className="text-sm font-medium">{localizeUiText(t(`offers.discountTypeVal.${typ}.label`, typ))}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5 leading-tight">
-                      {t(`offers.discountTypeVal.${typ}.hint`, "")}
+                      {localizeUiText(t(`offers.discountTypeVal.${typ}.hint`, ""))}
                     </div>
                   </button>
                 ))}
@@ -424,14 +425,14 @@ export default function OfferForm() {
             {/* Conditional fields per type */}
             {discountType === "line_pricing" && (
               <div className="text-xs text-muted-foreground bg-muted/30 rounded-lg p-3">
-                {t("offers.lineHint", "لا توجد إعدادات إضافية هنا — السعر/الخصم/الكمية يُحدَّد لكل صنف داخل تبويب «النطاقات» → «الأصناف».")}
+                {localizeUiText(t("offers.lineHint", "لا توجد إعدادات إضافية هنا — السعر/الخصم/الكمية يُحدَّد لكل صنف داخل تبويب «النطاقات» → «الأصناف»."))}
               </div>
             )}
 
             {discountType === "percentage_total" && (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("offers.f.discountValuePct", "نسبة الخصم على إجمالي الفاتورة %")}</Label>
+                  <Label className="text-xs">{localizeUiText(t("offers.f.discountValuePct", "نسبة الخصم على إجمالي الفاتورة %"))}</Label>
                   <Input className="h-9 text-sm" type="number" step="0.01" min={0} max={100}
                     value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} placeholder="مثال: 10" />
                 </div>
@@ -441,7 +442,7 @@ export default function OfferForm() {
             {discountType === "fixed_total" && (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("offers.f.discountValueFixed", "قيمة الخصم على إجمالي الفاتورة")}</Label>
+                  <Label className="text-xs">{localizeUiText(t("offers.f.discountValueFixed", "قيمة الخصم على إجمالي الفاتورة"))}</Label>
                   <Input className="h-9 text-sm" type="number" step="0.01" min={0}
                     value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} placeholder="مثال: 50" />
                 </div>
@@ -482,39 +483,39 @@ export default function OfferForm() {
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center gap-1">
                   <Ticket className="h-3 w-3 text-muted-foreground" />
-                  {t("offers.f.couponCode", "رمز الكوبون (اختياري)")}
+                  {localizeUiText(t("offers.f.couponCode", "رمز الكوبون (اختياري)"))}
                 </Label>
                 <Input className="h-9 text-sm font-mono uppercase" value={couponCode}
                   onChange={(e) => setCouponCode(e.target.value)} placeholder="EID2026" maxLength={50} />
                 <p className="text-[10px] text-muted-foreground">
-                  {t("offers.couponHint", "اتركه فارغًا ليُطبَّق العرض تلقائيًا")}
+                  {localizeUiText(t("offers.couponHint", "اتركه فارغًا ليُطبَّق العرض تلقائيًا"))}
                 </p>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">{t("offers.f.minPurchase", "الحد الأدنى لإجمالي الفاتورة")}</Label>
+                <Label className="text-xs">{localizeUiText(t("offers.f.minPurchase", "الحد الأدنى لإجمالي الفاتورة"))}</Label>
                 <Input className="h-9 text-sm" type="number" step="0.01" min={0}
                   value={minPurchaseAmount} onChange={(e) => setMinPurchaseAmount(e.target.value)} placeholder="0" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center gap-1">
                   <Hash className="h-3 w-3 text-muted-foreground" />
-                  {t("offers.f.maxUses", "الحد الأقصى للاستخدام (إجمالي)")}
+                  {localizeUiText(t("offers.f.maxUses", "الحد الأقصى للاستخدام (إجمالي)"))}
                 </Label>
                 <Input className="h-9 text-sm" type="number" min={1} step={1}
-                  value={maxUses} onChange={(e) => setMaxUses(e.target.value)} placeholder={t("offers.unlimited", "غير محدود") as string} />
+                  value={maxUses} onChange={(e) => setMaxUses(e.target.value)} placeholder={localizeUiText(t("offers.unlimited", "غير محدود"))} />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center gap-1">
                   <Hash className="h-3 w-3 text-muted-foreground" />
-                  {t("offers.f.maxUsesPerCustomer", "الحد الأقصى لكل عميل")}
+                  {localizeUiText(t("offers.f.maxUsesPerCustomer", "الحد الأقصى لكل عميل"))}
                 </Label>
                 <Input className="h-9 text-sm" type="number" min={1} step={1}
-                  value={maxUsesPerCustomer} onChange={(e) => setMaxUsesPerCustomer(e.target.value)} placeholder={t("offers.unlimited", "غير محدود") as string} />
+                  value={maxUsesPerCustomer} onChange={(e) => setMaxUsesPerCustomer(e.target.value)} placeholder={localizeUiText(t("offers.unlimited", "غير محدود"))} />
               </div>
               {/* Read-only counter — only meaningful in edit mode. */}
               {editingId && (
                 <div className="space-y-1.5 col-span-2 lg:col-span-2">
-                  <Label className="text-xs">{t("offers.f.timesUsed", "عدد مرات الاستخدام")}</Label>
+                  <Label className="text-xs">{localizeUiText(t("offers.f.timesUsed", "عدد مرات الاستخدام"))}</Label>
                   <div className="h-9 px-3 rounded-md border border-input bg-muted/30 flex items-center text-sm">
                     <span className="font-semibold">{timesUsed}</span>
                     {maxUses && <span className="text-muted-foreground"> &nbsp;/ {maxUses}</span>}
@@ -524,10 +525,10 @@ export default function OfferForm() {
               <div className="space-y-1.5 col-span-2 lg:col-span-4">
                 <Label className="text-xs flex items-center gap-1">
                   <FileText className="h-3 w-3 text-muted-foreground" />
-                  {t("offers.f.notes", "ملاحظات داخلية")}
+                  {localizeUiText(t("offers.f.notes", "ملاحظات داخلية"))}
                 </Label>
                 <Textarea rows={3} className="text-sm" value={notes} onChange={(e) => setNotes(e.target.value)}
-                  placeholder={t("offers.notesPh", "ملاحظات للمحاسب أو المدير المالي — لا تظهر للعميل") as string} />
+                  placeholder={localizeUiText(t("offers.notesPh", "ملاحظات للمحاسب أو المدير المالي — لا تظهر للعميل"))} />
               </div>
             </div>
           </div>

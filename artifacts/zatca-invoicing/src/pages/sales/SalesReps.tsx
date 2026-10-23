@@ -540,15 +540,15 @@ export default function SalesReps() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Users className="h-6 w-6 text-primary" />
-            مناديب المبيعات
+            {localizeUiText("مناديب المبيعات")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            إدارة مناديب المبيعات وعمولاتهم — {reps.length} مندوب
+            {localizeUiText("إدارة مناديب المبيعات وعمولاتهم")} — {reps.length} {localizeUiText("مندوب")}
           </p>
         </div>
         <Button onClick={openNew} data-testid="btn-new-rep">
           <Plus className="h-4 w-4 ms-2" />
-          مندوب جديد
+          {localizeUiText("مندوب جديد")}
         </Button>
       </div>
 
@@ -560,7 +560,7 @@ export default function SalesReps() {
             data-testid="tab-reps-list"
           >
             <ListChecks className="h-4 w-4" />
-            قائمة المناديب
+            {localizeUiText("قائمة المناديب")}
             <span className="ms-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-mono">
               {reps.length}
             </span>
@@ -571,7 +571,7 @@ export default function SalesReps() {
             data-testid="tab-reps-dashboard"
           >
             <BarChart3 className="h-4 w-4" />
-            لوحة الأداء
+            {localizeUiText("لوحة الأداء")}
             <Sparkles className="h-3 w-3 text-violet-500" />
           </TabsTrigger>
         </TabsList>
@@ -582,7 +582,7 @@ export default function SalesReps() {
         <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir="rtl">
           <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
             <Users className="h-4 w-4 opacity-90" />
-            مناديب المبيعات
+            {localizeUiText("مناديب المبيعات")}
           </div>
           <div className="flex items-center gap-1.5">
             <HeaderColorPicker layout={layout} isRtl={isRtl} />
@@ -597,7 +597,7 @@ export default function SalesReps() {
               data-testid="btn-export-csv"
             >
               <FileSpreadsheet className="h-3.5 w-3.5" />
-              تصدير CSV
+              {localizeUiText("تصدير CSV")}
             </Button>
           </div>
         </div>
@@ -642,14 +642,14 @@ export default function SalesReps() {
       {showForm && (
         <FormPanel
           icon={editing ? Pencil : Plus}
-          title={editing ? `تعديل المندوب: ${editing.nameAr}` : "إضافة مندوب جديد"}
-          subtitle={editing ? `الكود: ${editing.code}` : "املأ بيانات المندوب — الكود يُولَّد تلقائياً إن تركته فارغاً"}
+          title={editing ? `${localizeUiText("تعديل المندوب")}: ${editing.nameAr}` : localizeUiText("إضافة مندوب جديد")}
+          subtitle={editing ? `${localizeUiText("الكود")}: ${editing.code}` : localizeUiText("املأ بيانات المندوب — الكود يُولَّد تلقائياً إن تركته فارغاً")}
           width="full"
           onClose={() => { setShowForm(false); setEditing(null); }}
           onSave={() => saveMut.mutate()}
           saving={saveMut.isPending}
-          saveLabel="حفظ"
-          cancelLabel="إلغاء"
+          saveLabel={localizeUiText("حفظ")}
+          cancelLabel={localizeUiText("إلغاء")}
         >
           <Tabs defaultValue="basic" className="w-full" dir="rtl">
             <TabsList className="grid w-full grid-cols-2 h-auto p-1.5 bg-gradient-to-l from-slate-100 to-slate-50 border border-slate-200 rounded-xl gap-1.5">
@@ -659,7 +659,7 @@ export default function SalesReps() {
                 data-testid="tab-rep-basic"
               >
                 <Users className="h-4 w-4" />
-                <span>البيانات الأساسية</span>
+                <span>{localizeUiText("البيانات الأساسية")}</span>
               </TabsTrigger>
               <TabsTrigger
                 value="financial"
@@ -667,34 +667,34 @@ export default function SalesReps() {
                 data-testid="tab-rep-financial"
               >
                 <Wallet className="h-4 w-4" />
-                <span>العمولة وحساب الدخول</span>
+                <span>{localizeUiText("العمولة وحساب الدخول")}</span>
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value="basic" className="mt-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
-              <Label className="text-xs">الكود</Label>
+              <Label className="text-xs">{localizeUiText("الكود")}</Label>
               <Input
                 className="h-9 text-sm"
                 value={form.code}
                 onChange={(e) => setForm({ ...form, code: e.target.value })}
-                placeholder="تلقائي مثل SR0001"
+                placeholder={localizeUiText("تلقائي مثل SR0001")}
                 data-testid="input-code"
               />
             </div>
             <div>
-              <Label className="text-xs">الاسم بالعربية *</Label>
+              <Label className="text-xs">{localizeUiText("الاسم بالعربية *")}</Label>
               <Input
                 className="h-9 text-sm"
                 value={form.nameAr}
                 onChange={(e) => setForm({ ...form, nameAr: e.target.value })}
-                placeholder="اسم المندوب"
+                placeholder={localizeUiText("اسم المندوب")}
                 data-testid="input-name-ar"
               />
             </div>
             <div>
-              <Label className="text-xs">الاسم بالإنجليزية</Label>
+              <Label className="text-xs">{localizeUiText("الاسم بالإنجليزية")}</Label>
               <Input
                 className="h-9 text-sm"
                 value={form.nameEn}
@@ -704,7 +704,7 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label className="text-xs">الهاتف</Label>
+              <Label className="text-xs">{localizeUiText("الهاتف")}</Label>
               <Input
                 className="h-9 text-sm"
                 value={form.phone}
@@ -725,14 +725,14 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label className="text-xs">الفرع</Label>
+              <Label className="text-xs">{localizeUiText("الفرع")}</Label>
               <select
                 className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.branchId}
                 onChange={(e) => setForm({ ...form, branchId: e.target.value })}
                 data-testid="select-branch"
               >
-                <option value="">— اختر الفرع —</option>
+                <option value="">{localizeUiText("— اختر الفرع —")}</option>
                 {branches.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.nameAr || b.nameEn}
@@ -741,22 +741,22 @@ export default function SalesReps() {
               </select>
             </div>
             <div>
-              <Label className="text-xs">المنطقة</Label>
+              <Label className="text-xs">{localizeUiText("المنطقة")}</Label>
               <Input
                 className="h-9 text-sm"
                 value={form.region}
                 onChange={(e) => setForm({ ...form, region: e.target.value })}
-                placeholder="الرياض / جدة / الشرقية…"
+                placeholder={localizeUiText("الرياض / جدة / الشرقية…")}
                 data-testid="input-region"
               />
             </div>
             <div>
-              <Label className="text-xs">العنوان</Label>
+              <Label className="text-xs">{localizeUiText("العنوان")}</Label>
               <Input
                 className="h-9 text-sm"
                 value={form.address}
                 onChange={(e) => setForm({ ...form, address: e.target.value })}
-                placeholder="عنوان المندوب"
+                placeholder={localizeUiText("عنوان المندوب")}
                 data-testid="input-address"
               />
             </div>
@@ -766,7 +766,7 @@ export default function SalesReps() {
             <TabsContent value="financial" className="mt-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
-              <Label className="text-xs">نسبة العمولة %</Label>
+              <Label className="text-xs">{localizeUiText("نسبة العمولة %")}</Label>
               <Input
                 className="h-9 text-sm"
                 type="number"
@@ -779,19 +779,19 @@ export default function SalesReps() {
               />
             </div>
             <div>
-              <Label className="text-xs">نوع العمولة</Label>
+              <Label className="text-xs">{localizeUiText("نوع العمولة")}</Label>
               <select
                 className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                 value={form.commissionType}
                 onChange={(e) => setForm({ ...form, commissionType: e.target.value as any })}
                 data-testid="select-commission-type"
               >
-                <option value="invoice">على الفاتورة (تُحسب عند البيع)</option>
-                <option value="collection">على التحصيل (تُحسب عند القبض)</option>
+                <option value="invoice">{localizeUiText("على الفاتورة (تُحسب عند البيع)")}</option>
+                <option value="collection">{localizeUiText("على التحصيل (تُحسب عند القبض)")}</option>
               </select>
             </div>
             <div>
-              <Label className="text-xs">الهدف الشهري (ر.س)</Label>
+              <Label className="text-xs">{localizeUiText("الهدف الشهري (ر.س)")}</Label>
               <Input
                 className="h-9 text-sm"
                 type="number"
@@ -805,19 +805,19 @@ export default function SalesReps() {
             <div className="col-span-2 lg:col-span-4 rounded-lg border p-3 space-y-3">
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input type="checkbox" checked={targetEnabled} onChange={e => setTargetEnabled(e.target.checked)} />
-                تفعيل تارجت أصناف للفترة
+                {localizeUiText("تفعيل تارجت أصناف للفترة")}
               </label>
               {targetEnabled && (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div><Label className="text-xs">من تاريخ</Label><Input type="date" value={targetFrom} onChange={e => setTargetFrom(e.target.value)} className="h-9" /></div>
-                    <div><Label className="text-xs">إلى تاريخ</Label><Input type="date" value={targetTo} onChange={e => setTargetTo(e.target.value)} className="h-9" /></div>
+                    <div><Label className="text-xs">{localizeUiText("من تاريخ")}</Label><Input type="date" value={targetFrom} onChange={e => setTargetFrom(e.target.value)} className="h-9" /></div>
+                    <div><Label className="text-xs">{localizeUiText("إلى تاريخ")}</Label><Input type="date" value={targetTo} onChange={e => setTargetTo(e.target.value)} className="h-9" /></div>
                     <div>
-                      <Label className="text-xs">استحقاق العمولة بعد التارجت</Label>
+                      <Label className="text-xs">{localizeUiText("استحقاق العمولة بعد التارجت")}</Label>
                       <select className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                         value={targetMode} onChange={e => setTargetMode(e.target.value as any)}>
-                        <option value="excess">على الكمية الزائدة فقط</option>
-                        <option value="all_after_hit">على كامل الكمية بعد بلوغ التارجت</option>
+                        <option value="excess">{localizeUiText("على الكمية الزائدة فقط")}</option>
+                        <option value="all_after_hit">{localizeUiText("على كامل الكمية بعد بلوغ التارجت")}</option>
                       </select>
                     </div>
                   </div>
@@ -827,7 +827,7 @@ export default function SalesReps() {
                       return (
                         <div key={idx} className="grid grid-cols-1 sm:grid-cols-[2fr_1fr_1fr_auto] gap-2 items-end">
                           <div>
-                            <Label className="text-xs">الصنف</Label>
+                            <Label className="text-xs">{localizeUiText("الصنف")}</Label>
                             <TargetItemPicker
                               companyId={Number(cid)}
                               headers={headers}
@@ -843,16 +843,16 @@ export default function SalesReps() {
                             />
                           </div>
                           <div>
-                            <Label className="text-xs">وحدة التارجت</Label>
+                            <Label className="text-xs">{localizeUiText("وحدة التارجت")}</Label>
                             <select className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
                               value={row.unitId}
                               onChange={e => setTargetRows(prev => prev.map((x, i) => i === idx ? { ...x, unitId: e.target.value } : x))}>
-                              <option value="">الوحدة</option>
+                              <option value="">{localizeUiText("الوحدة")}</option>
                               {(item?.units ?? []).map(u => <option key={u.unitId} value={u.unitId}>{u.unitName}</option>)}
                             </select>
                           </div>
                           <div>
-                            <Label className="text-xs">كمية التارجت</Label>
+                            <Label className="text-xs">{localizeUiText("كمية التارجت")}</Label>
                             <Input type="number" min="0.0001" step="0.01" value={row.targetQty}
                               onChange={e => setTargetRows(prev => prev.map((x, i) => i === idx ? { ...x, targetQty: e.target.value } : x))} />
                           </div>
@@ -866,37 +866,37 @@ export default function SalesReps() {
                   </div>
                   <Button type="button" variant="outline" size="sm" className="gap-2"
                     onClick={() => setTargetRows(prev => [...prev, { itemId: "", unitId: "", targetQty: "" }])}>
-                    <Plus className="h-4 w-4" /> إضافة صنف للتارجت
+                    <Plus className="h-4 w-4" /> {localizeUiText("إضافة صنف للتارجت")}
                   </Button>
                   {editing?.commissionPlan?.periods.some(p => p.status === "approved") && (
-                    <p className="text-xs text-amber-700">الفترات المعتمدة محفوظة ولا تتغير. أدخل فترة جديدة لإعداد تارجت لاحق.</p>
+                    <p className="text-xs text-amber-700">{localizeUiText("الفترات المعتمدة محفوظة ولا تتغير. أدخل فترة جديدة لإعداد تارجت لاحق.")}</p>
                   )}
                 </>
               )}
             </div>
             <div>
-              <Label className="text-xs">الحساب المحاسبي (اختياري)</Label>
+              <Label className="text-xs">{localizeUiText("الحساب المحاسبي (اختياري)")}</Label>
               <AccountCombobox
                 value={form.accountId}
                 onValueChange={(v) => setForm({ ...form, accountId: v })}
-                placeholder="— اختر حساب العمولات —"
+                placeholder={localizeUiText("— اختر حساب العمولات —")}
                 allowEmpty
               />
             </div>
             <div className="col-span-2 lg:col-span-2">
-              <Label className="text-xs">ملاحظات</Label>
+              <Label className="text-xs">{localizeUiText("ملاحظات")}</Label>
               <Input
                 className="h-9 text-sm"
                 value={form.notes}
                 onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                placeholder="ملاحظات إدارية"
+                placeholder={localizeUiText("ملاحظات إدارية")}
                 data-testid="input-notes"
               />
             </div>
             <div className="col-span-2 lg:col-span-2">
               <Label className="text-xs flex items-center gap-1">
                 <KeyRound className="h-3.5 w-3.5 text-blue-600" />
-                حساب الدخول للنظام
+                {localizeUiText("حساب الدخول للنظام")}
               </Label>
               <select
                 className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
@@ -925,7 +925,7 @@ export default function SalesReps() {
                 }}
                 data-testid="select-rep-user"
               >
-                <option value="">— بدون حساب دخول (مندوب خارجي) —</option>
+                <option value="">{localizeUiText("— بدون حساب دخول (مندوب خارجي) —")}</option>
                 {users
                   .filter((u) => {
                     // Hide admins / superadmins — a rep is a regular employee
@@ -946,12 +946,12 @@ export default function SalesReps() {
                   .map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.nameAr || u.nameEn || u.username} ({u.username})
-                      {!u.isActive ? " — موقوف" : ""}
+                      {!u.isActive ? localizeUiText(" — موقوف") : ""}
                     </option>
                   ))}
               </select>
               <p className="text-xs text-muted-foreground mt-1">
-                عند ربط حساب دخول، فواتير هذا المستخدم تُسنَد تلقائياً للمندوب وتُحسب عمولته بدون تدخّل يدوي.
+                {localizeUiText("عند ربط حساب دخول، فواتير هذا المستخدم تُسنَد تلقائياً للمندوب وتُحسب عمولته بدون تدخّل يدوي.")}
               </p>
 
               {/* ─── Linked-user preview card ─────────────────────────────

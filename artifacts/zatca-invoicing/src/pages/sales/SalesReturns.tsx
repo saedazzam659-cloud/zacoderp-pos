@@ -2953,7 +2953,7 @@ ${sections}
         <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir={isRtl ? "rtl" : "ltr"}>
           <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
             <RotateCcw className="h-4 w-4 opacity-90" />
-            جرد مرتجعات المبيعات
+            {localizeUiText("جرد مرتجعات المبيعات")}
           </div>
           <div className="flex items-center gap-1.5">
             <HeaderColorPicker layout={layout} isRtl={isRtl} />
@@ -3567,7 +3567,7 @@ ${sections}
                   );
                 })}
                 {picker?.rows.length === 0 && (
-                  <tr><td colSpan={11} className="p-4 text-center text-muted-foreground">لا توجد أصناف في الفاتورة</td></tr>
+                  <tr><td colSpan={11} className="p-4 text-center text-muted-foreground">{localizeUiText("لا توجد أصناف في الفاتورة")}</td></tr>
                 )}
               </tbody>
             </table>

@@ -493,7 +493,7 @@ ${source.map((r: any, i: number) => `<tr>
         <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir={isRtl ? "rtl" : "ltr"}>
           <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
             <FileSignature className="h-4 w-4 opacity-90" />
-            جرد عروض الأسعار
+            {localizeUiText("جرد عروض الأسعار")}
           </div>
           <div className="flex items-center gap-1.5">
             <HeaderColorPicker layout={layout} isRtl={isRtl} />

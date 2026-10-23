@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { Children, isValidElement, useState, useRef, useCallback, useEffect, type ComponentProps, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -1959,8 +1960,8 @@ export default function GeneralSettings() {
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
                   <SectionIcon className="h-5 w-5" aria-hidden="true" />
                 </span>
-                <span className="text-xs font-semibold leading-tight">{section.label}</span>
-                <span className="text-[10px] leading-snug text-muted-foreground">{section.description}</span>
+                <span className="text-xs font-semibold leading-tight">{localizeUiText(section.label)}</span>
+                <span className="text-[10px] leading-snug text-muted-foreground">{localizeUiText(section.description)}</span>
               </button>
             );
           })}
@@ -1972,10 +1973,10 @@ export default function GeneralSettings() {
       <div id="agent-general-settings-panel-document-options" className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Settings2 className="h-4 w-4 text-muted-foreground" />
-          خيارات شاشات المستندات
+          {localizeUiText("خيارات شاشات المستندات")}
         </h2>
         <p className="text-xs text-muted-foreground">
-          تحكم في طريقة عرض إدخال الأصناف وسياسات البيع في نماذج المستندات.
+          {localizeUiText("تحكم في طريقة عرض إدخال الأصناف وسياسات البيع في نماذج المستندات.")}
         </p>
         {isArchiveAdmin && <SalesStockBranchSettings
           users={archiveUsers}

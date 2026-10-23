@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -337,7 +338,7 @@ export const SmartDateInput = React.forwardRef<
     title,
     id,
     name,
-    placeholder = "يوم/شهر/سنة",
+    placeholder = localizeUiText("يوم/شهر/سنة"),
     "aria-label": ariaLabel,
     onBlur: userOnBlur,
     onFocus: userOnFocus,

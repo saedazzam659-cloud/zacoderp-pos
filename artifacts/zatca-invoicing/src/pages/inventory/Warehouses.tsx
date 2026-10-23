@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { localizedName } from "@/lib/localizedName";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBranches } from "@/hooks/useBranches";
@@ -307,8 +308,8 @@ export default function Warehouses() {
                 <div className="md:col-span-2 flex items-start gap-3 rounded-lg border bg-amber-50/60 px-3 py-2.5">
                   <Switch checked={!!form.blockNegativeSales} onCheckedChange={v => setForm((p: any) => ({ ...p, blockNegativeSales: v }))} id="block-negative-sales" />
                   <div className="space-y-1">
-                    <Label htmlFor="block-negative-sales" className="text-sm cursor-pointer">فرض منع البيع على المكشوف في هذا المخزن</Label>
-                    <p className="text-xs text-muted-foreground">استثناء من الإعداد العام. عند تفعيله يُمنع السحب بالسالب من هذا المخزن، ويمكن لخيار الفاتورة تجاوزه إذا كان الإعداد العام مفعّلًا.</p>
+                    <Label htmlFor="block-negative-sales" className="text-sm cursor-pointer">{localizeUiText("فرض منع البيع على المكشوف في هذا المخزن")}</Label>
+                    <p className="text-xs text-muted-foreground">{localizeUiText("استثناء من الإعداد العام. عند تفعيله يُمنع السحب بالسالب من هذا المخزن، ويمكن لخيار الفاتورة تجاوزه إذا كان الإعداد العام مفعّلًا.")}</p>
                   </div>
                 </div>
                 {form.allowNegative && (

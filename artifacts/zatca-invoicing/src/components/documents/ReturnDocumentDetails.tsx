@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useFormatters } from "@/lib/format";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -110,7 +111,7 @@ export default function ReturnDocumentDetails({
         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
           <Info className="h-7 w-7 text-muted-foreground" />
         </div>
-        <p className="text-sm font-semibold text-foreground">لا توجد تفاصيل بعد</p>
+        <p className="text-sm font-semibold text-foreground">{localizeUiText("لا توجد تفاصيل بعد")}</p>
         <p className="max-w-md text-xs leading-relaxed text-muted-foreground">{emptyStateText}</p>
       </div>
     );

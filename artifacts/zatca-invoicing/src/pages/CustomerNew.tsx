@@ -30,6 +30,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { LocationCapture, type LocationValue } from "@/components/LocationCapture";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
+import { localizeUiText } from "@/lib/localizedUiText";
 
 const NATIONAL_ADDRESS_RX = /^[A-Z]{4}[0-9]{4}$/;
 
@@ -365,9 +366,9 @@ export default function CustomerNew() {
           <Link href="/customers"><ArrowRight className="h-5 w-5" /></Link>
         </Button>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold">{isEditMode ? "تعديل بيانات العميل" : "إضافة عميل جديد"}</h1>
+          <h1 className="text-2xl font-bold">{localizeUiText(isEditMode ? "تعديل بيانات العميل" : "إضافة عميل جديد")}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            أدخل بيانات العميل — اضغط Enter للانتقال للحقل التالي.
+            {localizeUiText("أدخل بيانات العميل — اضغط Enter للانتقال للحقل التالي.")}
           </p>
         </div>
         <Button
@@ -382,16 +383,16 @@ export default function CustomerNew() {
             setActiveTab(firstTab);
             const firstMsg = Object.values(errors)[0]?.message as string | undefined;
             toast({
-              title: "تحقّق من الحقول المطلوبة",
-              description: firstMsg ?? "يوجد حقل غير صحيح — راجع التبويبات.",
+              title: localizeUiText("تحقّق من الحقول المطلوبة"),
+              description: firstMsg ?? localizeUiText("يوجد حقل غير صحيح — راجع التبويبات."),
               variant: "destructive",
             });
           })}
         >
           <Save className="h-4 w-4" />
           {(createCustomer.isPending || updateCustomer.isPending)
-            ? "جاري الحفظ..."
-            : (isEditMode ? "حفظ التعديلات" : "حفظ العميل")}
+            ? localizeUiText("جاري الحفظ...")
+            : localizeUiText(isEditMode ? "حفظ التعديلات" : "حفظ العميل")}
         </Button>
       </div>
 
@@ -400,13 +401,13 @@ export default function CustomerNew() {
         <div className="flex gap-2.5 p-3 rounded-lg border bg-blue-50 border-blue-200 text-blue-800">
           <Info className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
           <div>
-            <strong>عميل شركة (B2B):</strong> يجب إدخال الرقم الضريبي (15 رقماً) والعنوان الوطني الكامل لإصدار الفاتورة الضريبية.
+            <strong>{localizeUiText("عميل شركة (B2B):")}</strong> {localizeUiText("يجب إدخال الرقم الضريبي (15 رقماً) والعنوان الوطني الكامل لإصدار الفاتورة الضريبية.")}
           </div>
         </div>
         <div className="flex gap-2.5 p-3 rounded-lg border bg-green-50 border-green-200 text-green-800">
           <Info className="h-4 w-4 mt-0.5 shrink-0 text-green-500" />
           <div>
-            <strong>عميل فرد (B2C):</strong> الاسم اختياري — يكفي حفظ الفاتورة المبسطة بدون عميل محدد.
+            <strong>{localizeUiText("عميل فرد (B2C):")}</strong> {localizeUiText("الاسم اختياري — يكفي حفظ الفاتورة المبسطة بدون عميل محدد.")}
           </div>
         </div>
       </div>
@@ -421,19 +422,19 @@ export default function CustomerNew() {
                 {
                   value: "basic",
                   icon:  <Users className="h-4 w-4" />,
-                  label: "البيانات الأساسية",
+                  label: localizeUiText("البيانات الأساسية"),
                   badge: tabBadge(basicComplete, true),
                 },
                 {
                   value: "tax",
                   icon:  <Building2 className="h-4 w-4" />,
-                  label: "الضريبية والتجارية",
+                  label: localizeUiText("الضريبية والتجارية"),
                   badge: tabBadge(taxComplete, isB2B),
                 },
                 {
                   value: "address",
                   icon:  <MapPin className="h-4 w-4" />,
-                  label: "التواصل والعنوان",
+                  label: localizeUiText("التواصل والعنوان"),
                   badge: tabBadge(addressComplete, isB2B),
                 },
               ].map(tab => (
@@ -460,7 +461,7 @@ export default function CustomerNew() {
                         );
                         return (
                           <FormItem>
-                            <FormLabel>الشركة المصدرة للفواتير <span className="text-destructive">*</span></FormLabel>
+                            <FormLabel>{localizeUiText("الشركة المصدرة للفواتير")} <span className="text-destructive">*</span></FormLabel>
                             <datalist id="cust-companies-list">
                               {(companies ?? []).map(c => <option key={c.id} value={c.nameAr} />)}
                             </datalist>
@@ -468,7 +469,7 @@ export default function CustomerNew() {
                               <Input
                                 className="h-9 text-sm"
                                 list="cust-companies-list"
-                                placeholder="اكتب اسم الشركة..."
+                                placeholder={localizeUiText("اكتب اسم الشركة...")}
                                 value={companyText}
                                 onChange={e => {
                                   const val = e.target.value;
@@ -481,9 +482,9 @@ export default function CustomerNew() {
                               />
                             </FormControl>
                             {matched
-                              ? <p className="text-xs text-green-700 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />تم التعرف على الشركة</p>
+                              ? <p className="text-xs text-green-700 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />{localizeUiText("تم التعرف على الشركة")}</p>
                               : companyText
-                                ? <p className="text-xs text-amber-600 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />لم يُعثر على الشركة</p>
+                                ? <p className="text-xs text-amber-600 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{localizeUiText("لم يُعثر على الشركة")}</p>
                                 : null
                             }
                             <FormMessage />
@@ -492,25 +493,25 @@ export default function CustomerNew() {
                       }} />
                     ) : (
                       <div className="space-y-1.5">
-                        <label className="text-sm font-medium">الشركة المصدرة للفواتير</label>
+                        <label className="text-sm font-medium">{localizeUiText("الشركة المصدرة للفواتير")}</label>
                         <div className="flex items-center gap-2 h-9 rounded-md border border-input bg-muted/30 px-3 text-sm">
                           <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
                           <span className="truncate font-medium">{userCompanyName}</span>
                           <CheckCircle2 className="h-3.5 w-3.5 text-green-500 mr-auto shrink-0" />
                         </div>
-                        <p className="text-xs text-muted-foreground">مرتبط بشركتك تلقائياً</p>
+                        <p className="text-xs text-muted-foreground">{localizeUiText("مرتبط بشركتك تلقائياً")}</p>
                       </div>
                     )}
 
                     {/* نوع العميل — segment buttons */}
                     <div className="space-y-1.5">
                       <label className="text-sm font-medium">
-                        نوع العميل <span className="text-destructive">*</span>
+                        {localizeUiText("نوع العميل")} <span className="text-destructive">*</span>
                       </label>
                       <div className="flex gap-2">
                         {[
-                          { val: "b2b", label: "شركة / منشأة", icon: Building2, desc: "B2B" },
-                          { val: "b2c", label: "فرد / مستهلك", icon: Users,     desc: "B2C" },
+                          { val: "b2b", label: localizeUiText("شركة / منشأة"), icon: Building2, desc: "B2B" },
+                          { val: "b2c", label: localizeUiText("فرد / مستهلك"), icon: Users,     desc: "B2C" },
                         ].map(opt => {
                           const Icon = opt.icon;
                           const active = customerType === opt.val;
@@ -532,7 +533,7 @@ export default function CustomerNew() {
                         })}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {isB2B ? "يتطلب رقم ضريبي وعنوان وطني كامل" : "بيانات اختيارية — للفواتير المبسطة"}
+                        {localizeUiText(isB2B ? "يتطلب رقم ضريبي وعنوان وطني كامل" : "بيانات اختيارية — للفواتير المبسطة")}
                       </p>
                     </div>
 
@@ -540,12 +541,12 @@ export default function CustomerNew() {
                     {contractingEnabledForSelectedCompany && (
                     <FormField control={form.control} name="partyClassification" render={({ field }) => (
                       <FormItem className="col-span-2 lg:col-span-4">
-                        <FormLabel>تصنيف الجهة</FormLabel>
-                        <div className="flex flex-wrap gap-4 rounded-md border p-3" role="radiogroup" aria-label="تصنيف الجهة">
+                        <FormLabel>{localizeUiText("تصنيف الجهة")}</FormLabel>
+                        <div className="flex flex-wrap gap-4 rounded-md border p-3" role="radiogroup" aria-label={localizeUiText("تصنيف الجهة")}>
                           {([
-                            ["customer", "عميل"],
-                            ["project_owner", "مالك مشروع"],
-                            ["both", "مالك مشروع وعميل"],
+                            ["customer", localizeUiText("عميل")],
+                            ["project_owner", localizeUiText("مالك مشروع")],
+                            ["both", localizeUiText("مالك مشروع وعميل")],
                           ] as const).map(([value, label]) => (
                             <label key={value} className="flex items-center gap-2 text-sm cursor-pointer">
                               <input type="radio" name={field.name} value={value}
@@ -565,12 +566,12 @@ export default function CustomerNew() {
                     <FormField control={form.control} name="nameAr" render={({ field }) => (
                       <FormItem>
                         <FormLabel>
-                          اسم العميل أو الجهة (عربي) <span className="text-destructive">*</span>
+                          {localizeUiText("اسم العميل أو الجهة (عربي)")} <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
-                          <Input className="h-9 text-sm" placeholder="مثال: شركة الأمانة للتجارة" {...field} />
+                          <Input className="h-9 text-sm" placeholder={localizeUiText("مثال: شركة الأمانة للتجارة")} {...field} />
                         </FormControl>
-                        <FormDescription>الاسم الرسمي كما في السجل التجاري</FormDescription>
+                        <FormDescription>{localizeUiText("الاسم الرسمي كما في السجل التجاري")}</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )} />
@@ -578,7 +579,7 @@ export default function CustomerNew() {
                     {/* اسم إنجليزي */}
                     <FormField control={form.control} name="nameEn" render={({ field }) => (
                       <FormItem>
-                        <FormLabel>الاسم (إنجليزي)</FormLabel>
+                        <FormLabel>{localizeUiText("الاسم (إنجليزي)")}</FormLabel>
                         <FormControl>
                           <Input placeholder="Al Amanah Trading Co." dir="ltr" className="h-9 text-sm text-left" {...field} />
                         </FormControl>
@@ -590,7 +591,7 @@ export default function CustomerNew() {
                     <div className="space-y-1.5">
                       <label className="text-sm font-medium flex items-center gap-1.5">
                         <Users className="h-3.5 w-3.5 text-muted-foreground" />
-                        مجموعة العملاء
+                        {localizeUiText("مجموعة العملاء")}
                       </label>
                       <select
                         value={customerGroupId}
@@ -598,18 +599,18 @@ export default function CustomerNew() {
                         className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
                         data-testid="customer-group"
                       >
-                        <option value="">— بدون مجموعة —</option>
+                        <option value="">{localizeUiText("— بدون مجموعة —")}</option>
                         {(customerGroups as any[]).filter((g: any) => g.isActive !== false).map((g: any) => (
                           <option key={g.id} value={g.id}>{g.nameAr ?? g.nameEn ?? `#${g.id}`}</option>
                         ))}
                       </select>
-                      <p className="text-xs text-muted-foreground">اختياري — لتصنيف العميل ضمن مجموعة</p>
+                      <p className="text-xs text-muted-foreground">{localizeUiText("اختياري — لتصنيف العميل ضمن مجموعة")}</p>
                     </div>
                   </div>
 
                   <div className="flex justify-start mt-6 pt-4 border-t">
                     <Button type="button" variant="default" className="gap-2" onClick={() => setActiveTab("tax")}>
-                      التالي — البيانات الضريبية <ChevronLeft className="h-4 w-4" />
+                      {localizeUiText("التالي — البيانات الضريبية")} <ChevronLeft className="h-4 w-4" />
                     </Button>
                   </div>
                 </CardContent>
@@ -626,9 +627,9 @@ export default function CustomerNew() {
                     <Info className={`h-4 w-4 mt-0.5 shrink-0 ${isB2B ? "text-blue-500" : "text-gray-400"}`} />
                     <div>
                       {isB2B
-                        ? <><p className="font-semibold mb-0.5">الحقول الإلزامية لفاتورة B2B حسب ZATCA:</p>
-                            <p className="text-xs">الرقم الضريبي 15 رقماً يبدأ بـ 3 ✓ — رقم السجل التجاري موصى به</p></>
-                        : <span>البيانات الضريبية <strong>اختيارية</strong> للعملاء الأفراد (B2C).</span>
+                        ? <><p className="font-semibold mb-0.5">{localizeUiText("الحقول الإلزامية لفاتورة B2B حسب ZATCA:")}</p>
+                            <p className="text-xs">{localizeUiText("الرقم الضريبي 15 رقماً يبدأ بـ 3 ✓ — رقم السجل التجاري موصى به")}</p></>
+                        : <span>{localizeUiText("البيانات الضريبية")} <strong>{localizeUiText("اختيارية")}</strong> {localizeUiText("للعملاء الأفراد (B2C).")}</span>
                       }
                     </div>
                   </div>
@@ -638,9 +639,9 @@ export default function CustomerNew() {
                     <FormField control={form.control} name="vatNumber" render={({ field }) => (
                       <FormItem>
                         <FormLabel>
-                          الرقم الضريبي (VAT)
+                          {localizeUiText("الرقم الضريبي (VAT)")}
                           {isB2B && <span className="text-destructive"> *</span>}
-                          {!isB2B && <span className="text-muted-foreground text-xs mr-1">(اختياري)</span>}
+                          {!isB2B && <span className="text-muted-foreground text-xs mr-1">{localizeUiText("(اختياري)")}</span>}
                         </FormLabel>
                         <FormControl>
                           <Input
@@ -651,21 +652,21 @@ export default function CustomerNew() {
                             onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
                           />
                         </FormControl>
-                        <FormDescription>15 رقماً — يبدأ بـ 3 وينتهي بـ 3</FormDescription>
+                        <FormDescription>{localizeUiText("15 رقماً — يبدأ بـ 3 وينتهي بـ 3")}</FormDescription>
                         <FormMessage />
                         {vatValue.length > 0 && vatValue.length < 15 && (
                           <p className="text-xs text-amber-600 flex items-center gap-1 mt-1">
-                            <AlertTriangle className="h-3 w-3" />{15 - vatValue.length} رقم متبقٍ
+                            <AlertTriangle className="h-3 w-3" />{15 - vatValue.length} {localizeUiText("رقم متبقٍ")}
                           </p>
                         )}
                         {vatOk && (
                           <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
-                            <CheckCircle2 className="h-3 w-3" />رقم ضريبي صحيح
+                            <CheckCircle2 className="h-3 w-3" />{localizeUiText("رقم ضريبي صحيح")}
                           </p>
                         )}
                         {vatValue.length === 15 && !vatValue.startsWith("3") && (
                           <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
-                            <AlertTriangle className="h-3 w-3" />يجب أن يبدأ بـ 3
+                            <AlertTriangle className="h-3 w-3" />{localizeUiText("يجب أن يبدأ بـ 3")}
                           </p>
                         )}
                       </FormItem>
@@ -674,7 +675,7 @@ export default function CustomerNew() {
                     {/* CR */}
                     <FormField control={form.control} name="crNumber" render={({ field }) => (
                       <FormItem>
-                        <FormLabel>رقم السجل التجاري (CR)</FormLabel>
+                        <FormLabel>{localizeUiText("رقم السجل التجاري (CR)")}</FormLabel>
                         <FormControl>
                           <Input
                             placeholder="1010000001"
@@ -683,7 +684,7 @@ export default function CustomerNew() {
                             onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
                           />
                         </FormControl>
-                        <FormDescription>موصى به للفواتير B2B — 10 أرقام</FormDescription>
+                        <FormDescription>{localizeUiText("موصى به للفواتير B2B — 10 أرقام")}</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )} />
@@ -698,12 +699,12 @@ export default function CustomerNew() {
                   <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-4">
                     <div className="flex items-center gap-2 mb-3">
                       <BadgeCheck className="h-4 w-4 text-amber-600" />
-                      <h3 className="text-sm font-semibold text-amber-900">الائتمان والمسموح به</h3>
+                      <h3 className="text-sm font-semibold text-amber-900">{localizeUiText("الائتمان والمسموح به")}</h3>
                     </div>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       <FormField control={form.control} name="creditLimit" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>الحد الائتماني للسحب (ر.س)</FormLabel>
+                          <FormLabel>{localizeUiText("الحد الائتماني للسحب (ر.س)")}</FormLabel>
                           <FormControl>
                             <Input
                               type="number" min={0} step="0.01" inputMode="decimal"
@@ -714,7 +715,7 @@ export default function CustomerNew() {
                             />
                           </FormControl>
                           <FormDescription>
-                            الحد الأقصى للمستحق على العميل. اتركه 0 للسماح بدون حد.
+                            {localizeUiText("الحد الأقصى للمستحق على العميل. اتركه 0 للسماح بدون حد.")}
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -722,7 +723,7 @@ export default function CustomerNew() {
 
                       <FormField control={form.control} name="paymentTermsDays" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>مدة الاستحقاق (بالأيام)</FormLabel>
+                          <FormLabel>{localizeUiText("مدة الاستحقاق (بالأيام)")}</FormLabel>
                           <FormControl>
                             <Input
                               type="number" min={0} step="1" inputMode="numeric"
@@ -733,7 +734,7 @@ export default function CustomerNew() {
                             />
                           </FormControl>
                           <FormDescription>
-                            عند تجاوز هذه المدة بدون سداد، سيرفض النظام إصدار أي فاتورة آجلة جديدة لهذا العميل. اتركها 0 لعدم التفعيل.
+                            {localizeUiText("عند تجاوز هذه المدة بدون سداد، سيرفض النظام إصدار أي فاتورة آجلة جديدة لهذا العميل. اتركها 0 لعدم التفعيل.")}
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -741,7 +742,7 @@ export default function CustomerNew() {
 
                       <FormField control={form.control} name="enforceCreditLimit" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>منع التجاوز عند الوصول للحد</FormLabel>
+                          <FormLabel>{localizeUiText("منع التجاوز عند الوصول للحد")}</FormLabel>
                           <FormControl>
                             <button
                               type="button"
@@ -759,7 +760,7 @@ export default function CustomerNew() {
                                   ? <CheckCircle2 className="h-4 w-4 text-amber-600" />
                                   : <Info className="h-4 w-4" />}
                                 <span className="font-medium">
-                                  {field.value ? "مفعَّل — سيتم رفض الفواتير الزائدة عن الحد" : "غير مفعَّل — الحد للعرض فقط"}
+                                  {localizeUiText(field.value ? "مفعَّل — سيتم رفض الفواتير الزائدة عن الحد" : "غير مفعَّل — الحد للعرض فقط")}
                                 </span>
                               </span>
                               <span className={`relative inline-block w-10 h-5 rounded-full transition ${field.value ? "bg-amber-500" : "bg-slate-300"}`}>
@@ -768,7 +769,7 @@ export default function CustomerNew() {
                             </button>
                           </FormControl>
                           <FormDescription>
-                            عند تفعيله، إنشاء فاتورة آجلة تجعل المستحق يتجاوز الحد سيُرفض من الخادم.
+                            {localizeUiText("عند تفعيله، إنشاء فاتورة آجلة تجعل المستحق يتجاوز الحد سيُرفض من الخادم.")}
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -778,10 +779,10 @@ export default function CustomerNew() {
 
                   <div className="flex justify-between pt-4 border-t">
                     <Button type="button" variant="ghost" className="gap-2 text-muted-foreground" onClick={() => setActiveTab("basic")}>
-                      <ChevronRight className="h-4 w-4" /> رجوع
+                      <ChevronRight className="h-4 w-4" /> {localizeUiText("رجوع")}
                     </Button>
                     <Button type="button" variant="default" className="gap-2" onClick={() => setActiveTab("address")}>
-                      التالي — التواصل والعنوان <ChevronLeft className="h-4 w-4" />
+                      {localizeUiText("التالي — التواصل والعنوان")} <ChevronLeft className="h-4 w-4" />
                     </Button>
                   </div>
                 </CardContent>
@@ -797,12 +798,12 @@ export default function CustomerNew() {
                   <div>
                     <div className="flex items-center gap-2 mb-4">
                       <Phone className="h-4 w-4 text-primary" />
-                      <h3 className="font-semibold text-sm">معلومات التواصل</h3>
+                      <h3 className="font-semibold text-sm">{localizeUiText("معلومات التواصل")}</h3>
                     </div>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       <FormField control={form.control} name="email" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>البريد الإلكتروني</FormLabel>
+                          <FormLabel>{localizeUiText("البريد الإلكتروني")}</FormLabel>
                           <FormControl>
                             <Input type="email" placeholder="info@company.com" dir="ltr" className="h-9 text-sm text-left" {...field} />
                           </FormControl>
@@ -811,7 +812,7 @@ export default function CustomerNew() {
                       )} />
                       <FormField control={form.control} name="phone" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>رقم الهاتف</FormLabel>
+                          <FormLabel>{localizeUiText("رقم الهاتف")}</FormLabel>
                           <FormControl>
                             <Input placeholder="0500000000" dir="ltr" className="h-9 text-sm text-left" {...field} />
                           </FormControl>
@@ -825,10 +826,10 @@ export default function CustomerNew() {
                   <div>
                     <div className="flex items-center gap-2 mb-4 flex-wrap">
                       <MapPin className="h-4 w-4 text-primary" />
-                      <h3 className="font-semibold text-sm">العنوان الوطني</h3>
+                      <h3 className="font-semibold text-sm">{localizeUiText("العنوان الوطني")}</h3>
                       {isB2B && (
                         <span className="text-xs bg-red-50 text-red-700 border border-red-200 rounded-full px-2 py-0.5">
-                          مطلوب للفواتير B2B
+                      {localizeUiText("مطلوب للفواتير B2B")}
                         </span>
                       )}
                       <div className="ms-auto">
@@ -840,22 +841,22 @@ export default function CustomerNew() {
                           onClick={fetchNationalAddress}
                           data-testid="btn-fetch-national-address"
                           title={!isEditMode
-                            ? "احفظ بيانات العميل أولاً ثم استخدم هذا الزر"
-                            : "جلب العنوان الوطني الرسمي من البريد السعودي"}
+                            ? localizeUiText("احفظ بيانات العميل أولاً ثم استخدم هذا الزر")
+                            : localizeUiText("جلب العنوان الوطني الرسمي من البريد السعودي")}
                         >
                           {fetchingNA
                             ? <Loader2 className="h-4 w-4 ms-2 animate-spin" />
                             : <Download className="h-4 w-4 ms-2" />}
-                          تحديث العنوان الوطني
+                          {localizeUiText("تحديث العنوان الوطني")}
                         </Button>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       <FormField control={form.control} name="street" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>اسم الشارع {isB2B && <span className="text-destructive">*</span>}</FormLabel>
+                          <FormLabel>{localizeUiText("اسم الشارع")} {isB2B && <span className="text-destructive">*</span>}</FormLabel>
                           <FormControl>
-                            <Input className="h-9 text-sm" placeholder="شارع الملك فهد" {...field} />
+                            <Input className="h-9 text-sm" placeholder={localizeUiText("شارع الملك فهد")} {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -863,7 +864,7 @@ export default function CustomerNew() {
 
                       <FormField control={form.control} name="buildingNumber" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>رقم المبنى {isB2B && <span className="text-destructive">*</span>}</FormLabel>
+                          <FormLabel>{localizeUiText("رقم المبنى")} {isB2B && <span className="text-destructive">*</span>}</FormLabel>
                           <FormControl>
                             <Input
                               placeholder="1234"
@@ -873,30 +874,30 @@ export default function CustomerNew() {
                               onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
                             />
                           </FormControl>
-                          <FormDescription>4 أرقام</FormDescription>
+                          <FormDescription>{localizeUiText("4 أرقام")}</FormDescription>
                           <FormMessage />
                         </FormItem>
                       )} />
 
                       <FormField control={form.control} name="district" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>الحي</FormLabel>
-                          <FormControl><Input className="h-9 text-sm" placeholder="العليا" {...field} /></FormControl>
+                          <FormLabel>{localizeUiText("الحي")}</FormLabel>
+                          <FormControl><Input className="h-9 text-sm" placeholder={localizeUiText("العليا")} {...field} /></FormControl>
                           <FormMessage />
                         </FormItem>
                       )} />
 
                       <FormField control={form.control} name="city" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>المدينة {isB2B && <span className="text-destructive">*</span>}</FormLabel>
-                          <FormControl><Input className="h-9 text-sm" placeholder="الرياض" {...field} /></FormControl>
+                          <FormLabel>{localizeUiText("المدينة")} {isB2B && <span className="text-destructive">*</span>}</FormLabel>
+                          <FormControl><Input className="h-9 text-sm" placeholder={localizeUiText("الرياض")} {...field} /></FormControl>
                           <FormMessage />
                         </FormItem>
                       )} />
 
                       <FormField control={form.control} name="postalCode" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>الرمز البريدي {isB2B && <span className="text-destructive">*</span>}</FormLabel>
+                          <FormLabel>{localizeUiText("الرمز البريدي")} {isB2B && <span className="text-destructive">*</span>}</FormLabel>
                           <FormControl>
                             <Input
                               placeholder="12345"
@@ -906,21 +907,21 @@ export default function CustomerNew() {
                               onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
                             />
                           </FormControl>
-                          <FormDescription>5 أرقام</FormDescription>
+                          <FormDescription>{localizeUiText("5 أرقام")}</FormDescription>
                           <FormMessage />
                         </FormItem>
                       )} />
 
                       <FormField control={form.control} name="country" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>الدولة</FormLabel>
+                          <FormLabel>{localizeUiText("الدولة")}</FormLabel>
                           <FormControl>
                             <SearchCombobox
                               items={WORLD_COUNTRIES.map(c => ({ value: c.code, label: c.nameAr, labelEn: c.nameEn, code: c.code }))}
                               value={field.value || "SA"}
                               onValueChange={field.onChange}
-                              placeholder="اختر الدولة..."
-                              searchPlaceholder="ابحث عن دولة..."
+                              placeholder={localizeUiText("اختر الدولة...")}
+                              searchPlaceholder={localizeUiText("ابحث عن دولة...")}
                             />
                           </FormControl>
                           <FormDescription>دولة العميل — تُحدِّد ترتيب العنوان في طباعة «النموذج الأصلي» وتُفعّل التسلسل الأجنبي للفواتير والمرتجعات</FormDescription>
@@ -934,16 +935,16 @@ export default function CustomerNew() {
                   <div className="pt-2 border-t">
                     <div className="flex items-center gap-2 mb-3">
                       <MapPin className="h-4 w-4 text-primary" />
-                      <h3 className="font-semibold text-sm">العنوان الوطني المختصر والموقع</h3>
+                      <h3 className="font-semibold text-sm">{localizeUiText("العنوان الوطني المختصر والموقع")}</h3>
                       <span className="text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5">
-                        تسريع التسجيل
+                        {localizeUiText("تسريع التسجيل")}
                       </span>
                     </div>
 
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       <FormField control={form.control} name="nationalAddressShort" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>الرمز الوطني المختصر</FormLabel>
+                          <FormLabel>{localizeUiText("الرمز الوطني المختصر")}</FormLabel>
                           <FormControl>
                             <Input
                               placeholder="RYDH2345"
@@ -955,14 +956,14 @@ export default function CustomerNew() {
                             />
                           </FormControl>
                           <FormDescription>
-                            صيغة قصيرة: 4 حروف + 4 أرقام (يُستخرج من بطاقة العنوان الوطني السعودي).
+                            {localizeUiText("صيغة قصيرة: 4 حروف + 4 أرقام (يُستخرج من بطاقة العنوان الوطني السعودي).")}
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )} />
 
                       <div className="space-y-1.5">
-                        <label className="text-sm font-medium">الموقع الجغرافي (GPS)</label>
+                        <label className="text-sm font-medium">{localizeUiText("الموقع الجغرافي (GPS)")}</label>
                         <LocationCapture value={location} onChange={setLocation_} />
                       </div>
                     </div>
@@ -973,7 +974,7 @@ export default function CustomerNew() {
                     <div className="space-y-1.5">
                       <label className="text-sm font-medium flex items-center gap-1.5">
                         <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-                        الفرع الافتراضي
+                        {localizeUiText("الفرع الافتراضي")}
                       </label>
                       <select
                         value={branchId}
@@ -981,44 +982,43 @@ export default function CustomerNew() {
                         className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
                         data-testid="customer-branch"
                       >
-                        <option value="">— بدون فرع محدد —</option>
+                        <option value="">{localizeUiText("— بدون فرع محدد —")}</option>
                         {(branches as any[]).map((b: any) => (
                           <option key={b.id} value={b.id}>
                             {b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}
                           </option>
                         ))}
                       </select>
-                      <p className="text-xs text-muted-foreground">اختياري — الفرع الافتراضي عند إنشاء فاتورة لهذا العميل</p>
+                      <p className="text-xs text-muted-foreground">{localizeUiText("اختياري — الفرع الافتراضي عند إنشاء فاتورة لهذا العميل")}</p>
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-sm font-medium flex items-center gap-1.5">
                         <BookMarked className="h-3.5 w-3.5 text-muted-foreground" />
-                        حساب المدينين (العميل)
+                        {localizeUiText("حساب المدينين (العميل)")}
                       </label>
                       <AccountCombobox
                         value={custAccountId}
                         onValueChange={setCustAccountId}
-                        placeholder="— اختر الحساب المحاسبي —"
+                        placeholder={localizeUiText("— اختر الحساب المحاسبي —")}
                         filterTypes={["asset"]}
                         grouped={false}
                       />
-                      <p className="text-xs text-muted-foreground">اختياري — الحساب المرتبط بهذا العميل في دفتر الأستاذ</p>
+                      <p className="text-xs text-muted-foreground">{localizeUiText("اختياري — الحساب المرتبط بهذا العميل في دفتر الأستاذ")}</p>
                     </div>
                     {!custAccountId && (
                       <div className="col-span-2 lg:col-span-4 space-y-1.5 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-4">
-                        <label className="text-sm font-medium">تصنيف العميل (للإنشاء التلقائي للحساب)</label>
+                        <label className="text-sm font-medium">{localizeUiText("تصنيف العميل (للإنشاء التلقائي للحساب)")}</label>
                         <select
                           value={custAccountCategory}
                           onChange={e => setCustAccountCategory(e.target.value as "local" | "export")}
                           className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
                           data-testid="customer-account-category"
                         >
-                          <option value="local">عميل محلي (عملاء محليون)</option>
-                          <option value="export">عميل تصدير (عملاء تصدير)</option>
+                          <option value="local">{localizeUiText("عميل محلي (عملاء محليون)")}</option>
+                          <option value="export">{localizeUiText("عميل تصدير (عملاء تصدير)")}</option>
                         </select>
                         <p className="text-xs text-muted-foreground">
-                          لم تختر حساباً — سيُنشئ النظام حساباً فرعياً تلقائياً باسم العميل تحت الحساب الأب لهذا التصنيف
-                          (يُضبط من «الإعدادات ← ربط القيود المحاسبية»).
+                          {localizeUiText("لم تختر حساباً — سيُنشئ النظام حساباً فرعياً تلقائياً باسم العميل تحت الحساب الأب لهذا التصنيف (يُضبط من «الإعدادات ← ربط القيود المحاسبية»).")}
                         </p>
                       </div>
                     )}
@@ -1026,17 +1026,17 @@ export default function CustomerNew() {
 
                   <div className="flex justify-between pt-4 border-t">
                     <Button type="button" variant="ghost" className="gap-2 text-muted-foreground" onClick={() => setActiveTab("tax")}>
-                      <ChevronRight className="h-4 w-4" /> رجوع
+                      <ChevronRight className="h-4 w-4" /> {localizeUiText("رجوع")}
                     </Button>
                     <div className="flex gap-3">
                       <Button type="button" variant="outline" asChild data-enter-skip="true">
-                        <Link href="/customers">إلغاء</Link>
+                        <Link href="/customers">{localizeUiText("إلغاء")}</Link>
                       </Button>
                       <Button type="submit" className="gap-2 min-w-[140px]" data-enter-skip="true" disabled={createCustomer.isPending || updateCustomer.isPending}>
                         <Save className="h-4 w-4" />
                         {(createCustomer.isPending || updateCustomer.isPending)
-                          ? "جاري الحفظ..."
-                          : (isEditMode ? "حفظ التعديلات" : "حفظ العميل")}
+                          ? localizeUiText("جاري الحفظ...")
+                          : localizeUiText(isEditMode ? "حفظ التعديلات" : "حفظ العميل")}
                       </Button>
                     </div>
                   </div>
@@ -1051,16 +1051,16 @@ export default function CustomerNew() {
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-amber-600">
-              <AlertTriangle className="h-5 w-5" /> رقم مُكرَّر
+              <AlertTriangle className="h-5 w-5" /> {localizeUiText("رقم مُكرَّر")}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-right leading-relaxed">
               {dupConfirm?.message}
               <br />
-              هل تريد حفظ التعديل على أي حال؟
+              {localizeUiText("هل تريد حفظ التعديل على أي حال؟")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-row-reverse gap-2">
-            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogCancel>{localizeUiText("إلغاء")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-amber-600 hover:bg-amber-700"
               disabled={createCustomer.isPending || updateCustomer.isPending}
@@ -1069,7 +1069,7 @@ export default function CustomerNew() {
                 if (dupConfirm) persist(dupConfirm.payload, true);
               }}
             >
-              حفظ على أي حال
+              {localizeUiText("حفظ على أي حال")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

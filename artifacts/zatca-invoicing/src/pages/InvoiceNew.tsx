@@ -26,6 +26,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useBaseCurrencySymbol, useCompanyCurrencies } from "@/hooks/useCurrencySymbol";
 import { useCompanyTaxes } from "@/hooks/useCompanyTaxes";
 import { DateField } from "@/components/ui/date-field";
+import { localizeUiText } from "@/lib/localizedUiText";
 
 const PAYMENT_METHOD_ITEMS: ComboboxItem[] = [
   { value: "10", code: "10", label: "نقدي",             labelEn: "Cash" },
@@ -242,7 +243,7 @@ export default function InvoiceNew() {
 
   const customerItems: ComboboxItem[] = eligibleParties(customers ?? [], "sales", selectedCustomerId).map(c => ({
     value: c.id.toString(), label: c.nameAr,
-    badge: c.vatNumber ? "✓ ضريبي" : "بدون رقم",
+    badge: c.vatNumber ? localizeUiText("✓ ضريبي") : localizeUiText("بدون رقم"),
     badgeClass: c.vatNumber
       ? "bg-green-100 text-green-700 border-green-200"
       : "bg-amber-100 text-amber-700 border-amber-200",
@@ -330,14 +331,14 @@ export default function InvoiceNew() {
             {/* ── Tab bar ── */}
             <TabsList className="w-full h-auto p-0 bg-transparent border-b rounded-none gap-0 justify-start">
               {[
-                { value: "basic", icon: <ClipboardList className="h-4 w-4" />, label: "البيانات الأساسية" },
-                { value: "buyer", icon: <User className="h-4 w-4" />, label: "بيانات المشتري",
+                { value: "basic", icon: <ClipboardList className="h-4 w-4" />, label: localizeUiText("البيانات الأساسية") },
+                { value: "buyer", icon: <User className="h-4 w-4" />, label: localizeUiText("بيانات المشتري"),
                   badge: isB2B && !buyerComplete
                     ? <span className="mr-1 rounded-full bg-amber-100 text-amber-700 text-xs px-1.5 py-0.5 font-bold border border-amber-300">!</span>
                     : buyerComplete
                       ? <span className="mr-1 text-green-600"><BadgeCheck className="h-3.5 w-3.5 inline" /></span>
                       : null },
-                { value: "items", icon: <Package className="h-4 w-4" />, label: "الأصناف والخدمات",
+                { value: "items", icon: <Package className="h-4 w-4" />, label: localizeUiText("الأصناف والخدمات"),
                   badge: watchLineItems.length > 0
                     ? <span className="mr-1 rounded-full bg-primary/10 text-primary text-xs px-2 py-0.5 font-bold">{watchLineItems.length}</span>
                     : null },
@@ -394,7 +395,7 @@ export default function InvoiceNew() {
                             </FormControl>
                             {matched && (
                               <p className="text-xs text-green-700 font-mono">
-                                الرقم الضريبي: {matched.vatNumber ?? "—"}
+                                {localizeUiText("الرقم الضريبي:")} {matched.vatNumber ?? "—"}
                               </p>
                             )}
                             {companyText && !matched && (
@@ -417,7 +418,7 @@ export default function InvoiceNew() {
                         </div>
                         {userCompanyVat && (
                           <p className="text-xs text-muted-foreground font-mono">
-                            الرقم الضريبي: {userCompanyVat}
+                            {localizeUiText("الرقم الضريبي:")} {userCompanyVat}
                           </p>
                         )}
                       </div>
@@ -445,7 +446,7 @@ export default function InvoiceNew() {
                           <SearchCombobox items={customerItems} value={field.value?.toString()}
                             onValueChange={v => field.onChange(parseInt(v, 10))}
                             placeholder={effectiveCompanyId ? "اختر العميل..." : "حدد الشركة أولاً"}
-                            searchPlaceholder="ابحث باسم العميل أو الرقم الضريبي..."
+                            searchPlaceholder={localizeUiText("ابحث باسم العميل أو الرقم الضريبي...")}
                             disabled={!effectiveCompanyId} />
                         </FormControl>
                         <FormDescription>
@@ -526,7 +527,7 @@ export default function InvoiceNew() {
                           <p className="font-semibold mb-1">متطلبات زكاة — فاتورة ضريبية B2B (إلزامية):</p>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-0.5 text-xs">
                             <span>✓ اسم المشتري (الاسم التجاري الرسمي)</span>
-                            <span>✓ الرقم الضريبي 15 رقماً يبدأ بـ 3</span>
+                            <span>{localizeUiText("✓ الرقم الضريبي 15 رقماً يبدأ بـ 3")}</span>
                             <span>✓ اسم الشارع + رقم المبنى</span>
                             <span>✓ المدينة + الرمز البريدي (5 أرقام)</span>
                           </div>
@@ -566,7 +567,7 @@ export default function InvoiceNew() {
 
                       <FormField control={form.control} name="buyerVatNumber" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>الرقم الضريبي (VAT) {isB2B && <span className="text-destructive">*</span>}</FormLabel>
+                          <FormLabel>{localizeUiText("الرقم الضريبي (VAT)")} {isB2B && <span className="text-destructive">*</span>}</FormLabel>
                           <FormControl>
                             <Input
                               placeholder="310000000000003"
@@ -590,7 +591,7 @@ export default function InvoiceNew() {
                           {field.value?.length === 15 && !field.value.startsWith("3") && (
                             <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
                               <AlertTriangle className="h-3 w-3" />
-                              الرقم الضريبي يجب أن يبدأ بـ 3
+                              {localizeUiText("الرقم الضريبي يجب أن يبدأ بـ 3")}
                             </p>
                           )}
                           {field.value?.length === 15 && field.value.startsWith("3") && (

@@ -5,6 +5,7 @@ import { useLocation } from "wouter";
 import { useFormatters } from "@/lib/format";
 import { fetchJsonArray } from "@/lib/fetchJsonArray";
 import { useToast } from "@/hooks/use-toast";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -265,9 +266,9 @@ export default function InvoicePaymentsTab({
     return (
       <div className="rounded-lg border border-dashed p-8 text-center space-y-2">
         <Wallet className="h-8 w-8 mx-auto text-muted-foreground" />
-        <p className="text-sm font-medium">إدارة المدفوعات</p>
+        <p className="text-sm font-medium">{localizeUiText("إدارة المدفوعات")}</p>
         <p className="text-xs text-muted-foreground max-w-md mx-auto">
-          احفظ الفاتورة أولاً لتتمكن من إنشاء سندات القبض وتتبّع التحصيلات والرصيد المتبقّي من هنا مباشرة.
+          {localizeUiText("احفظ الفاتورة أولاً لتتمكن من إنشاء سندات القبض وتتبّع التحصيلات والرصيد المتبقّي من هنا مباشرة.")}
         </p>
       </div>
     );

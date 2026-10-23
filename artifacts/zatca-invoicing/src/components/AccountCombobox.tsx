@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { localizeUiText } from "@/lib/localizedUiText";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -52,7 +53,7 @@ export function AccountCombobox({
   filterTypes,
   grouped        = true,
   allowEmpty     = true,
-  emptyLabel     = "بدون حساب",
+  emptyLabel     = localizeUiText("بدون حساب"),
   autoFocus,
   excludeIds,
   allowParentAccounts = false,

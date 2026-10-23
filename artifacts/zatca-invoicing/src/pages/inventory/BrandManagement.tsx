@@ -98,8 +98,8 @@ export default function BrandManagement() {
       {showForm && (
         <FormPanel
           icon={Bookmark}
-          title={editId ? "تعديل العلامة التجارية" : "علامة تجارية جديدة"}
-          subtitle="بيانات العلامة التجارية"
+          title={localizeUiText(editId ? "تعديل العلامة التجارية" : "علامة تجارية جديدة")}
+          subtitle={localizeUiText("بيانات العلامة التجارية")}
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending || updateMut.isPending}
@@ -109,26 +109,26 @@ export default function BrandManagement() {
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="w-full h-9 mb-5">
               <TabsTrigger value="basic" className="flex-1 text-xs gap-1.5"><Bookmark className="h-3.5 w-3.5" />{t("inventoryMaster.common.code") as string} / {t("inventoryMaster.common.nameAr") as string}</TabsTrigger>
-              <TabsTrigger value="more"  className="flex-1 text-xs gap-1.5"><Info className="h-3.5 w-3.5" />بيانات إضافية</TabsTrigger>
+              <TabsTrigger value="more"  className="flex-1 text-xs gap-1.5"><Info className="h-3.5 w-3.5" />{localizeUiText("بيانات إضافية")}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="basic" className="mt-0">
               <FormGrid>
                 <Field label={t("inventoryMaster.common.code") as string} required>
-                  <Input placeholder="مثال: BR-001" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
+                  <Input placeholder={localizeUiText("مثال: BR-001")} value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
                 </Field>
                 <Field label={t("inventoryMaster.common.nameAr") as string} required>
-                  <Input placeholder="اسم العلامة التجارية" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} />
+                  <Input placeholder={localizeUiText("اسم العلامة التجارية")} value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} />
                 </Field>
                 <Field label={t("inventoryMaster.common.nameEn") as string} className="md:col-span-2">
                   <Input placeholder="Brand name (English)" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
                 </Field>
-                <Field label="الحالة">
+                <Field label={localizeUiText("الحالة")}>
                   <Select value={form.status} onValueChange={v => setForm((p: any) => ({ ...p, status: v }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="active">نشطة</SelectItem>
-                      <SelectItem value="inactive">غير نشطة</SelectItem>
+                      <SelectItem value="active">{localizeUiText("نشطة")}</SelectItem>
+                      <SelectItem value="inactive">{localizeUiText("غير نشطة")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </Field>

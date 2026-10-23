@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { localizeUiText } from "@/lib/localizedUiText";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
@@ -212,7 +213,7 @@ export default function PosItemGroups() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Link href="/inventory/pos-item-subgroups" className="inline-flex h-10 items-center rounded-lg border border-teal-900/20 bg-white px-4 text-sm font-semibold text-teal-900 hover:bg-teal-50">
-              إدارة المجموعات الفرعية
+              {localizeUiText("إدارة المجموعات الفرعية")}
             </Link>
             <Button onClick={openCreate} className="h-10 shrink-0 gap-2 rounded-lg px-4 shadow-sm" data-testid="button-create-pos-group">
               <Plus className="h-4 w-4" />
