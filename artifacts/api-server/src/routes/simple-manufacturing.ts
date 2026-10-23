@@ -1896,7 +1896,7 @@ const simpleReportHandler = async (req: any, res: any) => {
 router.get("/reports", view, simpleReportHandler);
 router.get("/reports/export", exportReport, simpleReportHandler);
 
-// Read-only planning estimate from the saved stage snapshot. It deliberately
+// Read-only planned-versus-executed resource comparison. It deliberately
 // does not update order costs, allocations, WIP, or journal entries.
 router.get("/reports/resource-estimates", view, async (req, res) => {
   const cid = companyId(req, res);
@@ -1917,7 +1917,11 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
     }).from(productionOrdersTable)
       .where(and(...conditions))
       .orderBy(desc(productionOrdersTable.createdAt)).limit(1000);
-    if (!orders.length) return void res.json({ orders: [], totals: { labor: 0, depreciation: 0, electricity: 0, total: 0 } });
+    if (!orders.length) return void res.json({
+      orders: [],
+      totals: { labor: 0, depreciation: 0, electricity: 0, total: 0 },
+      actualTotals: { labor: 0, depreciation: 0, electricity: 0, total: 0 },
+    });
 
     const orderIds = orders.map((order) => order.id);
     const stageRows = await db.select({
@@ -1925,6 +1929,9 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
       sequence: productionOrderStagesTable.sequence,
       nameAr: productionOrderStagesTable.nameAr,
       expectedDurationMinutes: productionOrderStagesTable.expectedDurationMinutes,
+      actualDurationMinutes: productionOrderStagesTable.actualDurationMinutes,
+      startedAt: productionOrderStagesTable.startedAt,
+      completedAt: productionOrderStagesTable.completedAt,
       resourceMode: productionOrderStagesTable.resourceMode,
       resourceId: productionOrderStagesTable.resourceId,
       workerCount: productionOrderStagesTable.workerCount,
@@ -2033,8 +2040,50 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
       list.push(row);
       depreciationByAsset.set(row.assetId, list);
     }
+    const employeeHourlyRate = (employeeId: number, effectivePeriod: string) => {
+      const pay = employeePayroll.get(employeeId)?.find((row) =>
+        `${row.year}-${String(row.month).padStart(2, "0")}` <= effectivePeriod,
+      );
+      if (!pay) return { rate: null as number | null, sourcePeriod: null as string | null, reason: "لا يوجد مسير مرحّل" };
+      const contract = employeeContracts
+        .filter((row) => row.employeeId === employeeId &&
+          row.startDate <= String(pay.periodEnd) &&
+          (!row.endDate || row.endDate >= String(pay.periodEnd)))
+        .sort((a, b) => String(b.startDate).localeCompare(String(a.startDate)))[0];
+      if (!(Number(contract?.workingHours) > 0)) {
+        return { rate: null, sourcePeriod: null, reason: "ساعات العقد غير محددة" };
+      }
+      if (!(Number(pay.grossSalary) > 0)) {
+        return { rate: null, sourcePeriod: null, reason: "راتب المسير غير متاح" };
+      }
+      return {
+        rate: Number(pay.grossSalary) / (30 * Number(contract.workingHours)),
+        sourcePeriod: `${pay.year}-${String(pay.month).padStart(2, "0")}`,
+        reason: null,
+      };
+    };
+    const depreciationRate = (stage: typeof stageRows[number], effectivePeriod: string) => {
+      const method = String(stage.allocationMethod || "");
+      if (method === "fixed_hourly_rate") {
+        return {
+          rate: Number(stage.fixedManufacturingRate) > 0 ? Number(stage.fixedManufacturingRate) : 0,
+          source: "معدل الساعة المحدد على الأصل",
+        };
+      }
+      if (method === "operating_hours" && stage.fixedAssetId && Number(stage.approvedOperatingHours) > 0) {
+        const run = depreciationByAsset.get(Number(stage.fixedAssetId))?.find((row) =>
+          `${row.year}-${String(row.month).padStart(2, "0")}` <= effectivePeriod,
+        );
+        return {
+          rate: run ? Number(run.amount) / Number(stage.approvedOperatingHours) : 0,
+          source: run ? `${run.year}-${String(run.month).padStart(2, "0")}` : null,
+        };
+      }
+      return { rate: 0, source: null as string | null };
+    };
     const orderMap = new Map(orders.map((order) => [order.id, order]));
     const totals = { labor: 0, depreciation: 0, electricity: 0, total: 0 };
+    const actualTotals = { labor: 0, depreciation: 0, electricity: 0, total: 0 };
     const byOrder = new Map<number, any>();
     for (const order of orders) {
       const meta = order.meta && typeof order.meta === "object" ? order.meta as Record<string, any> : {};
@@ -2049,93 +2098,129 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
       const order = orderMap.get(stage.orderId);
       const period = byOrder.get(stage.orderId)?.period ?? "";
       const stageHours = Number(stage.expectedDurationMinutes || 0) / 60;
+      const actualHours = Number(stage.actualDurationMinutes || 0) / 60;
+      const actualDate = stage.completedAt ?? stage.startedAt;
+      const actualExecutionRecorded = Boolean(actualDate || actualHours > 0);
+      const actualPeriod = actualDate
+        ? (actualDate instanceof Date ? actualDate.toISOString() : String(actualDate)).slice(0, 7)
+        : period;
       const ids = Array.isArray(stage.workerEmployeeIds)
         ? [...new Set(stage.workerEmployeeIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))]
         : [];
       const missing: string[] = [];
-      let labor = 0;
+      const actualMissing: string[] = [];
+      let plannedHourlyTotal = 0;
+      let actualHourlyTotal = 0;
+      let plannedLaborRatesComplete = true;
+      let actualLaborRatesComplete = true;
       const laborSourcePeriods: string[] = [];
+      const actualLaborSourcePeriods: string[] = [];
       if (stage.resourceMode === "labor" || stage.resourceMode === "both") {
         if (!stageHours || !ids.length) missing.push("مدة أو موظفون غير محددين");
+        if (actualExecutionRecorded && !(actualHours > 0)) actualMissing.push("لم تُسجل مدة تنفيذ فعلية");
+        if (actualExecutionRecorded && !ids.length) actualMissing.push("موظفو التنفيذ غير محددين");
+        if (actualExecutionRecorded && stage.workerCount == null) actualMissing.push("عدد العاملين الفعلي غير مسجل");
         for (const employeeId of ids) {
-          const pay = employeePayroll.get(employeeId)?.find((row) =>
-            `${row.year}-${String(row.month).padStart(2, "0")}` <= period,
-          );
-          if (!pay) { missing.push("لا يوجد مسير مرحّل لهذا الموظف"); continue; }
-          const payPeriod = `${pay.year}-${String(pay.month).padStart(2, "0")}`;
-          const contract = employeeContracts
-            .filter((row) => row.employeeId === employeeId &&
-              row.startDate <= String(pay.periodEnd) &&
-              (!row.endDate || row.endDate >= String(pay.periodEnd)))
-            .sort((a, b) => String(b.startDate).localeCompare(String(a.startDate)))[0];
-          if (!(Number(contract?.workingHours) > 0)) {
-            missing.push("ساعات الدوام اليومية غير محددة في عقد الموظف");
-            continue;
+          const plannedRate = employeeHourlyRate(employeeId, period);
+          if (plannedRate.rate == null) {
+            plannedLaborRatesComplete = false;
+            missing.push(`${plannedRate.reason} للموظف`);
           }
-          if (!(Number(pay.grossSalary) > 0)) {
-            missing.push("راتب الموظف في المسير غير متاح");
-            continue;
+          else {
+            plannedHourlyTotal += plannedRate.rate;
+            if (plannedRate.sourcePeriod) laborSourcePeriods.push(plannedRate.sourcePeriod);
           }
-          // Use the selected standard monthly denominator: 30 paid days ×
-          // this employee's contractual daily hours, not a company-wide rate.
-          labor += stageHours * Number(pay.grossSalary) /
-            (30 * Number(contract.workingHours));
-          laborSourcePeriods.push(payPeriod);
+          const actualRate = employeeHourlyRate(employeeId, actualPeriod);
+          if (actualRate.rate == null) {
+            actualLaborRatesComplete = false;
+            actualMissing.push(`${actualRate.reason} للموظف`);
+          } else {
+            actualHourlyTotal += actualRate.rate;
+            if (actualRate.sourcePeriod) actualLaborSourcePeriods.push(actualRate.sourcePeriod);
+          }
         }
         if (stage.workerCount != null && Number(stage.workerCount) !== ids.length)
           missing.push("عدد الموظفين لا يطابق الموظفين المعيّنين");
+        if (actualExecutionRecorded && stage.workerCount != null && Number(stage.workerCount) !== ids.length)
+          actualMissing.push("عدد العاملين المسجل لا يطابق الموظفين المعيّنين");
       }
+      const labor = stageHours > 0 && ids.length && plannedLaborRatesComplete
+        ? stageHours * plannedHourlyTotal : 0;
+      const actualLabor = actualHours > 0 && ids.length && stage.workerCount === ids.length &&
+        actualLaborRatesComplete
+        ? actualHours * actualHourlyTotal : 0;
       let depreciation = 0;
+      let actualDepreciation = 0;
       let electricity = 0;
+      let actualElectricity = 0;
       let depreciationSourcePeriod: string | null = null;
+      let actualDepreciationSourcePeriod: string | null = null;
       if (stage.resourceMode === "machine" || stage.resourceMode === "both") {
         if (!stage.resourceId || !stage.resourceName) missing.push("الآلة غير محددة");
-        if (stage.fixedAssetId && stage.usedInManufacturing && stageHours > 0) {
-          const method = String(stage.allocationMethod || "");
-          let rate = method === "fixed_hourly_rate" ? Number(stage.fixedManufacturingRate) : 0;
-          if (method === "operating_hours") {
-            const run = depreciationByAsset.get(Number(stage.fixedAssetId))?.find((row) =>
-              `${row.year}-${String(row.month).padStart(2, "0")}` <= period,
-            );
-            rate = run && Number(stage.approvedOperatingHours) > 0
-              ? Number(run.amount) / Number(stage.approvedOperatingHours) : 0;
-            if (run) depreciationSourcePeriod = `${run.year}-${String(run.month).padStart(2, "0")}`;
-          }
-          if (rate > 0) {
-            depreciation = stageHours * rate;
-            if (String(stage.allocationMethod) === "fixed_hourly_rate")
-              depreciationSourcePeriod = "معدل الساعة المحدد على الأصل";
-          }
-          else missing.push("معدل إهلاك الساعة غير متاح");
+        if (actualExecutionRecorded && !(actualHours > 0))
+          actualMissing.push("لم تُسجل مدة الآلة الفعلية");
+        if (stage.fixedAssetId && stage.usedInManufacturing) {
+          const plannedRate = depreciationRate(stage, period);
+          const actualRate = depreciationRate(stage, actualPeriod);
+          if (stageHours > 0 && plannedRate.rate > 0) {
+            depreciation = stageHours * plannedRate.rate;
+            depreciationSourcePeriod = plannedRate.source;
+          } else if (stageHours > 0) missing.push("معدل إهلاك الساعة غير متاح");
+          if (actualHours > 0 && actualRate.rate > 0) {
+            actualDepreciation = actualHours * actualRate.rate;
+            actualDepreciationSourcePeriod = actualRate.source;
+          } else if (actualHours > 0) actualMissing.push("معدل إهلاك الساعة الفعلي غير متاح");
+        } else {
+          if (stageHours > 0) missing.push("الأصل الصناعي أو معدل الإهلاك غير متاح");
+          if (actualExecutionRecorded && actualHours > 0) actualMissing.push("الأصل الصناعي أو معدل الإهلاك غير متاح");
         }
         if (stage.electricityEnabled) {
           const tariff = Number(settings?.electricityTariffPerKwh);
           const kw = Number(stage.electricityKw);
           if (tariff > 0 && kw > 0 && stageHours > 0) electricity = stageHours * tariff * kw;
           else missing.push("قدرة الآلة أو تعريفة الكهرباء غير مكتملة");
+          if (tariff > 0 && kw > 0 && actualHours > 0)
+            actualElectricity = actualHours * tariff * kw;
+          else if (actualExecutionRecorded && actualHours > 0) actualMissing.push("قدرة الآلة أو تعريفة الكهرباء الفعلية غير مكتملة");
         }
       }
       const stageTotal = labor + depreciation + electricity;
+      const actualStageTotal = actualLabor + actualDepreciation + actualElectricity;
       const row = {
         sequence: stage.sequence, nameAr: stage.nameAr, period,
         durationMinutes: stage.expectedDurationMinutes,
+        actualDurationMinutes: stage.actualDurationMinutes,
+        actualExecutionRecorded,
+        actualPeriod,
         resourceMode: stage.resourceMode, resourceName: stage.resourceName,
         workerCount: stage.workerCount, assignedEmployeeCount: ids.length,
         labor: Number(labor.toFixed(2)), depreciation: Number(depreciation.toFixed(2)),
         electricity: Number(electricity.toFixed(2)), total: Number(stageTotal.toFixed(2)),
+        actualLabor: Number(actualLabor.toFixed(2)),
+        actualDepreciation: Number(actualDepreciation.toFixed(2)),
+        actualElectricity: Number(actualElectricity.toFixed(2)),
+        actualTotal: Number(actualStageTotal.toFixed(2)),
         laborSourcePeriods: [...new Set(laborSourcePeriods)],
+        actualLaborSourcePeriods: [...new Set(actualLaborSourcePeriods)],
         depreciationSourcePeriod,
+        actualDepreciationSourcePeriod,
         missing: [...new Set(missing)],
+        actualMissing: [...new Set(actualMissing)],
       };
       byOrder.get(stage.orderId)?.stages.push(row);
       totals.labor += labor;
       totals.depreciation += depreciation;
       totals.electricity += electricity;
       totals.total += stageTotal;
+      actualTotals.labor += actualLabor;
+      actualTotals.depreciation += actualDepreciation;
+      actualTotals.electricity += actualElectricity;
+      actualTotals.total += actualStageTotal;
     }
     res.json({
       orders: [...byOrder.values()],
       totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, Number(value.toFixed(2))])),
+      actualTotals: Object.fromEntries(Object.entries(actualTotals).map(([key, value]) => [key, Number(value.toFixed(2))])),
       truncated: orders.length === 1000,
       basis: "employee_payroll_gross_per_employee_working_hour_and_saved_order_stage_snapshot",
     });

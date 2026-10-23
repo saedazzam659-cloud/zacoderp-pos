@@ -82,6 +82,10 @@ test("route resource estimates use employee payroll rates and stay read-only", a
   assert.match(handler, /payrollLinesTable\.employeeId/);
   assert.match(handler, /Number\(pay\.grossSalary\)\s*\/\s*\(\s*30\s*\*\s*Number\(contract\.workingHours\)\s*\)/);
   assert.match(handler, /productionOrderStagesTable\.expectedDurationMinutes/);
+  assert.match(handler, /productionOrderStagesTable\.actualDurationMinutes/);
+  assert.match(handler, /employeeHourlyRate\(employeeId,\s*actualPeriod\)/);
+  assert.match(handler, /actualHours\s*\*\s*actualHourlyTotal/);
+  assert.match(handler, /stage\.workerCount\s*===\s*ids\.length/);
   assert.match(handler, /fixed_hourly_rate/);
   assert.match(handler, /approvedOperatingHours/);
   assert.doesNotMatch(handler, /db\.(?:insert|update|delete)|\.insert\(|\.update\(|\.delete\(/);

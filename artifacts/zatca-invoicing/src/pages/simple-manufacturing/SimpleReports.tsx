@@ -53,7 +53,7 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
     request("/api/simple-manufacturing/reports/resource-estimates", { signal: controller.signal })
       .then(data => {
         if (!active) return;
-        if (!data || !Array.isArray(data.orders) || !data.totals) {
+        if (!data || !Array.isArray(data.orders) || !data.totals || !data.actualTotals) {
           throw new Error("استجابة تقدير الموارد غير صالحة");
         }
         setResourceEstimate(data);
@@ -95,6 +95,9 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
   const stdCost = Number(report.totals.standardCost || 0);
   const actCost = Number(report.totals.actualCost || 0);
   const diff = actCost - stdCost;
+  const actualIncompleteStages = (resourceEstimate?.orders ?? [])
+    .flatMap((order: any) => order.stages ?? [])
+    .filter((stage: any) => stage.actualExecutionRecorded && stage.actualMissing?.length).length;
 
   return (
     <div className="space-y-6">
@@ -142,8 +145,8 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
             تقدير موارد مسارات أوامر الإنتاج
           </CardTitle>
           <p className="text-sm text-slate-600">
-            تقدير قراءة فقط من لقطة المراحل المحفوظة: رواتب الموظفين من مسيراتهم الفردية، وإهلاك الآلة، وكهرباؤها عند توفر البيانات.
-            لا يُضاف إلى التكلفة الفعلية ولا ينشئ قيوداً محاسبية.
+            مقارنة قراءة فقط بين موارد المرحلة المخططة والمنفذة. الفعلي هنا محسوب من مدة التنفيذ والموظفين المسجلين في المرحلة ومعدلات رواتبهم الفردية؛
+            لا يغيّر التكلفة الفعلية المحاسبية ولا ينشئ قيوداً.
           </p>
         </CardHeader>
         <CardContent className="space-y-4 p-4">
@@ -157,27 +160,33 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
             </div>
           ) : (
             <>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 {[
-                  { key: "labor", label: "العمالة حسب الموظف", Icon: Users, color: "text-blue-700" },
-                  { key: "depreciation", label: "إهلاك الآلات", Icon: Wrench, color: "text-violet-700" },
-                  { key: "electricity", label: "كهرباء الآلات", Icon: Zap, color: "text-amber-700" },
-                  { key: "total", label: "إجمالي الموارد المقدّرة", Icon: Calculator, color: "text-indigo-800" },
-                ].map(({ key, label, Icon, color }) => (
-                  <div key={key} className="rounded-lg border bg-white p-3">
+                  { key: "labor", label: "العمالة المخططة", Icon: Users, color: "text-blue-700", source: "planned" },
+                  { key: "depreciation", label: "إهلاك مخطط", Icon: Wrench, color: "text-violet-700", source: "planned" },
+                  { key: "electricity", label: "كهرباء مخططة", Icon: Zap, color: "text-amber-700", source: "planned" },
+                  { key: "total", label: "إجمالي الموارد المخططة", Icon: Calculator, color: "text-indigo-800", source: "planned" },
+                  { key: "total", label: "موارد منفذة (تحليل فقط)", Icon: TrendingUp, color: "text-emerald-700", source: "actual" },
+                ].map(({ key, label, Icon, color, source }) => (
+                  <div key={label} className="rounded-lg border bg-white p-3">
                     <div className={`flex items-center gap-2 text-xs ${color}`}>
                       <Icon className="h-4 w-4" />{label}
                     </div>
                     <div className={`mt-2 text-xl font-bold font-mono ${color}`}>
-                      {Number(resourceEstimate.totals?.[key] || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      {Number(resourceEstimate[source === "actual" ? "actualTotals" : "totals"]?.[key] || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </div>
                   </div>
                 ))}
               </div>
               <p className="text-xs text-slate-500">
-                سعر ساعة الموظف = راتبه الإجمالي في آخر مسير مرحّل مناسب ÷ (30 يوماً × ساعات دوامه اليومية في العقد الساري). الإهلاك يعتمد على معدل الأصل وساعات المرحلة المتوقعة.
-                الأوامر التي ينقصها مسير أو معدل إهلاك تظهر تفاصيل النقص بدلاً من اعتبارها تكلفة صفرية.
+                سعر ساعة الموظف = راتبه الإجمالي في آخر مسير مرحّل مناسب ÷ (30 يوماً × ساعات دوامه اليومية في العقد الساري). العمالة الفعلية تستخدم ساعات التنفيذ الفعلية ومعدل كل موظف في فترة التنفيذ؛ الكهرباء تستخدم التعريفة المسجلة حالياً.
+                الإجمالي المنفذ قد يكون جزئياً عند نقص البيانات؛ لا يُعامل النقص كتكلفة مؤكدة.
               </p>
+              {actualIncompleteStages > 0 && (
+                <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-800">
+                  توجد {actualIncompleteStages} مرحلة ينقصها بيان لحساب موارد التنفيذ بدقة؛ راجع سبب النقص داخل تفاصيل المرحلة.
+                </p>
+              )}
               {resourceEstimate.truncated && (
                 <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-800">
                   عُرضت تقديرات آخر 1000 أمر فقط.
@@ -197,16 +206,19 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
                       </span>
                     </summary>
                     <div className="overflow-x-auto border-t">
-                      <table className="w-full min-w-[760px] text-xs">
+                      <table className="w-full min-w-[1120px] text-xs">
                         <thead className="bg-slate-50 text-slate-600">
                           <tr>
                             <th className="p-2 text-right">المرحلة / المورد</th>
-                            <th className="p-2 text-right">المدة المتوقعة</th>
-                            <th className="p-2 text-right">العمالة</th>
-                            <th className="p-2 text-right">تكلفة العمالة</th>
-                            <th className="p-2 text-right">الإهلاك</th>
-                            <th className="p-2 text-right">الكهرباء</th>
-                            <th className="p-2 text-right">الإجمالي التقديري</th>
+                            <th className="p-2 text-right">المدة المخططة / الفعلية</th>
+                            <th className="p-2 text-right">عمالة مخططة</th>
+                            <th className="p-2 text-right">عمالة فعلية</th>
+                            <th className="p-2 text-right">إهلاك مخطط</th>
+                            <th className="p-2 text-right">إهلاك فعلي</th>
+                            <th className="p-2 text-right">كهرباء مخططة</th>
+                            <th className="p-2 text-right">كهرباء فعلية</th>
+                            <th className="p-2 text-right">إجمالي مخطط</th>
+                            <th className="p-2 text-right">إجمالي فعلي (تحليل)</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -216,10 +228,16 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
                                 <div className="font-medium">{stage.nameAr}</div>
                                 {stage.resourceName && <div className="text-slate-500">{stage.resourceName}</div>}
                                 {!!stage.laborSourcePeriods?.length && (
-                                  <div className="text-slate-500">مسير الرواتب: {stage.laborSourcePeriods.join("، ")}</div>
+                                  <div className="text-slate-500">مسير المخطط: {stage.laborSourcePeriods.join("، ")}</div>
+                                )}
+                                {!!stage.actualLaborSourcePeriods?.length && (
+                                  <div className="text-slate-500">مسير التنفيذ: {stage.actualLaborSourcePeriods.join("، ")}</div>
                                 )}
                                 {stage.depreciationSourcePeriod && (
                                   <div className="text-slate-500">أساس الإهلاك: {stage.depreciationSourcePeriod}</div>
+                                )}
+                                {stage.actualDepreciationSourcePeriod && (
+                                  <div className="text-slate-500">أساس الإهلاك الفعلي: {stage.actualDepreciationSourcePeriod}</div>
                                 )}
                                 {!!stage.missing?.length && (
                                   <div className="mt-1 flex items-start gap-1 text-amber-700">
@@ -227,13 +245,27 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
                                     <span>{stage.missing.join("، ")}</span>
                                   </div>
                                 )}
+                                {!!stage.actualMissing?.length && (
+                                  <div className="mt-1 flex items-start gap-1 text-amber-700">
+                                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                                    <span>فعلي: {stage.actualMissing.join("، ")}</span>
+                                  </div>
+                                )}
                               </td>
-                              <td className="p-2">{stage.durationMinutes == null ? "غير محددة" : `${stage.durationMinutes} دقيقة`}</td>
-                              <td className="p-2">{stage.assignedEmployeeCount}/{stage.workerCount ?? "—"} موظف</td>
+                              <td className="p-2">{stage.durationMinutes ?? "—"} / {Number(stage.actualDurationMinutes) > 0 ? stage.actualDurationMinutes : "—"} دقيقة</td>
                               <td className="p-2 font-mono">{Number(stage.labor || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                              <td className="p-2 font-mono">{!stage.actualExecutionRecorded || stage.actualLaborSourcePeriods?.length !== stage.assignedEmployeeCount || stage.actualMissing?.some((m: string) => /(موظف|عامل|مسير|عقد|راتب)/.test(m))
+                                ? "—" : Number(stage.actualLabor || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                               <td className="p-2 font-mono">{Number(stage.depreciation || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                              <td className="p-2 font-mono">{!stage.actualExecutionRecorded || stage.actualMissing?.some((m: string) => m.includes("إهلاك") || m.includes("الأصل"))
+                                ? "—" : Number(stage.actualDepreciation || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                               <td className="p-2 font-mono">{Number(stage.electricity || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                              <td className="p-2 font-mono">{!stage.actualExecutionRecorded || stage.actualMissing?.some((m: string) => m.includes("كهرباء") || m.includes("تعريفة"))
+                                ? "—" : Number(stage.actualElectricity || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                               <td className="p-2 font-mono font-semibold">{Number(stage.total || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                              <td className="p-2 font-mono font-semibold">{!stage.actualExecutionRecorded
+                                ? "—" : stage.actualMissing?.length
+                                  ? "غير مكتمل" : Number(stage.actualTotal || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                             </tr>
                           ))}
                         </tbody>
