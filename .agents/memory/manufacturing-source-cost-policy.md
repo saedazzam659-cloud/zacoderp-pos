@@ -62,7 +62,7 @@ Employer insurance and factory supervision are manufacturing overhead allocated 
 
 **Why:** The user chose labor-hours as the allocation basis, and the HR policy table does not establish the employer-paid amount or its accounting source.
 
-**How to apply:** Use frozen stage person-hours and posted source amounts/accounts; never infer insurance expense from a policy or reuse employee-paid GOSI deductions.
+**How to apply:** Use frozen stage person-hours and posted source amounts/accounts; never infer insurance expense from a policy or reuse employee-paid GOSI deductions. Multi-period premiums stay prepaid and enter manufacturing monthly through their posted amortization; multiple payment vouchers settle the source invoice and never create extra expense. Do not tag supervisor payroll as a second vendor overhead source.
 
 Accounting verification must include failed finalization after driver reconciliation and zero-net reallocations across different source accounts.
 

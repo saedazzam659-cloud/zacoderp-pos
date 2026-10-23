@@ -1643,7 +1643,8 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
           ALTER TABLE accounting_adjustments
             ADD COLUMN IF NOT EXISTS manufacturing_eligible BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS manufacturing_allocation_method TEXT NOT NULL DEFAULT 'none',
-            ADD COLUMN IF NOT EXISTS approved_production_quantity NUMERIC(14,4);` },
+            ADD COLUMN IF NOT EXISTS approved_production_quantity NUMERIC(14,4),
+            ADD COLUMN IF NOT EXISTS approved_manufacturing_hours NUMERIC(14,4);` },
 ];
 
 async function ensurePayrollAllocationSchema(options: { strict?: boolean } = {}): Promise<string[]> {

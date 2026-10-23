@@ -11,6 +11,8 @@ import { assertWritableForDate } from "./periodGuard.js";
 
 export const INDUSTRIAL_COST_TYPES = [
   "electricity",
+  "employee_insurance",
+  "factory_supervision",
   "maintenance",
   "industrial_services",
   "indirect_materials",

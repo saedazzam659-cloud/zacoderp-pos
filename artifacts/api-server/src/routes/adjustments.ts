@@ -364,7 +364,7 @@ router.post("/", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { type, name, expenseAccountId, contraAccountId, totalAmount, startDate, endDate, autoGenerate, notes, costCenterId, periodicity, costCenterSplit,
-      manufacturingEligible, approvedProductionQuantity } = req.body ?? {};
+      manufacturingEligible, manufacturingAllocationMethod, approvedProductionQuantity, approvedManufacturingHours } = req.body ?? {};
 
     if (!["prepaid", "accrued"].includes(type)) {
       res.status(400).json({ error: "نوع التسوية غير صالح (prepaid/accrued فقط)" }); return;
@@ -415,10 +415,20 @@ router.post("/", async (req, res) => {
     if (months <= 0) { res.status(400).json({ error: "لا توجد أشهر كافية بين التاريخين" }); return; }
     const monthlyAmount = (total / months).toFixed(2);
     const mfgEligible = type === "prepaid" && manufacturingEligible === true;
+    if (manufacturingAllocationMethod !== undefined &&
+        !["production_quantity", "labor_hours"].includes(String(manufacturingAllocationMethod))) {
+      res.status(400).json({ error: "أساس تحميل المصروف المقدم غير صالح" }); return;
+    }
+    const mfgMethod = manufacturingAllocationMethod === "labor_hours" ? "labor_hours" : "production_quantity";
     const approvedQty = approvedProductionQuantity === "" || approvedProductionQuantity == null
       ? null : Number(approvedProductionQuantity);
-    if (mfgEligible && !(Number.isFinite(approvedQty) && (approvedQty as number) > 0)) {
+    const approvedHours = approvedManufacturingHours === "" || approvedManufacturingHours == null
+      ? null : Number(approvedManufacturingHours);
+    if (mfgEligible && mfgMethod === "production_quantity" && !(Number.isFinite(approvedQty) && (approvedQty as number) > 0)) {
       res.status(400).json({ error: "كمية الإنتاج الشهرية المعتمدة مطلوبة لربط المصروف المقدم بالتصنيع" }); return;
+    }
+    if (mfgEligible && mfgMethod === "labor_hours" && !(Number.isFinite(approvedHours) && (approvedHours as number) > 0)) {
+      res.status(400).json({ error: "ساعات العمالة الصناعية الشهرية المعتمدة مطلوبة لربط المصروف المقدم بالتصنيع" }); return;
     }
 
     const [created] = await db.insert(accountingAdjustmentsTable).values({
@@ -434,8 +444,9 @@ router.post("/", async (req, res) => {
       periodicity:      per,
       costCenterSplit:  split,
       manufacturingEligible: mfgEligible,
-      manufacturingAllocationMethod: mfgEligible ? "production_quantity" : "none",
+      manufacturingAllocationMethod: mfgEligible ? mfgMethod : "none",
       approvedProductionQuantity: approvedQty == null ? null : String(approvedQty),
+      approvedManufacturingHours: approvedHours == null ? null : String(approvedHours),
       autoGenerate:     autoGenerate !== false,
       status:           "active",
       notes:            notes || null,
@@ -464,7 +475,7 @@ router.put("/:id", async (req, res) => {
     const {
       name, autoGenerate, status, notes, carryForwardEnabled,
       totalAmount, startDate, endDate, expenseAccountId, contraAccountId,
-      costCenterId, manufacturingEligible, approvedProductionQuantity,
+      costCenterId, manufacturingEligible, manufacturingAllocationMethod, approvedProductionQuantity, approvedManufacturingHours,
     } = req.body ?? {};
 
     const patch: any = { updatedAt: new Date() };
@@ -480,24 +491,41 @@ router.put("/:id", async (req, res) => {
     if (typeof carryForwardEnabled === "boolean") patch.carryForwardEnabled = carryForwardEnabled;
     if (status && ["active", "completed", "cancelled"].includes(status)) patch.status = status;
     if (typeof notes === "string" || notes === null) patch.notes = notes;
-    if (manufacturingEligible !== undefined || approvedProductionQuantity !== undefined) {
+    if (manufacturingEligible !== undefined || manufacturingAllocationMethod !== undefined ||
+        approvedProductionQuantity !== undefined || approvedManufacturingHours !== undefined) {
+      if (manufacturingAllocationMethod !== undefined &&
+          !["production_quantity", "labor_hours"].includes(String(manufacturingAllocationMethod))) {
+        res.status(400).json({ error: "أساس تحميل المصروف المقدم غير صالح" }); return;
+      }
       const [cur] = await db.select({ type: accountingAdjustmentsTable.type,
         eligible: accountingAdjustmentsTable.manufacturingEligible,
-        qty: accountingAdjustmentsTable.approvedProductionQuantity })
+        method: accountingAdjustmentsTable.manufacturingAllocationMethod,
+        qty: accountingAdjustmentsTable.approvedProductionQuantity,
+        hours: accountingAdjustmentsTable.approvedManufacturingHours })
         .from(accountingAdjustmentsTable)
         .where(and(eq(accountingAdjustmentsTable.id, id), eq(accountingAdjustmentsTable.companyId, cid)));
       if (!cur) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
       const eligible = cur.type === "prepaid" &&
         (manufacturingEligible !== undefined ? manufacturingEligible === true : cur.eligible);
+      const method = manufacturingAllocationMethod !== undefined
+        ? (manufacturingAllocationMethod === "labor_hours" ? "labor_hours" : "production_quantity")
+        : cur.method === "labor_hours" ? "labor_hours" : "production_quantity";
       const qty = approvedProductionQuantity !== undefined
         ? (approvedProductionQuantity === "" || approvedProductionQuantity == null ? null : Number(approvedProductionQuantity))
         : Number(cur.qty);
-      if (eligible && !(Number.isFinite(qty) && Number(qty) > 0)) {
+      const hours = approvedManufacturingHours !== undefined
+        ? (approvedManufacturingHours === "" || approvedManufacturingHours == null ? null : Number(approvedManufacturingHours))
+        : Number(cur.hours);
+      if (eligible && method === "production_quantity" && !(Number.isFinite(qty) && Number(qty) > 0)) {
         res.status(400).json({ error: "كمية الإنتاج الشهرية المعتمدة مطلوبة لربط المصروف المقدم بالتصنيع" }); return;
       }
+      if (eligible && method === "labor_hours" && !(Number.isFinite(hours) && Number(hours) > 0)) {
+        res.status(400).json({ error: "ساعات العمالة الصناعية الشهرية المعتمدة مطلوبة لربط المصروف المقدم بالتصنيع" }); return;
+      }
       patch.manufacturingEligible = eligible;
-      patch.manufacturingAllocationMethod = eligible ? "production_quantity" : "none";
+      patch.manufacturingAllocationMethod = eligible ? method : "none";
       patch.approvedProductionQuantity = qty == null ? null : String(qty);
+      patch.approvedManufacturingHours = hours == null ? null : String(hours);
     }
 
     // ── Financial fields (amount / dates / accounts) ────────────────────

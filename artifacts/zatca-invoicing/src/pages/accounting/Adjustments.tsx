@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateField } from "@/components/ui/date-field";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -47,6 +48,7 @@ type Adjustment = {
   manufacturingEligible: boolean;
   manufacturingAllocationMethod: string;
   approvedProductionQuantity: string | null;
+  approvedManufacturingHours: string | null;
 };
 
 const TYPE_LABELS: Record<Adjustment["type"], string> = {
@@ -94,7 +96,9 @@ const EMPTY_FORM = {
   autoGenerate: true,
   carryForwardEnabled: true,
   manufacturingEligible: false,
+  manufacturingAllocationMethod: "production_quantity",
   approvedProductionQuantity: "",
+  approvedManufacturingHours: "",
   notes: "",
 };
 
@@ -314,7 +318,9 @@ export default function Adjustments() {
       autoGenerate:     a.autoGenerate,
       carryForwardEnabled: a.carryForwardEnabled,
       manufacturingEligible: !!a.manufacturingEligible,
+      manufacturingAllocationMethod: a.manufacturingAllocationMethod ?? "production_quantity",
       approvedProductionQuantity: a.approvedProductionQuantity ?? "",
+      approvedManufacturingHours: a.approvedManufacturingHours ?? "",
       notes:            a.notes ?? "",
     });
     setShowForm(true);
@@ -734,11 +740,28 @@ export default function Adjustments() {
                   مؤهل كمصدر تكلفة لأوامر الإنتاج
                 </label>
                 {form.manufacturingEligible && <div>
-                  <Label>كمية الإنتاج الشهرية المعتمدة *</Label>
-                  <Input className="max-w-xs" type="number" min="0.0001" step="0.01"
-                    value={form.approvedProductionQuantity}
-                    onChange={e=>setForm(p=>({...p,approvedProductionQuantity:e.target.value}))} />
-                  <p className="text-xs text-muted-foreground mt-1">حصة الأمر = قسط المصروف المُرحّل × كمية الأمر ÷ الكمية المعتمدة.</p>
+                  <Label>أساس توزيع القسط الشهري</Label>
+                  <Select value={form.manufacturingAllocationMethod}
+                    onValueChange={value=>setForm(p=>({...p,manufacturingAllocationMethod:value}))}>
+                    <SelectTrigger className="max-w-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="production_quantity">كمية الإنتاج</SelectItem>
+                      <SelectItem value="labor_hours">ساعات العمالة</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {form.manufacturingAllocationMethod === "labor_hours" ? <>
+                    <Label className="mt-3 block">ساعات العمالة الصناعية الشهرية المعتمدة *</Label>
+                    <Input className="max-w-xs" type="number" min="0.0001" step="0.01"
+                      value={form.approvedManufacturingHours}
+                      onChange={e=>setForm(p=>({...p,approvedManufacturingHours:e.target.value}))} />
+                    <p className="text-xs text-muted-foreground mt-1">حصة الأمر تُقدّر بالساعات المخططة، ثم تسويها ساعات التنفيذ الفعلية عند إقفال المرحلة.</p>
+                  </> : <>
+                    <Label className="mt-3 block">كمية الإنتاج الشهرية المعتمدة *</Label>
+                    <Input className="max-w-xs" type="number" min="0.0001" step="0.01"
+                      value={form.approvedProductionQuantity}
+                      onChange={e=>setForm(p=>({...p,approvedProductionQuantity:e.target.value}))} />
+                    <p className="text-xs text-muted-foreground mt-1">حصة الأمر = قسط المصروف المُرحّل × كمية الأمر ÷ الكمية المعتمدة.</p>
+                  </>}
                 </div>}
               </div>
             </Field>}

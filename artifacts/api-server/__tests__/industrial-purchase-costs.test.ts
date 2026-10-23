@@ -52,6 +52,20 @@ test("industrial return source reference is normalized and invalid tags reject",
     costType: "electricity", factoryId: 4, costCenter: "MFG-01",
     period: "2026-13", allocationDriver: "machine_hours",
   }), /YYYY-MM/);
+  assert.deepEqual(normalizeIndustrialCostTag({
+    costType: "employee_insurance", factoryId: 4, costCenter: "MFG-01",
+    period: "2026-09", allocationDriver: "labor_hours",
+  }), {
+    costType: "employee_insurance",
+    factoryId: 4,
+    costCenter: "MFG-01",
+    period: "2026-09",
+    allocationDriver: "labor_hours",
+  });
+  assert.deepEqual(normalizeIndustrialCostTag({
+    costType: "factory_supervision", factoryId: 4, costCenter: "MFG-01",
+    period: "2026-09", allocationDriver: "labor_hours",
+  })?.costType, "factory_supervision");
 });
 
 test("posted source facts are immutable base-currency account snapshots", () => {

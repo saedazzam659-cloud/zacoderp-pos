@@ -24,6 +24,15 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
     payroll: "الرواتب", fixed_asset_depreciation: "الإهلاك", prepaid_amortization: "المصروفات المقدمة",
     purchase_invoice: "فاتورة شراء صناعية", purchase_return: "مرتجع شراء صناعي",
   };
+  const industrialCostLabels: Record<string, string> = {
+    employee_insurance: "تأمين طبي لصاحب العمل",
+    factory_supervision: "خدمات إشراف المصنع",
+    electricity: "كهرباء وطاقة",
+    maintenance: "صيانة",
+    industrial_services: "خدمات صناعية",
+    indirect_materials: "مواد صناعية غير مباشرة",
+    other_industrial_overhead: "تكاليف صناعية أخرى",
+  };
   return (
     <section className="rounded-xl border border-violet-200 bg-violet-50/30 p-4 space-y-3">
       <div className="flex flex-wrap justify-between gap-2 font-semibold">
@@ -108,7 +117,9 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
           return <div key={source.id} className="rounded-lg border bg-white p-3 text-sm">
             <div className="font-medium">{sourceLabels[source.sourceType] ?? "مصدر تكلفة"} #{source.sourceRecordId}</div>
             <div className="text-xs text-slate-600 mt-1">{rule}</div>
-            {(source.sourceType === "purchase_invoice" || source.sourceType === "purchase_return") && <div className="text-xs text-indigo-700 mt-1">مصدر صناعي: {String(meta.costType ?? "غير مصنف")} — المحرك: {String(industrialDriver ?? "غير محدد")}</div>}
+            {(source.sourceType === "purchase_invoice" || source.sourceType === "purchase_return") && <div className="text-xs text-indigo-700 mt-1">مصدر صناعي: {industrialCostLabels[String(meta.costType)] ?? String(meta.costType ?? "غير مصنف")} — المحرك: {String(industrialDriver ?? "غير محدد")}</div>}
+            {source.sourceType === "purchase_invoice" && meta.costType === "employee_insurance" && industrialDriver === "labor_hours" && <div className="text-xs text-emerald-700 mt-1">قسط صاحب العمل المرحّل موزع حسب ساعات العمالة الفعلية؛ سندات الصرف المتعددة تسدد الفاتورة ولا تضيف تكلفة جديدة.</div>}
+            {source.sourceType === "prepaid_amortization" && meta.industrialDriver === "labor_hours" && <div className="text-xs text-emerald-700 mt-1">القسط الشهري من المصروف المقدم موزع حسب ساعات العمالة؛ الفاتورة الأصلية وسندات سدادها لا تُحمّل مرة أخرى.</div>}
             {source.sourceType === "purchase_invoice" && meta.costType === "electricity" && industrialDriver === "machine_hours" && <div className="text-xs text-emerald-700 mt-1">مصدر كهرباء صناعي مؤهل: عند اختياره صراحةً في الإقفال يكون هو المبلغ المحاسبي؛ kWh/التعريفة في لقطة المرحلة دليل استخدام فقط.</div>}
             {meta.includeInManufacturing === false && <div className="text-xs text-amber-700 mt-1">تحليلي فقط — غير محمل على التصنيع</div>}
           </div>;

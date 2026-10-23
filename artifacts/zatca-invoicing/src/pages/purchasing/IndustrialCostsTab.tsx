@@ -24,6 +24,8 @@ type SourceLine = {
 
 const COST_TYPES = [
   { value: "electricity", label: "كهرباء وطاقة" },
+  { value: "employee_insurance", label: "تأمين طبي على صاحب العمل" },
+  { value: "factory_supervision", label: "خدمات إشراف المصنع" },
   { value: "maintenance", label: "صيانة" },
   { value: "industrial_services", label: "خدمات صناعية" },
   { value: "indirect_materials", label: "مواد صناعية غير مباشرة" },
@@ -116,6 +118,16 @@ export default function IndustrialCostsTab({
                         <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
                         <SelectContent>{COST_TYPES.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}</SelectContent>
                       </Select>
+                      {tag.costType === "employee_insurance" && (
+                        <p className="text-[11px] leading-5 text-amber-800">
+                          استخدمه فقط لمبلغ قسط صاحب العمل المرحّل كمصروف لهذه الفترة. للتغطية متعددة الأشهر، استخدم خطة «مصروف يوزع على فترات» في الفاتورة، ثم فعّل أهلية التصنيع في التسوية المرتبطة واختر ساعات العمالة.
+                        </p>
+                      )}
+                      {tag.costType === "factory_supervision" && (
+                        <p className="text-[11px] leading-5 text-amber-800">
+                          للخدمات الإشرافية المرحّلة كمصروف فقط؛ لا تستخدمه لرواتب مشرفين محتسبة بالفعل ضمن مصدر الرواتب.
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-xs flex items-center gap-1"><Factory className="h-3.5 w-3.5" />المصنع / موقع التكلفة <span className="text-destructive">*</span></Label>

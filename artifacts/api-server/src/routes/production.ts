@@ -1038,6 +1038,7 @@ async function loadPostedCostSources(
     name: accountingAdjustmentsTable.name, adjustmentId: accountingAdjustmentsTable.id,
     method: accountingAdjustmentsTable.manufacturingAllocationMethod,
     approvedQty: accountingAdjustmentsTable.approvedProductionQuantity,
+    approvedHours: accountingAdjustmentsTable.approvedManufacturingHours,
   }).from(accountingAdjustmentRunsTable)
     .innerJoin(accountingAdjustmentsTable, and(
       eq(accountingAdjustmentRunsTable.adjustmentId, accountingAdjustmentsTable.id),
@@ -1050,8 +1051,12 @@ async function loadPostedCostSources(
     .where(and(eq(accountingAdjustmentRunsTable.companyId, cid), eq(accountingAdjustmentRunsTable.periodMonth, period),
       eq(accountingAdjustmentsTable.type, "prepaid"), eq(journalEntriesTable.status, "posted"),
       eq(accountingAdjustmentsTable.manufacturingEligible, true),
-      eq(accountingAdjustmentsTable.manufacturingAllocationMethod, "production_quantity"),
-      sql`${accountingAdjustmentsTable.approvedProductionQuantity} > 0`,
+      or(
+        and(eq(accountingAdjustmentsTable.manufacturingAllocationMethod, "production_quantity"),
+          sql`${accountingAdjustmentsTable.approvedProductionQuantity} > 0`),
+        and(eq(accountingAdjustmentsTable.manufacturingAllocationMethod, "labor_hours"),
+          sql`${accountingAdjustmentsTable.approvedManufacturingHours} > 0`),
+      ),
       journalBranch));
 
   // Purchase owns the industrial tag and determines whether a document is a
@@ -1161,7 +1166,8 @@ async function loadPostedCostSources(
     ...prepaid.map((r: any) => ({ sourceType: "prepaid_amortization" as const, sourceRecordId: r.id,
       label: `مصروف مقدم — ${r.name}`, periodStart: start, periodEnd: end, basis: "posted_amortization",
       sourceAmount: num(r.amount), meta: sourceMeta(r, { adjustmentId: r.adjustmentId, manufacturingEligible: true,
-        allocationMethod: r.method, approvedProductionQuantity: r.approvedQty }) })),
+        allocationMethod: r.method, approvedProductionQuantity: r.approvedQty,
+        approvedManufacturingHours: r.approvedHours }) })),
     ...industrialWithJournal.map((r: any) => ({
       sourceType: r.sourceType as "purchase_invoice" | "purchase_return",
       sourceRecordId: r.sourceLineId,
@@ -5857,11 +5863,19 @@ export async function productionWizardHandler(req: any, res: any) {
           formulaMethod = "fixed_hourly_rate";
           amount = calculateFormulaAllocation(formulaMethod, source.sourceAmount, plannedHours, denominator);
         } else if (source.sourceType === "prepaid_amortization") {
-          denominator = num(source.meta.approvedProductionQuantity);
-          if (!(plannedQty > 0 && denominator > 0))
-            throw Object.assign(new Error(`كمية الأمر والكمية الشهرية المعتمدة مطلوبتان لتوزيع ${source.label}`), { status: 400 });
-          formulaMethod = "production_quantity";
-          amount = calculateFormulaAllocation(formulaMethod, source.sourceAmount, plannedQty, denominator);
+          if (method === "labor_hours") {
+            denominator = num(source.meta.approvedManufacturingHours);
+            if (!(plannedLaborPersonHours >= 0 && denominator > 0))
+              throw Object.assign(new Error(`ساعات العمالة للأمر والساعات الشهرية المعتمدة مطلوبتان لتوزيع ${source.label}`), { status: 400 });
+            formulaMethod = "operating_hours";
+            amount = calculateFormulaAllocation(formulaMethod, source.sourceAmount, plannedLaborPersonHours, denominator);
+          } else {
+            denominator = num(source.meta.approvedProductionQuantity);
+            if (!(plannedQty > 0 && denominator > 0))
+              throw Object.assign(new Error(`كمية الأمر والكمية الشهرية المعتمدة مطلوبتان لتوزيع ${source.label}`), { status: 400 });
+            formulaMethod = "production_quantity";
+            amount = calculateFormulaAllocation(formulaMethod, source.sourceAmount, plannedQty, denominator);
+          }
         } else {
           throw Object.assign(new Error(`طريقة توزيع غير مدعومة للمصدر: ${source.label}`), { status: 400 });
         }
@@ -5872,6 +5886,7 @@ export async function productionWizardHandler(req: any, res: any) {
         // its actual driver delta. v0 retains its existing positive baseline.
         const zeroExecutionBaseline = resourceCostingVersion >= 1 && amount === 0 &&
           (source.sourceType === "payroll" || source.sourceType === "fixed_asset_depreciation" ||
+            (source.sourceType === "prepaid_amortization" && method === "labor_hours") ||
             (source.sourceType === "purchase_invoice" && ["machine_hours", "labor_hours"].includes(method)));
         if (!(amount > 0 && sharePct > 0) && !zeroExecutionBaseline)
           throw Object.assign(new Error(`ناتج توزيع صفري للمصدر: ${source.label}`), { status: 400 });
@@ -5945,8 +5960,10 @@ export async function productionWizardHandler(req: any, res: any) {
             costTreatment: treatment, includeInManufacturing,
             formulaMethod,
             industrialDriver: source.sourceType === "purchase_invoice" ? method : undefined,
+            ...(source.sourceType === "prepaid_amortization" && method === "labor_hours"
+              ? { industrialDriver: "labor_hours" } : {}),
             formulaNumerator: source.sourceType === "prepaid_amortization"
-              ? plannedQty
+              ? method === "labor_hours" ? plannedLaborPersonHours : plannedQty
               : source.sourceType === "payroll"
                 ? plannedLaborPersonHours
                 : source.sourceType === "purchase_invoice" && method === "production_quantity"

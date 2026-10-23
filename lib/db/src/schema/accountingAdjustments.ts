@@ -52,6 +52,7 @@ export const accountingAdjustmentsTable = pgTable("accounting_adjustments", {
   manufacturingEligible: boolean("manufacturing_eligible").notNull().default(false),
   manufacturingAllocationMethod: text("manufacturing_allocation_method").notNull().default("none"),
   approvedProductionQuantity: numeric("approved_production_quantity", { precision: 14, scale: 4 }),
+  approvedManufacturingHours: numeric("approved_manufacturing_hours", { precision: 14, scale: 4 }),
   autoGenerate:        boolean("auto_generate").notNull().default(true),
   carryForwardEnabled: boolean("carry_forward_enabled").notNull().default(true),
   parentAdjustmentId:  integer("parent_adjustment_id"),
