@@ -22,7 +22,7 @@ test("cost mode preferences keep only safe category modes", () => {
     modes: {
       payroll: "linked",
       fixed_asset_depreciation: "manual",
-      prepaid_amortization: "none",
+      prepaid_amortization: "linked",
     },
   });
   assert.equal("sourceRecordId" in payload.modes, false);
@@ -40,6 +40,11 @@ test("invalid or missing durable values fall back to safe defaults", () => {
       payroll: "manual",
     },
   );
+  assert.deepEqual(DEFAULT_SIMPLE_MANUFACTURING_COST_MODES, {
+    payroll: "linked",
+    fixed_asset_depreciation: "linked",
+    prepaid_amortization: "linked",
+  });
 });
 
 test("preference screen key is scoped by user and effective tenant", () => {

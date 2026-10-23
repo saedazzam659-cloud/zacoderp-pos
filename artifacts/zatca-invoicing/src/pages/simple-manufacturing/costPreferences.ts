@@ -23,9 +23,9 @@ export type SimpleManufacturingCostModes = Record<
 >;
 
 export const DEFAULT_SIMPLE_MANUFACTURING_COST_MODES: SimpleManufacturingCostModes = {
-  payroll: "none",
-  fixed_asset_depreciation: "none",
-  prepaid_amortization: "none",
+  payroll: "linked",
+  fixed_asset_depreciation: "linked",
+  prepaid_amortization: "linked",
 };
 
 const isCostMode = (value: unknown): value is ManufacturingCostMode =>
