@@ -58,6 +58,12 @@ Actual stage drivers reconcile against immutable planned source allocations thro
 
 **How to apply:** Freeze posted facts, include unreversed driver deltas in capacity and closure calculations, and reverse those deltas exactly.
 
+Employer insurance and factory supervision are manufacturing overhead allocated by actual labor/person-hours, separate from direct wages. Only posted expense sources qualify; policy records and employee deductions are not employer expense evidence.
+
+**Why:** The user chose labor-hours as the allocation basis, and the HR policy table does not establish the employer-paid amount or its accounting source.
+
+**How to apply:** Use frozen stage person-hours and posted source amounts/accounts; never infer insurance expense from a policy or reuse employee-paid GOSI deductions.
+
 Accounting verification must include failed finalization after driver reconciliation and zero-net reallocations across different source accounts.
 
 **Why:** An HTTP error plus normal return inside a database transaction commits preceding writes; a zero total delta can still require balanced debit/credit transfers between source accounts.
