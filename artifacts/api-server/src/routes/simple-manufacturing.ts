@@ -6,7 +6,7 @@
 // delegating order creation/detail/status to the same production handlers and
 // tables used by the advanced UI.
 import { Router } from "express";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import {
   db,
   itemsTable,
@@ -29,6 +29,7 @@ import {
   stockTransfersTable,
   productionResourcesTable,
   employeesTable,
+  fixedAssetsTable,
 } from "@workspace/db";
 import {
   extractAuth,
@@ -45,6 +46,7 @@ import { setContextModuleKey } from "../lib/requestContext.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { requireItemUnit } from "../lib/requiredItemUnit.js";
 import { listInternalDeliveryEvidence } from "../lib/internalManufacturingTransport.js";
+import { backfillProductionMachinesForAssets, getActiveManufacturingAssets } from "../lib/productionAssetResources.js";
 import {
   productionOrderDetailHandler,
   productionCostDrilldownHandler,
@@ -320,15 +322,34 @@ router.get("/execution-catalog", view, async (req, res) => {
     if ("deny" in employeeBranchResult) {
       return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
     }
+    const assetBranchResult = effectiveBranchCondition(
+      req,
+      fixedAssetsTable.branchId,
+      req.query.branchId,
+    );
+    if ("deny" in assetBranchResult) {
+      return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    }
+    const manufacturingAssets = await getActiveManufacturingAssets(cid, assetBranchResult.cond);
+    await backfillProductionMachinesForAssets(cid, manufacturingAssets);
+    const eligibleLinkedAssetIds = manufacturingAssets.map(asset => asset.id);
+    const visibleLinkedAssetFilter = eligibleLinkedAssetIds.length
+      ? or(
+        isNull(productionResourcesTable.fixedAssetId),
+        inArray(productionResourcesTable.fixedAssetId, eligibleLinkedAssetIds),
+      )
+      : isNull(productionResourcesTable.fixedAssetId);
     const machineWhere = branchResult.cond
       ? and(
         eq(productionResourcesTable.companyId, cid),
         eq(productionResourcesTable.type, "machine"),
+        visibleLinkedAssetFilter,
         branchResult.cond,
       )
       : and(
         eq(productionResourcesTable.companyId, cid),
         eq(productionResourcesTable.type, "machine"),
+        visibleLinkedAssetFilter,
       );
     const employeeWhere = employeeBranchResult.cond
       ? and(

@@ -46,3 +46,25 @@ test("new production orders copy linked machine and labor assignments from activ
   assert.match(automaticCopy, /workerCount:\s*s\.workerCount/);
   assert.match(automaticCopy, /workerEmployeeIds:\s*s\.workerEmployeeIds\s*\?\?\s*\[\]/);
 });
+
+test("manufacturing-enabled assets synchronize to one linked machine resource", async () => {
+  const helper = await readFile(
+    new URL("../src/lib/productionAssetResources.ts", import.meta.url),
+    "utf8",
+  );
+  const assetsRoute = await readFile(
+    new URL("../src/routes/fixed-assets.ts", import.meta.url),
+    "utf8",
+  );
+  const simpleRoute = await readFile(
+    new URL("../src/routes/simple-manufacturing.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(helper, /pg_advisory_xact_lock/);
+  assert.match(helper, /autoCreatedFromFixedAsset:\s*true/);
+  assert.match(helper, /type:\s*"machine"/);
+  assert.match(helper, /eq\(fixedAssetsTable\.usedInManufacturing,\s*true\)/);
+  assert.match(assetsRoute, /ensureProductionMachineForAsset\(tx,\s*(?:created|updated)\)/);
+  assert.match(simpleRoute, /backfillProductionMachinesForAssets\(cid,\s*manufacturingAssets\)/);
+});

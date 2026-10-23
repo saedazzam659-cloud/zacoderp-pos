@@ -26,6 +26,7 @@ import {
 } from "../lib/fa-journals.js";
 import { postDepreciationForCompany, unpostDepreciationRun, repostDepreciationRun, postDepreciationCatchUpForAsset } from "../lib/depreciationPosting.js";
 import { computePeriodDepreciation, buildSchedule, overlayScheduleRuns } from "../lib/depreciationCalc.js";
+import { ensureProductionMachineForAsset } from "../lib/productionAssetResources.js";
 
 const isValidIsoDate = (value: unknown) => {
   if (typeof value !== "string" || !/^\d{4}-\d\d-\d\d$/.test(value)) return false;
@@ -505,7 +506,8 @@ router.post("/assets", async (req, res) => {
         return;
       }
     }
-    const [row] = await db.insert(fixedAssetsTable).values({
+    const [row] = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(fixedAssetsTable).values({
       companyId: cid,
       branchId,
       costCenterId: b.costCenterId ? Number(b.costCenterId) : null,
@@ -562,7 +564,12 @@ router.post("/assets", async (req, res) => {
       location: b.location || null,
       qrPayload,
       notes: b.notes || null,
-    }).returning();
+      }).returning();
+      if (created.usedInManufacturing && created.status === "active") {
+        await ensureProductionMachineForAsset(tx, created);
+      }
+      return [created];
+    });
     // ── Phase-2: post acquisition JE if this is a fresh purchase (cost > 0
     // and no opening accumulated depreciation). Skipping when the user is
     // loading an opening-balance asset prevents double-counting against the
@@ -716,8 +723,14 @@ router.put("/assets/:id", async (req, res) => {
     if (patch.groupId && !await ownsRow(faAssetGroupsTable, Number(patch.groupId), cid)) {
       res.status(400).json({ error: "المجموعة غير موجودة" }); return;
     }
-    const [row] = await db.update(fixedAssetsTable).set(patch)
-      .where(and(eq(fixedAssetsTable.id, id), eq(fixedAssetsTable.companyId, cid))).returning();
+    const [row] = await db.transaction(async (tx) => {
+      const [updated] = await tx.update(fixedAssetsTable).set(patch)
+        .where(and(eq(fixedAssetsTable.id, id), eq(fixedAssetsTable.companyId, cid))).returning();
+      if (updated?.usedInManufacturing && updated.status === "active") {
+        await ensureProductionMachineForAsset(tx, updated);
+      }
+      return [updated];
+    });
     // Heal any runs broken by the old JE-grid bulk unpost BEFORE catch-up so
     // the schedule + asset accum reflect the true unposted state on save.
     await healDraftLinkedRuns(cid, id, (req as any).authUser?.id ?? null);
