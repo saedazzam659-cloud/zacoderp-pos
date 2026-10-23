@@ -32,7 +32,7 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
       </div>
       <p className="text-xs text-slate-600">
         الوقت يُقرأ من بيانات المراحل المحفوظة. تكلفة المورد أدناه لقطة خادم مصدرية؛ لا يعاد حسابها من أسعار أو إعدادات المتصفح الحالية.
-        {status !== "completed" && " التسوية تستخدم تخصيص المصدر المرحّل ومطابقة محركه الفعلي في دورة الإقفال القائمة، لا عند إدخال ساعات مستقلة."}
+        {status !== "completed" && " المصدر المرحّل يُطابق محركه الفعلي؛ أما التقدير المرحلي فيبقى مميزًا حتى تراجع التسوية."}
       </p>
       {stages.length > 0 && <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -55,9 +55,9 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
               : "الكهرباء أدناه لقطة استخدام مجمّدة من الخادم. عند ربطها بمصدر كهرباء صناعي مرحّل تبقى المعالجة مرتبطة بالمصدر وساعات الآلة الفعلية. اللقطات التاريخية التي لا تحمل حساب استحقاق تبقى دليل استخدام فقط ولا يعاد تفسيرها أو إضافتها إلى WIP/FG/COGS."}
           </p>
           {resourceStages.length > 0 ? <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-xs">
+             <table className="w-full min-w-[1050px] text-xs">
               <thead><tr className="border-b text-slate-500">
-                <th className="p-2 text-start">المرحلة</th><th className="p-2 text-start">نمط المورد</th><th className="p-2 text-start">عمالة</th><th className="p-2 text-start">إهلاك</th><th className="p-2 text-start">كهرباء</th><th className="p-2 text-start">معالجة الكهرباء المحفوظة</th><th className="p-2 text-start">عبء مصنع</th><th className="p-2 text-start">إجمالي لقطة الاستخدام</th>
+                <th className="p-2 text-start">المرحلة</th><th className="p-2 text-start">حالة التكلفة</th><th className="p-2 text-start">التقدير المؤقت</th><th className="p-2 text-start">نمط المورد</th><th className="p-2 text-start">عمالة</th><th className="p-2 text-start">إهلاك</th><th className="p-2 text-start">كهرباء</th><th className="p-2 text-start">معالجة الكهرباء المحفوظة</th><th className="p-2 text-start">عبء مصنع</th><th className="p-2 text-start">إجمالي لقطة الاستخدام</th>
               </tr></thead>
               <tbody>{resourceStages.map((stage: any) => {
                 const routeStage = stages.find((candidate: any) => String(candidate.id) === String(stage.stageId));
@@ -73,14 +73,22 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
                     : electricity
                       ? "دليل استخدام تاريخي فقط"
                       : "—";
+                const statusLabel = stage.costStatus === "pending"
+                  ? "معلّقة"
+                  : stage.costStatus === "review"
+                    ? "تحتاج مراجعة"
+                    : stage.costStatus === "calculated"
+                      ? "محسوبة من مصدر"
+                      : "غير محسوبة";
                 return <tr key={stage.stageId} className="border-b last:border-0">
                   <td className="p-2 font-medium">{routeStage?.name ?? `#${stage.stageId}`}</td>
+                  <td className="p-2">{statusLabel}</td><td className="p-2">{money(stage.provisionalEstimate)}</td>
                   <td className="p-2">{modeLabel}</td><td className="p-2">{money(stage.labor)}</td><td className="p-2">{money(stage.depreciation)}</td>
                   <td className="p-2">{money(stage.electricity)}</td><td className="p-2">{electricityTreatment}</td><td className="p-2">{money(stage.factoryOverhead)}</td><td className="p-2 font-semibold">{money(stage.total)}</td>
                 </tr>;
               })}</tbody>
               {resourceCost?.totals && <tfoot><tr className="border-t-2 border-violet-200 font-semibold text-violet-950">
-                <td className="p-2" colSpan={2}>إجمالي لقطة الخادم</td><td className="p-2">{money(resourceCost.totals.labor)}</td><td className="p-2">{money(resourceCost.totals.depreciation)}</td>
+                <td className="p-2" colSpan={4}>إجمالي لقطة الخادم</td><td className="p-2">{money(resourceCost.totals.labor)}</td><td className="p-2">{money(resourceCost.totals.depreciation)}</td>
                 <td className="p-2">{money(resourceCost.totals.electricity)}</td><td className="p-2">—</td><td className="p-2">{money(resourceCost.totals.factoryOverhead)}</td><td className="p-2">{money(resourceCost.totals.total)}</td>
               </tr></tfoot>}
             </table>

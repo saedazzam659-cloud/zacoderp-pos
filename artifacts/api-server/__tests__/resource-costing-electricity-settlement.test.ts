@@ -9,6 +9,7 @@ import {
   requireSingleMachineElectricityAllocation,
   settleProvisionalResourceCost,
   splitProvisionalResourceSettlement,
+  summarizeStageResourceCosts,
 } from "../src/lib/resourceCosting.js";
 
 const electricityAllocation = {
@@ -76,6 +77,22 @@ test("utility delta follows frozen FG and abnormal-waste receipt allocation", ()
   });
 });
 
+test("stage cost summary distinguishes estimates from calculated source costs", () => {
+  assert.deepEqual(summarizeStageResourceCosts([
+    { amount: "24.50", snapshot: { pendingSourceSettlement: true } },
+    { amount: "3.25", snapshot: { pendingUtilitySettlement: true } },
+  ]), { status: "pending", amount: 27.75, provisionalEstimate: 27.75 });
+  assert.deepEqual(summarizeStageResourceCosts([
+    { amount: "18.00", snapshot: { costStatus: "provisional_prior_period_rate" } },
+  ]), { status: "review", amount: 18, provisionalEstimate: 18 });
+  assert.deepEqual(summarizeStageResourceCosts([
+    { amount: "12.00", snapshot: { costStatus: "calculated_from_linked_payroll_source" } },
+  ]), { status: "calculated", amount: 12, provisionalEstimate: 0 });
+  assert.deepEqual(summarizeStageResourceCosts([]), {
+    status: "not_calculated", amount: 0, provisionalEstimate: 0,
+  });
+});
+
 test("v1 route freezes source-linked kWh evidence and provisional pending utility accrual facts", async () => {
   const source = await readFile(
     new URL("../src/routes/production.ts", import.meta.url),
@@ -93,6 +110,9 @@ test("v1 route freezes source-linked kWh evidence and provisional pending utilit
   assert.match(freeze, /sourceAllocationId: electricityAllocation\?\.id \?\? null/);
   assert.match(freeze, /provisionalAccrualAccountId: electricityAllocation \? null : order\.overheadAccountId/);
   assert.match(freeze, /provisional_wip_accrual_cleared_by_actual_utility_source/);
+  assert.match(freeze, /sourceType: "pending_payroll"/);
+  assert.match(freeze, /sourceType: "pending_fixed_asset_depreciation"/);
+  assert.match(source, /"pending_machine_electricity"[\s\S]*"pending_payroll"[\s\S]*"pending_fixed_asset_depreciation"/);
   assert.doesNotMatch(freeze, /sourceType: "machine_electricity_tariff"/);
 
   const reconciliation = source.slice(reconcileStart, reconcileEnd);

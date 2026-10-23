@@ -13,6 +13,7 @@ import {
   machineElectricityEstimate,
   provisionalResourceReceiptBalance,
   requireSingleMachineElectricityAllocation,
+  summarizeStageResourceCosts,
 } from "../lib/resourceCosting.js";
 import {
   productionOrdersTable,
@@ -1898,18 +1899,23 @@ export async function productionCostDrilldownHandler(req: any, res: any) {
           stages: stages.map((stage) => {
             const components = resourceCosts.filter((row) => row.stageId === stage.id);
             const amounts = Object.fromEntries(components.map((row) => [row.component, num(row.amount)]));
+            const costSummary = summarizeStageResourceCosts(components.map((row) => ({
+              amount: row.amount,
+              snapshot: row.snapshot,
+            })));
             return {
               stageId: stage.id,
+              stageName: stage.nameAr,
+              status: stage.status,
               durationMinutes: stage.actualDurationMinutes,
               resourceMode: stage.resourceMode,
-              // Payroll is allocated at order/source level. A per-stage labor
-              // amount is explicitly unavailable until HR publishes an
-              // approved hourly source; never display a made-up zero.
+              costStatus: costSummary.status,
+              provisionalEstimate: costSummary.provisionalEstimate,
               labor: amounts.labor ?? null,
-              depreciation: amounts.depreciation ?? 0,
-              electricity: amounts.electricity ?? 0,
+              depreciation: amounts.depreciation ?? null,
+              electricity: amounts.electricity ?? null,
               factoryOverhead: amounts.factory_overhead ?? null,
-              total: components.reduce((sum, row) => sum + num(row.amount), 0),
+              total: costSummary.amount,
               snapshot: components.map((row) => ({
                 component: row.component, sourceType: row.sourceType,
                 sourceRecordId: row.sourceRecordId, snapshot: row.snapshot,
@@ -7593,12 +7599,10 @@ export async function productionStatusHandler(req: any, res: any) {
       const driverDelta = await reconcileFinalStageDrivers(
         tx, cid, order, producedQty, req.authUser!.id, req,
       );
-      // Pending utility evidence for v1 has no posted invoice to reclassify.
-      // Capitalize its frozen tariff amount in this same receipt JE (DR WIP /
-      // CR configured absorption-accrual). Source-linked payroll/depreciation
-      // and source-linked electricity deliberately do not enter this map:
-      // those amounts already reached WIP through the source allocation +
-      // driver-reconciliation path.
+      // Unposted sources have no original expense debit to reclassify yet.
+      // Capitalize their frozen provisional amount in the receipt JE; linked
+      // posted sources already reached WIP through source allocation and driver
+      // reconciliation and must not be added here a second time.
       const provisionalAccruals = new Map<number, number>();
       if (Number(order.resourceCostingVersion) >= 1) {
         const resourceEvidence = await tx.select({
@@ -7607,15 +7611,23 @@ export async function productionStatusHandler(req: any, res: any) {
         }).from(productionStageResourceCostsTable).where(and(
           eq(productionStageResourceCostsTable.companyId, cid),
           eq(productionStageResourceCostsTable.orderId, order.id),
-          eq(productionStageResourceCostsTable.sourceType, "pending_machine_electricity"),
+          inArray(productionStageResourceCostsTable.sourceType, [
+            "pending_machine_electricity",
+            "pending_payroll",
+            "pending_fixed_asset_depreciation",
+          ]),
         ));
         for (const evidence of resourceEvidence) {
           const snapshot = (evidence.snapshot ?? {}) as Record<string, unknown>;
           const accountId = Number(snapshot.provisionalAccrualAccountId);
           const amount = num(snapshot.provisionalAccrualAmount ?? evidence.amount);
-          // Older posted/evidence-only stages intentionally remain untouched:
-          // v0 and historical v1 orders are never rewritten by this release.
-          if (!Number.isInteger(accountId) || !(amount > 0)) continue;
+          if (!(amount > 0)) continue;
+          if (!Number.isInteger(accountId) || accountId <= 0) {
+            throw Object.assign(
+              new Error("تكاليف الموارد المؤقتة تحتاج حساب امتصاص صناعي قبل استلام المنتج النهائي"),
+              { status: 422 },
+            );
+          }
           await validatePostingAccount(tx, cid, accountId);
           provisionalAccruals.set(accountId, Number(((provisionalAccruals.get(accountId) ?? 0) + amount).toFixed(2)));
         }
@@ -7719,7 +7731,7 @@ export async function productionStatusHandler(req: any, res: any) {
             {
               accountId,
               credit: amount,
-              description: "استحقاق كهرباء آلة مؤقت",
+              description: "استحقاق مؤقت لتكلفة مورد إنتاج",
             } satisfies JLine,
           ]),
           {
@@ -9889,6 +9901,8 @@ async function freezeStageResourceCosts(
           pendingSourceSettlement: true,
           costStatus: "pending_payroll",
           productionPeriod: period,
+          provisionalAccrualAccountId: order.overheadAccountId ?? null,
+          provisionalAccrualAmount: estimatedAmount,
           rateSourceRunId: lastPayroll?.id ?? null,
           rateSourcePeriod: sourcePeriod,
           rateSourceDays: lastPayroll
@@ -10062,6 +10076,8 @@ async function freezeStageResourceCosts(
           pendingSourceSettlement: true,
           costStatus: "pending_depreciation",
           productionPeriod: period,
+          provisionalAccrualAccountId: order.overheadAccountId ?? null,
+          provisionalAccrualAmount: estimatedAmount,
           fixedAssetId,
           rateSourceRunId: reference?.id ?? null,
           rateSourcePeriod: sourcePeriod,
@@ -10569,29 +10585,12 @@ productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
     res.json({
       stages: stages.map((stage) => {
         const rows = costsByStage.get(stage.id) ?? [];
-        const snapshots = rows.map((row) => row.snapshot);
-        const pending = snapshots.some((snapshot) =>
-          snapshot.pendingSourceSettlement === true || snapshot.pendingUtilitySettlement === true);
-        const priorRate = snapshots.some((snapshot) =>
-          snapshot.costStatus === "provisional_prior_period_rate");
-        const resourceCostAmount = Number(rows.reduce((sum, row) => sum + num(row.amount), 0).toFixed(2));
-        const provisionalCostEstimate = Number(rows.reduce((sum, row) => {
-          const provisional = row.snapshot.pendingSourceSettlement === true ||
-            row.snapshot.pendingUtilitySettlement === true ||
-            row.snapshot.costStatus === "provisional_prior_period_rate";
-          return sum + (provisional ? num(row.amount) : 0);
-        }, 0).toFixed(2));
+        const costSummary = summarizeStageResourceCosts(rows);
         return {
           ...stageApiRow(stage),
-          resourceCostStatus: pending
-            ? "pending"
-            : priorRate
-              ? "review"
-              : snapshots.length
-                ? "calculated"
-                : "not_calculated",
-          resourceCostAmount,
-          provisionalCostEstimate,
+          resourceCostStatus: costSummary.status,
+          resourceCostAmount: costSummary.amount,
+          provisionalCostEstimate: costSummary.provisionalEstimate,
         };
       }),
       unitCatalog,

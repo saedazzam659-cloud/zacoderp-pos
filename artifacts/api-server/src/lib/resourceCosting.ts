@@ -99,3 +99,36 @@ export function splitProvisionalResourceSettlement(
     abnormalWasteDelta: Number((settlement.deltaAmount - finishedGoodsDelta).toFixed(2)),
   };
 }
+
+export type StageResourceCostStatus = "pending" | "review" | "calculated" | "not_calculated";
+
+/** Summarize immutable stage evidence without treating an estimate as posted cost. */
+export function summarizeStageResourceCosts(
+  rows: Array<{ amount: unknown; snapshot: unknown }>,
+) {
+  const details = rows.map((row) => ({
+    amount: Number(row.amount ?? 0),
+    snapshot: row.snapshot && typeof row.snapshot === "object"
+      ? row.snapshot as Record<string, unknown>
+      : {},
+  }));
+  const pending = details.some(({ snapshot }) =>
+    snapshot.pendingSourceSettlement === true || snapshot.pendingUtilitySettlement === true);
+  const priorRate = details.some(({ snapshot }) =>
+    snapshot.costStatus === "provisional_prior_period_rate");
+  const amount = Number(details.reduce((sum, row) =>
+    sum + (Number.isFinite(row.amount) ? row.amount : 0), 0).toFixed(2));
+  const provisionalEstimate = Number(details.reduce((sum, row) => {
+    const provisional = row.snapshot.pendingSourceSettlement === true ||
+      row.snapshot.pendingUtilitySettlement === true ||
+      row.snapshot.costStatus === "provisional_prior_period_rate";
+    return sum + (provisional && Number.isFinite(row.amount) ? row.amount : 0);
+  }, 0).toFixed(2));
+  return {
+    status: pending ? "pending" as const
+      : priorRate ? "review" as const
+        : details.length ? "calculated" as const : "not_calculated" as const,
+    amount,
+    provisionalEstimate,
+  };
+}

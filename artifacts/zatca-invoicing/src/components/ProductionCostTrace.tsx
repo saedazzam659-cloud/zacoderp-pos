@@ -43,6 +43,12 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
       return Number(snapshot?.provisionalAccrualAccountId) > 0 &&
         Number(snapshot?.provisionalAccrualAmount) > 0;
     }));
+  const hasProvisionalOtherResourceAccrual = (Array.isArray(resourceCosts?.stages) ? resourceCosts.stages : [])
+    .some((stage: any) => (Array.isArray(stage?.snapshot) ? stage.snapshot : []).some((component: any) => {
+      const snapshot = component?.component !== "electricity" ? component?.snapshot : null;
+      return Number(snapshot?.provisionalAccrualAccountId) > 0 &&
+        Number(snapshot?.provisionalAccrualAmount) > 0;
+    }));
 
   const totals = costDrilldown.totals || {};
   const act = Number(totals.actual || 0);
@@ -182,8 +188,11 @@ export function ProductionCostTrace({ orderId, costDrilldown, orderStatus, token
               </div>
               <div className="mt-2 text-xs leading-5 text-slate-500">
                 هذه تفصيلة لقطات خادم وليست جمعاً جديداً فوق إجمالي التكلفة الفعلية. {hasProvisionalElectricityAccrual
-                  ? "تحمل الكهرباء المعلّقة استحقاقاً مؤقتاً مرسملًا ضمن استلام الإنتاج؛ التسوية اللاحقة تزيل الاستحقاق وتطبّق فرق الفاتورة الفعلية فقط."
-                  : "تظل الكهرباء المرتبطة بمصدر مرحّل ضمن مسار المصدر، أما اللقطات التاريخية بلا استحقاق فتبقى أدلة استخدام فقط."}
+                  ? "تحمل الكهرباء المعلّقة استحقاقاً مؤقتاً مرسملًا ضمن استلام الإنتاج؛ التسوية الفعلية تطبق فرق الفاتورة فقط."
+                  : "تظل الكهرباء المرتبطة بمصدر مرحّل ضمن مسار المصدر، أما اللقطات بلا استحقاق فتبقى أدلة استخدام فقط."}
+                {hasProvisionalOtherResourceAccrual
+                  ? " توجد تقديرات معلّقة للرواتب أو الإهلاك مرسملة عند استلام الإنتاج وتحتاج مطابقة بالمصدر الفعلي؛ لا تضفها يدويًا مرة أخرى."
+                  : ""}
               </div>
             </div>
           )}
