@@ -111,6 +111,7 @@ import {
   getBalance,
   addStockLedgerEntry,
   lockStockBalances,
+  refreshItemCost,
   pickBatches,
   readBatchRemaining,
 } from "../lib/stockHelpers.js";
@@ -288,6 +289,422 @@ async function createJournalEntry(opts: {
     })),
   );
   return entry.id;
+}
+
+const PENDING_SOURCE_SWEEP_MS = 60 * 60_000;
+
+async function settlePendingResourceEvidence(evidenceId: number) {
+  await db.transaction(async (tx) => {
+    const [evidence] = await tx.select().from(productionStageResourceCostsTable)
+      .where(eq(productionStageResourceCostsTable.id, evidenceId)).limit(1);
+    if (!evidence || !["pending_payroll", "pending_fixed_asset_depreciation"].includes(evidence.sourceType)) return;
+    const snapshot = (evidence.snapshot ?? {}) as Record<string, any>;
+    const period = String(snapshot.productionPeriod ?? "");
+    const match = /^(\d{4})-(\d{2})$/.exec(period);
+    if (!match || snapshot.pendingSourceSettlement !== true) return;
+    const year = Number(match[1]), month = Number(match[2]);
+    if (month < 1 || month > 12) return;
+    const [orderCandidate] = await tx.select().from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.id, evidence.orderId),
+      eq(productionOrdersTable.companyId, evidence.companyId),
+    )).limit(1);
+    // Keep the frozen order identity available while resolving the posted source.
+    if (!orderCandidate || Number(orderCandidate.resourceCostingVersion) < 1) return;
+    const accrualAccountId = Number(snapshot.provisionalAccrualAccountId);
+    const accruedAmount = Number(Number(snapshot.provisionalAccrualAmount ?? evidence.amount).toFixed(2));
+    if (!Number.isInteger(accrualAccountId) || accrualAccountId <= 0 ||
+        !Number.isFinite(accruedAmount) || accruedAmount < 0) return;
+    const sourceType = evidence.sourceType === "pending_payroll" ? "payroll" : "fixed_asset_depreciation";
+    const sourceId = sourceType === "payroll" ? null : Number(snapshot.fixedAssetId);
+    let source: { id: number; journalId: number; amount: number; denominator: number; fixedRate?: boolean } | null = null;
+    if (sourceType === "payroll") {
+      const [run] = await tx.select({
+        id: payrollRunsTable.id,
+        journalId: payrollRunsTable.postedJournalId,
+        denominator: payrollRunsTable.approvedManufacturingHours,
+        amount: sql<string>`coalesce(sum(${payrollAllocationSnapshotsTable.allocatedAmount}), 0)`,
+      }).from(payrollRunsTable)
+        .innerJoin(payrollAllocationSnapshotsTable, eq(
+          payrollAllocationSnapshotsTable.payrollRunId, payrollRunsTable.id,
+        ))
+        .innerJoin(journalEntriesTable, and(
+          eq(journalEntriesTable.id, payrollRunsTable.postedJournalId),
+          eq(journalEntriesTable.companyId, evidence.companyId),
+          eq(journalEntriesTable.status, "posted"),
+        ))
+        .where(and(
+          eq(payrollRunsTable.companyId, evidence.companyId),
+          eq(payrollRunsTable.year, year), eq(payrollRunsTable.month, month),
+          inArray(payrollRunsTable.status, ["posted", "paid"]),
+          eq(payrollRunsTable.manufacturingEligible, true),
+          eq(payrollRunsTable.manufacturingAllocationMethod, "operating_hours"),
+          sql`${payrollRunsTable.approvedManufacturingHours} > 0`,
+        )).groupBy(payrollRunsTable.id).limit(1);
+      if (run?.journalId) source = {
+        id: run.id, journalId: run.journalId, amount: Number(run.amount),
+        denominator: Number(run.denominator), fixedRate: false,
+      };
+    } else if (sourceId != null && Number.isInteger(sourceId) && sourceId > 0) {
+      const [run] = await tx.select({
+        id: faDepreciationRunsTable.id,
+        journalId: faDepreciationRunsTable.journalEntryId,
+        amount: faDepreciationRunsTable.depreciationAmount,
+        approvedHours: fixedAssetsTable.approvedOperatingHours,
+        method: fixedAssetsTable.manufacturingAllocationMethod,
+        fixedRate: fixedAssetsTable.fixedManufacturingRate,
+      }).from(faDepreciationRunsTable)
+        .innerJoin(fixedAssetsTable, and(
+          eq(fixedAssetsTable.id, faDepreciationRunsTable.assetId),
+          eq(fixedAssetsTable.companyId, evidence.companyId),
+        ))
+        .innerJoin(journalEntriesTable, and(
+          eq(journalEntriesTable.id, faDepreciationRunsTable.journalEntryId),
+          eq(journalEntriesTable.companyId, evidence.companyId),
+          eq(journalEntriesTable.status, "posted"),
+        ))
+        .where(and(
+          eq(faDepreciationRunsTable.companyId, evidence.companyId),
+          eq(faDepreciationRunsTable.assetId, sourceId),
+          eq(faDepreciationRunsTable.periodYear, year),
+          eq(faDepreciationRunsTable.periodMonth, month),
+          eq(faDepreciationRunsTable.status, "posted"),
+          eq(fixedAssetsTable.usedInManufacturing, true),
+        )).limit(1);
+      if (run?.journalId) {
+        const method = String(run.method ?? "");
+        source = {
+          id: run.id, journalId: run.journalId, amount: Number(run.amount),
+          denominator: method === "fixed_hourly_rate" ? Number(run.fixedRate) : Number(run.approvedHours),
+          fixedRate: method === "fixed_hourly_rate",
+        };
+      }
+    }
+    if (!source || !(source.amount > 0) || !(source.denominator > 0)) return;
+    const driver = sourceType === "payroll" ? Number(snapshot.personHours) : Number(snapshot.hours);
+    const actualAmount = Number((source.fixedRate
+      ? driver * source.denominator
+      : driver * source.amount / source.denominator).toFixed(2));
+    if (!(driver > 0) || !(actualAmount > 0)) return;
+    await tx.execute(sql`select pg_advisory_xact_lock(
+      ${evidence.companyId}, hashtext(${sourceType + ":" + source.id})
+    )`);
+    await tx.execute(sql`select pg_advisory_xact_lock(${evidence.companyId}, ${evidence.orderId})`);
+    const [order] = await tx.select().from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.id, evidence.orderId),
+      eq(productionOrdersTable.companyId, evidence.companyId),
+    )).for("update").limit(1);
+    const completedOrder = order?.status === "completed";
+    if (!order || (!completedOrder && !["in_production", "paused", "quality_check"].includes(String(order.status))) ||
+        !order.issueJournalEntryId || (!completedOrder && !order.wipAccountId)) return;
+    const [lockedEvidence] = await tx.select().from(productionStageResourceCostsTable)
+      .where(eq(productionStageResourceCostsTable.id, evidenceId)).for("update").limit(1);
+    if (!lockedEvidence) return;
+    const [existingClaim] = await tx.select({ id: productionPendingSourceSettlementsTable.id })
+      .from(productionPendingSourceSettlementsTable).where(and(
+        eq(productionPendingSourceSettlementsTable.stageResourceCostId, evidence.id),
+        isNull(productionPendingSourceSettlementsTable.reversalJournalEntryId),
+      )).limit(1);
+    if (existingClaim) return;
+    const [existingAllocation] = await tx.select({ id: productionCostAllocationsTable.id })
+      .from(productionCostAllocationsTable).where(and(
+        eq(productionCostAllocationsTable.companyId, evidence.companyId),
+        eq(productionCostAllocationsTable.orderId, order.id),
+        eq(productionCostAllocationsTable.sourceType, sourceType),
+        eq(productionCostAllocationsTable.sourceRecordId, source.id),
+      )).limit(1);
+    if (existingAllocation) return;
+    const usedRows = await tx.select({ amount: productionCostAllocationsTable.allocatedAmount })
+      .from(productionCostAllocationsTable)
+      .innerJoin(productionOrdersTable, eq(productionOrdersTable.id, productionCostAllocationsTable.orderId))
+      .where(and(
+        eq(productionCostAllocationsTable.companyId, evidence.companyId),
+        eq(productionCostAllocationsTable.sourceType, sourceType),
+        eq(productionCostAllocationsTable.sourceRecordId, source.id),
+        sql`${productionOrdersTable.status} NOT IN ('cancelled','reversed')`,
+      ));
+    const priorDeltas = await tx.select({ amount: productionDriverReconciliationsTable.deltaAmount })
+      .from(productionDriverReconciliationsTable).where(and(
+        eq(productionDriverReconciliationsTable.companyId, evidence.companyId),
+        eq(productionDriverReconciliationsTable.sourceType, sourceType),
+        eq(productionDriverReconciliationsTable.sourceRecordId, source.id),
+        isNull(productionDriverReconciliationsTable.reversalJournalEntryId),
+      ));
+    const priorClaims = await tx.select({ amount: productionPendingSourceSettlementsTable.actualAmount })
+      .from(productionPendingSourceSettlementsTable).where(and(
+        eq(productionPendingSourceSettlementsTable.companyId, evidence.companyId),
+        eq(productionPendingSourceSettlementsTable.sourceType, sourceType),
+        eq(productionPendingSourceSettlementsTable.sourceRecordId, source.id),
+        isNull(productionPendingSourceSettlementsTable.reversalJournalEntryId),
+      ));
+    const used = usedRows.reduce((n, row: any) => n + Number(row.amount), 0) +
+      priorDeltas.reduce((n, row) => n + Number(row.amount), 0) +
+      priorClaims.reduce((n, row) => n + Number(row.amount), 0);
+    assertAllocationCapacity(source.amount, used, actualAmount);
+    const sourceDebitRows = await tx.execute(sql`
+      select account_id as "accountId", debit
+      from journal_entry_lines where entry_id = ${source.journalId} and debit > 0
+      order by sort_order
+    `);
+    const debits = (sourceDebitRows.rows ?? []).filter((line: any) => Number(line.debit) > 0);
+    const totalDebit = debits.reduce((n: number, line: any) => n + Number(line.debit), 0);
+    if (!debits.length || !(totalDebit > 0)) return;
+    let completedFgDelta = 0;
+    let completedBalance: any = null;
+    if (completedOrder) {
+      if (!order.receiptJournalEntryId || !order.productItemId || !order.finishedWarehouseId ||
+          !order.finishedGoodsAccountId || !order.batchNumber || !(Number(order.producedQty) > 0)) {
+        throw Object.assign(new Error(`لا يمكن تسوية الأمر المكتمل ${order.orderNumber}: بيانات استلام المخزون غير مكتملة`), { status: 422 });
+      }
+      const sourceEntries = await tx.select({
+        id: journalEntriesTable.id, entryType: journalEntriesTable.entryType, status: journalEntriesTable.status,
+      }).from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.companyId, evidence.companyId),
+        inArray(journalEntriesTable.id, [order.issueJournalEntryId, order.receiptJournalEntryId]),
+      )).for("update");
+      if (!sourceEntries.some((x: any) => x.id === order.issueJournalEntryId && x.entryType === "production_issue" && x.status === "posted") ||
+          !sourceEntries.some((x: any) => x.id === order.receiptJournalEntryId && x.entryType === "production_receipt" && x.status === "posted")) {
+        throw Object.assign(new Error(`لا يمكن تسوية الأمر المكتمل ${order.orderNumber}: قيود الصرف والاستلام الأصلية غير مرحّلة`), { status: 422 });
+      }
+      await lockStockBalances([{
+        companyId: evidence.companyId, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
+      }], tx);
+      const receipt = await tx.execute(sql`
+        select id, qty from stock_ledger
+        where company_id = ${evidence.companyId} and item_id = ${order.productItemId}
+          and warehouse_id = ${order.finishedWarehouseId} and ref_id = ${order.id}
+          and ref_type = 'production_order' and tx_type = 'production_receipt'
+          and batch_number = ${order.batchNumber}
+        order by id asc limit 1
+      `);
+      const receiptRow: any = receipt.rows?.[0];
+      const downstream = receiptRow ? await tx.execute(sql`
+        select id from stock_ledger
+        where company_id = ${evidence.companyId} and item_id = ${order.productItemId}
+          and warehouse_id = ${order.finishedWarehouseId} and batch_number = ${order.batchNumber}
+          and qty < 0 and id > ${Number(receiptRow.id)}
+          and ref_type is distinct from 'production_order_reversal'
+        order by id asc limit 1
+      `) : { rows: [] };
+      const [balance] = await tx.select().from(stockBalanceTable).where(and(
+        eq(stockBalanceTable.companyId, evidence.companyId),
+        eq(stockBalanceTable.itemId, order.productItemId),
+        eq(stockBalanceTable.warehouseId, order.finishedWarehouseId),
+      )).for("update");
+      if (!receiptRow || Math.abs(Number(receiptRow.qty) - Number(order.producedQty)) > 0.0001 ||
+          Boolean((downstream.rows ?? [])[0]) || !balance ||
+          Math.abs(Number(balance.qty) - Number(order.producedQty)) > 0.0001) {
+        throw Object.assign(new Error(`لا يمكن تسوية الأمر المكتمل ${order.orderNumber}: لا يمكن عزل كامل تشغيلة المنتج في المخزون`), { status: 422 });
+      }
+      completedBalance = balance;
+      completedFgDelta = Number((actualAmount - accruedAmount).toFixed(2));
+      const newAverage = (Number(balance.avgCost) * Number(balance.qty) + completedFgDelta) / Number(balance.qty);
+      if (!(newAverage >= 0)) throw Object.assign(new Error(`تسوية الأمر ${order.orderNumber} ستجعل تكلفة المخزون سالبة`), { status: 422 });
+    }
+    const destinationAccountId = completedOrder ? order.finishedGoodsAccountId : order.wipAccountId;
+    const lines: JLine[] = [{ accountId: destinationAccountId, debit: actualAmount,
+      description: `تسوية تكلفة فعلية ${sourceType === "payroll" ? "للعمالة" : "لإهلاك الأصل"} — ${order.orderNumber}` }];
+    let credited = 0;
+    debits.forEach((line: any, index: number) => {
+      const part = index === debits.length - 1
+        ? Number((actualAmount - credited).toFixed(2))
+        : Number((actualAmount * Number(line.debit) / totalDebit).toFixed(2));
+      credited = Number((credited + part).toFixed(2));
+      if (part > 0) lines.push({
+        accountId: Number(line.accountId), credit: part,
+        description: `إعادة تصنيف مصدر فعلي — ${order.orderNumber}`,
+      });
+    });
+    if (accruedAmount > 0) lines.push(
+      { accountId: accrualAccountId, debit: accruedAmount, description: `إطفاء الاستحقاق المؤقت — ${order.orderNumber}` },
+      { accountId: destinationAccountId, credit: accruedAmount, description: `عكس تقدير الإنتاج بعد وصول المصدر — ${order.orderNumber}` },
+    );
+    const correctionDate = new Date().toISOString().slice(0, 10);
+    const journalId = await createJournalEntry({
+      companyId: evidence.companyId, branchId: order.branchId, date: correctionDate,
+      description: `تسوية تلقائية لمصدر تكلفة إنتاج ${period} — ${order.orderNumber}`,
+      docNumber: `${order.orderNumber}-SRC-${source.id}`,
+      entryType: "production_pending_source_settlement", status: "posted",
+      costCenter: order.costCenter ?? null, lines, dx: tx,
+    });
+    if (completedOrder && completedBalance) {
+      const newAverage = (Number(completedBalance.avgCost) * Number(completedBalance.qty) + completedFgDelta) /
+        Number(completedBalance.qty);
+      await tx.update(stockBalanceTable).set({
+        avgCost: String(newAverage.toFixed(4)), updatedAt: new Date(),
+      }).where(eq(stockBalanceTable.id, completedBalance.id));
+      await refreshItemCost(evidence.companyId, order.productItemId, tx);
+      await addStockLedgerEntry({
+        companyId: evidence.companyId, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
+        txDate: correctionDate, txType: "production_receipt", qty: "0",
+        costPrice: String(newAverage.toFixed(4)), totalCost: String(completedFgDelta.toFixed(2)),
+        balanceQty: String(completedBalance.qty), refId: evidence.id,
+        refType: "production_pending_source_settlement", batchNumber: order.batchNumber,
+        notes: `تعديل تكلفة مصدر إنتاج معلّق لأمر ${order.orderNumber}`,
+      }, tx);
+    }
+    const periodStart = `${period}-01`;
+    const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+    const priorAttempts = await tx.select({
+      attempt: productionPendingSourceSettlementsTable.attempt,
+    }).from(productionPendingSourceSettlementsTable).where(and(
+      eq(productionPendingSourceSettlementsTable.stageResourceCostId, evidence.id),
+      eq(productionPendingSourceSettlementsTable.sourceType, sourceType),
+      eq(productionPendingSourceSettlementsTable.sourceRecordId, source.id),
+    ));
+    await tx.insert(productionPendingSourceSettlementsTable).values({
+      companyId: evidence.companyId, orderId: order.id, stageResourceCostId: evidence.id,
+      sourceType, sourceRecordId: source.id, periodStart, periodEnd,
+      attempt: Math.max(0, ...priorAttempts.map((row: any) => Number(row.attempt) || 0)) + 1,
+      accruedAmount: String(accruedAmount.toFixed(2)), actualAmount: String(actualAmount.toFixed(2)),
+      deltaAmount: String((actualAmount - accruedAmount).toFixed(2)),
+      status: "posted", journalEntryId: journalId,
+      snapshotMeta: {
+        period, driver, sourceAmount: source.amount, denominator: source.denominator,
+        completedFgDelta, orderActualCostIncrease: completedOrder ? actualAmount - accruedAmount : actualAmount,
+      },
+    });
+    await tx.update(productionOrdersTable).set({
+      actualCost: String((Number(order.actualCost) + (completedOrder ? actualAmount - accruedAmount : actualAmount)).toFixed(2)),
+      updatedAt: new Date(),
+    }).where(and(eq(productionOrdersTable.id, order.id), eq(productionOrdersTable.companyId, evidence.companyId)));
+  });
+}
+
+export async function runPendingResourceSettlementSweep() {
+  const evidence = await db.select({ id: productionStageResourceCostsTable.id })
+    .from(productionStageResourceCostsTable)
+    .innerJoin(productionOrdersTable, and(
+      eq(productionOrdersTable.id, productionStageResourceCostsTable.orderId),
+      eq(productionOrdersTable.companyId, productionStageResourceCostsTable.companyId),
+    )).where(and(
+      inArray(productionStageResourceCostsTable.sourceType, [
+        "pending_payroll", "pending_fixed_asset_depreciation",
+      ]),
+      sql`${productionStageResourceCostsTable.snapshot}->>'pendingSourceSettlement' = 'true'`,
+      inArray(productionOrdersTable.status, ["in_production", "paused", "quality_check"]),
+      eq(productionOrdersTable.resourceCostingVersion, 1),
+    )).orderBy(asc(productionStageResourceCostsTable.id)).limit(500);
+  for (const row of evidence) {
+    try { await settlePendingResourceEvidence(row.id); }
+    catch (err) { console.error("[production-source-settlement] deferred", row.id, err); }
+  }
+  return evidence.length;
+}
+
+let pendingSourceSettlementTimer: NodeJS.Timeout | null = null;
+export function startPendingResourceSettlementScheduler() {
+  if (pendingSourceSettlementTimer || process.env.NODE_ENV === "test" || process.env.VITEST) return;
+  const initial = setTimeout(() => {
+    void runPendingResourceSettlementSweep();
+    pendingSourceSettlementTimer = setInterval(() => {
+      void runPendingResourceSettlementSweep();
+    }, PENDING_SOURCE_SWEEP_MS);
+  }, 60_000);
+  pendingSourceSettlementTimer = initial;
+}
+
+async function reversePendingSourceSettlements(
+  tx: any, companyId: number, order: any, reversalDate: string, req: any, reduceActualCost: boolean,
+) {
+  const claims = await tx.select().from(productionPendingSourceSettlementsTable).where(and(
+    eq(productionPendingSourceSettlementsTable.companyId, companyId),
+    eq(productionPendingSourceSettlementsTable.orderId, order.id),
+    eq(productionPendingSourceSettlementsTable.status, "posted"),
+    isNull(productionPendingSourceSettlementsTable.reversalJournalEntryId),
+  )).for("update");
+  let amountToRemove = 0;
+  for (const claim of claims) {
+    if (!claim.journalEntryId) throw Object.assign(new Error("قيد تسوية مصدر الإنتاج غير موجود"), { status: 409 });
+    const [original] = await tx.select({
+      id: journalEntriesTable.id, entryType: journalEntriesTable.entryType, status: journalEntriesTable.status,
+    }).from(journalEntriesTable).where(and(
+      eq(journalEntriesTable.id, claim.journalEntryId),
+      eq(journalEntriesTable.companyId, companyId),
+    )).for("update").limit(1);
+    if (!original || original.entryType !== "production_pending_source_settlement" || original.status !== "posted") {
+      throw Object.assign(new Error("قيد تسوية مصدر الإنتاج الأصلي غير صالح للعكس"), { status: 409 });
+    }
+    const lines = await tx.select({
+      accountId: journalEntryLinesTable.accountId,
+      debit: journalEntryLinesTable.debit,
+      credit: journalEntryLinesTable.credit,
+      description: journalEntryLinesTable.description,
+      costCenter: journalEntryLinesTable.costCenter,
+    }).from(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, original.id));
+    if (lines.length < 2) throw Object.assign(new Error("سطور قيد تسوية مصدر الإنتاج غير مكتملة"), { status: 409 });
+    const meta = (claim.snapshotMeta ?? {}) as Record<string, any>;
+    const completedFgDelta = Number(meta.completedFgDelta ?? 0);
+    if (order.status === "completed" && Math.abs(completedFgDelta) >= 0.005) {
+      if (!order.productItemId || !order.finishedWarehouseId || !order.batchNumber) {
+        throw Object.assign(new Error("لا يمكن عكس تعديل تكلفة البضاعة التامة: بيانات المخزون غير مكتملة"), { status: 409 });
+      }
+      await lockStockBalances([{
+        companyId, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
+      }], tx);
+      const adjustment = await tx.execute(sql`
+        select id from stock_ledger
+        where company_id = ${companyId} and ref_id = ${claim.stageResourceCostId}
+          and ref_type = 'production_pending_source_settlement'
+          and item_id = ${order.productItemId} and warehouse_id = ${order.finishedWarehouseId}
+          and batch_number = ${order.batchNumber} and qty = 0
+        order by id desc limit 1
+      `);
+      const adjustmentId = Number(adjustment.rows?.[0]?.id);
+      if (!adjustmentId) throw Object.assign(new Error("تعديل تكلفة البضاعة التامة غير موجود ولا يمكن عكسه بأمان"), { status: 409 });
+      const laterLedger = await tx.execute(sql`
+        select id from stock_ledger
+        where company_id = ${companyId} and item_id = ${order.productItemId}
+          and warehouse_id = ${order.finishedWarehouseId} and id > ${adjustmentId}
+        order by id asc limit 1
+      `);
+      if ((laterLedger.rows ?? [])[0]) {
+        throw Object.assign(new Error("لا يمكن عكس التسوية: تغير رصيد المخزون بعد تعديل تكلفة البضاعة التامة"), { status: 409 });
+      }
+      const [balance] = await tx.select().from(stockBalanceTable).where(and(
+        eq(stockBalanceTable.companyId, companyId),
+        eq(stockBalanceTable.itemId, order.productItemId),
+        eq(stockBalanceTable.warehouseId, order.finishedWarehouseId),
+      )).for("update");
+      if (!balance || !(Number(balance.qty) > 0)) throw Object.assign(new Error("لا يمكن عكس التسوية: رصيد البضاعة التامة الحالي غير صالح"), { status: 409 });
+      const newAverage = (Number(balance.avgCost) * Number(balance.qty) - completedFgDelta) / Number(balance.qty);
+      if (!(newAverage >= 0)) throw Object.assign(new Error("عكس التسوية ينتج تكلفة مخزون سالبة"), { status: 409 });
+      await tx.update(stockBalanceTable).set({
+        avgCost: String(newAverage.toFixed(4)), updatedAt: new Date(),
+      }).where(eq(stockBalanceTable.id, balance.id));
+      await refreshItemCost(companyId, order.productItemId, tx);
+      await addStockLedgerEntry({
+        companyId, itemId: order.productItemId, warehouseId: order.finishedWarehouseId,
+        txDate: reversalDate, txType: "production_issue", qty: "0",
+        costPrice: String(newAverage.toFixed(4)), totalCost: String((-completedFgDelta).toFixed(2)),
+        balanceQty: String(balance.qty), refId: claim.stageResourceCostId,
+        refType: "production_pending_source_settlement_reversal", batchNumber: order.batchNumber,
+        notes: `عكس تعديل تكلفة مصدر إنتاج معلّق لأمر ${order.orderNumber}`,
+      }, tx);
+    }
+    const reversalId = await createJournalEntry({
+      companyId, branchId: order.branchId, date: reversalDate,
+      description: `عكس تسوية مصدر تكلفة الإنتاج لأمر ${order.orderNumber}`,
+      docNumber: `${order.orderNumber}-SRC-REV-${claim.id}`,
+      entryType: "production_pending_source_settlement_reversal",
+      status: "posted", audit: { req }, costCenter: order.costCenter ?? null,
+      lines: lines.map((line: any) => ({
+        accountId: line.accountId, debit: Number(line.credit), credit: Number(line.debit),
+        description: `عكس: ${line.description ?? "تسوية مصدر إنتاج"}`, costCenter: line.costCenter,
+      })), dx: tx,
+    });
+    await tx.update(productionPendingSourceSettlementsTable).set({
+      status: "reversed", reversalJournalEntryId: reversalId,
+    }).where(eq(productionPendingSourceSettlementsTable.id, claim.id));
+    amountToRemove += Number(meta.orderActualCostIncrease ?? claim.actualAmount);
+  }
+  if (reduceActualCost && amountToRemove > 0) {
+    const remaining = Number(order.actualCost) - amountToRemove;
+    if (remaining < -0.005) throw Object.assign(new Error("لا يمكن عكس تسوية المصدر: تكلفة WIP لا تثبت المبلغ المرحّل"), { status: 409 });
+    await tx.update(productionOrdersTable).set({
+      actualCost: String(Math.max(0, remaining).toFixed(2)), updatedAt: new Date(),
+    }).where(and(eq(productionOrdersTable.id, order.id), eq(productionOrdersTable.companyId, companyId)));
+  }
+  return amountToRemove;
 }
 
 // Reads the current avg cost (WAC) for an item in a warehouse. Falls back to
@@ -6990,6 +7407,9 @@ export async function productionStatusHandler(req: any, res: any) {
     }
 
     const todayIso = new Date().toISOString().slice(0, 10);
+    if (target === "cancelled" || target === "reversed") {
+      await reversePendingSourceSettlements(tx, cid, order, todayIso, req, true);
+    }
     const updates: Record<string, unknown> = {
       status: target,
       updatedAt: new Date(),
@@ -8057,6 +8477,7 @@ export async function productionStatusHandler(req: any, res: any) {
           reversalJournalEntryId: reversalId,
         }).where(eq(productionDriverReconciliationsTable.id, reconciliation.id));
       }
+      await reversePendingSourceSettlements(tx, cid, order, todayIso, req, false);
       // The completed-order reversal already inverts the original issue and
       // receipt journals.  It does not contain a transport allocation added
       // later, so reverse only those separately evidenced WIP deltas here.

@@ -422,6 +422,11 @@ async function bootstrap() {
     // Auto-post fixed-assets monthly depreciation per company on its
     // configured day-of-month (companies.faAutoDepDay).
     import("./lib/depreciationScheduler.js").then(m => m.startFaDepreciationScheduler?.()).catch(() => {});
+     // Settle provisional manufacturing labour/depreciation automatically as
+     // matching posted monthly sources become available.
+     import("./routes/production.js").then(m => m.startPendingResourceSettlementScheduler?.()).catch(err =>
+       logger.error({ err }, "production source-settlement scheduler failed to start"),
+     );
     // Auto-generate monthly accounting-adjustment JEs (prepaid/accrued) at
     // month end for adjustments flagged auto_generate=true.
     import("./lib/adjustmentScheduler.js").then(m => m.startAdjustmentScheduler?.()).catch(() => {});
