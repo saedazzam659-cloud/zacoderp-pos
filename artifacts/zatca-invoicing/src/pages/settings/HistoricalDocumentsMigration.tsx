@@ -47,6 +47,21 @@ const requiredHeaders = [
 ];
 
 function norm(value: unknown) { return String(value ?? "").trim().toLocaleLowerCase(); }
+function normalizePaymentType(value: unknown) {
+  const raw = norm(value);
+  const aliases: Record<string, string> = {
+    credit: "credit", "آجل": "credit", "اجل": "credit", "على الحساب": "credit",
+    cash: "cash", "نقدي": "cash", "نقدًا": "cash", "نقدا": "cash",
+    bank: "bank", "بنكي": "bank", "بنك": "bank", "تحويل بنكي": "bank",
+  };
+  return aliases[raw] ?? raw;
+}
+function normalizeBoolean(value: unknown): boolean | null {
+  const raw = norm(value);
+  if (["true", "1", "yes", "نعم"].includes(raw)) return true;
+  if (["false", "0", "no", "لا"].includes(raw)) return false;
+  return null;
+}
 function num(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
   const raw = String(value ?? "").trim();
@@ -118,7 +133,7 @@ function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
       doc = {
         key, kind, sourceNumber, date,
         sourceInvoiceNumber: String(row.source_invoice_number ?? "").trim(),
-        paymentType: String(row.payment_type ?? "credit").trim().toLowerCase() || "credit",
+        paymentType: normalizePaymentType(row.payment_type ?? "credit") || "credit",
         currencyCode: String(row.currency_code ?? "SAR").trim().toUpperCase() || "SAR",
         exchangeRate: requiredNum(row.exchange_rate),
         subtotal: requiredNum(row.subtotal),
@@ -126,7 +141,7 @@ function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
         discountAmount: requiredNum(row.discount_amount),
         totalAmount: requiredNum(row.total_amount),
         totalExpensesLoaded: num(row.total_expenses_loaded ?? 0),
-        priceIncludesVat: String(row.price_includes_vat ?? "false").trim().toLowerCase() === "true",
+        priceIncludesVat: normalizeBoolean(row.price_includes_vat ?? "false") === true,
         partyCode: String(row.party_code ?? "").trim(),
         branchCode: String(row.branch_code ?? "").trim(),
         cashBoxCode: String(row.cash_box_code ?? "").trim(),
@@ -142,7 +157,7 @@ function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
       const repeatedFields: Array<[string, string, string]> = [
         ["party_code", doc.partyCode, String(row.party_code ?? "").trim()],
         ["branch_code", doc.branchCode, String(row.branch_code ?? "").trim()],
-        ["payment_type", doc.paymentType, String(row.payment_type ?? "credit").trim().toLowerCase() || "credit"],
+        ["payment_type", doc.paymentType, normalizePaymentType(row.payment_type ?? "credit") || "credit"],
         ["currency_code", doc.currencyCode, String(row.currency_code ?? "SAR").trim().toUpperCase() || "SAR"],
         ["source_invoice_number", doc.sourceInvoiceNumber, String(row.source_invoice_number ?? "").trim()],
         ["cash_box_code", doc.cashBoxCode, String(row.cash_box_code ?? "").trim()],
@@ -154,7 +169,7 @@ function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
       if (Math.abs(doc.exchangeRate - num(row.exchange_rate ?? 1)) > 0.000001) {
         doc.issues.push("قيمة exchange_rate تختلف بين سطور المستند");
       }
-      if (doc.priceIncludesVat !== (String(row.price_includes_vat ?? "false").trim().toLowerCase() === "true")) {
+      if (doc.priceIncludesVat !== (normalizeBoolean(row.price_includes_vat) === true)) {
         doc.issues.push("قيمة price_includes_vat تختلف بين سطور المستند");
       }
     }
@@ -162,8 +177,8 @@ function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
     if (!validIsoDate(date)) doc.issues.push("التاريخ غير صالح، استخدم YYYY-MM-DD");
     if (!String(row.payment_type ?? "").trim()) doc.issues.push("طريقة السداد مطلوبة");
     if (!String(row.currency_code ?? "").trim()) doc.issues.push("رمز العملة مطلوب");
-    if (!["true", "false"].includes(String(row.price_includes_vat ?? "").trim().toLowerCase())) {
-      doc.issues.push("حدد price_includes_vat بقيمة true أو false");
+    if (normalizeBoolean(row.price_includes_vat) === null) {
+      doc.issues.push("حدد price_includes_vat بنعم أو لا");
     }
     if (!doc.partyCode) doc.issues.push("كود العميل/المورد مطلوب");
     if (!doc.branchCode) doc.issues.push("كود الفرع مطلوب");
@@ -266,7 +281,10 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     setPeriodScan(null);
     try {
       const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+       const dataSheetName = workbook.SheetNames.find((name) => name === "بيانات الفواتير");
+       const sheet = dataSheetName
+         ? workbook.Sheets[dataSheetName]
+         : workbook.Sheets[workbook.SheetNames[0]];
       if (!sheet) throw new Error("الملف لا يحتوي على ورقة بيانات");
       const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "", raw: true });
       if (!rows.length) throw new Error("الملف فارغ");
@@ -295,10 +313,66 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       "payment_type", "currency_code", "exchange_rate", "cash_box_code", "bank_account_code",
       "source_invoice_number", "line_notes", "price_includes_vat", "total_expenses_loaded",
     ];
-    const example = ["OLD-001", "2024-01-15", "CUST-001", "BR-01", "ITEM-001", "صنف تجريبي", "WH-01", 2, 0, 100, 0, 0, 15, 230, 200, 30, 0, 230, "credit", "SAR", 1, "", "", "", "", "false", 0];
+    const partyCode = kind.startsWith("sales") ? "CUS-EXAMPLE" : "SUP-EXAMPLE";
+    const sourceNumber = kind === "sales_invoice" ? "OLD-S-001"
+      : kind === "purchase_invoice" ? "OLD-P-001"
+      : kind === "sales_return" ? "OLD-SR-001" : "OLD-PR-001";
+    const sourceInvoiceNumber = kind === "sales_return" ? "OLD-S-001"
+      : kind === "purchase_return" ? "OLD-P-001" : "";
+    const example = [
+      sourceNumber, "2026-01-15", partyCode, "BR-EXAMPLE", "ITEM-EXAMPLE",
+      "مثال — استبدل بكود الصنف الموجود", "WH-EXAMPLE", 2, 0, 100, 0, 0,
+      15, 230, 200, 30, 0, 230, "آجل", "SAR", 1, "", "",
+      sourceInvoiceNumber, "مثال عربي — احذف هذا السطر أو استبدله", "لا", 0,
+    ];
+    const guideRows: any[][] = [
+      ["دليل تعبئة نموذج المستندات التاريخية"],
+      ["نوع المستند المختار في صفحة الاستيراد", kindLabels[kind]],
+      ["1", "املأ ورقة «بيانات الفواتير» فقط؛ ورقة «مثال عربي» للشرح ولا تُستورد."],
+      ["2", "كل صف يمثل صنفًا واحدًا. كرر بيانات رأس الفاتورة في كل صف من صفوف الفاتورة نفسها."],
+      ["3", "لا تغير اسم ورقة «بيانات الفواتير» ولا أسماء الأعمدة الإنجليزية فيها؛ هي مفاتيح القراءة."],
+      ["4", "استخدم أكواد العميل/المورد والفرع والصنف والمخزن المسجلة بالفعل في الشركة؛ لا تكتب أسماء بديلة."],
+      ["5", "source_doc_number هو رقم المستند في النظام القديم، وليس رقم التسلسل الجديد. يُحفظ كمرجع في ملاحظة الترحيل، والنظام يولد رقمه الرسمي من مسلسل نوع المستند والفترة."],
+      ["6", "يحدد document_date الفترة المالية. يجب أن تكون الفترة التي تغطي التاريخ مفتوحة، مع مسلسل سنوي مستقل ومجهز لهذا النوع والفرع."],
+      ["7", "في المرتجع، اكتب رقم الفاتورة الأصلية القديمة في source_invoice_number واستورد الفاتورة الأصلية ضمن الدفعة قبل المرتجع."],
+      ["8", "payment_type يقبل: آجل أو نقدي أو بنكي. عند النقدي املأ cash_box_code، وعند البنكي املأ bank_account_code."],
+      ["9", "price_includes_vat يقبل نعم أو لا. اكتب التاريخ بصيغة YYYY-MM-DD، مثل 2026-01-15."],
+      ["10", "الإجماليات subtotal وvat_amount وdiscount_amount وtotal_amount تخص الفاتورة كاملة، لذا كرر القيم نفسها في كل صف."],
+      [""],
+      ["العمود", "المعنى", "مطلوب؟", "مثال"],
+      ["source_doc_number", "رقم الفاتورة/المرتجع القديم؛ يُحفظ كمرجع منفصل عن رقم التسلسل الذي ينشئه النظام.", "نعم", sourceNumber],
+      ["document_date", "تاريخ المستند الذي يحدد السنة والفترة المالية.", "نعم", "2026-01-15"],
+      ["party_code", kind.startsWith("sales") ? "كود العميل الموجود في النظام." : "كود المورد الموجود في النظام.", "نعم", partyCode],
+      ["branch_code", "كود الفرع المسجل في الشركة.", "نعم", "BR-EXAMPLE"],
+      ["item_code", "كود الصنف الموجود في النظام.", "نعم", "ITEM-EXAMPLE"],
+      ["item_name", "اسم توضيحي فقط؛ إذا تركته فارغًا يستخدم النظام اسم الصنف المسجل.", "اختياري", "صنف تجريبي"],
+      ["warehouse_code", "كود المخزن الذي تخصه حركة الصنف؛ مطلوب للأصناف المخزنية.", "حسب الصنف", "WH-EXAMPLE"],
+      ["qty / free_qty", "الكمية المباعة أو المشتراة والكمية المجانية.", "الكمية مطلوبة", "2 / 0"],
+      ["unit_price", "سعر الوحدة قبل الضريبة.", "نعم", "100"],
+      ["discount_percent / line_discount_amount", "خصم السطر كنسبة ومبلغ.", "اختياري", "0 / 0"],
+      ["vat_rate / line_total", "نسبة الضريبة وإجمالي السطر بعد الخصم والضريبة.", "نعم", "15 / 230"],
+      ["subtotal / vat_amount / discount_amount / total_amount", "إجماليات المستند قبل الضريبة، الضريبة، الخصم، ثم الإجمالي النهائي.", "نعم — كررها بكل صف", "200 / 30 / 0 / 230"],
+      ["payment_type", "طريقة السداد: آجل أو نقدي أو بنكي.", "نعم", "آجل"],
+      ["currency_code / exchange_rate", "رمز العملة وسعر الصرف إلى عملة الشركة.", "نعم", "SAR / 1"],
+      ["cash_box_code / bank_account_code", "كود الخزنة للنقدي أو كود الحساب البنكي للبنكي.", "حسب طريقة السداد", "CASH-01 / BANK-01"],
+      ["source_invoice_number", "رقم الفاتورة الأصلية القديمة — للمرتجعات فقط.", "للمرتجع", sourceInvoiceNumber || "OLD-S-001"],
+      ["line_notes", "ملاحظات تخص سطر الصنف.", "اختياري", "مثال"],
+      ["price_includes_vat", "هل السعر يتضمن الضريبة؟", "نعم", "نعم أو لا"],
+      ["total_expenses_loaded", "مصاريف إضافية محمّلة على فاتورة المشتريات.", "اختياري", "0"],
+      [""],
+      ["ملاحظة", "أكواد CUS-EXAMPLE وSUP-EXAMPLE وBR-EXAMPLE وITEM-EXAMPLE وWH-EXAMPLE أمثلة فقط؛ استبدلها بأكوادك الفعلية."],
+    ];
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([headers, example]), "Historical documents");
-    XLSX.writeFile(workbook, "historical-documents-template.xlsx");
+    const guide = XLSX.utils.aoa_to_sheet(guideRows);
+    guide["!cols"] = [{ wch: 34 }, { wch: 88 }, { wch: 20 }, { wch: 28 }];
+    const data = XLSX.utils.aoa_to_sheet([headers]);
+    data["!cols"] = headers.map((header) => ({ wch: Math.max(16, header.length + 3) }));
+    const sample = XLSX.utils.aoa_to_sheet([headers, example]);
+    sample["!cols"] = headers.map((header) => ({ wch: Math.max(16, header.length + 3) }));
+    XLSX.utils.book_append_sheet(workbook, guide, "تعليمات عربية");
+    XLSX.utils.book_append_sheet(workbook, data, "بيانات الفواتير");
+    XLSX.utils.book_append_sheet(workbook, sample, "مثال عربي");
+    XLSX.writeFile(workbook, `نموذج-${kind}-فواتير-تاريخية.xlsx`);
   }
 
   function validateAgainstMasters(doc: HistoricalDoc, sourceIds: Record<string, number>) {
@@ -332,7 +406,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     });
     const cashBox = doc.paymentType === "cash" ? resolveCode(indexes.cashBoxes, doc.cashBoxCode, "الخزنة", issues) : null;
     const bank = doc.paymentType === "bank" ? resolveCode(indexes.bankAccounts, doc.bankAccountCode, "الحساب البنكي", issues) : null;
-    if (!["credit", "cash", "bank"].includes(doc.paymentType)) issues.push("طريقة السداد يجب أن تكون credit أو cash أو bank");
+    if (!["credit", "cash", "bank"].includes(doc.paymentType)) issues.push("طريقة السداد يجب أن تكون: آجل أو نقدي أو بنكي");
     if (doc.kind.endsWith("_return") && !doc.sourceInvoiceNumber) issues.push("رقم الفاتورة المصدر مطلوب للمرتجع");
     const sourceInvoiceId = doc.sourceInvoiceNumber ? sourceIds[`${doc.kind.startsWith("sales") ? "sales" : "purchase"}:${doc.sourceInvoiceNumber}`] : undefined;
     if (doc.kind.endsWith("_return") && doc.sourceInvoiceNumber && !sourceInvoiceId) {
@@ -585,13 +659,16 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         <div>
           <h3 className="font-bold">استيراد المستندات التاريخية</h3>
           <p className="text-xs text-muted-foreground">يُنشأ كل مستند برقمه الرسمي من المسلسل المطابق لتاريخ المستند، ثم يُرحّل عبر واجهة النظام المعتادة. لا تُعاد بيانات التأسيس أو إعدادات الفترات والمسلسلات. استورد فواتير الشراء قبل المبيعات عند الحاجة للمخزون؛ والمرتجعات تتطلب استيراد فواتيرها المصدر أولاً في الجلسة نفسها.</p>
+          <p className="mt-2 rounded-md border border-sky-200 bg-sky-50 p-2 text-xs leading-6 text-sky-950">
+            القالب يحتوي على شرح عربي، ورقة فارغة للرفع، ومثال مستقل. استخدم أكواد العملاء والموردين والأصناف المسجلة بالفعل، ورقم النظام القديم في source_doc_number؛ لا تستبدل به رقم التسلسل الذي ينشئه النظام.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={kind} onValueChange={(value) => { setKind(value as Kind); setDocs([]); setPeriodScan(null); setResults([]); }}>
             <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(kindLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
           </Select>
-          <Button variant="outline" onClick={downloadTemplate}><FileDown className="ml-1 h-4 w-4" />تنزيل نموذج موحد</Button>
+           <Button variant="outline" onClick={downloadTemplate}><FileDown className="ml-1 h-4 w-4" />تنزيل النموذج مع شرح وأمثلة</Button>
           <input ref={fileRef} className="hidden" type="file" accept=".xlsx,.xls,.csv" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ""; if (file) void onFile(file); }} />
           <Button onClick={() => fileRef.current?.click()} disabled={loading || busy}><Upload className="ml-1 h-4 w-4" />{loading ? "تحميل المطابقات…" : "رفع ملف"}</Button>
           {fileName && <span className="text-xs text-muted-foreground">{fileName}</span>}

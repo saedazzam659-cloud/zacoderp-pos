@@ -7,6 +7,8 @@ For this migration, customers, suppliers, items, and the chart of accounts have 
 
 The user will manually create the fiscal years and annual document sequences in the ERP before importing. Use one annual sequence per document type and preserve the existing independent counter for each branch; the importer should consume these settings, not create or reset them.
 
+Keep each document's legacy source number separate from the ERP-generated official sequence number. The source number is a historical/customer reference, not a sequence to reserve or reuse.
+
 **Why:** The user confirmed that target master data, fiscal years, and annual sequences are managed manually; historical import should use the normal document lifecycle without altering company setup.
 
 **How to apply:** Resolve relationships using stable company-local codes/identifiers. Flag missing or ambiguous matches for correction; never silently create duplicate masters or guess a financial relationship. Require fiscal periods and sequences to be configured before import; do not create or reset them automatically.
