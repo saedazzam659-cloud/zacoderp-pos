@@ -71,6 +71,31 @@ export function settleProvisionalResourceCost(actualAmount: number, accruedAmoun
   };
 }
 
+/**
+ * A provisional amount is booked in the receipt journal only if the source is
+ * still pending when the order is completed. If the actual source settles while
+ * the order is in WIP, capitalize the full actual amount now and do not clear
+ * an accrual that has not yet been posted.
+ */
+export function pendingResourceSettlementPosting(
+  actualAmount: number,
+  accruedAmount: number,
+  completedOrder: boolean,
+) {
+  if (![actualAmount, accruedAmount].every((value) => Number.isFinite(value) && value >= 0)) {
+    throw Object.assign(new Error("مبلغ المصدر الفعلي أو الاستحقاق المؤقت غير صالح"), { status: 422 });
+  }
+  const actual = Number(actualAmount.toFixed(2));
+  const accrued = Number(accruedAmount.toFixed(2));
+  const accrualRelease = completedOrder ? accrued : 0;
+  return {
+    destinationDebit: actual,
+    accrualDebit: accrualRelease,
+    destinationCredit: accrualRelease,
+    destinationNet: Number((actual - accrualRelease).toFixed(2)),
+  };
+}
+
 export function provisionalResourceReceiptBalance(materialWip: number, resourceAccrual: number) {
   if (![materialWip, resourceAccrual].every((value) => Number.isFinite(value) && value >= 0)) {
     throw Object.assign(new Error("رصيد WIP أو استحقاق المورد غير صالح"), { status: 422 });

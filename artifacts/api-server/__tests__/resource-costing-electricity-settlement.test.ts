@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import {
   isMachineElectricityAllocation,
   machineElectricityEstimate,
+  pendingResourceSettlementPosting,
   provisionalResourceReceiptBalance,
   requireSingleMachineElectricityAllocation,
   settleProvisionalResourceCost,
@@ -64,6 +65,21 @@ test("actual utility settlement clears provisional accrual and capitalizes only 
     actualAmount: 450, accruedAmount: 500, deltaAmount: -50,
   });
   assert.throws(() => settleProvisionalResourceCost(550, -1), /غير صالح/);
+});
+
+test("actual payroll/depreciation settling during WIP does not reverse an accrual not yet posted", () => {
+  assert.deepEqual(pendingResourceSettlementPosting(550, 500, false), {
+    destinationDebit: 550,
+    accrualDebit: 0,
+    destinationCredit: 0,
+    destinationNet: 550,
+  });
+  assert.deepEqual(pendingResourceSettlementPosting(550, 500, true), {
+    destinationDebit: 550,
+    accrualDebit: 500,
+    destinationCredit: 500,
+    destinationNet: 50,
+  });
 });
 
 test("utility delta follows frozen FG and abnormal-waste receipt allocation", () => {

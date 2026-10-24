@@ -11,6 +11,7 @@ import { getContextModuleKey, setContextModuleKey } from "../lib/requestContext.
 import {
   isMachineElectricityAllocation,
   machineElectricityEstimate,
+  pendingResourceSettlementPosting,
   provisionalResourceReceiptBalance,
   requireSingleMachineElectricityAllocation,
   summarizeStageResourceCosts,
@@ -314,8 +315,7 @@ async function settlePendingResourceEvidence(evidenceId: number) {
     if (!orderCandidate || Number(orderCandidate.resourceCostingVersion) < 1) return;
     const accrualAccountId = Number(snapshot.provisionalAccrualAccountId);
     const accruedAmount = Number(Number(snapshot.provisionalAccrualAmount ?? evidence.amount).toFixed(2));
-    if (!Number.isInteger(accrualAccountId) || accrualAccountId <= 0 ||
-        !Number.isFinite(accruedAmount) || accruedAmount < 0) return;
+    if (!Number.isFinite(accruedAmount) || accruedAmount < 0) return;
     const sourceType = evidence.sourceType === "pending_payroll" ? "payroll" : "fixed_asset_depreciation";
     const sourceId = sourceType === "payroll" ? null : Number(snapshot.fixedAssetId);
     let source: { id: number; journalId: number; amount: number; denominator: number; fixedRate?: boolean } | null = null;
@@ -536,7 +536,15 @@ async function settlePendingResourceEvidence(evidenceId: number) {
       if (!(newAverage >= 0)) throw Object.assign(new Error(`تسوية الأمر ${order.orderNumber} ستجعل تكلفة المخزون سالبة`), { status: 422 });
     }
     const destinationAccountId = completedOrder ? order.finishedGoodsAccountId : order.wipAccountId;
-    const lines: JLine[] = [{ accountId: destinationAccountId, debit: actualAmount,
+    const settlementPosting = pendingResourceSettlementPosting(
+      actualAmount, accruedAmount, completedOrder,
+    );
+    const orderActualCostIncrease = completedOrder
+      ? settlementPosting.destinationNet
+      : settlementPosting.destinationDebit;
+    if (settlementPosting.accrualDebit > 0 &&
+        (!Number.isInteger(accrualAccountId) || accrualAccountId <= 0)) return;
+    const lines: JLine[] = [{ accountId: destinationAccountId, debit: settlementPosting.destinationDebit,
       description: `تسوية تكلفة فعلية ${sourceType === "payroll" ? "للعمالة" : "لإهلاك الأصل"} — ${order.orderNumber}` }];
     let credited = 0;
     debits.forEach((line: any, index: number) => {
@@ -549,9 +557,9 @@ async function settlePendingResourceEvidence(evidenceId: number) {
         description: `إعادة تصنيف مصدر فعلي — ${order.orderNumber}`,
       });
     });
-    if (accruedAmount > 0) lines.push(
-      { accountId: accrualAccountId, debit: accruedAmount, description: `إطفاء الاستحقاق المؤقت — ${order.orderNumber}` },
-      { accountId: destinationAccountId, credit: accruedAmount, description: `عكس تقدير الإنتاج بعد وصول المصدر — ${order.orderNumber}` },
+    if (settlementPosting.accrualDebit > 0) lines.push(
+      { accountId: accrualAccountId, debit: settlementPosting.accrualDebit, description: `إطفاء الاستحقاق المؤقت — ${order.orderNumber}` },
+      { accountId: destinationAccountId, credit: settlementPosting.destinationCredit, description: `عكس تقدير الإنتاج بعد وصول المصدر — ${order.orderNumber}` },
     );
     const correctionDate = new Date().toISOString().slice(0, 10);
     const journalId = await createJournalEntry({
@@ -595,11 +603,11 @@ async function settlePendingResourceEvidence(evidenceId: number) {
       status: "posted", journalEntryId: journalId,
       snapshotMeta: {
         period, driver, sourceAmount: source.amount, denominator: source.denominator,
-        completedFgDelta, orderActualCostIncrease: completedOrder ? actualAmount - accruedAmount : actualAmount,
+        completedFgDelta, orderActualCostIncrease,
       },
     });
     await tx.update(productionOrdersTable).set({
-      actualCost: String((Number(order.actualCost) + (completedOrder ? actualAmount - accruedAmount : actualAmount)).toFixed(2)),
+      actualCost: String((Number(order.actualCost) + orderActualCostIncrease).toFixed(2)),
       updatedAt: new Date(),
     }).where(and(eq(productionOrdersTable.id, order.id), eq(productionOrdersTable.companyId, evidence.companyId)));
   });
