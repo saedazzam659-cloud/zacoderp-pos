@@ -8452,7 +8452,8 @@ export async function productionStatusHandler(req: any, res: any) {
         res.status(403).json({ error: "عكس أمر مكتمل يتطلب صلاحية ترحيل التصنيع" });
         return;
       }
-      if (!order.issueJournalEntryId || !order.receiptJournalEntryId ||
+      if ((!order.issueJournalEntryId && Number(order.resourceCostingVersion) < 1) ||
+          !order.receiptJournalEntryId ||
           !order.productItemId || !order.finishedWarehouseId || !order.rawWarehouseId ||
           !order.wipAccountId || !order.finishedGoodsAccountId || !order.rawInventoryAccountId) {
         res.status(409).json({ error: "لا يمكن العكس: روابط المخزون أو القيود الأصلية غير مكتملة" });
@@ -8464,20 +8465,23 @@ export async function productionStatusHandler(req: any, res: any) {
         });
         return;
       }
+      const originalJournalIds = [
+        order.issueJournalEntryId,
+        order.receiptJournalEntryId,
+      ].filter((value): value is number => Number.isInteger(value) && Number(value) > 0);
       const originalJournals = await tx.select({
         id: journalEntriesTable.id,
         status: journalEntriesTable.status,
       }).from(journalEntriesTable).where(and(
         eq(journalEntriesTable.companyId, cid),
-        inArray(journalEntriesTable.id, [
-          order.issueJournalEntryId,
-          order.receiptJournalEntryId,
-        ]),
+        inArray(journalEntriesTable.id, originalJournalIds),
       ));
       const originalJournalById = new Map(originalJournals.map((entry) => [entry.id, entry]));
-      const originalIssueJournal = originalJournalById.get(order.issueJournalEntryId);
+      const originalIssueJournal = order.issueJournalEntryId
+        ? originalJournalById.get(order.issueJournalEntryId)
+        : undefined;
       const originalReceiptJournal = originalJournalById.get(order.receiptJournalEntryId);
-      if (!originalIssueJournal || !originalReceiptJournal) {
+      if ((order.issueJournalEntryId && !originalIssueJournal) || !originalReceiptJournal) {
         res.status(409).json({ error: "لا يمكن العكس: أحد القيود الأصلية لا يتبع هذه الشركة أو لم يعد موجوداً" });
         return;
       }
@@ -8490,7 +8494,7 @@ export async function productionStatusHandler(req: any, res: any) {
         costCenter: journalEntryLinesTable.costCenter,
       }).from(journalEntryLinesTable).where(inArray(
         journalEntryLinesTable.entryId,
-        [order.issueJournalEntryId, order.receiptJournalEntryId],
+        originalJournalIds,
       ));
       const exactReversalLines = (entryId: number, label: string): JLine[] =>
         originalJournalLines.filter((line) => line.entryId === entryId).map((line) => ({
@@ -8503,10 +8507,11 @@ export async function productionStatusHandler(req: any, res: any) {
       const receiptReversalLines = exactReversalLines(
         order.receiptJournalEntryId, "عكس قيد الاستلام الأصلي",
       );
-      const issueReversalLines = exactReversalLines(
-        order.issueJournalEntryId, "عكس قيد الصرف الأصلي",
-      );
-      if (receiptReversalLines.length < 2 || issueReversalLines.length < 2) {
+      const issueReversalLines = order.issueJournalEntryId
+        ? exactReversalLines(order.issueJournalEntryId, "عكس قيد الصرف الأصلي")
+        : [];
+      if (receiptReversalLines.length < 2 ||
+          (order.issueJournalEntryId && issueReversalLines.length < 2)) {
         res.status(409).json({ error: "لا يمكن العكس: سطور أحد القيود الأصلية غير مكتملة" });
         return;
       }
@@ -8652,14 +8657,16 @@ export async function productionStatusHandler(req: any, res: any) {
         description: `عكس إقفال إنتاج مكتمل ${order.orderNumber}`,
         lines: receiptReversalLines, dx: tx,
       });
-      const issueReversalJournalId = await createJournalEntry({
-        companyId: cid, audit: { req }, branchId: order.branchId, date: todayIso,
-        docNumber: `${order.orderNumber}-ISS-REV`, entryType: "production_issue_reversal",
-        status: originalIssueJournal.status,
-        costCenter: order.costCenter ?? null,
-        description: `عكس صرف وتكلفة أمر إنتاج مكتمل ${order.orderNumber}`,
-        lines: issueReversalLines, dx: tx,
-      });
+      const issueReversalJournalId = originalIssueJournal
+        ? await createJournalEntry({
+          companyId: cid, audit: { req }, branchId: order.branchId, date: todayIso,
+          docNumber: `${order.orderNumber}-ISS-REV`, entryType: "production_issue_reversal",
+          status: originalIssueJournal.status,
+          costCenter: order.costCenter ?? null,
+          description: `عكس صرف وتكلفة أمر إنتاج مكتمل ${order.orderNumber}`,
+          lines: issueReversalLines, dx: tx,
+        })
+        : null;
       await reverseStageResourceAccrualPostings(tx, cid, order, todayIso, req);
       await reverseStageMaterialIssuePostings(tx, cid, order, todayIso, req);
       // Driver reconciliations are separate immutable delta JEs. Reverse
@@ -11014,7 +11021,9 @@ async function issueStageRawMaterials(
   if (issuable.length !== lines.length) {
     throw Object.assign(new Error(`مرحلة ${stage.nameAr || stage.code} مرتبطة بخامة غير قابلة للصرف`), { status: 422 });
   }
-  const usageIds = [...new Set(issuable.map((line: any) => Number(line.itemId)))];
+  const usageIds: number[] = Array.from(
+    new Set<number>(issuable.map((line: any) => Number(line.itemId))),
+  );
   const violations = await checkItemsUsable(cid, "raw_consumption", usageIds, req.authUser, "post");
   if (violations.length) {
     throw Object.assign(new Error(usageViolationMessage(violations, "post")), { status: 403 });
@@ -11065,8 +11074,8 @@ async function issueStageRawMaterials(
       continue;
     }
     const picks = await pickBatches(cid, itemId, order.rawWarehouseId, qty, mode, tx);
-    const lineCost = Number(picks.reduce((sum: number, pick: any) =>
-      sum + pick.takeQty * pick.costPrice, 0).toFixed(2));
+    const lineCost = picks.reduce((sum: number, pick: any) =>
+      sum + Number((pick.takeQty * pick.costPrice).toFixed(2)), 0);
     await upsertBalance(cid, itemId, order.rawWarehouseId, -qty, qty > 0 ? lineCost / qty : 0, tx);
     let cursor = await getBalance(cid, itemId, order.rawWarehouseId, tx) + qty;
     for (const pick of picks) {

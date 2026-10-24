@@ -68,6 +68,18 @@ test("simple wizard scaling is based on the recipe output quantity", async () =>
   );
 });
 
+test("v1 raw materials are issued to WIP only when their assigned stage completes", async () => {
+  const production = await readFile(
+    new URL("../src/routes/production.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(production, /const deferRawIssueToStages = Number\(order\.resourceCostingVersion\) >= 1/);
+  assert.match(production, /async function issueStageRawMaterials/);
+  assert.match(production, /await issueStageRawMaterials\(\s*tx, ctx\.cid, ctx\.order, updated/);
+  assert.match(production, /entryType: "production_stage_material_issue"/);
+  assert.match(production, /reverseStageMaterialIssuePostings/);
+});
+
 test("v1 material costs require and freeze an explicit route stage assignment", async () => {
   const [production, wizardUi] = await Promise.all([
     readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
