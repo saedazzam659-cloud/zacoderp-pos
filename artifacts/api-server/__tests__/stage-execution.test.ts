@@ -235,8 +235,15 @@ test("stage execution exposes assigned raw materials and posted issue status", a
   assert.match(production, /materials: stageMaterials/);
   assert.match(executionUi, /خامات هذه المرحلة/);
   assert.match(executionUi, /الكمية المخططة/);
+  assert.match(executionUi, /هالك الخامة/);
+  assert.match(executionUi, /materialWasteLines/);
   assert.match(executionUi, /المصروف من المخزون/);
   assert.match(executionUi, /سيُصرف عند إنهاء المرحلة/);
+  assert.match(production, /stageMaterialWasteQty/);
+  assert.match(production, /plannedQty \+ waste\.quantity/);
+  assert.match(production, /materialIssueLines: issueLines/);
+  assert.match(production, /سبق تسجيل صرف خامات لهذه المرحلة/);
+  assert.match(production, /accountId: order\.wipAccountId, debit: amount/);
 });
 
 test("routing material defaults seed a new order while order-level choices remain editable", async () => {

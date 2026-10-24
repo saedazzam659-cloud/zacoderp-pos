@@ -11325,6 +11325,82 @@ export async function postStageLinkedSourceCosts(
   return { journalEntryId, amount };
 }
 
+type StageMaterialWasteInput = {
+  orderItemId: number;
+  quantity: number;
+  reason: string;
+};
+
+async function persistStageMaterialWasteInputs(
+  tx: any,
+  cid: number,
+  order: any,
+  stage: any,
+  rawInputs: unknown,
+): Promise<StageMaterialWasteInput[]> {
+  if (rawInputs === undefined) return [];
+  if (Number(order.resourceCostingVersion) < 1) {
+    throw Object.assign(new Error("هالك الخامات المرحلي يتطلب تفعيل التكلفة الشاملة لهذا الأمر"), { status: 409 });
+  }
+  if (!Array.isArray(rawInputs) || rawInputs.length > 500) {
+    throw Object.assign(new Error("بيانات هالك الخامات غير صالحة"), { status: 400 });
+  }
+
+  const rawLines = await tx.select().from(productionOrderItemsTable).where(and(
+    eq(productionOrderItemsTable.orderId, order.id),
+    eq(productionOrderItemsTable.kind, "raw"),
+  ));
+  const assigned = rawLines.filter((line: any) =>
+    String((line.meta as Record<string, unknown> | null)?.productionStageCode ?? "") === String(stage.code),
+  );
+  const assignedById = new Map<number, any>(assigned.map((line: any) => [Number(line.id), line]));
+  const seen = new Set<number>();
+  const normalized: StageMaterialWasteInput[] = [];
+
+  for (const raw of rawInputs) {
+    if (!raw || typeof raw !== "object") {
+      throw Object.assign(new Error("بيانات هالك الخامة غير صالحة"), { status: 400 });
+    }
+    const entry = raw as Record<string, unknown>;
+    const orderItemId = Number(entry.orderItemId);
+    const quantity = Number(entry.quantity);
+    const reason = String(entry.reason ?? "").trim();
+    if (!Number.isInteger(orderItemId) || !assignedById.has(orderItemId) || seen.has(orderItemId)) {
+      throw Object.assign(new Error("الخامة لا تتبع هذه المرحلة أو تكررت في بيانات الهالك"), { status: 400 });
+    }
+    if (!Number.isFinite(quantity) || quantity < 0 || quantity > 1_000_000_000) {
+      throw Object.assign(new Error("كمية هالك الخامة يجب أن تكون رقمًا غير سالب"), { status: 400 });
+    }
+    if (Math.abs(quantity * 10_000 - Math.round(quantity * 10_000)) > 0.00001) {
+      throw Object.assign(new Error("كمية هالك الخامة تقبل حتى أربع منازل عشرية"), { status: 400 });
+    }
+    if (quantity > 0 && !reason) {
+      throw Object.assign(new Error("اكتب سبب هالك الخامة قبل حفظها"), { status: 400 });
+    }
+    seen.add(orderItemId);
+    normalized.push({ orderItemId, quantity, reason });
+  }
+
+  for (const entry of normalized) {
+    const line = assignedById.get(entry.orderItemId);
+    const meta = line.meta && typeof line.meta === "object"
+      ? line.meta as Record<string, unknown>
+      : {};
+    await tx.update(productionOrderItemsTable).set({
+      meta: {
+        ...meta,
+        stageMaterialWasteQty: String(entry.quantity),
+        stageMaterialWasteReason: entry.reason,
+      },
+    }).where(and(
+      eq(productionOrderItemsTable.id, entry.orderItemId),
+      eq(productionOrderItemsTable.orderId, order.id),
+    ));
+  }
+
+  return normalized;
+}
+
 async function issueStageRawMaterials(
   tx: any, cid: number, order: any, stage: any, actorId: number, req: any,
 ) {
@@ -11337,9 +11413,33 @@ async function issueStageRawMaterials(
     String((line.meta as Record<string, unknown> | null)?.productionStageCode ?? "") === String(stage.code),
   );
   if (!lines.length) return { journalEntryId: null as number | null, amount: 0 };
+  const priorIssueEvents = await tx.select({ payload: productionEventsTable.payload })
+    .from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, cid),
+      eq(productionEventsTable.orderId, order.id),
+      eq(productionEventsTable.eventType, "stage_material_issue_posted"),
+    ));
+  if (priorIssueEvents.some((event: any) =>
+    Number((event.payload as Record<string, unknown> | null)?.stageId) === Number(stage.id),
+  )) {
+    throw Object.assign(
+      new Error("سبق تسجيل صرف خامات لهذه المرحلة؛ أوقف الإكمال لمنع تكرار حركة المخزون والقيد"),
+      { status: 409 },
+    );
+  }
   const issuable = lines.filter((line: any) => line.itemId && num(line.quantity) > 0);
   if (issuable.length !== lines.length) {
     throw Object.assign(new Error(`مرحلة ${stage.nameAr || stage.code} مرتبطة بخامة غير قابلة للصرف`), { status: 422 });
+  }
+  const wasteByLine = new Map<number, { quantity: number; reason: string }>();
+  for (const line of issuable) {
+    const meta = (line.meta ?? {}) as Record<string, unknown>;
+    const quantity = num(meta.stageMaterialWasteQty);
+    const reason = String(meta.stageMaterialWasteReason ?? "").trim();
+    if (quantity < 0 || !Number.isFinite(quantity) || (quantity > 0 && !reason)) {
+      throw Object.assign(new Error(`بيانات هالك خامة «${line.description}» غير مكتملة`), { status: 422 });
+    }
+    wasteByLine.set(Number(line.id), { quantity, reason });
   }
   const usageIds: number[] = Array.from(
     new Set<number>(issuable.map((line: any) => Number(line.itemId))),
@@ -11353,7 +11453,7 @@ async function issueStageRawMaterials(
   })), tx);
   for (const line of issuable) {
     const available = await getBalance(cid, Number(line.itemId), order.rawWarehouseId, tx);
-    const required = num(line.quantity);
+    const required = num(line.quantity) + (wasteByLine.get(Number(line.id))?.quantity ?? 0);
     if (available + 1e-6 < required) {
       throw Object.assign(
         new Error(`المخزون غير كافٍ لصرف «${line.description}» في المرحلة ${stage.nameAr || stage.code} (متاح ${available}، مطلوب ${required})`),
@@ -11373,47 +11473,77 @@ async function issueStageRawMaterials(
     modeById.set(row.id, mode === "fifo" || mode === "fefo" ? mode : "none");
   }
   let amount = 0;
+  let capitalizedAmount = 0;
+  const issueLines: Array<Record<string, unknown>> = [];
   for (const line of issuable) {
     const itemId = Number(line.itemId);
-    const qty = num(line.quantity);
+    const plannedQty = num(line.quantity);
+    const waste = wasteByLine.get(Number(line.id))!;
+    const qty = plannedQty + waste.quantity;
     const mode = modeById.get(itemId) ?? "none";
+    let lineTotal = 0;
+    let linePlannedCost = 0;
+    let lineWasteCost = 0;
     if (mode === "none") {
       const cost = await readAvgCost(cid, itemId, order.rawWarehouseId, num(line.unitCost), tx);
       await upsertBalance(cid, itemId, order.rawWarehouseId, -qty, cost, tx);
       const balance = await getBalance(cid, itemId, order.rawWarehouseId, tx);
-      const total = Number((qty * cost).toFixed(2));
+      linePlannedCost = Number((plannedQty * cost).toFixed(2));
+      lineWasteCost = Number((waste.quantity * cost).toFixed(2));
+      lineTotal = Number((linePlannedCost + lineWasteCost).toFixed(2));
       await addStockLedgerEntry({
         companyId: cid, itemId, warehouseId: order.rawWarehouseId,
         txDate: new Date(stage.completedAt ?? new Date()).toISOString().slice(0, 10),
         txType: "production_issue", qty: String(-qty),
-        costPrice: String(cost.toFixed(4)), totalCost: String((-total).toFixed(2)),
+        costPrice: String(cost.toFixed(4)), totalCost: String((-lineTotal).toFixed(2)),
         balanceQty: String(balance), refId: order.id, refType: "production_order",
-        notes: `صرف خامة للمرحلة ${stage.code} — ${order.orderNumber}`,
+        notes: `صرف خامة للمرحلة ${stage.code} — ${order.orderNumber}${waste.quantity > 0 ? ` (يتضمن هالك خامة ${waste.quantity} ${line.unitCode})` : ""}`,
       }, tx);
-      amount += total;
-      continue;
+    } else {
+      const picks = await pickBatches(cid, itemId, order.rawWarehouseId, qty, mode, tx);
+      lineTotal = Number(picks.reduce((sum: number, pick: any) =>
+        sum + Number((pick.takeQty * pick.costPrice).toFixed(2)), 0).toFixed(2));
+      let plannedRemaining = plannedQty;
+      for (const pick of picks) {
+        const plannedTake = Math.min(plannedRemaining, pick.takeQty);
+        const wasteTake = Math.max(0, pick.takeQty - plannedTake);
+        linePlannedCost += Number((plannedTake * pick.costPrice).toFixed(2));
+        lineWasteCost += Number((wasteTake * pick.costPrice).toFixed(2));
+        plannedRemaining = Math.max(0, plannedRemaining - plannedTake);
+      }
+      linePlannedCost = Number(linePlannedCost.toFixed(2));
+      lineWasteCost = Number(lineWasteCost.toFixed(2));
+      await upsertBalance(cid, itemId, order.rawWarehouseId, -qty, qty > 0 ? lineTotal / qty : 0, tx);
+      let cursor = await getBalance(cid, itemId, order.rawWarehouseId, tx) + qty;
+      for (const pick of picks) {
+        cursor -= pick.takeQty;
+        const total = Number((pick.takeQty * pick.costPrice).toFixed(2));
+        await addStockLedgerEntry({
+          companyId: cid, itemId, warehouseId: order.rawWarehouseId,
+          txDate: new Date(stage.completedAt ?? new Date()).toISOString().slice(0, 10),
+          txType: "production_issue", qty: String(-pick.takeQty),
+          costPrice: String(pick.costPrice.toFixed(4)), totalCost: String((-total).toFixed(2)),
+          balanceQty: String(cursor.toFixed(4)), refId: order.id, refType: "production_order",
+          batchNumber: pick.batchNumber, expiryDate: pick.expiryDate,
+          notes: `صرف خامة للمرحلة ${stage.code} — ${order.orderNumber}${waste.quantity > 0 ? ` (يتضمن هالك خامة ${waste.quantity} ${line.unitCode})` : ""}`,
+        }, tx);
+      }
     }
-    const picks = await pickBatches(cid, itemId, order.rawWarehouseId, qty, mode, tx);
-    const lineCost = picks.reduce((sum: number, pick: any) =>
-      sum + Number((pick.takeQty * pick.costPrice).toFixed(2)), 0);
-    await upsertBalance(cid, itemId, order.rawWarehouseId, -qty, qty > 0 ? lineCost / qty : 0, tx);
-    let cursor = await getBalance(cid, itemId, order.rawWarehouseId, tx) + qty;
-    for (const pick of picks) {
-      cursor -= pick.takeQty;
-      const total = Number((pick.takeQty * pick.costPrice).toFixed(2));
-      await addStockLedgerEntry({
-        companyId: cid, itemId, warehouseId: order.rawWarehouseId,
-        txDate: new Date(stage.completedAt ?? new Date()).toISOString().slice(0, 10),
-        txType: "production_issue", qty: String(-pick.takeQty),
-        costPrice: String(pick.costPrice.toFixed(4)), totalCost: String((-total).toFixed(2)),
-        balanceQty: String(cursor.toFixed(4)), refId: order.id, refType: "production_order",
-        batchNumber: pick.batchNumber, expiryDate: pick.expiryDate,
-        notes: `صرف خامة للمرحلة ${stage.code} — ${order.orderNumber}`,
-      }, tx);
-    }
-    amount += lineCost;
+    lineWasteCost = Number((lineTotal - linePlannedCost).toFixed(2));
+    amount += lineTotal;
+    capitalizedAmount += lineTotal;
+    issueLines.push({
+      orderItemId: Number(line.id),
+      plannedQuantity: plannedQty,
+      materialWasteQuantity: waste.quantity,
+      issuedQuantity: qty,
+      materialWasteReason: waste.reason || null,
+      totalCost: lineTotal,
+      capitalizedCost: lineTotal,
+    });
   }
   amount = Number(amount.toFixed(2));
+  capitalizedAmount = Number(capitalizedAmount.toFixed(2));
   const postingDate = new Date(stage.completedAt ?? new Date()).toISOString().slice(0, 10);
   const writable = await assertWritableForDate(cid, postingDate);
   if (!writable.ok) throw Object.assign(new Error(writable.reason), { status: 423 });
@@ -11421,7 +11551,8 @@ async function issueStageRawMaterials(
     await writeEvent(cid, order.id, "stage_material_issue_posted", {
       stageId: stage.id, stageCode: stage.code,
       productionOrderItemIds: issuable.map((line: any) => Number(line.id)),
-      journalEntryId: null, amount: 0,
+      materialIssueLines: issueLines,
+      journalEntryId: null, amount: 0, capitalizedAmount,
     }, actorId, false, tx);
     return { journalEntryId: null as number | null, amount: 0 };
   }
@@ -11432,7 +11563,7 @@ async function issueStageRawMaterials(
     costCenter: order.costCenter ?? null,
     description: `صرف خامات مرحلة ${stage.nameAr || stage.code} — ${order.orderNumber}`,
     lines: [
-      { accountId: order.wipAccountId, debit: amount, description: "مواد المرحلة — WIP" },
+      { accountId: order.wipAccountId, debit: amount, description: "مواد المرحلة والهالك الخام — WIP" },
       { accountId: order.rawInventoryAccountId, credit: amount, description: "مخزون خامات المرحلة" },
     ],
     dx: tx,
@@ -11440,7 +11571,8 @@ async function issueStageRawMaterials(
   await writeEvent(cid, order.id, "stage_material_issue_posted", {
     stageId: stage.id, stageCode: stage.code,
     productionOrderItemIds: issuable.map((line: any) => Number(line.id)),
-    journalEntryId, amount,
+    materialIssueLines: issueLines,
+    journalEntryId, amount, capitalizedAmount,
   }, actorId, false, tx);
   const [freshOrder] = await tx.select({
     actualCost: productionOrdersTable.actualCost,
@@ -11451,7 +11583,7 @@ async function issueStageRawMaterials(
     eq(productionOrdersTable.id, order.id),
   )).for("update").limit(1);
   await tx.update(productionOrdersTable).set({
-    actualCost: String((num(freshOrder?.actualCost) + amount).toFixed(2)),
+    actualCost: String((num(freshOrder?.actualCost) + capitalizedAmount).toFixed(2)),
     rawMaterialsCost: String((num(freshOrder?.rawMaterialsCost) + amount).toFixed(2)),
     issueJournalEntryId: freshOrder?.issueJournalEntryId ?? journalEntryId,
     updatedAt: new Date(),
@@ -11998,7 +12130,10 @@ productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
         "stage_material_issue_posted", "stage_material_issue_reversed",
       ]),
     ));
-    const materialIssues = new Map<number, { journalEntryId: number | null }>();
+    const materialIssues = new Map<number, {
+      journalEntryId: number | null;
+      issuedQuantity: number | null;
+    }>();
     const reversedMaterialJournalIds = new Set<number>();
     for (const event of materialEvents) {
       const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -12012,12 +12147,26 @@ productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
       const journalEntryId = Number(payload.journalEntryId);
       const normalizedJournalEntryId =
         Number.isInteger(journalEntryId) && journalEntryId > 0 ? journalEntryId : null;
+      for (const value of Array.isArray(payload.materialIssueLines) ? payload.materialIssueLines : []) {
+        if (!value || typeof value !== "object") continue;
+        const issueLine = value as Record<string, unknown>;
+        const lineId = Number(issueLine.orderItemId);
+        if (Number.isInteger(lineId) && lineId > 0) {
+          const issuedQuantity = Number(issueLine.issuedQuantity);
+          materialIssues.set(lineId, {
+            journalEntryId: normalizedJournalEntryId,
+            issuedQuantity: Number.isFinite(issuedQuantity) ? issuedQuantity : null,
+          });
+        }
+      }
       for (const value of Array.isArray(payload.productionOrderItemIds)
         ? payload.productionOrderItemIds
         : []) {
         const lineId = Number(value);
         if (Number.isInteger(lineId) && lineId > 0) {
-          materialIssues.set(lineId, { journalEntryId: normalizedJournalEntryId });
+          if (!materialIssues.has(lineId)) {
+            materialIssues.set(lineId, { journalEntryId: normalizedJournalEntryId, issuedQuantity: null });
+          }
         }
       }
     }
@@ -12061,7 +12210,11 @@ productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
             description: line.description,
             unitCode: line.unitCode,
             plannedQuantity: Number(line.quantity),
-            issuedQuantity: issue ? Number(line.quantity) : null,
+            materialWasteQuantity: Number((line.meta as Record<string, unknown> | null)?.stageMaterialWasteQty ?? 0),
+            materialWasteReason: String((line.meta as Record<string, unknown> | null)?.stageMaterialWasteReason ?? ""),
+            issuedQuantity: issue
+              ? issue.issuedQuantity ?? Number(line.quantity)
+              : null,
             issueStatus: Number(ctx.order.resourceCostingVersion) < 1
               ? "not_applicable"
               : issue ? wasReversed ? "reversed" : "issued" : "pending",
@@ -12462,6 +12615,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
       if (!lockedStage || lockedStage.status !== "in_progress") {
         throw Object.assign(new Error("المرحلة أصبحت نهائية أو لم تعد قيد التنفيذ"), { status: 409 });
       }
+      await persistStageMaterialWasteInputs(
+        tx, ctx.cid, ctx.order, lockedStage, req.body?.materialWasteLines,
+      );
       await validateStageExecutionReferences(ctx.cid, execution, req, ctx.order.branchId,
         ctx.order.resourceCostingVersion, lockedStage);
       wasteQty = execution.wasteQty ?? num(lockedStage.wasteQty);
@@ -12637,6 +12793,10 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
       });
     }
     const b = stageExecutionRequestBody(req) as Record<string, any>;
+    const hasMaterialWasteInputs = Boolean(
+      rawBody && typeof rawBody === "object" &&
+      Object.prototype.hasOwnProperty.call(rawBody, "materialWasteLines"),
+    );
     const execution = normalizeStageExecutionPayload(b);
     const [current] = await db.select().from(productionOrderStagesTable).where(and(
       eq(productionOrderStagesTable.id, stageId),
@@ -12715,31 +12875,49 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (execution.notes !== undefined) updates.notes = execution.notes;
     if (execution.operatorUserId !== undefined) updates.operatorUserId = execution.operatorUserId;
     if (execution.operatorEmployeeId !== undefined) updates.operatorEmployeeId = execution.operatorEmployeeId;
-    if (Object.keys(updates).length === 0) {
+    if (Object.keys(updates).length === 0 && !hasMaterialWasteInputs) {
       res.status(400).json({ error: "لا يوجد تحديث" });
       return;
     }
     const result = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(${ctx.cid}, ${ctx.order.id})`);
-      const [updated] = await tx
-        .update(productionOrderStagesTable)
-        .set(updates)
-        .where(
-          and(
+      let updated: any;
+      if (Object.keys(updates).length > 0) {
+        [updated] = await tx
+          .update(productionOrderStagesTable)
+          .set(updates)
+          .where(
+            and(
+              eq(productionOrderStagesTable.id, stageId),
+              eq(productionOrderStagesTable.orderId, ctx.order.id),
+              ne(productionOrderStagesTable.status, "done"),
+              ne(productionOrderStagesTable.status, "completed"),
+              ne(productionOrderStagesTable.status, "skipped"),
+            ),
+          )
+          .returning();
+      } else {
+        [updated] = await tx.select().from(productionOrderStagesTable)
+          .where(and(
             eq(productionOrderStagesTable.id, stageId),
             eq(productionOrderStagesTable.orderId, ctx.order.id),
             ne(productionOrderStagesTable.status, "done"),
             ne(productionOrderStagesTable.status, "completed"),
             ne(productionOrderStagesTable.status, "skipped"),
-          ),
-        )
-        .returning();
+          )).for("update").limit(1);
+      }
       if (!updated) {
         throw Object.assign(new Error("المرحلة غير موجودة أو أصبحت نهائية أثناء التحديث"), { status: 409 });
       }
+      const materialWasteInputs = hasMaterialWasteInputs
+        ? await persistStageMaterialWasteInputs(
+          tx, ctx.cid, ctx.order, updated, rawBody.materialWasteLines,
+        )
+        : [];
       await writeEvent(ctx.cid, ctx.order.id, "stage_execution_updated", {
         stageId,
-        fields: Object.keys(updates).sort(),
+        fields: [...Object.keys(updates), ...(hasMaterialWasteInputs ? ["materialWasteLines"] : [])].sort(),
+        materialWasteLines: materialWasteInputs,
         actualDurationMinutes: updated.actualDurationMinutes,
         workerCount: updated.workerCount,
         inputQty: updated.inputQty,

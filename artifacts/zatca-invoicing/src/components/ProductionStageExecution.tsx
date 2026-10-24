@@ -36,6 +36,8 @@ type StageMaterial = {
   description: string;
   unitCode: string;
   plannedQuantity: number;
+  materialWasteQuantity: number;
+  materialWasteReason: string;
   issuedQuantity: number | null;
   issueStatus: "pending" | "issued" | "reversed" | "not_applicable";
   issueJournalEntryId: number | null;
@@ -290,6 +292,8 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
           description: String(material.description || ""),
           unitCode: String(material.unitCode || ""),
           plannedQuantity: Number(material.plannedQuantity ?? 0),
+          materialWasteQuantity: Number(material.materialWasteQuantity ?? 0),
+          materialWasteReason: String(material.materialWasteReason ?? ""),
           issuedQuantity: material.issuedQuantity == null ? null : Number(material.issuedQuantity),
           issueStatus: ["issued", "reversed", "not_applicable"].includes(material.issueStatus)
             ? material.issueStatus
@@ -367,6 +371,20 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     setStages(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
   };
 
+  const handleMaterialWasteChange = (
+    stageId: string,
+    materialId: number,
+    updates: Partial<Pick<StageMaterial, "materialWasteQuantity" | "materialWasteReason">>,
+  ) => {
+    dirtyStages.current.add(stageId);
+    setStages(prev => prev.map(stage => stage.id !== stageId ? stage : {
+      ...stage,
+      materials: stage.materials.map(material =>
+        material.id === materialId ? { ...material, ...updates } : material,
+      ),
+    }));
+  };
+
   const handleStageUnitChange = (
     id: string,
     kind: "quantity" | "waste",
@@ -432,6 +450,17 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         if (completionIssue.focusField) focusStageField(stageId, completionIssue.focusField);
         return;
       }
+      const invalidMaterialWaste = stageData.materials.find(material =>
+        material.materialWasteQuantity > 0 && !material.materialWasteReason.trim(),
+      );
+      if (invalidMaterialWaste) {
+        toast({
+          title: "سبب هالك الخامة مطلوب",
+          description: `اكتب سبب هالك «${invalidMaterialWaste.name}» قبل إنهاء المرحلة.`,
+          variant: "destructive",
+        });
+        return;
+      }
     }
     if (
       (stageData.quantityUnitCustomMode && !stageData.quantityUnit) ||
@@ -483,6 +512,13 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         wasteType: stageData.wasteType || null,
         wasteClassification: stageData.wasteClassification || "normal",
         notes: stageData.notes || null,
+        ...(isResourceCostingV1 ? {
+          materialWasteLines: stageData.materials.map(material => ({
+            orderItemId: material.id,
+            quantity: material.materialWasteQuantity || 0,
+            reason: material.materialWasteReason || "",
+          })),
+        } : {}),
       };
 
       let url = `${apiBase}/orders/${orderId}/stages/${stageId}`;
@@ -708,11 +744,12 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                       ) : (
                         <>
                           <div className="mt-3 overflow-x-auto rounded-lg border border-cyan-100 bg-white">
-                            <table className="w-full min-w-[620px] text-sm">
+                            <table className="w-full min-w-[880px] text-sm">
                               <thead className="bg-cyan-50/70 text-xs text-cyan-950">
                                 <tr>
                                   <th className="p-2 text-start font-semibold">الخامة</th>
                                   <th className="p-2 text-end font-semibold">الكمية المخططة</th>
+                                  <th className="p-2 text-start font-semibold">هالك الخامة</th>
                                   <th className="p-2 text-end font-semibold">المصروف من المخزون</th>
                                   <th className="p-2 text-start font-semibold">حالة الصرف</th>
                                 </tr>
@@ -746,6 +783,47 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                                       <td className="p-2 text-end font-mono tabular-nums" dir="ltr">
                                         {material.plannedQuantity.toLocaleString(undefined, { maximumFractionDigits: 4 })} {material.unitCode}
                                       </td>
+                                      <td className="p-2">
+                                        {isResourceCostingV1 ? (
+                                          <div className="min-w-[190px] space-y-1.5">
+                                            <div className="flex items-center gap-2">
+                                              <Input
+                                                type="number"
+                                                min="0"
+                                                step="0.0001"
+                                                value={material.materialWasteQuantity}
+                                                aria-label={`كمية هالك خامة ${material.name}`}
+                                                disabled={!isExecuting || !canExecute || activeStage.status !== "in_progress"}
+                                                className="h-8 w-28 text-end font-mono"
+                                                onChange={event => handleMaterialWasteChange(
+                                                  activeStage.id,
+                                                  material.id,
+                                                  { materialWasteQuantity: Math.max(0, Number(event.target.value) || 0) },
+                                                )}
+                                              />
+                                              <span className="text-xs text-slate-500">{material.unitCode}</span>
+                                            </div>
+                                            {material.materialWasteQuantity > 0 && (
+                                              <div className="space-y-1.5">
+                                                <Input
+                                                  value={material.materialWasteReason}
+                                                  aria-label={`سبب هالك خامة ${material.name}`}
+                                                  placeholder="سبب الهالك"
+                                                  disabled={!isExecuting || !canExecute || activeStage.status !== "in_progress"}
+                                                  className="h-8 text-xs"
+                                                  onChange={event => handleMaterialWasteChange(
+                                                    activeStage.id,
+                                                    material.id,
+                                                    { materialWasteReason: event.target.value },
+                                                  )}
+                                                />
+                                              </div>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <span className="text-xs text-slate-400">غير مفعّل</span>
+                                        )}
+                                      </td>
                                       <td className="p-2 text-end font-mono tabular-nums" dir="ltr">
                                         {material.issuedQuantity == null
                                           ? "—"
@@ -765,6 +843,9 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                               </tbody>
                             </table>
                           </div>
+                          <p className="mt-2 text-xs leading-5 text-cyan-900">
+                            هالك الخام يُسجّل بوحدة الخامة ويُضاف إلى الكمية المخططة عند الصرف؛ لا يغيّر الوصفة أو كمية أمر الإنتاج. هالك المنتج يُسجّل منفصلًا في بيانات المرحلة.
+                          </p>
                           <p className="mt-2 text-[11px] leading-5 text-slate-600">
                             الكمية المصروفة هي كمية سطر الوصفة المحفوظة لأمر الإنتاج. تظهر بعد إتمام الصرف، ولا يعيد استلام المنتج النهائي صرفها مرة أخرى.
                           </p>
