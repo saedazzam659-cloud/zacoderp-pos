@@ -7,7 +7,7 @@
 - [Draft-save activation boundary](draft-save-activation-boundary.md) — draft-saving and draft-only behavior must remain off unless explicitly enabled per user and document type in Approval Permissions.
 - [Crawler hardening boundary](crawl-hardening-boundary.md) — advisory indexing controls must preserve ERP workflows; agent gateway rollout is separate from central publication.
 - [Batch reporting boundary](batch-reporting-boundary.md) — reuse ledger attribution; preserve optional tracking and explicitly unknown historical batches.
-- [Manufacturing issue screen boundary](manufacturing-issue-screen-boundary.md) — warehouse issue view is read-only and visible only when Production or Smart Manufacturing is enabled.
+- [Manufacturing issue screen boundary](manufacturing-issue-screen-boundary.md) — keep issue views read-only; stage cards show assigned and posted quantities without changing auto-issue accounting.
 - [Contracting accounting boundaries](contracting-accounting-boundaries.md) — optional cost-center snapshots, planning versus posting, and preservation of existing customer/bill data.
 - [Taxable contracting advances](contracting-taxable-advance-boundaries.md) — tax-point ownership, fiscal-only certificates, legacy safety, and exact partial settlements.
 - [Retroactive sequence protection](retroactive-sequence-protection.md) — enabling protection sweeps existing numbered drafts and journal entries; record markers survive package disablement.

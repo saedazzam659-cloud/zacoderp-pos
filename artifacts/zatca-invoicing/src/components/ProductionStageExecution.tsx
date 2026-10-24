@@ -28,6 +28,19 @@ type StageExecutionProps = {
   onReload?: () => void;
 };
 
+type StageMaterial = {
+  id: number;
+  itemId: number | null;
+  itemCode: string | null;
+  name: string;
+  description: string;
+  unitCode: string;
+  plannedQuantity: number;
+  issuedQuantity: number | null;
+  issueStatus: "pending" | "issued" | "reversed" | "not_applicable";
+  issueJournalEntryId: number | null;
+};
+
 type Stage = {
   id: string; // the integer id but as string for UI
   nameAr: string;
@@ -55,6 +68,7 @@ type Stage = {
   resourceCostStatus: "pending" | "review" | "calculated" | "not_calculated";
   resourceCostAmount: number;
   provisionalCostEstimate: number;
+  materials: StageMaterial[];
   notes: string;
 };
 
@@ -268,6 +282,22 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
          : "not_calculated",
        resourceCostAmount: Number(s.resourceCostAmount ?? 0),
        provisionalCostEstimate: Number(s.provisionalCostEstimate ?? 0),
+        materials: Array.isArray(s.materials) ? s.materials.map((material: any) => ({
+          id: Number(material.id),
+          itemId: material.itemId == null ? null : Number(material.itemId),
+          itemCode: material.itemCode == null ? null : String(material.itemCode),
+          name: String(material.name || material.description || "خامة"),
+          description: String(material.description || ""),
+          unitCode: String(material.unitCode || ""),
+          plannedQuantity: Number(material.plannedQuantity ?? 0),
+          issuedQuantity: material.issuedQuantity == null ? null : Number(material.issuedQuantity),
+          issueStatus: ["issued", "reversed", "not_applicable"].includes(material.issueStatus)
+            ? material.issueStatus
+            : "pending",
+          issueJournalEntryId: material.issueJournalEntryId == null
+            ? null
+            : Number(material.issueJournalEntryId),
+        })) : [],
       notes: s.notes || ""
       };
     });
@@ -661,6 +691,86 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                   
                   {/* Body */}
                   <div className="p-5 grid md:grid-cols-2 gap-8 bg-slate-50/30">
+                    <section
+                      aria-label="خامات المرحلة"
+                      className="md:col-span-2 rounded-xl border border-cyan-200 bg-cyan-50/50 p-4"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="font-bold text-sm text-cyan-950">خامات هذه المرحلة</h3>
+                        <span className="text-[11px] text-cyan-900">
+                          الصرف يتم عند إنهاء المرحلة
+                        </span>
+                      </div>
+                      {activeStage.materials.length === 0 ? (
+                        <p className="mt-2 text-xs leading-5 text-slate-600">
+                          لا توجد خامات مرتبطة بهذه المرحلة. اربط سطور الوصفة بها من خيار «مرحلة استهلاك المادة».
+                        </p>
+                      ) : (
+                        <>
+                          <div className="mt-3 overflow-x-auto rounded-lg border border-cyan-100 bg-white">
+                            <table className="w-full min-w-[620px] text-sm">
+                              <thead className="bg-cyan-50/70 text-xs text-cyan-950">
+                                <tr>
+                                  <th className="p-2 text-start font-semibold">الخامة</th>
+                                  <th className="p-2 text-end font-semibold">الكمية المخططة</th>
+                                  <th className="p-2 text-end font-semibold">المصروف من المخزون</th>
+                                  <th className="p-2 text-start font-semibold">حالة الصرف</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {activeStage.materials.map(material => {
+                                  const statusLabel = material.issueStatus === "issued"
+                                    ? "تم الصرف"
+                                    : material.issueStatus === "reversed"
+                                      ? "عُكس الصرف"
+                                      : material.issueStatus === "not_applicable"
+                                        ? "الصرف المرحلي غير مفعّل"
+                                        : activeStage.status === "skipped"
+                                          ? "لم يُصرف — تم تخطي المرحلة"
+                                          : activeStage.status === "done"
+                                            ? "لم تُسجّل حركة صرف"
+                                            : "سيُصرف عند إنهاء المرحلة";
+                                  const statusClass = material.issueStatus === "issued"
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                    : material.issueStatus === "reversed"
+                                      ? "border-amber-200 bg-amber-50 text-amber-800"
+                                      : "border-slate-200 bg-slate-50 text-slate-700";
+                                  return (
+                                    <tr key={material.id} className="border-t border-slate-100">
+                                      <td className="p-2">
+                                        <div className="font-medium text-slate-800">{material.name}</div>
+                                        {material.itemCode && (
+                                          <div className="text-[11px] text-slate-500" dir="ltr">{material.itemCode}</div>
+                                        )}
+                                      </td>
+                                      <td className="p-2 text-end font-mono tabular-nums" dir="ltr">
+                                        {material.plannedQuantity.toLocaleString(undefined, { maximumFractionDigits: 4 })} {material.unitCode}
+                                      </td>
+                                      <td className="p-2 text-end font-mono tabular-nums" dir="ltr">
+                                        {material.issuedQuantity == null
+                                          ? "—"
+                                          : `${material.issuedQuantity.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${material.unitCode}`}
+                                      </td>
+                                      <td className="p-2">
+                                        <Badge variant="outline" className={statusClass}>{statusLabel}</Badge>
+                                        {material.issueJournalEntryId != null && (
+                                          <div className="mt-1 text-[10px] text-slate-500">
+                                            قيد الصرف رقم {material.issueJournalEntryId}
+                                          </div>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          <p className="mt-2 text-[11px] leading-5 text-slate-600">
+                            الكمية المصروفة هي كمية سطر الوصفة المحفوظة لأمر الإنتاج. تظهر بعد إتمام الصرف، ولا يعيد استلام المنتج النهائي صرفها مرة أخرى.
+                          </p>
+                        </>
+                      )}
+                    </section>
                     <div className="space-y-5">
                       <StageUnitSelector
                         value={activeStage.quantityUnit}

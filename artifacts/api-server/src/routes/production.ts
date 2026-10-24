@@ -11961,6 +11961,56 @@ productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
       .from(productionOrderStagesTable)
       .where(eq(productionOrderStagesTable.orderId, ctx.order.id))
       .orderBy(asc(productionOrderStagesTable.sequence));
+    const orderMaterials = await db.select({
+      id: productionOrderItemsTable.id,
+      itemId: productionOrderItemsTable.itemId,
+      description: productionOrderItemsTable.description,
+      quantity: productionOrderItemsTable.quantity,
+      unitCode: productionOrderItemsTable.unitCode,
+      meta: productionOrderItemsTable.meta,
+      itemCode: itemsTable.code,
+      itemNameAr: itemsTable.nameAr,
+      itemNameEn: itemsTable.nameEn,
+    }).from(productionOrderItemsTable).leftJoin(itemsTable, and(
+      eq(itemsTable.id, productionOrderItemsTable.itemId),
+      eq(itemsTable.companyId, ctx.cid),
+    )).where(and(
+      eq(productionOrderItemsTable.orderId, ctx.order.id),
+      eq(productionOrderItemsTable.kind, "raw"),
+    ));
+    const materialEvents = await db.select({
+      eventType: productionEventsTable.eventType,
+      payload: productionEventsTable.payload,
+    }).from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, ctx.cid),
+      eq(productionEventsTable.orderId, ctx.order.id),
+      inArray(productionEventsTable.eventType, [
+        "stage_material_issue_posted", "stage_material_issue_reversed",
+      ]),
+    ));
+    const materialIssues = new Map<number, { journalEntryId: number | null }>();
+    const reversedMaterialJournalIds = new Set<number>();
+    for (const event of materialEvents) {
+      const payload = (event.payload ?? {}) as Record<string, unknown>;
+      if (event.eventType === "stage_material_issue_reversed") {
+        const originalJournalEntryId = Number(payload.originalJournalEntryId);
+        if (Number.isInteger(originalJournalEntryId) && originalJournalEntryId > 0) {
+          reversedMaterialJournalIds.add(originalJournalEntryId);
+        }
+        continue;
+      }
+      const journalEntryId = Number(payload.journalEntryId);
+      const normalizedJournalEntryId =
+        Number.isInteger(journalEntryId) && journalEntryId > 0 ? journalEntryId : null;
+      for (const value of Array.isArray(payload.productionOrderItemIds)
+        ? payload.productionOrderItemIds
+        : []) {
+        const lineId = Number(value);
+        if (Number.isInteger(lineId) && lineId > 0) {
+          materialIssues.set(lineId, { journalEntryId: normalizedJournalEntryId });
+        }
+      }
+    }
     const resourceCosts = await db.select({
       stageId: productionStageResourceCostsTable.stageId,
       amount: productionStageResourceCostsTable.amount,
@@ -11986,11 +12036,34 @@ productionExecutionRouter.get("/orders/:id/stages", async (req, res) => {
       stages: stages.map((stage) => {
         const rows = costsByStage.get(stage.id) ?? [];
         const costSummary = summarizeStageResourceCosts(rows);
+        const stageMaterials = orderMaterials.filter((line) =>
+          String((line.meta as Record<string, unknown> | null)?.productionStageCode ?? "") === stage.code,
+        ).map((line) => {
+          const issue = materialIssues.get(Number(line.id));
+          const wasReversed = ctx.order.status === "reversed" ||
+            (issue?.journalEntryId != null &&
+              reversedMaterialJournalIds.has(issue.journalEntryId));
+          return {
+            id: Number(line.id),
+            itemId: line.itemId,
+            itemCode: line.itemCode,
+            name: line.itemNameAr || line.itemNameEn || line.description,
+            description: line.description,
+            unitCode: line.unitCode,
+            plannedQuantity: Number(line.quantity),
+            issuedQuantity: issue ? Number(line.quantity) : null,
+            issueStatus: Number(ctx.order.resourceCostingVersion) < 1
+              ? "not_applicable"
+              : issue ? wasReversed ? "reversed" : "issued" : "pending",
+            issueJournalEntryId: issue?.journalEntryId ?? null,
+          };
+        });
         return {
           ...stageApiRow(stage),
           resourceCostStatus: costSummary.status,
           resourceCostAmount: costSummary.amount,
           provisionalCostEstimate: costSummary.provisionalEstimate,
+          materials: stageMaterials,
         };
       }),
       unitCatalog,

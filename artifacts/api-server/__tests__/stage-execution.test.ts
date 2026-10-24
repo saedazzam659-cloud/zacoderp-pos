@@ -223,3 +223,18 @@ test("compact facade mounts the shared execution and settlement engines", async 
   assert.match(facade, /productionResourcesTable\.branchId/);
   assert.match(facade, /overhead-closures\/:id\/reopen/);
 });
+
+test("stage execution exposes assigned raw materials and posted issue status", async () => {
+  const [production, executionUi] = await Promise.all([
+    readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../zatca-invoicing/src/components/ProductionStageExecution.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(production, /productionOrderItemsTable\.kind, "raw"/);
+  assert.match(production, /stage_material_issue_posted/);
+  assert.match(production, /materials: stageMaterials/);
+  assert.match(executionUi, /خامات هذه المرحلة/);
+  assert.match(executionUi, /الكمية المخططة/);
+  assert.match(executionUi, /المصروف من المخزون/);
+  assert.match(executionUi, /سيُصرف عند إنهاء المرحلة/);
+});
