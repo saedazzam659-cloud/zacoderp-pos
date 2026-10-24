@@ -847,6 +847,9 @@ export const manufacturingSettingsTable = pgTable(
     // Disabled for new captures by default. Existing posted transport costs
     // remain historical and continue through their saved source snapshots.
     internalTransportEnabled: boolean("internal_transport_enabled").notNull().default(false),
+    // Applies resource-based costing only to newly-created production orders.
+    // Saved orders retain their own resourceCostingVersion snapshot.
+    comprehensiveCostingEnabled: boolean("comprehensive_costing_enabled").notNull().default(false),
     // ─── Round A — Approval gate (informational on this MVP) ─────────────
     // When approvalRequired is true (or estimatedCost >= approvalThreshold),
     // the order's pending-approval UI surfaces it for manual approval before

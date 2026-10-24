@@ -80,6 +80,7 @@ export type Catalog = {
       defaultWasteAccountId?: number | null;
       electricityTariffPerKwh?: string | number | null;
       internalTransportEnabled?: boolean;
+      comprehensiveCostingEnabled?: boolean;
     } | null;
     accounts: Array<{
       id: number;

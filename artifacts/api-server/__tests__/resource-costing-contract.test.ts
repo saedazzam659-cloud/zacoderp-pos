@@ -3,9 +3,11 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 test("resource costing is opt-in, source-settled, and stage-duration driven", async () => {
-  const [schema, route, execution, resourceCosting] = await Promise.all([
+  const [schema, route, simpleRoute, settingsUi, execution, resourceCosting] = await Promise.all([
     readFile(new URL("../../../lib/db/src/schema/production.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/simple-manufacturing.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../zatca-invoicing/src/pages/production/ManufacturingSettings.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/lib/stageExecution.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/lib/resourceCosting.ts", import.meta.url), "utf8"),
   ]);
@@ -16,6 +18,12 @@ test("resource costing is opt-in, source-settled, and stage-duration driven", as
   assert.match(schema, /actualDurationMinutes: integer\("actual_duration_minutes"\)/);
   assert.match(schema, /electricityTariffPerKwh/);
   assert.match(schema, /fixedAssetId: integer\("fixed_asset_id"\)\.references/);
+  assert.match(schema, /comprehensiveCostingEnabled: boolean\("comprehensive_costing_enabled"\)\.notNull\(\)\.default\(false\)/);
+  assert.match(route, /if \(!editing && mfg\?\.comprehensiveCostingEnabled === true\)\s*\{\s*resourceCostingVersion = 1;/);
+  assert.match(route, /resourceCostingVersion: mfg\?\.comprehensiveCostingEnabled === true \? 1 : 0/);
+  assert.match(simpleRoute, /comprehensiveCostingEnabled: manufacturingSettingsTable\.comprehensiveCostingEnabled/);
+  assert.match(simpleRoute, /comprehensiveCostingEnabled = req\.body\.comprehensiveCostingEnabled/);
+  assert.match(settingsUi, /switch-comprehensive-manufacturing-costing/);
 
   assert.match(execution, /resourceMode\?: "labor" \| "machine" \| "both"/);
   assert.match(route, /if \(Number\(order\.resourceCostingVersion\) < 1\) return;/);

@@ -709,9 +709,10 @@ router.get("/setup/accounting", view, async (req, res) => {
       defaultWasteAccountId: manufacturingSettingsTable.defaultWasteAccountId,
       electricityTariffPerKwh: manufacturingSettingsTable.electricityTariffPerKwh,
       internalTransportEnabled: manufacturingSettingsTable.internalTransportEnabled,
+      comprehensiveCostingEnabled: manufacturingSettingsTable.comprehensiveCostingEnabled,
     }).from(manufacturingSettingsTable)
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
-    res.json({ settings: settings ?? { internalTransportEnabled: false } });
+    res.json({ settings: settings ?? { internalTransportEnabled: false, comprehensiveCostingEnabled: false } });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -749,15 +750,23 @@ router.put("/setup/accounting", edit, async (req, res) => {
       defaultWasteAccountId: manufacturingSettingsTable.defaultWasteAccountId,
       electricityTariffPerKwh: manufacturingSettingsTable.electricityTariffPerKwh,
       internalTransportEnabled: manufacturingSettingsTable.internalTransportEnabled,
+      comprehensiveCostingEnabled: manufacturingSettingsTable.comprehensiveCostingEnabled,
     }).from(manufacturingSettingsTable)
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
     const requestedIds = new Set<number>();
     let internalTransportEnabled = current?.internalTransportEnabled ?? false;
+    let comprehensiveCostingEnabled = current?.comprehensiveCostingEnabled ?? false;
     if (req.body?.internalTransportEnabled !== undefined) {
       if (typeof req.body.internalTransportEnabled !== "boolean") {
         return void res.status(400).json({ error: "internalTransportEnabled يجب أن يكون true أو false" });
       }
       internalTransportEnabled = req.body.internalTransportEnabled;
+    }
+    if (req.body?.comprehensiveCostingEnabled !== undefined) {
+      if (typeof req.body.comprehensiveCostingEnabled !== "boolean") {
+        return void res.status(400).json({ error: "comprehensiveCostingEnabled يجب أن يكون true أو false" });
+      }
+      comprehensiveCostingEnabled = req.body.comprehensiveCostingEnabled;
     }
     let electricityTariffPerKwh: string | null = current?.electricityTariffPerKwh ?? null;
     if (req.body?.electricityTariffPerKwh !== undefined) {
@@ -838,6 +847,7 @@ router.put("/setup/accounting", edit, async (req, res) => {
       ...values,
       electricityTariffPerKwh,
       internalTransportEnabled,
+      comprehensiveCostingEnabled,
       updatedAt: new Date(),
     }).onConflictDoUpdate({
       target: manufacturingSettingsTable.companyId,
@@ -845,6 +855,7 @@ router.put("/setup/accounting", edit, async (req, res) => {
         ...values,
         electricityTariffPerKwh,
         internalTransportEnabled,
+        comprehensiveCostingEnabled,
         updatedAt: new Date(),
       },
     }).returning();

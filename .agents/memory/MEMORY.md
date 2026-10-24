@@ -55,6 +55,7 @@
 - [Manufacturing assets as route machines](manufacturing-asset-machine-link.md) — only active manufacturing-enabled assets can be linked; use existing machine records to preserve cost attribution and prevent duplicates.
 - [Manufacturing estimate versus actual](manufacturing-estimate-actual-boundary.md) — show route-based estimates separately; use each employee's payroll rate and never create accounting entries.
 - [Manufacturing cost-source defaults](manufacturing-cost-source-defaults.md) — new orders default source categories to linked; supervision remains in payroll unless allocation can split rather than duplicate it.
+- [Company manufacturing costing policy](company-manufacturing-cost-policy.md) — the company toggle sets resource costing only on new orders; existing order snapshots remain unchanged.
 - [Inventory-only assembly boundary](inventory-quick-assembly-boundary.md) — quick item assembly must stay inside inventory and leave production/manufacturing flows untouched.
 - [Inventory brand filter boundary](inventory-brand-filter-boundary.md) — filter by linked items in inventory reports; include full quantities without allocating stock across brands.
 - [Sales-invoice form parity](sales-invoice-form-parity.md) — keep related customer, supplier, HR, order, credit, and representative forms on the same full-width field layout.

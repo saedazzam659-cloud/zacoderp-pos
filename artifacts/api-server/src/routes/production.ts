@@ -6133,7 +6133,7 @@ export async function productionWizardHandler(req: any, res: any) {
     if (b.editOrderId != null && !editing) {
       res.status(400).json({ error: "إعادة إعداد الأمر متاحة عبر مسار التعديل المخصص فقط" }); return;
     }
-    const resourceCostingVersion = b.resourceCostingVersion == null || b.resourceCostingVersion === ""
+    let resourceCostingVersion = b.resourceCostingVersion == null || b.resourceCostingVersion === ""
       ? 0 : Number(b.resourceCostingVersion);
     if (![0, 1].includes(resourceCostingVersion)) {
       res.status(400).json({ error: "إصدار تكلفة الموارد يجب أن يكون 1 عند تفعيله" }); return;
@@ -6279,6 +6279,11 @@ export async function productionWizardHandler(req: any, res: any) {
     }
     const [mfg] = await db.select().from(manufacturingSettingsTable)
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
+    // Company policy is frozen onto new orders only. Reconfiguring an existing
+    // draft must not silently change its costing model.
+    if (!editing && mfg?.comprehensiveCostingEnabled === true) {
+      resourceCostingVersion = 1;
+    }
     const plannedHours = num(b.plannedHours);
     const plannedLaborPersonHours = resourceCostingVersion >= 1
       ? num(b.plannedLaborPersonHours)
@@ -6825,6 +6830,7 @@ router.post("/orders", async (req, res) => {
             plannedEndDate: b.plannedEndDate || null,
             resourceId: resourceIdNum,
             productItemId: b.productItemId ? Number(b.productItemId) : null,
+            resourceCostingVersion: mfg?.comprehensiveCostingEnabled === true ? 1 : 0,
             unitCode: b.unitCode || "PCE",
             estimatedCost: String(num(b.estimatedCost)),
             actualCost: "0",
@@ -9270,6 +9276,12 @@ router.put("/manufacturing-settings", async (req, res) => {
     if (typeof internalTransportEnabled !== "boolean") {
       return void res.status(400).json({ error: "internalTransportEnabled يجب أن يكون true أو false" });
     }
+    const comprehensiveCostingEnabled = b.comprehensiveCostingEnabled === undefined
+      ? (currentSettings?.comprehensiveCostingEnabled ?? false)
+      : b.comprehensiveCostingEnabled;
+    if (typeof comprehensiveCostingEnabled !== "boolean") {
+      return void res.status(400).json({ error: "comprehensiveCostingEnabled يجب أن يكون true أو false" });
+    }
     const numOrNull = (v: any) =>
       v === null || v === undefined || v === "" ? null : Number(v);
     // The shared accounting-mapping page edits only the seven GL fields.
@@ -9295,6 +9307,7 @@ router.put("/manufacturing-settings", async (req, res) => {
       defaultVarianceAccountId: await validateAccount(cid, numOrNull(provided("defaultVarianceAccountId", currentSettings?.defaultVarianceAccountId))),
       defaultWasteAccountId: await validateExpenseAccount(cid, numOrNull(provided("defaultWasteAccountId", currentSettings?.defaultWasteAccountId))),
       internalTransportEnabled,
+      comprehensiveCostingEnabled,
       updatedAt: new Date(),
     };
     // True upsert keyed on the unique companyId index, so concurrent first

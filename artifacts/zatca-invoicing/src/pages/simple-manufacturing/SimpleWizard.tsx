@@ -342,6 +342,11 @@ export function SimpleWizard({
       electricityTariffPerKwh: settings.electricityTariffPerKwh == null ? "" : String(settings.electricityTariffPerKwh),
       internalTransportEnabled: settings.internalTransportEnabled === true,
     });
+    if (!initialOrder && settings.comprehensiveCostingEnabled === true) {
+      setForm(current => current.resourceCostingVersion
+        ? current
+        : { ...current, resourceCostingVersion: true });
+    }
   }, [catalog.accounting?.settings]);
 
   const request = useCallback(async (path: string, init: RequestInit = {}) => {
@@ -384,6 +389,8 @@ export function SimpleWizard({
   // flows remain v0 unless the user explicitly opts in.
   const resourceCostingEnabled = resourceCostReadiness.ready &&
     (form.resourceCostingVersion || routingUsesStageResources);
+  const companyCostingPolicyEnabled = !initialOrder &&
+    catalog.accounting?.settings?.comprehensiveCostingEnabled === true;
   const routingHasElectricityMachine = (routingPreview?.stages ?? []).some((stage: any) => {
     if (stage?.resourceMode !== "machine" && stage?.resourceMode !== "both") return false;
     return catalog.machines?.some(machine =>
@@ -1489,13 +1496,15 @@ export function SimpleWizard({
                       type="checkbox"
                       className="mt-1 h-4 w-4 rounded text-violet-600"
                       checked={resourceCostingEnabled}
-                      disabled={routingUsesStageResources}
+                      disabled={routingUsesStageResources || companyCostingPolicyEnabled}
                       onChange={event => setForm(current => ({ ...current, resourceCostingVersion: event.target.checked }))}
                     />
                     <span>
                       <span className="block text-sm font-semibold text-slate-800">تفعيل تكلفة موارد المرحلة لهذا الأمر</span>
                       <span className="mt-1 block text-xs leading-6 text-slate-600">
-                        {routingUsesStageResources
+                        {companyCostingPolicyEnabled
+                          ? "مفعّل تلقائياً وفق سياسة تكلفة التصنيع للشركة؛ يسري على هذا الأمر الجديد فقط، ولا يغيّر الأوامر السابقة."
+                          : routingUsesStageResources
                           ? "مفعّل تلقائياً لهذا الأمر لأن المسار يحتوي موارد مراحل. يستخدم ساعات تشغيل المرحلة الواحدة لحساب العمالة أو الإهلاك والكهرباء حسب المورد؛ لا يغيّر أوامر سابقة."
                           : "خيار اختياري للأوامر الجديدة فقط. يستخدم ساعات تشغيل المرحلة الواحدة لحساب العمالة أو الإهلاك والكهرباء حسب المورد؛ لا يغيّر تكاليف أو أوامر سابقة."}
                       </span>

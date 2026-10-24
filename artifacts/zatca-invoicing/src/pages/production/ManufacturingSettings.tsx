@@ -29,6 +29,7 @@ type Settings = {
   defaultVarianceAccountId: number | null;
   defaultWasteAccountId: number | null;
   internalTransportEnabled: boolean;
+  comprehensiveCostingEnabled: boolean;
 };
 
 const EMPTY: Settings = {
@@ -43,6 +44,7 @@ const EMPTY: Settings = {
   defaultVarianceAccountId: null,
   defaultWasteAccountId: null,
   internalTransportEnabled: false,
+  comprehensiveCostingEnabled: false,
 };
 
 export default function ManufacturingSettings() {
@@ -175,6 +177,12 @@ export default function ManufacturingSettings() {
     () => accounts.map(a => ({ value: String(a.id), label: `${a.code} — ${a.nameAr}` })),
     [accounts],
   );
+  const costingSetupChecks = [
+    { label: "حساب إنتاج تحت التشغيل (WIP)", ready: data.defaultWipAccountId != null },
+    { label: "حساب مخزون الخامات", ready: data.defaultRawInventoryAccountId != null },
+    { label: "حساب مخزون الإنتاج التام", ready: data.defaultFinishedGoodsAccountId != null },
+  ];
+  const readyCostingSetupCount = costingSetupChecks.filter(item => item.ready).length;
 
   function NumSelect({
     value, onChange, options, placeholder = "— غير محدد —",
@@ -290,6 +298,53 @@ export default function ManufacturingSettings() {
               <p className="mt-1 text-xs text-violet-600"><Sparkles className="inline h-3 w-3 me-1" />{aiReasons["defaultCostCenter"]}</p>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 shadow-sm">
+        <CardHeader className="flex flex-row items-start gap-3">
+          <div className="rounded-xl bg-indigo-600 p-2 text-white shadow-sm">
+            <Calculator className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <CardTitle className="text-base text-indigo-950">سياسة تكلفة التصنيع الشاملة</CardTitle>
+            <p className="mt-1 text-sm leading-6 text-indigo-900/75">
+              تجعل تكلفة موارد المراحل هي الإعداد الافتراضي لأوامر الإنتاج الجديدة، مع الاحتفاظ بلقطة التكلفة داخل كل أمر.
+            </p>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-indigo-100 bg-white/80 p-4">
+            <div>
+              <p className="font-semibold text-slate-900">
+                {data.comprehensiveCostingEnabled ? "السياسة مفعّلة لهذه الشركة" : "السياسة متوقفة"}
+              </p>
+              <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">
+                عند التفعيل، تُنشأ الأوامر الجديدة بإصدار تكلفة الموارد الذي يستخدم ساعات تشغيل المراحل وتكلفة العمالة والآلات وفق الإعدادات والمصادر المتاحة. لا يغيّر ذلك الأوامر القائمة ولا ينشئ مصروفاً أو قيداً مكرراً.
+              </p>
+            </div>
+            <Switch
+              checked={data.comprehensiveCostingEnabled}
+              onCheckedChange={(checked) => setData(current => ({ ...current, comprehensiveCostingEnabled: checked }))}
+              disabled={saving}
+              aria-label="تفعيل سياسة تكلفة التصنيع الشاملة"
+              data-testid="switch-comprehensive-manufacturing-costing"
+            />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3" aria-label="جاهزية إعدادات تكلفة التصنيع">
+            {costingSetupChecks.map(item => (
+              <div key={item.label} className={`rounded-lg border px-3 py-2 text-xs ${item.ready ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                <span className="font-semibold">{item.ready ? "جاهز" : "يحتاج إعداداً"}</span>
+                <span className="ms-2">{item.label}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs leading-5 text-slate-500">
+            جهّز مسارات الإنتاج والعمال والآلات ومصادر التكاليف المرحّلة قبل التشغيل. تُلتقط تكلفة الإشراف من الرواتب القائمة ولا تُضاف مرة أخرى كمصدر مستقل.
+            {readyCostingSetupCount < costingSetupChecks.length
+              ? ` إعداد الحسابات الأساسية مكتمل جزئياً (${readyCostingSetupCount}/${costingSetupChecks.length})؛ استكمل الحسابات أعلاه قبل اعتماد السياسة محاسبياً.`
+              : " الحسابات الأساسية المحددة جاهزة؛ تظل المسارات والمصادر الفعلية بحاجة إلى مراجعة حسب منتجات الشركة."}
+          </p>
         </CardContent>
       </Card>
 
