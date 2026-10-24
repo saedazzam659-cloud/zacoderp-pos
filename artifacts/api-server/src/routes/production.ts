@@ -6128,13 +6128,87 @@ export async function productionWizardHandler(req: any, res: any) {
   try {
     const cid = guard(req, res); if (!cid) return;
     const b = req.body ?? {};
+    const editOrderId = Number(b.editOrderId);
+    const editing = req.method === "PATCH" && Number.isInteger(editOrderId) && editOrderId > 0;
+    if (b.editOrderId != null && !editing) {
+      res.status(400).json({ error: "إعادة إعداد الأمر متاحة عبر مسار التعديل المخصص فقط" }); return;
+    }
     const resourceCostingVersion = b.resourceCostingVersion == null || b.resourceCostingVersion === ""
       ? 0 : Number(b.resourceCostingVersion);
     if (![0, 1].includes(resourceCostingVersion)) {
       res.status(400).json({ error: "إصدار تكلفة الموارد يجب أن يكون 1 عند تفعيله" }); return;
     }
     if (!wizardRequestId) { res.status(400).json({ error: "مفتاح الطلب مطلوب لإتاحة إعادة المحاولة الآمنة" }); return; }
-    const [previous] = await db.select().from(productionOrdersTable).where(and(
+    let orderBeingEdited: any = null;
+    if (editing) {
+      const [candidate] = await db.select().from(productionOrdersTable).where(and(
+        eq(productionOrdersTable.companyId, cid), eq(productionOrdersTable.id, editOrderId),
+      )).limit(1);
+      if (!candidate || !rowInScope(req, candidate.branchId)) {
+        res.status(404).json({ error: "أمر الإنتاج غير موجود" }); return;
+      }
+      if (b.branchId == null) b.branchId = candidate.branchId;
+      if ((candidate.meta as any)?.wizardEditRequestId === wizardRequestId &&
+          (candidate.meta as any)?.wizardEditRequestHash === requestHash) {
+        res.json({ ...candidate, idempotentReplay: true }); return;
+      }
+      if (!["draft", "approved"].includes(String(candidate.status)) ||
+          candidate.issueJournalEntryId || candidate.receiptJournalEntryId) {
+        res.status(409).json({ error: "لا يمكن إعادة إعداد الأمر إلا وهو مسودة وقبل صرف المخزون أو ترحيل الاستلام" }); return;
+      }
+      const [allocation] = await db.select({ id: productionCostAllocationsTable.id })
+        .from(productionCostAllocationsTable)
+        .where(and(
+          eq(productionCostAllocationsTable.companyId, cid),
+          eq(productionCostAllocationsTable.orderId, editOrderId),
+        )).limit(1);
+      const [resourceCost] = await db.select({ id: productionStageResourceCostsTable.id })
+        .from(productionStageResourceCostsTable)
+        .where(and(
+          eq(productionStageResourceCostsTable.companyId, cid),
+          eq(productionStageResourceCostsTable.orderId, editOrderId),
+        )).limit(1);
+      const [movement] = await db.select({ id: stockLedgerTable.id })
+        .from(stockLedgerTable)
+        .where(and(
+          eq(stockLedgerTable.companyId, cid),
+          eq(stockLedgerTable.refId, editOrderId),
+          eq(stockLedgerTable.refType, "production_order"),
+        )).limit(1);
+      const [qualityCheck] = await db.select({ id: productionQualityChecksTable.id })
+        .from(productionQualityChecksTable)
+        .where(and(
+          eq(productionQualityChecksTable.companyId, cid),
+          eq(productionQualityChecksTable.orderId, editOrderId),
+        )).limit(1);
+      const [wasteRecord] = await db.select({ id: productionWasteRecordsTable.id })
+        .from(productionWasteRecordsTable)
+        .where(and(
+          eq(productionWasteRecordsTable.companyId, cid),
+          eq(productionWasteRecordsTable.orderId, editOrderId),
+        )).limit(1);
+      const [downtimeEvent] = await db.select({ id: productionDowntimeEventsTable.id })
+        .from(productionDowntimeEventsTable)
+        .where(and(
+          eq(productionDowntimeEventsTable.companyId, cid),
+          eq(productionDowntimeEventsTable.productionOrderId, editOrderId),
+        )).limit(1);
+      const stages = await db.select({
+        status: productionOrderStagesTable.status,
+        startedAt: productionOrderStagesTable.startedAt,
+        outputQty: productionOrderStagesTable.outputQty,
+        wasteQty: productionOrderStagesTable.wasteQty,
+        actualDurationMinutes: productionOrderStagesTable.actualDurationMinutes,
+      }).from(productionOrderStagesTable)
+        .where(eq(productionOrderStagesTable.orderId, editOrderId));
+      if (allocation || resourceCost || movement || qualityCheck || wasteRecord || downtimeEvent || stages.some((stage: any) =>
+        stage.status !== "pending" || stage.startedAt || num(stage.outputQty) !== 0 ||
+        num(stage.wasteQty) !== 0 || num(stage.actualDurationMinutes) !== 0)) {
+        res.status(409).json({ error: "لا يمكن إعادة إعداد الأمر بعد ربط تكلفة أو تسجيل حركة/تنفيذ؛ أنشئ أمرًا جديدًا بدلًا منه" }); return;
+      }
+      orderBeingEdited = candidate;
+    }
+    const [previous] = editing ? [undefined] : await db.select().from(productionOrdersTable).where(and(
       eq(productionOrdersTable.companyId, cid), eq(productionOrdersTable.wizardRequestId, wizardRequestId),
     )).limit(1);
     if (previous) {
@@ -6263,12 +6337,27 @@ export async function productionWizardHandler(req: any, res: any) {
       ? "simple_manufacturing" : "production";
     if (requested.length && !canAccessModule(req.authUser, postingModule, "post"))
       return void res.status(403).json({ error: "لا تملك صلاحية تصنيف وترحيل مصادر تكلفة التصنيع" });
-    const orderNumber = await nextSequenceNumber(cid, "production_order", {
+    const orderNumber = editing ? orderBeingEdited.orderNumber : await nextSequenceNumber(cid, "production_order", {
       userId: req.authUser!.id, refTable: "production_orders", branchId,
       docDate: b.plannedStartDate || undefined,
     }) ?? `PRD-${Date.now().toString(36)}`;
 
     const result = await db.transaction(async (tx) => {
+      if (editing) {
+        await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${editOrderId})`);
+        const [lockedOrder] = await tx.select({
+          status: productionOrdersTable.status,
+          issueJournalEntryId: productionOrdersTable.issueJournalEntryId,
+          receiptJournalEntryId: productionOrdersTable.receiptJournalEntryId,
+        }).from(productionOrdersTable).where(and(
+          eq(productionOrdersTable.id, editOrderId),
+          eq(productionOrdersTable.companyId, cid),
+        )).for("update").limit(1);
+        if (!lockedOrder || !["draft", "approved"].includes(String(lockedOrder.status)) ||
+            lockedOrder.issueJournalEntryId || lockedOrder.receiptJournalEntryId) {
+          throw Object.assign(new Error("تغيرت حالة الأمر؛ لا يمكن إعادة إعداده بعد بدء الصرف"), { status: 409 });
+        }
+      }
       if (requested.length) await lockOverheadClosureMutation(tx, cid);
       const sources = requested.length ? await loadPostedCostSources(tx, cid, period, req, branchId) : [];
       const sourceMap = new Map(sources.map((s) => [`${s.sourceType}:${s.sourceRecordId}`, s]));
@@ -6542,8 +6631,10 @@ export async function productionWizardHandler(req: any, res: any) {
         ? payrollCost : (payrollCost > 0 ? payrollCost : wcLabor);
       const overheadCost = explicitCostConfiguration
         ? indirectCost : (indirectCost > 0 ? indirectCost : wcOverhead);
-      const [order] = await tx.insert(productionOrdersTable).values({
-        companyId: cid, branchId, orderNumber, wizardRequestId, title: String(b.title).trim(), status: "draft",
+      const orderValues: any = {
+        companyId: cid, branchId, orderNumber,
+        ...(editing ? {} : { wizardRequestId }),
+        title: String(b.title).trim(), status: "draft",
         plannedQty: String(plannedQty), productItemId, unitCode: b.unitCode || tmpl.outputUnitCode || "PCE",
         resourceCostingVersion,
         plannedStartDate: b.plannedStartDate || null, plannedEndDate: b.plannedEndDate || null,
@@ -6572,9 +6663,20 @@ export async function productionWizardHandler(req: any, res: any) {
           templateId: validatedTemplateId,
           sourceOrderId: validatedSourceOrderId,
           salePriceSnapshot: productSnapshot?.salePrice == null ? null : sourceAmountCents(productSnapshot.salePrice),
-           duplicateCostGuard: "source_snapshot_precedes_rate" },
-        createdBy: req.authUser!.id,
-      }).returning();
+           duplicateCostGuard: "source_snapshot_precedes_rate",
+           ...(editing ? { wizardEditRequestId: wizardRequestId, wizardEditRequestHash: requestHash } : {}) },
+         ...(editing ? { updatedAt: new Date() } : { createdBy: req.authUser!.id }),
+      };
+      const [order] = editing
+        ? await tx.update(productionOrdersTable).set(orderValues).where(and(
+            eq(productionOrdersTable.id, editOrderId),
+            eq(productionOrdersTable.companyId, cid),
+          )).returning()
+        : await tx.insert(productionOrdersTable).values(orderValues).returning();
+      if (editing) {
+        await tx.delete(productionOrderStagesTable).where(eq(productionOrderStagesTable.orderId, editOrderId));
+        await tx.delete(productionOrderItemsTable).where(eq(productionOrderItemsTable.orderId, editOrderId));
+      }
       await tx.insert(productionOrderItemsTable).values(itemRows.map((x) => ({ ...x, orderId: order.id })));
       if (snapshots.length) await tx.insert(productionCostAllocationsTable)
         .values(snapshots.map((x) => ({ ...x, orderId: order.id })));
@@ -6593,16 +6695,17 @@ export async function productionWizardHandler(req: any, res: any) {
         inputQty: i === 0 ? String(plannedQty) : "0", fromRoutingId: routing.id,
       })));
       await tx.insert(productionEventsTable).values({ companyId: cid, orderId: order.id,
-        eventType: "wizard_created", payload: { bomTemplateId: tmpl.id, materialLines: itemRows.length,
+        eventType: editing ? "wizard_reconfigured" : "wizard_created", payload: { bomTemplateId: tmpl.id, materialLines: itemRows.length,
           creationMode: validatedTemplateId ? "quick_manufacturing" : (validatedSourceOrderId ? "manufacture_again" : "wizard"),
-          routingId: routing?.id ?? null, stages: stages.length, allocations: snapshots.length },
+          routingId: routing?.id ?? null, stages: stages.length, allocations: snapshots.length,
+          changed: editing ? ["title", "productItemId", "plannedQty", "bomSnapshot", "routingSnapshot"] : undefined },
         userId: req.authUser!.id });
       return { ...order, bomLoaded: itemRows.length, routingLoaded: stages.length,
         allocatedCosts: snapshots.reduce((s, x) => s + num(x.allocatedAmount), 0),
         manualCosts: manualEntries,
       };
     });
-    res.status(201).json(result);
+    res.status(editing ? 200 : 201).json(result);
   } catch (e: any) {
     const code = e?.code || e?.cause?.code;
     if (code === "23505" && wizardRequestId) {

@@ -51,6 +51,7 @@
 - [Wouter navigation boundaries](wouter-native-new-tab.md) — use native browser navigation for new tabs and cross-artifact routes.
 - [Variable manufacturing routes](manufacturing-route-stages.md) — stage counts are variable; multi-employee assignments copy to editable order snapshots while legacy attribution stays singular.
 - [Smart manufacturing stage permissions](smart-manufacturing-stage-permissions.md) — split route editing from execution entry per user; preserve existing edit access.
+- [Production-order reconfiguration boundary](production-order-reconfiguration-boundary.md) — order snapshots may be rebuilt only before movement, execution, QA, or cost allocation; never edit reusable templates.
 - [Manufacturing assets as route machines](manufacturing-asset-machine-link.md) — the asset's manufacturing flag should provide its linked machine automatically, without a manual resource step.
 - [Manufacturing estimate versus actual](manufacturing-estimate-actual-boundary.md) — show route-based estimates separately; use each employee's payroll rate and never create accounting entries.
 - [Manufacturing cost-source defaults](manufacturing-cost-source-defaults.md) — new orders default source categories to linked; supervision remains in payroll unless allocation can split rather than duplicate it.

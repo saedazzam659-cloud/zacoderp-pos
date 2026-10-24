@@ -40,6 +40,7 @@ export function SimpleWizard({
   token,
   catalog,
   busy,
+  initialOrder,
   onSaveAccounting,
   onSubmit,
   onCancel
@@ -47,6 +48,7 @@ export function SimpleWizard({
   token: string;
   catalog: Catalog;
   busy: boolean;
+  initialOrder?: any;
   onSaveAccounting: (data: {
     defaultWipAccountId: number | null;
     defaultRawInventoryAccountId: number | null;
@@ -63,14 +65,28 @@ export function SimpleWizard({
   const { actingCompanyId, user, setUser } = useAuth();
   const { fmtQty } = useFmt();
   const [tab, setTab] = useState<"basic" | "materials" | "routing" | "resources" | "costs" | "review">("basic");
-  const [form, setForm] = useState<WizardState>({
-    title: "", productItemId: "", plannedQty: "1", unitCode: "PCE", notes: "",
-    plannedStartDate: new Date().toISOString().slice(0, 10), plannedEndDate: "",
-    rawWarehouseId: catalog.warehouses[0]?.id ? String(catalog.warehouses[0].id) : "",
-    finishedWarehouseId: catalog.warehouses[0]?.id ? String(catalog.warehouses[0].id) : "",
-    workCenterId: "", plannedHours: "1", costPeriod: new Date().toISOString().slice(0, 7),
-    templateId: "", sourceOrderId: null, resourceCostingVersion: false, costPolicy: { packaging: "primary", quality: "appraisal", wasteTreatment: "normal_manufacturing", reworkTreatment: "internal_failure", certificationLayer: "manufacturing", royaltyLayer: "economic", warrantyLayer: "operating" }
-  });
+  const [form, setForm] = useState<WizardState>(() => ({
+    title: initialOrder?.title ?? "",
+    productItemId: initialOrder?.productItemId ? String(initialOrder.productItemId) : "",
+    plannedQty: String(initialOrder?.plannedQty ?? "1"),
+    unitCode: initialOrder?.unitCode ?? "PCE",
+    notes: initialOrder?.notes ?? "",
+    plannedStartDate: initialOrder?.plannedStartDate ?? new Date().toISOString().slice(0, 10),
+    plannedEndDate: initialOrder?.plannedEndDate ?? "",
+    rawWarehouseId: String(initialOrder?.rawWarehouseId ?? catalog.warehouses[0]?.id ?? ""),
+    finishedWarehouseId: String(initialOrder?.finishedWarehouseId ?? catalog.warehouses[0]?.id ?? ""),
+    workCenterId: String(initialOrder?.workCenterId ?? ""),
+    plannedHours: String(initialOrder?.plannedHours ?? "1"),
+    costPeriod: initialOrder?.meta?.costPeriod ?? new Date().toISOString().slice(0, 7),
+    templateId: String(initialOrder?.meta?.templateId ?? ""),
+    sourceOrderId: initialOrder?.meta?.sourceOrderId ?? null,
+    resourceCostingVersion: Number(initialOrder?.resourceCostingVersion ?? 0) >= 1,
+    costPolicy: initialOrder?.meta?.costPolicy ?? {
+      packaging: "primary", quality: "appraisal", wasteTreatment: "normal_manufacturing",
+      reworkTreatment: "internal_failure", certificationLayer: "manufacturing",
+      royaltyLayer: "economic", warrantyLayer: "operating",
+    },
+  }));
 
   const [bomPreview, setBomPreview] = useState<any>(null);
   const [routingPreview, setRoutingPreview] = useState<any>(null);
@@ -78,8 +94,14 @@ export function SimpleWizard({
   const [costSources, setCostSources] = useState<any[]>([]);
   const [allocations, setAllocations] = useState<Record<string, string>>({});
   const [sourceTreatments, setSourceTreatments] = useState<Record<string, string>>({});
-  const [costModes, setCostModes] = useState<Record<ManufacturingCostCategory, ManufacturingCostMode>>({
-    ...DEFAULT_SIMPLE_MANUFACTURING_COST_MODES,
+  const [costModes, setCostModes] = useState<Record<ManufacturingCostCategory, ManufacturingCostMode>>(() => {
+    const saved = initialOrder?.meta?.costConfiguration;
+    if (!saved) return { ...DEFAULT_SIMPLE_MANUFACTURING_COST_MODES };
+    return {
+      payroll: saved.payroll?.mode ?? DEFAULT_SIMPLE_MANUFACTURING_COST_MODES.payroll,
+      fixed_asset_depreciation: saved.fixed_asset_depreciation?.mode ?? DEFAULT_SIMPLE_MANUFACTURING_COST_MODES.fixed_asset_depreciation,
+      prepaid_amortization: saved.prepaid_amortization?.mode ?? DEFAULT_SIMPLE_MANUFACTURING_COST_MODES.prepaid_amortization,
+    };
   });
   const [costSourcesState, setCostSourcesState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [costSourcesError, setCostSourcesError] = useState<string | null>(null);
@@ -96,10 +118,19 @@ export function SimpleWizard({
   const costPrefsSerializedRef = useRef<string | null>(null);
   const costPrefsSaveInFlightRef = useRef<string | null>(null);
   const costPrefsOperationRef = useRef(0);
-  const [manualCosts, setManualCosts] = useState<ManufacturingCostConfiguration>({
-    payroll: { mode: "manual", amount: "", description: "", counterpartAccountId: "" },
-    fixed_asset_depreciation: { mode: "manual", amount: "", description: "", counterpartAccountId: "" },
-    prepaid_amortization: { mode: "manual", amount: "", description: "", counterpartAccountId: "" },
+  const [manualCosts, setManualCosts] = useState<ManufacturingCostConfiguration>(() => {
+    const saved = initialOrder?.meta?.costConfiguration;
+    const entry = (category: ManufacturingCostCategory) => ({
+      mode: "manual" as const,
+      amount: String(saved?.[category]?.amount ?? ""),
+      description: String(saved?.[category]?.description ?? ""),
+      counterpartAccountId: String(saved?.[category]?.counterpartAccountId ?? ""),
+    });
+    return {
+      payroll: entry("payroll"),
+      fixed_asset_depreciation: entry("fixed_asset_depreciation"),
+      prepaid_amortization: entry("prepaid_amortization"),
+    };
   });
   const [accountSettings, setAccountSettings] = useState({
     defaultWipAccountId: "",
@@ -146,6 +177,7 @@ export function SimpleWizard({
   // user + effective tenant. The key guard prevents an acting-company switch
   // from applying (or saving) another tenant's modes.
   useEffect(() => {
+    if (initialOrder) return;
     if (!user || !costPrefsScope || !costPrefsScreen) {
       setCostPrefsHydratedKey(null);
       costPrefsLastSavedRef.current = null;
@@ -158,7 +190,7 @@ export function SimpleWizard({
     costPrefsLastSavedRef.current = JSON.stringify(modes);
     setCostPrefsSaveState("idle");
     setCostPrefsHydratedKey(costPrefsScope);
-  }, [user, costPrefsScope, costPrefsScreen, costPrefsHydratedKey]);
+  }, [user, costPrefsScope, costPrefsScreen, costPrefsHydratedKey, initialOrder]);
 
   // A request cannot be aborted through the small shared prefs client. Mark
   // the old operation stale immediately when the tenant/user context changes
@@ -505,6 +537,14 @@ export function SimpleWizard({
   }, [request, token, form.costPeriod, costSourcesRefreshKey, toast]);
 
   const handleCreateBom = async () => {
+    if (initialOrder) {
+      toast({
+        title: "لا يمكن تعديل قالب المواد المشترك من شاشة الأمر",
+        description: "تعديل الأمر ينسخ القالب النشط إلى هذه المسودة فقط.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!form.productItemId || newBomLines.length === 0) return;
     try {
       const b = await request("/api/simple-manufacturing/setup/bom", {
@@ -674,6 +714,7 @@ export function SimpleWizard({
     }
     const payload = {
       wizardRequestId: wizardRequestIdRef.current,
+      ...(initialOrder?.id ? { editOrderId: Number(initialOrder.id) } : {}),
       title: form.title.trim(),
       productItemId: Number(form.productItemId),
       plannedQty: Number(form.plannedQty),
@@ -724,6 +765,14 @@ export function SimpleWizard({
   };
 
   const saveAccounting = async () => {
+    if (initialOrder) {
+      toast({
+        title: "إعدادات الحسابات العامة لا تتغير عند تعديل الأمر",
+        description: "تُحفظ تغييرات الأمر على نسخته فقط.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!accountSettings.defaultWipAccountId || !accountSettings.defaultRawInventoryAccountId) {
       toast({
         title: "حسابات الترحيل ناقصة",
@@ -1372,7 +1421,7 @@ export function SimpleWizard({
                     <p className="text-xs text-amber-800">
                       اختيارات المخازن أدناه تُحفظ مع أمر التصنيع نفسه، وليست إعداد مخزن مستقلاً.
                     </p>
-                    <Button
+                     {!initialOrder && <Button
                       type="button"
                       variant="outline"
                       onClick={() => void saveAccounting().catch(() => {})}
@@ -1381,7 +1430,7 @@ export function SimpleWizard({
                     >
                       <Save className="ml-2 h-4 w-4" />
                       حفظ حسابات التصنيع
-                    </Button>
+                     </Button>}
                   </div>
                 </CardContent>
               </Card>
@@ -1918,12 +1967,12 @@ export function SimpleWizard({
           type="button"
           variant="secondary"
           onClick={() => void submit("draft")}
-          disabled={busy || !canCreate}
+          disabled={busy || !(initialOrder ? canEdit : canCreate)}
         >
           <Save className="ml-2 h-4 w-4" />
-          حفظ مسودة
+          {initialOrder ? "حفظ تعديلات الأمر" : "حفظ مسودة"}
         </Button>
-        <Button
+        {!initialOrder && <Button
           type="button"
           className="bg-violet-600 text-white shadow-md hover:bg-violet-700"
           onClick={() => {
@@ -1934,7 +1983,7 @@ export function SimpleWizard({
         >
           <Play className="ml-2 h-4 w-4" />
           مراجعة وبدء الإنتاج
-        </Button>
+        </Button>}
       </div>
     </div>
   );

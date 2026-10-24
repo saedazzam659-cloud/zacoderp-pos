@@ -932,6 +932,10 @@ const compactWizardHandler = async (req: any, res: any) => {
 
 router.post("/orders", create, compactWizardHandler);
 router.post("/orders/wizard", create, compactWizardHandler);
+router.patch("/orders/:id/wizard", edit, (req, res) => {
+  req.body = { ...(req.body ?? {}), editOrderId: Number(req.params.id) };
+  return compactWizardHandler(req, res);
+});
 
 router.delete("/orders/:id", remove, async (req, res) => {
   const cid = companyId(req, res);

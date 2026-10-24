@@ -46,8 +46,10 @@ export function SimpleOrderList({
   canPost,
   canUnpost,
   canDelete,
+  canEdit,
   onOpenOrder,
   onCloseOrder,
+  onEditOrder,
   onChangeStatus,
   onDeleteDraft,
   executionPanel,
@@ -65,8 +67,10 @@ export function SimpleOrderList({
   canPost: boolean;
   canUnpost: boolean;
   canDelete: boolean;
+  canEdit: boolean;
   onOpenOrder: (order: Order) => void;
   onCloseOrder: () => void;
+  onEditOrder: (order: Order) => void;
   onChangeStatus: (order: Order, status: string) => void;
   onDeleteDraft: (order: Order) => void;
   executionPanel?: import("react").ReactNode;
@@ -263,6 +267,17 @@ export function SimpleOrderList({
               />
             )}
             <div className="flex gap-2 flex-wrap mb-6">
+              {["draft", "approved"].includes(selectedOrder.status) && canEdit && (
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => onEditOrder(selectedOrder)}
+                  data-testid="edit-simple-manufacturing-order"
+                >
+                  <Boxes className="ml-2 h-4 w-4" />
+                  تعديل إعدادات الأمر
+                </Button>
+              )}
               {nextStatus(selectedOrder.status) && (
                 <Button disabled={busy || !canPost} onClick={() => onChangeStatus(selectedOrder, nextStatus(selectedOrder.status)!)} className="bg-violet-600 hover:bg-violet-700">
                   <Play className="ml-2 h-4 w-4" />

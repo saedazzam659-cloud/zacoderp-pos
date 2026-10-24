@@ -43,6 +43,7 @@ export default function SimpleManufacturing() {
   const [catalog, setCatalog] = useState<Catalog>(() => emptyCatalog());
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [editingOrder, setEditingOrder] = useState<any>(null);
   const [sourceCosts, setSourceCosts] = useState<any[]>([]);
   const [costDrilldown, setCostDrilldown] = useState<any>(null);
   const [internalTransport, setInternalTransport] = useState<any>(null);
@@ -281,6 +282,20 @@ export default function SimpleManufacturing() {
     let submittedOrderId: number | null = null;
     setBusy(true);
     try {
+      if (payload?.editOrderId) {
+        const edited = await request(`/api/simple-manufacturing/orders/${Number(payload.editOrderId)}/wizard`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+        if (submissionScope !== tenantScopeRef.current) return;
+        await load();
+        if (submissionScope !== tenantScopeRef.current) return;
+        setEditingOrder(null);
+        setTab("orders");
+        toast({ title: "تم تحديث إعدادات الأمر ونسخ المواد والمراحل" });
+        await openOrder(edited);
+        return;
+      }
       const j = await request("/api/simple-manufacturing/orders/wizard", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -530,8 +545,13 @@ export default function SimpleManufacturing() {
              canPost={canPost}
              canUnpost={canUnpost}
              canDelete={canDelete}
+            canEdit={canEdit}
             onOpenOrder={openOrder}
              onCloseOrder={closeOrder}
+            onEditOrder={(order) => {
+              setEditingOrder(order);
+              setTab("new");
+            }}
             onChangeStatus={changeStatus}
             onDeleteDraft={deleteDraft}
           />
@@ -539,13 +559,17 @@ export default function SimpleManufacturing() {
 
         <TabsContent value="new" className="mt-0">
           <SimpleWizard
-             key={tenantScope}
+             key={`${tenantScope}:${editingOrder?.id ?? "new"}`}
             token={token || ""}
             catalog={catalog}
             busy={busy}
+            initialOrder={editingOrder}
              onSaveAccounting={handleSaveAccounting}
             onSubmit={handleWizardSubmit}
-            onCancel={() => setTab("orders")}
+            onCancel={() => {
+              setEditingOrder(null);
+              setTab("orders");
+            }}
           />
         </TabsContent>
 
