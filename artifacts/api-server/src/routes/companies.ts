@@ -417,7 +417,9 @@ router.put("/:id", async (req, res) => {
 });
 
 // PATCH /:id/general-settings — update logo + decimal places + auto-posting toggle
-router.patch("/:id/general-settings", async (req, res) => {
+router.patch("/:id/general-settings", async (req, res): Promise<void> => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
   const id = parseInt(String(req.params.id), 10);
   // Authorization: only a SuperAdmin or an admin of THIS company may change
   // tenant-wide settings. Without this guard, any authenticated user (even
@@ -1007,6 +1009,7 @@ router.patch("/:id/general-settings", async (req, res) => {
     .where(eq(companiesTable.id, id)).returning();
   if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
   res.json(company);
+  });
 });
 
 // ─── ضبط المرسلات — per-company sender settings ─────────────────────────────

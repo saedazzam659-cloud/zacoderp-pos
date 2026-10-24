@@ -169,7 +169,7 @@ export default function CompanyDetails() {
 
   const documentFieldControlsMutation = useMutation({
     mutationFn: async (enabled: boolean) => {
-      const res = await fetch(`${API}/api/companies/${id}/general-settings`, {
+      const res = await fetch(`${API}/api/companies/${id}/general-settings${agentQS}`, {
         method: "PATCH",
         headers,
         body: JSON.stringify({ documentFieldControlsEnabled: enabled }),
