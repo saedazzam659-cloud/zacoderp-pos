@@ -58,30 +58,46 @@ type Stage = {
   notes: string;
 };
 
-function getStageCompletionIssue(stage: Stage): string | null {
+type StageCompletionField = "inputQty" | "outputQty" | "wasteQty" | "wasteType" | "wasteReason";
+type StageCompletionIssue = { message: string; focusField?: StageCompletionField };
+
+function getStageCompletionIssue(stage: Stage): StageCompletionIssue | null {
   const input = Number(stage.inputQty);
   const output = Number(stage.outputQty);
   const waste = Number(stage.wasteQty);
-  if (![input, output, waste].every(value => Number.isFinite(value) && value >= 0)) {
-    return "أدخل كميات صحيحة غير سالبة قبل إنهاء المرحلة.";
+  if (!Number.isFinite(input) || input <= 0) {
+    return { message: "أدخل كمية الإدخال الفعلية للمرحلة أولاً.", focusField: "inputQty" };
+  }
+  if (!Number.isFinite(output) || output < 0) {
+    return { message: "أدخل كمية إنتاج صحيحة غير سالبة.", focusField: "outputQty" };
+  }
+  if (!Number.isFinite(waste) || waste < 0) {
+    return { message: "أدخل كمية هالك صحيحة غير سالبة.", focusField: "wasteQty" };
   }
   const quantityFactor = stage.quantityUnit ? Number(stage.quantityUnitFactor) : 1;
   const wasteFactor = stage.wasteUnit ? Number(stage.wasteUnitFactor) : 1;
 
   if (!Number.isFinite(quantityFactor) || quantityFactor <= 0 ||
       !Number.isFinite(wasteFactor) || wasteFactor <= 0) {
-    return "أدخل معامل تحويل موجبًا لوحدة المرحلة والهالك قبل الإنهاء.";
+    return { message: "أدخل معامل تحويل موجبًا لوحدة المرحلة والهالك قبل الإنهاء." };
   }
   if ((output * quantityFactor) + (waste * wasteFactor) >
       (input * quantityFactor) + 0.00005) {
-    return "مجموع الناتج والهالك بعد التحويل أكبر من كمية الإدخال.";
+    return {
+      message: "مجموع الناتج والهالك بعد التحويل أكبر من كمية الإدخال.",
+      focusField: output > 0 ? "outputQty" : "wasteQty",
+    };
   }
   if (input > 0 && output === 0 &&
       (waste * wasteFactor) < (input * quantityFactor) - 0.00005) {
-    return "الناتج صفر. سجّل كامل كمية الإدخال كهالك، أو أدخل كمية الإنتاج الفعلية.";
+    return {
+      message: "أدخل كمية الإنتاج الفعلية. وإذا لم ينتج شيء، سجّل كامل كمية الإدخال كهالك.",
+      focusField: "outputQty",
+    };
   }
   if (waste > 0 && (!(stage.wasteReason ?? "").trim() || !(stage.wasteType ?? "").trim() || !stage.wasteClassification)) {
-    return "أدخل سبب الهالك ونوعه وتصنيفه قبل إنهاء المرحلة.";
+    const focusField = !(stage.wasteType ?? "").trim() ? "wasteType" : "wasteReason";
+    return { message: "أدخل سبب الهالك ونوعه وتصنيفه قبل إنهاء المرحلة.", focusField };
   }
   return null;
 }
@@ -145,6 +161,14 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
   const previousOrderId = useRef(orderId);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const stageFieldRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const focusStageField = (stageId: string, field: StageCompletionField) => {
+    const input = stageFieldRefs.current[`${stageId}:${field}`];
+    if (!input) return;
+    input.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => input.focus({ preventScroll: true }), 120);
+  };
 
   const isExecuting = ["in_production", "quality_check"].includes(orderStatus);
 
@@ -374,7 +398,8 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
     if (action === "complete") {
       const completionIssue = getStageCompletionIssue(stageData);
       if (completionIssue) {
-        toast({ title: "لا يمكن إنهاء المرحلة", description: completionIssue, variant: "destructive" });
+        toast({ title: "لا يمكن إنهاء المرحلة", description: completionIssue.message, variant: "destructive" });
+        if (completionIssue.focusField) focusStageField(stageId, completionIssue.focusField);
         return;
       }
     }
@@ -623,7 +648,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                           {activeStage.status === "in_progress" && (
                             <Button 
                                 size="sm" variant="outline" className="h-8 bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700"
-                                disabled={busyStage === activeStage.id || Boolean(completionIssue)}
+                                disabled={busyStage === activeStage.id}
                               onClick={() => sendStageAction(activeStage.id, "complete", activeStage)}
                             >
                               <Square className="h-3.5 w-3.5 me-1" /> إنهاء المرحلة
@@ -655,11 +680,11 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><ArrowDownToLine className="h-3.5 w-3.5 text-slate-400" /> الكمية المدخلة</Label>
-                           <Input type="number" min="0" step="0.01" value={activeStage.inputQty} onChange={e => handleUpdateStage(activeStage.id, { inputQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
+                           <Input ref={el => { stageFieldRefs.current[`${activeStage.id}:inputQty`] = el; }} type="number" min="0" step="0.01" value={activeStage.inputQty} onChange={e => handleUpdateStage(activeStage.id, { inputQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><ArrowUpFromLine className="h-3.5 w-3.5 text-slate-400" /> الكمية المنتجة</Label>
-                           <Input type="number" min="0" step="0.01" value={activeStage.outputQty} onChange={e => handleUpdateStage(activeStage.id, { outputQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
+                           <Input ref={el => { stageFieldRefs.current[`${activeStage.id}:outputQty`] = el; }} type="number" min="0" step="0.01" value={activeStage.outputQty} onChange={e => handleUpdateStage(activeStage.id, { outputQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
                         </div>
                       </div>
 
@@ -777,7 +802,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-rose-900">كمية الهالك</Label>
-                            <Input type="number" min="0" step="0.01" value={activeStage.wasteQty} onChange={e => handleUpdateStage(activeStage.id, { wasteQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
+                            <Input ref={el => { stageFieldRefs.current[`${activeStage.id}:wasteQty`] = el; }} type="number" min="0" step="0.01" value={activeStage.wasteQty} onChange={e => handleUpdateStage(activeStage.id, { wasteQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-rose-900">طبيعي أم تالف</Label>
@@ -793,11 +818,11 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-rose-900">نوع الفاقد (wasteType)</Label>
-                            <Input placeholder="مثال: تلف خام أو فاقد حراري" value={activeStage.wasteType} onChange={e => handleUpdateStage(activeStage.id, { wasteType: e.target.value })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
+                            <Input ref={el => { stageFieldRefs.current[`${activeStage.id}:wasteType`] = el; }} placeholder="مثال: تلف خام أو فاقد حراري" value={activeStage.wasteType} onChange={e => handleUpdateStage(activeStage.id, { wasteType: e.target.value })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-rose-900">سبب الهالك</Label>
-                            <Input placeholder="مثال: خطأ في الحرارة..." value={activeStage.wasteReason} onChange={e => handleUpdateStage(activeStage.id, { wasteReason: e.target.value })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
+                            <Input ref={el => { stageFieldRefs.current[`${activeStage.id}:wasteReason`] = el; }} placeholder="مثال: خطأ في الحرارة..." value={activeStage.wasteReason} onChange={e => handleUpdateStage(activeStage.id, { wasteReason: e.target.value })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
                           </div>
                         </div>
                       </div>
@@ -818,7 +843,13 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                       {activeStage.status === "in_progress" && completionIssue && (
                         <div role="alert" className="md:col-span-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm leading-6 text-amber-900">
                           <AlertTriangle className="mt-1 h-4 w-4 shrink-0" />
-                          <span><strong>قبل إنهاء المرحلة:</strong> {completionIssue}</span>
+                          <span className="flex-1"><strong>قبل إنهاء المرحلة:</strong> {completionIssue.message}</span>
+                          {completionIssue.focusField && (
+                            <Button type="button" size="sm" variant="outline" className="shrink-0 bg-white"
+                              onClick={() => focusStageField(activeStage.id, completionIssue.focusField!)}>
+                              انتقل للخانة
+                            </Button>
+                          )}
                         </div>
                       )}
 
