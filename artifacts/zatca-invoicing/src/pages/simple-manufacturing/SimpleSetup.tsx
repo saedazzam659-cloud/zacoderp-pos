@@ -138,7 +138,9 @@ export function SimpleSetup({
       if (!item || (item.itemNature && !["raw", "consumable"].includes(item.itemNature))) continue;
       options.push({
         id,
-        nameAr: String(line.description || item.nameAr || `صنف #${itemId}`),
+        // Prefer the inventory master name: older BOM descriptions may contain
+        // a code or be blank, which made the actual material name disappear.
+        nameAr: String(item.nameAr?.trim() || item.nameEn?.trim() || line.description?.trim() || `صنف #${itemId}`),
         code: String(item.code || ""),
         detail: `${line.quantity ?? ""} ${line.unitCode ?? ""}`.trim(),
       });
