@@ -6561,6 +6561,22 @@ export async function productionWizardHandler(req: any, res: any) {
           createdBy: req.authUser!.id });
       }
 
+      const [routing] = await tx.select().from(productionRoutingsTable).where(and(
+        eq(productionRoutingsTable.companyId, cid), eq(productionRoutingsTable.productItemId, productItemId),
+        eq(productionRoutingsTable.isActive, true))).orderBy(desc(productionRoutingsTable.updatedAt)).limit(1);
+      const stages = routing ? await tx.select().from(productionRoutingStagesTable)
+        .where(eq(productionRoutingStagesTable.routingId, routing.id)).orderBy(asc(productionRoutingStagesTable.sequence)) : [];
+      const stageCodes = new Set(stages.map((stage: any) => String(stage.code ?? "")).filter(Boolean));
+      const requestedStageAssignments = b.materialStageAssignments &&
+        typeof b.materialStageAssignments === "object" && !Array.isArray(b.materialStageAssignments)
+        ? b.materialStageAssignments as Record<string, unknown>
+        : {};
+      if (resourceCostingVersion >= 1 && (!stages.length || !b.materialStageAssignments)) {
+        throw Object.assign(
+          new Error("مسار المراحل وربط كل خامة بمرحلة مطلوبان لتفعيل تكلفة الموارد"),
+          { status: 422 },
+        );
+      }
       const [tmpl] = await tx.select().from(bomTemplatesTable).where(and(
         eq(bomTemplatesTable.companyId, cid), eq(bomTemplatesTable.productItemId, productItemId),
         eq(bomTemplatesTable.isActive, true))).orderBy(desc(bomTemplatesTable.updatedAt)).limit(1);
@@ -6606,6 +6622,13 @@ export async function productionWizardHandler(req: any, res: any) {
       let rawCost = 0;
       const itemRows: any[] = [];
       for (const line of bomLines) {
+        const assignedStageCode = String(requestedStageAssignments[String(line.id)] ?? "").trim();
+        if (resourceCostingVersion >= 1 && !stageCodes.has(assignedStageCode)) {
+          throw Object.assign(
+            new Error(`حدّد مرحلة صالحة لاستهلاك المادة «${line.description}»`),
+            { status: 422 },
+          );
+        }
         let unitCost = 0;
         if (line.itemId) {
           const [bal] = await tx.select({ avgCost: stockBalanceTable.avgCost }).from(stockBalanceTable)
@@ -6628,11 +6651,14 @@ export async function productionWizardHandler(req: any, res: any) {
         itemRows.push({ kind: "raw", itemId: line.itemId, description: line.description,
           quantity: roundQuantity(usage.baseQuantity, 18, "half_up"),
           unitCode: usage.baseUnitCode, unitCost: String(unitCost),
-          totalCost: String(total), meta: bomLineSnapshotMeta(tmpl, {
+          totalCost: String(total), meta: {
+            ...bomLineSnapshotMeta(tmpl, {
             ...line,
             quantity: usage.usageQuantity,
             unitCode: usage.usageUnitCode,
-          }, recipeOutputQty, usage) });
+            }, recipeOutputQty, usage),
+            productionStageCode: assignedStageCode || null,
+          } });
       }
       const wcLabor = wc && plannedHours > 0 ? plannedHours * num(wc.laborRatePerHour) : 0;
       const wcOverhead = wc && plannedHours > 0 ? plannedHours * num(wc.overheadRatePerHour) : 0;
@@ -6693,11 +6719,6 @@ export async function productionWizardHandler(req: any, res: any) {
       await tx.insert(productionOrderItemsTable).values(itemRows.map((x) => ({ ...x, orderId: order.id })));
       if (snapshots.length) await tx.insert(productionCostAllocationsTable)
         .values(snapshots.map((x) => ({ ...x, orderId: order.id })));
-      const [routing] = await tx.select().from(productionRoutingsTable).where(and(
-        eq(productionRoutingsTable.companyId, cid), eq(productionRoutingsTable.productItemId, productItemId),
-        eq(productionRoutingsTable.isActive, true))).orderBy(desc(productionRoutingsTable.updatedAt)).limit(1);
-      const stages = routing ? await tx.select().from(productionRoutingStagesTable)
-        .where(eq(productionRoutingStagesTable.routingId, routing.id)).orderBy(asc(productionRoutingStagesTable.sequence)) : [];
       if (stages.length) await tx.insert(productionOrderStagesTable).values(stages.map((s: any, i: number) => ({
         orderId: order.id, sequence: s.sequence, code: s.code, nameAr: s.nameAr, nameEn: s.nameEn,
         workCenterId: s.workCenterId, expectedWasteRatio: s.expectedWasteRatio,

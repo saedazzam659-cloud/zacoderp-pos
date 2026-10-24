@@ -67,3 +67,23 @@ test("simple wizard scaling is based on the recipe output quantity", async () =>
     "invalid output quantities must not be replaced with an arbitrary one-unit fallback",
   );
 });
+
+test("v1 material costs require and freeze an explicit route stage assignment", async () => {
+  const [production, wizardUi] = await Promise.all([
+    readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
+    readFile(
+      new URL("../../zatca-invoicing/src/pages/simple-manufacturing/SimpleWizard.tsx", import.meta.url),
+      "utf8",
+    ),
+  ]);
+  const wizardStart = production.indexOf("export async function productionWizardHandler(");
+  const wizardEnd = production.indexOf("\nrouter.post(\"/orders/wizard\"", wizardStart);
+  assert.ok(wizardStart >= 0 && wizardEnd > wizardStart);
+  const handler = production.slice(wizardStart, wizardEnd);
+
+  assert.match(handler, /resourceCostingVersion >= 1 && \(!stages\.length \|\| !b\.materialStageAssignments\)/);
+  assert.match(handler, /stageCodes\.has\(assignedStageCode\)/);
+  assert.match(handler, /productionStageCode: assignedStageCode \|\| null/);
+  assert.match(wizardUi, /materialStageAssignments/);
+  assert.match(wizardUi, /مرحلة استهلاك المادة/);
+});

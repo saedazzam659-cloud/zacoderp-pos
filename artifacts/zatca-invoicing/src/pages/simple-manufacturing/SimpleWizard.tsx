@@ -90,6 +90,7 @@ export function SimpleWizard({
 
   const [bomPreview, setBomPreview] = useState<any>(null);
   const [routingPreview, setRoutingPreview] = useState<any>(null);
+  const [materialStageAssignments, setMaterialStageAssignments] = useState<Record<string, string>>({});
   const [previewLoading, setPreviewLoading] = useState(false);
   const [costSources, setCostSources] = useState<any[]>([]);
   const [allocations, setAllocations] = useState<Record<string, string>>({});
@@ -451,6 +452,24 @@ export function SimpleWizard({
     }
   }, [resourceCostReadiness.loading, resourceCostReadiness.ready]);
 
+  useEffect(() => {
+    const lines = Array.isArray(bomPreview?.lines) ? bomPreview.lines : [];
+    const stages = Array.isArray(routingPreview?.stages) ? routingPreview.stages : [];
+    if (!lines.length || !stages.length) {
+      setMaterialStageAssignments({});
+      return;
+    }
+    const codes = new Set(stages.map((stage: any) => String(stage.code ?? "")).filter(Boolean));
+    setMaterialStageAssignments(current => {
+      const next = Object.fromEntries(lines.map((line: any) => {
+        const key = String(line.id);
+        const saved = String(current[key] ?? "");
+        return [key, codes.has(saved) ? saved : ""];
+      }));
+      return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+    });
+  }, [bomPreview, routingPreview]);
+
   // Fetch the simple-facade envelopes and their details when product changes.
   // The old implementation queried /production and converted errors to null,
   // which made a permission/tenant failure look exactly like "no recipe".
@@ -663,6 +682,28 @@ export function SimpleWizard({
       setTab("materials");
       return;
     }
+    if (resourceCostingEnabled && !routingPreview?.stages?.length) {
+      toast({
+        title: "مسار المراحل مطلوب",
+        description: "اربط كل مادة بمرحلتها حتى تُصرف وتُحمّل على WIP عند إتمام تلك المرحلة.",
+        variant: "destructive",
+      });
+      setTab("routing");
+      return;
+    }
+    if (resourceCostingEnabled && bomPreview.lines.some((line: any) =>
+      !materialStageAssignments[String(line.id)] ||
+      !routingPreview.stages.some((stage: any) =>
+        String(stage.code) === materialStageAssignments[String(line.id)]),
+    )) {
+      toast({
+        title: "مرحلة استهلاك المواد غير محددة",
+        description: "اختر مرحلة صالحة لكل مادة في تبويب المواد.",
+        variant: "destructive",
+      });
+      setTab("materials");
+      return;
+    }
     if (routingUsesStageResources && !resourceCostReadiness.ready) {
       toast({
         title: "تكلفة موارد المراحل غير جاهزة",
@@ -738,6 +779,7 @@ export function SimpleWizard({
       } : {}),
       costPeriod: form.costPeriod,
       templateId: form.templateId ? Number(form.templateId) : null,
+      materialStageAssignments,
       costPolicy: form.costPolicy,
       costConfiguration: costCategories.reduce<Record<string, unknown>>((result, category) => {
         const entry = manualCosts[category];
@@ -1068,7 +1110,7 @@ export function SimpleWizard({
           {tab === "materials" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
               <div className="bg-slate-50 border p-4 rounded-lg text-sm text-slate-700 leading-relaxed">
-                يُحمّل قالب المكونات النشط تلقائياً ويُضرب في كمية الأمر. تكلفة المعاينة من متوسط تكلفة مخزن الخامات، وتُثبّت التكلفة الفعلية عند صرف المواد.
+                يُحمّل قالب المكونات النشط تلقائياً ويُضرب في كمية الأمر. في التكلفة الشاملة، اربط كل خامة بمرحلة استهلاكها ليُحفظ هذا الربط مع لقطة أمر الإنتاج.
               </div>
 
               {!form.productItemId ? (
@@ -1185,7 +1227,7 @@ export function SimpleWizard({
                   <CardContent className="pt-4">
                     <div className="divide-y rounded-lg border">
                       {(bomPreview.lines ?? []).map((l: any) => (
-                        <div key={l.id} className="p-3 flex justify-between items-center text-sm hover:bg-slate-50">
+                        <div key={l.id} className="p-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.8fr)] sm:items-center text-sm hover:bg-slate-50">
                            <span className="font-medium text-slate-700">
                              {l.itemNameAr || l.itemNameEn || l.description || `صنف #${l.itemId}`}
                            </span>
@@ -1201,6 +1243,29 @@ export function SimpleWizard({
                                 {" لكل "}{Number.isFinite(recipeOutputQty) && recipeOutputQty > 0 ? fmtQty(bomPreview.outputQty) : "—"} {recipeOutputUnit}
                             </span>
                           </div>
+                          {resourceCostingEnabled && (
+                            <div className="space-y-1 sm:col-span-2">
+                              <Label className="text-xs">مرحلة استهلاك المادة</Label>
+                              <SearchCombobox
+                                value={materialStageAssignments[String(l.id)] ?? ""}
+                                className="h-9"
+                                placeholder="اختر مرحلة..."
+                                searchPlaceholder="ابحث عن مرحلة..."
+                                items={[
+                                  { value: "", label: "اختر مرحلة..." },
+                                  ...routeStages.map((stage: any) => ({
+                                    value: String(stage.code),
+                                    label: stage.nameAr || stage.code,
+                                  })),
+                                ]}
+                                onValueChange={value => setMaterialStageAssignments(current => ({
+                                  ...current,
+                                  [String(l.id)]: value,
+                                }))}
+                                data-testid={`material-stage-${l.id}`}
+                              />
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
