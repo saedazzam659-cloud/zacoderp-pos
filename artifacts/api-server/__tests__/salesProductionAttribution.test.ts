@@ -5,10 +5,10 @@ import { readFile } from "node:fs/promises";
 test("sales invoice and return posting stamp immutable line attribution", async () => {
   const source = await readFile(new URL("../src/routes/sales.ts", import.meta.url), "utf8");
   const invoiceStart = source.indexOf("async function postSalesInvoiceHandler");
-  const returnStart = source.indexOf('router.patch("/sales-returns/:id/post"');
+  const returnStart = source.search(/router\.patch\(\s*"\/sales-returns\/:id\/post"/);
   assert.ok(invoiceStart > 0 && returnStart > invoiceStart);
   const invoiceHandler = source.slice(invoiceStart, returnStart);
-  const returnEnd = source.indexOf('router.patch("/sales-returns/:id/unpost"', returnStart);
+  const returnEnd = source.search(/router\.patch\(\s*"\/sales-returns\/:id\/unpost"/);
   const returnHandler = source.slice(returnStart, returnEnd > returnStart ? returnEnd : undefined);
   assert.match(invoiceHandler, /sourceLineId:\s*op\.sourceLineId/);
   assert.match(invoiceHandler, /writeSalesLineProductionAttributions\(\s*tx,\s*cid,\s*"sales_invoice"/s);
@@ -36,8 +36,8 @@ test("attribution excludes stale repost snapshots and never silently costs unava
 
 test("sales return no longer references an out-of-scope transaction variable", async () => {
   const source = await readFile(new URL("../src/routes/sales.ts", import.meta.url), "utf8");
-  const returnStart = source.indexOf('router.patch("/sales-returns/:id/post"');
-  const returnEnd = source.indexOf('router.patch("/sales-returns/:id/unpost"', returnStart);
+  const returnStart = source.search(/router\.patch\(\s*"\/sales-returns\/:id\/post"/);
+  const returnEnd = source.search(/router\.patch\(\s*"\/sales-returns\/:id\/unpost"/);
   const handler = source.slice(returnStart, returnEnd > returnStart ? returnEnd : undefined);
   assert.doesNotMatch(handler, /getCustomerAccountId\([^;]+,\s*db\)/);
   assert.match(handler, /getCustomerAccountId\([^;]+,\s*tx\)/);
@@ -50,8 +50,8 @@ test("linked return cap counts free quantities and is rechecked under source-inv
     source.indexOf('router.post("/sales-returns"', source.indexOf("async function validateSalesReturnPayload")),
   );
   const posting = source.slice(
-    source.indexOf('router.patch("/sales-returns/:id/post"'),
-    source.indexOf('router.patch("/sales-returns/:id/unpost"'),
+    source.search(/router\.patch\(\s*"\/sales-returns\/:id\/post"/),
+    source.search(/router\.patch\(\s*"\/sales-returns\/:id\/unpost"/),
   );
   assert.match(validation, /freeQty/);
   assert.match(validation, /multiplyQuantity\(String\(l\.qty[\s\S]*?multiplyQuantity\(String\(l\.freeQty/);

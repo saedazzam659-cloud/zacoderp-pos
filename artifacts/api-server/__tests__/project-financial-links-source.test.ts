@@ -21,7 +21,11 @@ test("source-query contract excludes unposted recognition, VAT, and duplicated a
     assert.ok(sources.includes(`'${type}'`), `${type} source missing`);
   }
   for (const section of ["'purchase_prepaid_adjustment_run'", "'prepaid_adjustment_run'"]) {
-    const branch = sources.slice(sources.indexOf(section), sources.indexOf("UNION ALL", sources.indexOf(section)));
+    const type = section.slice(1, -1);
+    const start = sources.indexOf(`SELECT '${type}'`);
+    assert.ok(start >= 0, `${type} branch missing`);
+    const end = sources.indexOf("UNION ALL", start);
+    const branch = sources.slice(start, end < 0 ? undefined : end);
     assert.match(branch, /je\.status='posted'/);
     assert.match(branch, /alloc\.source_type='journal_expense_line'/);
     assert.match(branch, /GREATEST\(recognized\.expense_base - recognized\.allocated, 0\)/);
@@ -37,8 +41,14 @@ test("source-query contract excludes unposted recognition, VAT, and duplicated a
 });
 
 test("partial, reversed, full and unrelated manual allocations retain exact expense residual", () => {
-  const purchase = sources.slice(sources.indexOf("'purchase_invoice_expense'"), sources.indexOf("UNION ALL", sources.indexOf("'purchase_invoice_expense'")));
-  const voucher = sources.slice(sources.indexOf("'payment_voucher_line'"), sources.indexOf("UNION ALL", sources.indexOf("'payment_voucher_line'")));
+  const branch = (type: string) => {
+    const start = sources.indexOf(`SELECT '${type}'`);
+    assert.ok(start >= 0, `${type} branch missing`);
+    const end = sources.indexOf("UNION ALL", start);
+    return sources.slice(start, end < 0 ? undefined : end);
+  };
+  const purchase = branch("purchase_invoice_expense");
+  const voucher = branch("payment_voucher_line");
   assert.match(sources, /SUM\(allocated_amount\)::numeric amount/);
   assert.match(purchase, /SUM\(jel\.debit::numeric \* COALESCE\(je\.exchange_rate::numeric, 1\) - COALESCE\(jalloc\.amount, 0\)\)/);
   assert.match(purchase, /COALESCE\(palloc\.amount, 0\)/);

@@ -8,7 +8,7 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test __tests__/*.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 __tests__/*.test.ts",
     "test:e2e": "playwright test --config=playwright.config.ts",
     "visual:simple-manufacturing": "node --import tsx scripts/simple-manufacturing-visual.ts"
   },

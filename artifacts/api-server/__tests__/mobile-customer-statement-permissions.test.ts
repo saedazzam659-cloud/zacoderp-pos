@@ -53,7 +53,7 @@ test("statement response exposes only tenant- and branch-scoped linked account h
   assert.match(helper, /eq\(accountsTable\.companyId, cid\)/);
   assert.match(helper, /eq\(customersTable\.companyId, cid\)/);
   assert.match(helper, /eq\(customersTable\.id, customerId\)/);
-  assert.match(helper, /branchScopeSpread\(req, customersTable\.branchId\)/);
+  assert.match(helper, /branchScopeSpread\(req, customersTable\.branchId, req\.query\.branchId\)/);
   assert.match(helper, /return account \?\? null/);
   assert.equal((routes.match(/res\.json\(\{ opening, lines, account: await customerStatementAccount\(req, cid, ccid\) \}\)/g) ?? []).length, 2);
   assert.equal((routes.match(/res\.json\(\{ opening: 0, lines: \[\], excluded: true/g) ?? []).length, 2);

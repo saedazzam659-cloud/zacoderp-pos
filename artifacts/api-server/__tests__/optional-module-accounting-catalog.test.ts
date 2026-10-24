@@ -40,7 +40,7 @@ test("optional codes have valid typed parents and never collide with commercial 
 
 test("only explicit true grants optional module defaults", () => {
   assert.deepEqual(accountingModulesFromMenu('{"contracting":false,"production":1,"simple_manufacturing":true}'),
-    { contracting: false, production: false, simple_manufacturing: true });
+    { pos: false, contracting: false, production: false, simple_manufacturing: true, school: false });
   assert.deepEqual(accountingModulesFromMenu(null), {});
 });
 

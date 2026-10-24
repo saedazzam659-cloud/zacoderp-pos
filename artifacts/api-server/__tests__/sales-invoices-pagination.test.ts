@@ -10,10 +10,12 @@ import {
   companiesTable,
   customersTable,
   db,
+  itemsTable,
   pool,
   receiptVouchersTable,
   salesInvoicesTable,
   salesQuotationsTable,
+  unitsTable,
   userBranchesTable,
   usersTable,
 } from "@workspace/db";
@@ -31,6 +33,8 @@ let branch1Id = 0;
 let branch2Id = 0;
 let customer1Id = 0;
 let customer2Id = 0;
+let unitId = 0;
+let itemId = 0;
 let userId = 0;
 let restrictedUserId = 0;
 let restrictedToken = "";
@@ -97,6 +101,15 @@ before(async () => {
   customer1Id = customers[0].id;
   customer2Id = customers[1].id;
 
+  const [unit] = await db.insert(unitsTable).values({
+    companyId, code: `${tag}-UNIT`, nameAr: "وحدة", nameEn: "Unit",
+  }).returning({ id: unitsTable.id });
+  unitId = unit.id;
+  const [item] = await db.insert(itemsTable).values({
+    companyId, unitId, code: `${tag}-ITEM`, nameAr: `${tag} خدمة`, itemType: "service",
+  }).returning({ id: itemsTable.id });
+  itemId = item.id;
+
   const [user] = await db.insert(usersTable).values({
     username: `${tag}_sa`,
     passwordHash: "not-used",
@@ -142,6 +155,8 @@ after(async () => {
     if (quotationIds.length) {
       await db.delete(salesQuotationsTable).where(inArray(salesQuotationsTable.id, quotationIds));
     }
+    if (itemId) await db.delete(itemsTable).where(eq(itemsTable.id, itemId));
+    if (unitId) await db.delete(unitsTable).where(eq(unitsTable.id, unitId));
     if (customer1Id || customer2Id) {
       await db.delete(customersTable).where(inArray(customersTable.id, [customer1Id, customer2Id].filter(Boolean)));
     }
@@ -257,7 +272,12 @@ test("sales invoice create still succeeds through the combined quota query", asy
       vatAmount: "0",
       discountAmount: "0",
       totalAmount: "0",
-      lines: [],
+       lines: [{
+         itemId, itemName: `${tag} خدمة`, itemCode: `${tag}-ITEM`,
+         unitId, unit: "وحدة", qty: "1", freeQty: "0",
+         unitPrice: "0", discount: "0", discountAmount: "0",
+         vatRate: "0", lineTotal: "0",
+       }],
     }),
   });
   const body = await response.json() as { id?: number; status?: string; error?: string };

@@ -42,7 +42,7 @@ test("credit sales repairs a restored customer ledger inside the posting transac
 });
 
 test("sales creation tolerates stale restored counters and account overrides", () => {
-  assert.match(salesRoute, /for \(let skipped = 0; fromSeq != null; skipped \+= 1\)/);
+  assert.match(salesRoute, /for \(let skipped = 0; req\.body\?\.saveAsDraft !== true && fromSeq != null; skipped \+= 1\)/);
   assert.match(salesRoute, /eq\(salesInvoicesTable\.docNumber, fromSeq\)/);
   assert.match(salesRoute, /fromSeq = await allocateSequenceNumber\(\)/);
   assert.match(salesRoute, /validAccountIds/);
