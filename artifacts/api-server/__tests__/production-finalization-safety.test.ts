@@ -70,3 +70,21 @@ test("status rejection is transaction-local; balanced zero-net source transfers 
   assert.match(reconciliation, /if \(lines\.length > 0\) \{[\s\S]*?if \(Math\.abs\(net\) >= 0\.005\)/);
   assert.match(reconciliation, /journalId = await createJournalEntry\([\s\S]*?dx: tx/);
 });
+
+test("stage-posted source costs are not capitalized twice and are reversed with the order", async () => {
+  const source = await readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8");
+  const reconciliation = source.slice(
+    source.indexOf("async function reconcileFinalStageDrivers"),
+    source.indexOf("function productionStatusPermission"),
+  );
+  const reversal = source.slice(
+    source.indexOf("async function reverseStageResourceAccrualPostings"),
+    source.indexOf("async function reverseStageMaterialIssuePostings"),
+  );
+  assert.match(source, /stage_resource_sources_deferred/);
+  assert.match(source, /stage_linked_resource_cost_posted/);
+  assert.match(reconciliation, /stagePostedByAllocation/);
+  assert.match(reconciliation, /stageLinkedResourcePostingDelta\(/);
+  assert.match(reversal, /"stage_linked_resource_cost_posted"/);
+  assert.match(reversal, /"stage_resource_accrual_reversed"/);
+});

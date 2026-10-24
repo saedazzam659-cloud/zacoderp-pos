@@ -2,6 +2,7 @@ export type ResourceCostAllocation = {
   id: number;
   sourceType: string;
   sourceRecordId: number;
+  sourceAmount?: unknown;
   snapshotMeta?: Record<string, unknown> | null;
 };
 
@@ -100,6 +101,21 @@ export function provisionalResourceReceiptBalance(materialWip: number, resourceA
     throw Object.assign(new Error("رصيد WIP أو استحقاق المورد غير صالح"), { status: 422 });
   }
   return Number((materialWip + resourceAccrual).toFixed(2));
+}
+
+/** Finalize the source driver without booking stage-posted cost into WIP twice. */
+export function stageLinkedResourcePostingDelta(
+  targetAmount: number,
+  stagedPostedAmount: number,
+  baseAllocatedAmount: number,
+  deferredToStages: boolean,
+) {
+  if (![targetAmount, stagedPostedAmount, baseAllocatedAmount]
+    .every((value) => Number.isFinite(value) && value >= 0)) {
+    throw Object.assign(new Error("مبالغ تسوية مورد المرحلة غير صالحة"), { status: 422 });
+  }
+  const alreadyInWip = deferredToStages ? stagedPostedAmount : baseAllocatedAmount;
+  return Number((targetAmount - alreadyInWip).toFixed(2));
 }
 
 /** Split an actual-vs-accrued utility delta by the immutable original receipt. */

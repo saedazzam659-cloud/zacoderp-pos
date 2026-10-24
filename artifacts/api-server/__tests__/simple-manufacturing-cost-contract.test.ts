@@ -85,12 +85,13 @@ test("v1 linked payroll is deferred to stage completion without a second driver 
     new URL("../src/routes/production.ts", import.meta.url),
     "utf8",
   );
-  assert.match(production, /const deferStagePayroll = Number\(order\.resourceCostingVersion\) >= 1/);
-  assert.match(production, /frozenCosts\.filter\(\(row\) => row\.sourceType !== "payroll"\)/);
+  assert.match(production, /const deferredStageSourceAllocationIds = new Set<number>\(\)/);
+  assert.match(production, /stage_resource_sources_deferred/);
+  assert.match(production, /fixed_asset_depreciation/);
   assert.match(production, /async function postStageLinkedSourceCosts/);
   assert.match(production, /stage_linked_resource_cost_posted/);
   assert.match(production, /stagePostedByAllocation/);
-  assert.match(production, /postingDelta: stagedPosted == null/);
+  assert.match(production, /stageLinkedResourcePostingDelta\([\s\S]*?deferredStageAllocationIds\.has\(Number\(allocation\.id\)\)/);
 });
 
 test("v1 material costs require and freeze an explicit route stage assignment", async () => {

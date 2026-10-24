@@ -15,6 +15,7 @@ import {
   provisionalResourceReceiptBalance,
   requireSingleMachineElectricityAllocation,
   summarizeStageResourceCosts,
+  stageLinkedResourcePostingDelta,
 } from "../lib/resourceCosting.js";
 import {
   productionOrdersTable,
@@ -7410,6 +7411,21 @@ async function reconcileFinalStageDrivers(
       eq(productionEventsTable.eventType, "stage_linked_resource_cost_posted"),
     ))
     : [];
+  const deferredSourceEvents = Number(order.resourceCostingVersion) >= 1
+    ? await tx.select({ payload: productionEventsTable.payload }).from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, cid),
+      eq(productionEventsTable.orderId, order.id),
+      eq(productionEventsTable.eventType, "stage_resource_sources_deferred"),
+    ))
+    : [];
+  const deferredStageAllocationIds = new Set<number>();
+  for (const event of deferredSourceEvents) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    for (const value of Array.isArray(payload.sourceAllocationIds) ? payload.sourceAllocationIds : []) {
+      const allocationId = Number(value);
+      if (Number.isInteger(allocationId) && allocationId > 0) deferredStageAllocationIds.add(allocationId);
+    }
+  }
   const stagePostedByAllocation = new Map<number, number>();
   for (const event of linkedPostingEvents) {
     const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -7468,9 +7484,12 @@ async function reconcileFinalStageDrivers(
     const delta = Number((target - num(allocation.allocatedAmount)).toFixed(2));
     const stagedPosted = stagePostedByAllocation.get(Number(allocation.id));
     rows.push({ allocation, meta, method, planned, denominator, actual, target, delta,
-      postingDelta: stagedPosted == null
-        ? delta
-        : Number((target - stagedPosted).toFixed(2)) });
+      postingDelta: stageLinkedResourcePostingDelta(
+        target,
+        stagedPosted ?? 0,
+        num(allocation.allocatedAmount),
+        deferredStageAllocationIds.has(Number(allocation.id)),
+      ) });
   }
   if (!rows.length) return 0;
   // Company-wide source capacity includes every branch's original allocations
@@ -7804,20 +7823,88 @@ export async function productionStatusHandler(req: any, res: any) {
       if (indirectSnapshots.length === 0 && manualIndirect === 0 && overhead > 0 && !order.overheadAccountId) {
         res.status(400).json({ error: "حساب التكاليف الصناعية غير المباشرة مطلوب قبل بدء الإنتاج" }); return;
       }
-      let sourceCredits: { accountId: number; amount: number }[];
-       const deferStagePayroll = Number(order.resourceCostingVersion) >= 1 && payrollSnapshots.length > 0;
-       if (deferStagePayroll) {
-         const stages = await tx.select({ resourceMode: productionOrderStagesTable.resourceMode })
-           .from(productionOrderStagesTable)
-           .where(eq(productionOrderStagesTable.orderId, order.id));
-         if (!stages.some((stage: any) => ["labor", "both"].includes(String(stage.resourceMode ?? "labor")))) {
+       let sourceCredits: { accountId: number; amount: number }[];
+       const deferredStageSourceAllocationIds = new Set<number>();
+       const deferStageResources = Number(order.resourceCostingVersion) >= 1;
+       const stagesForStageCosts = deferStageResources
+         ? await tx.select({
+           resourceMode: productionOrderStagesTable.resourceMode,
+           resourceId: productionOrderStagesTable.resourceId,
+         }).from(productionOrderStagesTable)
+           .where(eq(productionOrderStagesTable.orderId, order.id))
+         : [];
+       if (deferStageResources && payrollSnapshots.length) {
+         if (!stagesForStageCosts.some((stage: any) =>
+           ["labor", "both"].includes(String(stage.resourceMode ?? "labor")))) {
            res.status(409).json({ error: "مصدر الرواتب مرتبط بالأمر لكن لا توجد مرحلة موارد عمالة لترحيله عند اكتمالها." });
            return;
          }
+         payrollSnapshots.forEach((row) => deferredStageSourceAllocationIds.add(Number(row.id)));
+       }
+       const depreciationSnapshots = indirectSnapshots.filter(
+         (row) => row.sourceType === "fixed_asset_depreciation",
+       );
+       const linkedElectricitySnapshots = manufacturingSnapshots.filter(isMachineElectricityAllocation);
+       for (const allocation of linkedElectricitySnapshots) {
+         const meta = (allocation.snapshotMeta ?? {}) as Record<string, unknown>;
+         const method = String(meta.formulaMethod ?? "");
+         const denominator = num(meta.formulaDenominator ?? meta.denominatorOrRate);
+         if (!["operating_hours", "fixed_hourly_rate"].includes(method) || !(denominator > 0)) {
+           res.status(422).json({
+             error: "مصدر كهرباء الآلة يحتاج محرك ساعات آلية ومقام توزيع صالحاً قبل بدء الأمر.",
+           });
+           return;
+         }
+       }
+       if (deferStageResources &&
+           (depreciationSnapshots.length > 0 || linkedElectricitySnapshots.length > 0)) {
+         const machineResourceIds = [...new Set(stagesForStageCosts
+           .filter((stage: any) => ["machine", "both"].includes(String(stage.resourceMode ?? "labor")))
+           .map((stage: any) => Number(stage.resourceId))
+           .filter((id: number) => Number.isInteger(id) && id > 0))];
+         const machineResources = machineResourceIds.length
+           ? await tx.select({
+             id: productionResourcesTable.id,
+             fixedAssetId: productionResourcesTable.fixedAssetId,
+           electricityEnabled: productionResourcesTable.electricityEnabled,
+             meta: productionResourcesTable.meta,
+           }).from(productionResourcesTable).where(and(
+             eq(productionResourcesTable.companyId, cid),
+             inArray(productionResourcesTable.id, machineResourceIds),
+           ))
+           : [];
+         const routedAssetIds = new Set(machineResources.map((resource: any) =>
+           Number(resource.fixedAssetId ?? resourceRelationshipId(resource.meta, "fixedAssetId")),
+         ).filter((id: number) => Number.isInteger(id) && id > 0));
+         const depreciationRunIds = depreciationSnapshots.map((row) => Number(row.sourceRecordId))
+           .filter((id) => Number.isInteger(id) && id > 0);
+         const depreciationRuns = depreciationRunIds.length
+           ? await tx.select({
+             id: faDepreciationRunsTable.id,
+             assetId: faDepreciationRunsTable.assetId,
+           }).from(faDepreciationRunsTable).where(and(
+             eq(faDepreciationRunsTable.companyId, cid),
+             inArray(faDepreciationRunsTable.id, depreciationRunIds),
+           ))
+           : [];
+         const assetByRunId = new Map(depreciationRuns.map((run: any) =>
+           [Number(run.id), Number(run.assetId)],
+         ));
+         for (const allocation of depreciationSnapshots) {
+           const assetId = assetByRunId.get(Number(allocation.sourceRecordId));
+           if (assetId && routedAssetIds.has(assetId)) {
+             deferredStageSourceAllocationIds.add(Number(allocation.id));
+           }
+         }
+         if (machineResources.some((resource: any) => resource.electricityEnabled)) {
+           for (const allocation of linkedElectricitySnapshots) {
+             deferredStageSourceAllocationIds.add(Number(allocation.id));
+           }
+         }
        }
       try {
-         sourceCredits = sourceReclassificationLines(deferStagePayroll
-           ? frozenCosts.filter((row) => row.sourceType !== "payroll")
+          sourceCredits = sourceReclassificationLines(deferredStageSourceAllocationIds.size
+            ? frozenCosts.filter((row) => !deferredStageSourceAllocationIds.has(Number(row.id)))
            : frozenCosts);
       } catch {
         res.status(409).json({ error: "تعذر تحديد حساب المصروف الأصلي لأحد مصادر التكلفة. أنشئ لقطة حديثة بعد مراجعة القيد المصدر." });
@@ -8005,8 +8092,10 @@ export async function productionStatusHandler(req: any, res: any) {
       }
 
       const internalTransportCost = transportSnapshots.reduce((sum, x) => sum + num(x.allocatedAmount), 0);
-       const deferredStagePayrollAmount = deferStagePayroll ? frozenLabor : 0;
-       const wipDr = rawTotal + labor + overhead + internalTransportCost - deferredStagePayrollAmount;
+       const deferredStageSourceAmount = frozenCosts.filter((row) =>
+         deferredStageSourceAllocationIds.has(Number(row.id)),
+       ).reduce((sum, row) => sum + num(row.allocatedAmount), 0);
+       const wipDr = rawTotal + labor + overhead + internalTransportCost - deferredStageSourceAmount;
 
       // d) Issue JE: source snapshots reclassify the debit accounts of their
       // already-posted journals (DR WIP / CR original expense). Only the
@@ -8069,6 +8158,12 @@ export async function productionStatusHandler(req: any, res: any) {
       updates.rawMaterialsCost = String(rawTotal.toFixed(2));
       updates.actualCost = String(wipDr.toFixed(2));
       updates.issueJournalEntryId = issueJournalId;
+      if (deferredStageSourceAllocationIds.size) {
+        await writeEvent(cid, id, "stage_resource_sources_deferred", {
+          sourceAllocationIds: [...deferredStageSourceAllocationIds],
+          deferredAmount: Number(deferredStageSourceAmount.toFixed(2)),
+        }, req.authUser!.id, false, tx);
+      }
       if (!order.actualStartAt) updates.actualStartAt = new Date();
 
       // ─── PHASE D: generate batchNumber + qrToken when issuing ──────────────
@@ -10874,6 +10969,7 @@ async function freezeStageResourceCosts(
         id: productionCostAllocationsTable.id,
         sourceType: productionCostAllocationsTable.sourceType,
         sourceRecordId: productionCostAllocationsTable.sourceRecordId,
+        sourceAmount: productionCostAllocationsTable.sourceAmount,
         snapshotMeta: productionCostAllocationsTable.snapshotMeta,
       }).from(productionCostAllocationsTable).where(and(
         eq(productionCostAllocationsTable.companyId, cid),
@@ -10895,8 +10991,31 @@ async function freezeStageResourceCosts(
         ? requireSingleMachineElectricityAllocation(electricityAllocations)
         : null;
       const estimate = machineElectricityEstimate(kw, hours, tariff);
-      // A source-linked allocation is already reclassified at issue and later
-      // reconciled by its driver. A missing invoice is different: freeze an
+      let electricityAmount = estimate.amount;
+      let electricityFormulaMethod: string | null = null;
+      let electricityFormulaDenominator: number | null = null;
+      if (electricityAllocation) {
+        const sourceMeta = (electricityAllocation.snapshotMeta ?? {}) as Record<string, unknown>;
+        electricityFormulaMethod = String(sourceMeta.formulaMethod ?? "");
+        electricityFormulaDenominator = num(
+          sourceMeta.formulaDenominator ?? sourceMeta.denominatorOrRate,
+        );
+        if (!["operating_hours", "fixed_hourly_rate"].includes(electricityFormulaMethod) ||
+            !(electricityFormulaDenominator > 0)) {
+          throw Object.assign(
+            new Error("توزيع فاتورة كهرباء الآلة لا يملك محرك ساعات ومقاماً صالحاً للمرحلة"),
+            { status: 422 },
+          );
+        }
+        electricityAmount = calculateFormulaAllocation(
+          electricityFormulaMethod as "operating_hours" | "fixed_hourly_rate",
+          num(electricityAllocation.sourceAmount),
+          hours,
+          electricityFormulaDenominator,
+        );
+      }
+      // A source-linked allocation is valued by its frozen machine-hour formula
+      // and posted with this stage. A missing invoice is different: freeze an
       // explicit provisional liability account now so the completion receipt
       // can capitalize the tariff estimate without inventing a zero-cost path.
       if (!electricityAllocation && !order.overheadAccountId) {
@@ -10909,12 +11028,15 @@ async function freezeStageResourceCosts(
         companyId: cid, orderId: order.id, stageId: stage.id, component: "electricity",
         sourceType: electricityAllocation?.sourceType ?? "pending_machine_electricity",
         sourceRecordId: electricityAllocation?.sourceRecordId ?? machine.id,
-        amount: String(estimate.amount),
+        amount: String(electricityAmount),
         snapshot: {
           pendingUtilitySettlement: electricityAllocation == null,
           sourceAllocationId: electricityAllocation?.id ?? null,
           sourceType: electricityAllocation?.sourceType ?? null,
           sourceRecordId: electricityAllocation?.sourceRecordId ?? null,
+          sourceAmount: electricityAllocation ? num(electricityAllocation.sourceAmount) : null,
+          formulaMethod: electricityFormulaMethod,
+          formulaDenominator: electricityFormulaDenominator,
           hours,
           kw,
           kwh: estimate.kwh,
@@ -11059,12 +11181,30 @@ async function postStageLinkedSourceCosts(
     eq(productionStageResourceCostsTable.companyId, cid),
     eq(productionStageResourceCostsTable.orderId, order.id),
     eq(productionStageResourceCostsTable.stageId, stage.id),
-    eq(productionStageResourceCostsTable.sourceType, "payroll"),
+    inArray(productionStageResourceCostsTable.sourceType, [
+      "payroll", "fixed_asset_depreciation", "purchase_invoice",
+    ]),
   ));
+  const deferredSourceEvents = await tx.select({ payload: productionEventsTable.payload })
+    .from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, cid),
+      eq(productionEventsTable.orderId, order.id),
+      eq(productionEventsTable.eventType, "stage_resource_sources_deferred"),
+    ));
+  const deferredAllocationIds = new Set<number>();
+  for (const event of deferredSourceEvents) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    for (const value of Array.isArray(payload.sourceAllocationIds) ? payload.sourceAllocationIds : []) {
+      const id = Number(value);
+      if (Number.isInteger(id) && id > 0) deferredAllocationIds.add(id);
+    }
+  }
   const rows = evidence.filter((row: any) => {
     const snapshot = (row.snapshot ?? {}) as Record<string, unknown>;
     return Number.isInteger(Number(snapshot.sourceAllocationId)) &&
-      Number(snapshot.sourceAllocationId) > 0 && num(row.amount) > 0;
+      Number(snapshot.sourceAllocationId) > 0 &&
+      deferredAllocationIds.has(Number(snapshot.sourceAllocationId)) &&
+      num(row.amount) > 0;
   });
   if (!rows.length) return { journalEntryId: null as number | null, amount: 0 };
   const alreadyPostedEvents = await tx.select({ payload: productionEventsTable.payload })
@@ -11083,7 +11223,7 @@ async function postStageLinkedSourceCosts(
   }
   const unposted = rows.filter((row: any) => !alreadyPosted.has(Number(row.id)));
   if (!unposted.length) return { journalEntryId: null as number | null, amount: 0 };
-  const allocationIds = [...new Set(unposted.map((row: any) =>
+  const allocationIds: number[] = [...new Set<number>(unposted.map((row: any) =>
     Number((row.snapshot as Record<string, unknown>).sourceAllocationId),
   ))];
   const allocations = await tx.select({
@@ -11101,7 +11241,19 @@ async function postStageLinkedSourceCosts(
   let amount = 0;
   const credits = new Map<number, number>();
   const sourceAllocations: Array<{ sourceAllocationId: number; amount: number }> = [];
-  for (const row of unposted) {
+  const rowsToPost = unposted.filter((row: any) => {
+    if (row.sourceType !== "purchase_invoice") return true;
+    const sourceAllocationId = Number((row.snapshot as Record<string, unknown>).sourceAllocationId);
+    const allocation = allocationById.get(sourceAllocationId);
+    return allocation && isMachineElectricityAllocation({
+      id: sourceAllocationId,
+      sourceType: row.sourceType,
+      sourceRecordId: Number((row.snapshot as Record<string, unknown>).sourceRecordId),
+      snapshotMeta: allocation.snapshotMeta as Record<string, unknown> | null,
+    });
+  });
+  if (!rowsToPost.length) return { journalEntryId: null as number | null, amount: 0 };
+  for (const row of rowsToPost) {
     const snapshot = row.snapshot as Record<string, unknown>;
     const sourceAllocationId = Number(snapshot.sourceAllocationId);
     const sourceAllocation = allocationById.get(sourceAllocationId);

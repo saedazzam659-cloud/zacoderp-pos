@@ -9,6 +9,7 @@ import {
   provisionalResourceReceiptBalance,
   requireSingleMachineElectricityAllocation,
   settleProvisionalResourceCost,
+  stageLinkedResourcePostingDelta,
   splitProvisionalResourceSettlement,
   summarizeStageResourceCosts,
 } from "../src/lib/resourceCosting.js";
@@ -65,6 +66,14 @@ test("actual utility settlement clears provisional accrual and capitalizes only 
     actualAmount: 450, accruedAmount: 500, deltaAmount: -50,
   });
   assert.throws(() => settleProvisionalResourceCost(550, -1), /غير صالح/);
+});
+
+test("final source reconciliation books only the amount not already posted at stages", () => {
+  assert.equal(stageLinkedResourcePostingDelta(75, 70, 68, true), 5);
+  assert.equal(stageLinkedResourcePostingDelta(75, 0, 68, true), 75);
+  assert.equal(stageLinkedResourcePostingDelta(75, 70, 68, false), 7);
+  assert.equal(stageLinkedResourcePostingDelta(65, 70, 68, true), -5);
+  assert.throws(() => stageLinkedResourcePostingDelta(75, -1, 68, true), /غير صالحة/);
 });
 
 test("actual payroll/depreciation settling during WIP clears only a posted provisional accrual", () => {
@@ -128,8 +137,10 @@ test("v1 route freezes source-linked kWh evidence and provisional pending utilit
   const freeze = source.slice(freezeStart);
   assert.match(freeze, /requireSingleMachineElectricityAllocation/);
   assert.match(freeze, /machineElectricityEstimate\(kw, hours, tariff\)/);
+  assert.match(freeze, /calculateFormulaAllocation\(\s*electricityFormulaMethod/);
   assert.match(freeze, /pendingUtilitySettlement: electricityAllocation == null/);
   assert.match(freeze, /sourceAllocationId: electricityAllocation\?\.id \?\? null/);
+  assert.match(freeze, /sourceAmount: electricityAllocation \? num\(electricityAllocation\.sourceAmount\) : null/);
   assert.match(freeze, /provisionalAccrualAccountId: electricityAllocation \? null : order\.overheadAccountId/);
   assert.match(freeze, /provisional_wip_accrual_cleared_by_actual_utility_source/);
   assert.match(source, /async function postStagePendingSourceAccruals/);
