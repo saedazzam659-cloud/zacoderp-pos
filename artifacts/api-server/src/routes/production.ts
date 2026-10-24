@@ -7798,10 +7798,12 @@ export async function productionStatusHandler(req: any, res: any) {
             eq(productionOrderItemsTable.kind, "raw"),
           ),
         );
+      const deferRawIssueToStages = Number(order.resourceCostingVersion) >= 1;
       const issuableLines = rawLines.filter(
-        (l) => l.itemId && Number(l.quantity) > 0,
+        (l) => l.itemId && Number(l.quantity) > 0 && !deferRawIssueToStages,
       );
-      if (issuableLines.length === 0) {
+      if (issuableLines.length === 0 &&
+          !(deferRawIssueToStages && rawLines.some((line) => line.itemId && Number(line.quantity) > 0))) {
         res.status(400).json({
           error: "أمر الإنتاج لا يحتوي على سطور خامات قابلة للصرف (يجب ربطها بأصناف من المخزون)",
         });
@@ -7970,7 +7972,10 @@ export async function productionStatusHandler(req: any, res: any) {
       // d) Issue JE: source snapshots reclassify the debit accounts of their
       // already-posted journals (DR WIP / CR original expense). Only the
       // legacy work-centre fallback uses the configured applied-cost accounts.
-      const issueJournalId = await createJournalEntry({
+      const hasIssueValue = wipDr > 0.005 ||
+        sourceCredits.some((line) => line.amount > 0.005) ||
+        manualEntries.some((entry) => entry.amount > 0.005);
+      const issueJournalId = hasIssueValue ? await createJournalEntry({
         companyId: cid,
         audit: { req },
         branchId: order.branchId,
@@ -8020,7 +8025,7 @@ export async function productionStatusHandler(req: any, res: any) {
           } satisfies JLine)),
         ],
         dx: tx,
-      });
+      }) : null;
 
       updates.rawMaterialsCost = String(rawTotal.toFixed(2));
       updates.actualCost = String(wipDr.toFixed(2));
@@ -8601,7 +8606,7 @@ export async function productionStatusHandler(req: any, res: any) {
         eq(stockLedgerTable.txType, "production_issue"),
         sql`${stockLedgerTable.qty} < 0`,
       ));
-      if (!rawIssueRows.length) {
+      if (!rawIssueRows.length && Number(order.resourceCostingVersion) < 1) {
         res.status(409).json({ error: "لا يمكن العكس: لقطة صرف الخامات الأصلية غير موجودة" });
         return;
       }
@@ -8656,6 +8661,7 @@ export async function productionStatusHandler(req: any, res: any) {
         lines: issueReversalLines, dx: tx,
       });
       await reverseStageResourceAccrualPostings(tx, cid, order, todayIso, req);
+      await reverseStageMaterialIssuePostings(tx, cid, order, todayIso, req);
       // Driver reconciliations are separate immutable delta JEs. Reverse
       // their exact posted lines as part of an order reversal so their source
       // capacity is economically released without touching base allocations.
@@ -8720,7 +8726,7 @@ export async function productionStatusHandler(req: any, res: any) {
     // cancelled per the transition map anyway).
     if (
       target === "cancelled" &&
-      order.issueJournalEntryId &&
+      (order.issueJournalEntryId || Number(order.resourceCostingVersion) >= 1) &&
       !order.receiptJournalEntryId
     ) {
       // Restore raw materials we previously consumed.
@@ -8728,36 +8734,41 @@ export async function productionStatusHandler(req: any, res: any) {
       // posting derived from today's settings. In particular, a manual
       // counterpart account may have been deactivated since the issue; an
       // exact inverse must still be allowed to reference that account.
-      const [originalIssueJournal] = await tx.select({
-        id: journalEntriesTable.id,
-        status: journalEntriesTable.status,
-      }).from(journalEntriesTable).where(and(
-        eq(journalEntriesTable.id, order.issueJournalEntryId),
-        eq(journalEntriesTable.companyId, cid),
-      )).limit(1);
-      if (!originalIssueJournal) {
-        res.status(409).json({ error: "لا يمكن الإلغاء: قيد صرف الخامات الأصلي غير موجود" });
-        return;
-      }
-      const originalIssueLines = await tx.select({
-        accountId: journalEntryLinesTable.accountId,
-        debit: journalEntryLinesTable.debit,
-        credit: journalEntryLinesTable.credit,
-        description: journalEntryLinesTable.description,
-        costCenter: journalEntryLinesTable.costCenter,
-      }).from(journalEntryLinesTable).where(eq(
-        journalEntryLinesTable.entryId, originalIssueJournal.id,
-      ));
-      const issueReversalLines: JLine[] = originalIssueLines.map((line) => ({
-        accountId: line.accountId,
-        debit: num(line.credit),
-        credit: num(line.debit),
-        description: `عكس قيد الصرف الأصلي: ${line.description ?? order.orderNumber}`,
-        costCenter: line.costCenter,
-      }));
-      if (issueReversalLines.length < 2) {
-        res.status(409).json({ error: "لا يمكن الإلغاء: سطور قيد صرف الخامات الأصلي غير مكتملة" });
-        return;
+      let originalIssueJournal: { id: number; status: string } | null = null;
+      let issueReversalLines: JLine[] = [];
+      if (order.issueJournalEntryId) {
+        const [original] = await tx.select({
+          id: journalEntriesTable.id,
+          status: journalEntriesTable.status,
+        }).from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, order.issueJournalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+        )).limit(1);
+        if (!original) {
+          res.status(409).json({ error: "لا يمكن الإلغاء: قيد صرف الخامات الأصلي غير موجود" });
+          return;
+        }
+        originalIssueJournal = original;
+        const originalIssueLines = await tx.select({
+          accountId: journalEntryLinesTable.accountId,
+          debit: journalEntryLinesTable.debit,
+          credit: journalEntryLinesTable.credit,
+          description: journalEntryLinesTable.description,
+          costCenter: journalEntryLinesTable.costCenter,
+        }).from(journalEntryLinesTable).where(eq(
+          journalEntryLinesTable.entryId, original.id,
+        ));
+        issueReversalLines = originalIssueLines.map((line) => ({
+          accountId: line.accountId,
+          debit: num(line.credit),
+          credit: num(line.debit),
+          description: `عكس قيد الصرف الأصلي: ${line.description ?? order.orderNumber}`,
+          costCenter: line.costCenter,
+        }));
+        if (issueReversalLines.length < 2) {
+          res.status(409).json({ error: "لا يمكن الإلغاء: سطور قيد صرف الخامات الأصلي غير مكتملة" });
+          return;
+        }
       }
       // Restore the exact issue snapshot, including FIFO/FEFO batch costs.
       // Re-reading the current WAC would make the stock reversal disagree
@@ -8777,7 +8788,7 @@ export async function productionStatusHandler(req: any, res: any) {
         eq(stockLedgerTable.txType, "production_issue"),
         sql`${stockLedgerTable.qty} < 0`,
       ));
-      if (!rawIssueRows.length) {
+      if (!rawIssueRows.length && Number(order.resourceCostingVersion) < 1) {
         res.status(409).json({ error: "لا يمكن الإلغاء: لقطة صرف الخامات الأصلية غير موجودة" });
         return;
       }
@@ -8812,20 +8823,23 @@ export async function productionStatusHandler(req: any, res: any) {
       }
       // Reverse the exact issue lines, preserving the original journal's
       // posting state and all source/manual counterpart lines.
-      await createJournalEntry({
-        companyId: cid,
-        audit: { req },
-        branchId: order.branchId,
-        date: todayIso,
-        docNumber: `${order.orderNumber}-REV`,
-        entryType: "production_issue_reversal",
-        status: originalIssueJournal.status,
-        costCenter: order.costCenter ?? null,
-        description: `عكس إذن صرف خامات لأمر إنتاج ملغى ${order.orderNumber}`,
-        lines: issueReversalLines,
-        dx: tx,
-      });
+      if (originalIssueJournal) {
+        await createJournalEntry({
+          companyId: cid,
+          audit: { req },
+          branchId: order.branchId,
+          date: todayIso,
+          docNumber: `${order.orderNumber}-REV`,
+          entryType: "production_issue_reversal",
+          status: originalIssueJournal.status,
+          costCenter: order.costCenter ?? null,
+          description: `عكس إذن صرف خامات لأمر إنتاج ملغى ${order.orderNumber}`,
+          lines: issueReversalLines,
+          dx: tx,
+        });
+      }
       await reverseStageResourceAccrualPostings(tx, cid, order, todayIso, req);
+      await reverseStageMaterialIssuePostings(tx, cid, order, todayIso, req);
       // A transport linked after issue owns a separate WIP delta.  The normal
       // issue reversal only covers sources present at issue time, so invert
       // late deltas under this same order lock/transaction as well.
@@ -10975,6 +10989,142 @@ async function postStagePendingSourceAccruals(
     )).for("update").limit(1);
   await tx.update(productionOrdersTable).set({
     actualCost: String((num(freshOrder?.actualCost) + amount).toFixed(2)),
+    issueJournalEntryId: freshOrder?.issueJournalEntryId ?? journalEntryId,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(productionOrdersTable.companyId, cid),
+    eq(productionOrdersTable.id, order.id),
+  ));
+  return { journalEntryId, amount };
+}
+
+async function issueStageRawMaterials(
+  tx: any, cid: number, order: any, stage: any, actorId: number, req: any,
+) {
+  if (Number(order.resourceCostingVersion) < 1) return { journalEntryId: null as number | null, amount: 0 };
+  const allRaw = await tx.select().from(productionOrderItemsTable).where(and(
+    eq(productionOrderItemsTable.orderId, order.id),
+    eq(productionOrderItemsTable.kind, "raw"),
+  ));
+  const lines = allRaw.filter((line: any) =>
+    String((line.meta as Record<string, unknown> | null)?.productionStageCode ?? "") === String(stage.code),
+  );
+  if (!lines.length) return { journalEntryId: null as number | null, amount: 0 };
+  const issuable = lines.filter((line: any) => line.itemId && num(line.quantity) > 0);
+  if (issuable.length !== lines.length) {
+    throw Object.assign(new Error(`مرحلة ${stage.nameAr || stage.code} مرتبطة بخامة غير قابلة للصرف`), { status: 422 });
+  }
+  const usageIds = [...new Set(issuable.map((line: any) => Number(line.itemId)))];
+  const violations = await checkItemsUsable(cid, "raw_consumption", usageIds, req.authUser, "post");
+  if (violations.length) {
+    throw Object.assign(new Error(usageViolationMessage(violations, "post")), { status: 403 });
+  }
+  await lockStockBalances(issuable.map((line: any) => ({
+    companyId: cid, itemId: Number(line.itemId), warehouseId: order.rawWarehouseId,
+  })), tx);
+  for (const line of issuable) {
+    const available = await getBalance(cid, Number(line.itemId), order.rawWarehouseId, tx);
+    const required = num(line.quantity);
+    if (available + 1e-6 < required) {
+      throw Object.assign(
+        new Error(`المخزون غير كافٍ لصرف «${line.description}» في المرحلة ${stage.nameAr || stage.code} (متاح ${available}، مطلوب ${required})`),
+        { status: 409 },
+      );
+    }
+  }
+  const itemRows = await tx.select({
+    id: itemsTable.id, mode: itemsTable.batchTrackingMode,
+  }).from(itemsTable).where(and(
+    eq(itemsTable.companyId, cid),
+    inArray(itemsTable.id, usageIds),
+  ));
+  const modeById = new Map<number, "none" | "fifo" | "fefo">();
+  for (const row of itemRows) {
+    const mode = String(row.mode ?? "none");
+    modeById.set(row.id, mode === "fifo" || mode === "fefo" ? mode : "none");
+  }
+  let amount = 0;
+  for (const line of issuable) {
+    const itemId = Number(line.itemId);
+    const qty = num(line.quantity);
+    const mode = modeById.get(itemId) ?? "none";
+    if (mode === "none") {
+      const cost = await readAvgCost(cid, itemId, order.rawWarehouseId, num(line.unitCost), tx);
+      await upsertBalance(cid, itemId, order.rawWarehouseId, -qty, cost, tx);
+      const balance = await getBalance(cid, itemId, order.rawWarehouseId, tx);
+      const total = Number((qty * cost).toFixed(2));
+      await addStockLedgerEntry({
+        companyId: cid, itemId, warehouseId: order.rawWarehouseId,
+        txDate: new Date(stage.completedAt ?? new Date()).toISOString().slice(0, 10),
+        txType: "production_issue", qty: String(-qty),
+        costPrice: String(cost.toFixed(4)), totalCost: String((-total).toFixed(2)),
+        balanceQty: String(balance), refId: order.id, refType: "production_order",
+        notes: `صرف خامة للمرحلة ${stage.code} — ${order.orderNumber}`,
+      }, tx);
+      amount += total;
+      continue;
+    }
+    const picks = await pickBatches(cid, itemId, order.rawWarehouseId, qty, mode, tx);
+    const lineCost = Number(picks.reduce((sum: number, pick: any) =>
+      sum + pick.takeQty * pick.costPrice, 0).toFixed(2));
+    await upsertBalance(cid, itemId, order.rawWarehouseId, -qty, qty > 0 ? lineCost / qty : 0, tx);
+    let cursor = await getBalance(cid, itemId, order.rawWarehouseId, tx) + qty;
+    for (const pick of picks) {
+      cursor -= pick.takeQty;
+      const total = Number((pick.takeQty * pick.costPrice).toFixed(2));
+      await addStockLedgerEntry({
+        companyId: cid, itemId, warehouseId: order.rawWarehouseId,
+        txDate: new Date(stage.completedAt ?? new Date()).toISOString().slice(0, 10),
+        txType: "production_issue", qty: String(-pick.takeQty),
+        costPrice: String(pick.costPrice.toFixed(4)), totalCost: String((-total).toFixed(2)),
+        balanceQty: String(cursor.toFixed(4)), refId: order.id, refType: "production_order",
+        batchNumber: pick.batchNumber, expiryDate: pick.expiryDate,
+        notes: `صرف خامة للمرحلة ${stage.code} — ${order.orderNumber}`,
+      }, tx);
+    }
+    amount += lineCost;
+  }
+  amount = Number(amount.toFixed(2));
+  const postingDate = new Date(stage.completedAt ?? new Date()).toISOString().slice(0, 10);
+  const writable = await assertWritableForDate(cid, postingDate);
+  if (!writable.ok) throw Object.assign(new Error(writable.reason), { status: 423 });
+  if (!(amount > 0)) {
+    await writeEvent(cid, order.id, "stage_material_issue_posted", {
+      stageId: stage.id, stageCode: stage.code,
+      productionOrderItemIds: issuable.map((line: any) => Number(line.id)),
+      journalEntryId: null, amount: 0,
+    }, actorId, false, tx);
+    return { journalEntryId: null as number | null, amount: 0 };
+  }
+  const journalEntryId = await createJournalEntry({
+    companyId: cid, audit: { req }, branchId: order.branchId, date: postingDate,
+    docNumber: `${order.orderNumber}-STG-${stage.sequence}-MAT`,
+    entryType: "production_stage_material_issue", status: "posted",
+    costCenter: order.costCenter ?? null,
+    description: `صرف خامات مرحلة ${stage.nameAr || stage.code} — ${order.orderNumber}`,
+    lines: [
+      { accountId: order.wipAccountId, debit: amount, description: "مواد المرحلة — WIP" },
+      { accountId: order.rawInventoryAccountId, credit: amount, description: "مخزون خامات المرحلة" },
+    ],
+    dx: tx,
+  });
+  await writeEvent(cid, order.id, "stage_material_issue_posted", {
+    stageId: stage.id, stageCode: stage.code,
+    productionOrderItemIds: issuable.map((line: any) => Number(line.id)),
+    journalEntryId, amount,
+  }, actorId, false, tx);
+  const [freshOrder] = await tx.select({
+    actualCost: productionOrdersTable.actualCost,
+    rawMaterialsCost: productionOrdersTable.rawMaterialsCost,
+    issueJournalEntryId: productionOrdersTable.issueJournalEntryId,
+  }).from(productionOrdersTable).where(and(
+    eq(productionOrdersTable.companyId, cid),
+    eq(productionOrdersTable.id, order.id),
+  )).for("update").limit(1);
+  await tx.update(productionOrdersTable).set({
+    actualCost: String((num(freshOrder?.actualCost) + amount).toFixed(2)),
+    rawMaterialsCost: String((num(freshOrder?.rawMaterialsCost) + amount).toFixed(2)),
+    issueJournalEntryId: freshOrder?.issueJournalEntryId ?? journalEntryId,
     updatedAt: new Date(),
   }).where(and(
     eq(productionOrdersTable.companyId, cid),
@@ -11004,7 +11154,8 @@ async function reverseStageResourceAccrualPostings(
   for (const event of events) {
     const payload = (event.payload ?? {}) as Record<string, unknown>;
     const journalId = Number(payload.journalEntryId);
-    if (!Number.isInteger(journalId) || journalId <= 0 || reversedIds.has(journalId)) continue;
+    if (!Number.isInteger(journalId) || journalId <= 0 || reversedIds.has(journalId) ||
+        journalId === Number(order.issueJournalEntryId)) continue;
     const [original] = await tx.select({
       id: journalEntriesTable.id,
       status: journalEntriesTable.status,
@@ -11043,6 +11194,63 @@ async function reverseStageResourceAccrualPostings(
     await writeEvent(cid, order.id, "stage_resource_accrual_reversed", {
       originalJournalEntryId: journalId,
       reversalJournalEntryId: reversalId,
+    }, req.authUser?.id ?? null, false, tx);
+  }
+}
+
+async function reverseStageMaterialIssuePostings(
+  tx: any, cid: number, order: any, reversalDate: string, req: any,
+) {
+  const events = await tx.select({ payload: productionEventsTable.payload })
+    .from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, cid),
+      eq(productionEventsTable.orderId, order.id),
+      eq(productionEventsTable.eventType, "stage_material_issue_posted"),
+    ));
+  const reversals = await tx.select({ payload: productionEventsTable.payload })
+    .from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, cid),
+      eq(productionEventsTable.orderId, order.id),
+      eq(productionEventsTable.eventType, "stage_material_issue_reversed"),
+    ));
+  const reversedIds = new Set(reversals.map((event: any) =>
+    Number((event.payload as Record<string, unknown> | null)?.originalJournalEntryId),
+  ));
+  for (const event of events) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    const journalId = Number(payload.journalEntryId);
+    if (!Number.isInteger(journalId) || journalId <= 0 || reversedIds.has(journalId) ||
+        journalId === Number(order.issueJournalEntryId)) continue;
+    const [original] = await tx.select({
+      id: journalEntriesTable.id, status: journalEntriesTable.status,
+    }).from(journalEntriesTable).where(and(
+      eq(journalEntriesTable.id, journalId),
+      eq(journalEntriesTable.companyId, cid),
+    )).for("update").limit(1);
+    if (!original) throw Object.assign(new Error("قيد صرف خامات المرحلة الأصلي غير موجود ولا يمكن عكسه"), { status: 409 });
+    const lines = await tx.select({
+      accountId: journalEntryLinesTable.accountId,
+      debit: journalEntryLinesTable.debit,
+      credit: journalEntryLinesTable.credit,
+      description: journalEntryLinesTable.description,
+      costCenter: journalEntryLinesTable.costCenter,
+    }).from(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, journalId));
+    if (lines.length < 2) throw Object.assign(new Error("سطور قيد صرف خامات المرحلة غير مكتملة"), { status: 409 });
+    const reversalId = await createJournalEntry({
+      companyId: cid, audit: { req }, branchId: order.branchId, date: reversalDate,
+      docNumber: `${order.orderNumber}-STG-MAT-REV-${journalId}`,
+      entryType: "production_stage_material_issue_reversal",
+      status: original.status, costCenter: order.costCenter ?? null,
+      description: `عكس صرف خامات مراحل أمر ${order.orderNumber}`,
+      lines: lines.map((line: any) => ({
+        accountId: line.accountId, debit: num(line.credit), credit: num(line.debit),
+        description: `عكس: ${line.description ?? order.orderNumber}`,
+        costCenter: line.costCenter,
+      })),
+      dx: tx,
+    });
+    await writeEvent(cid, order.id, "stage_material_issue_reversed", {
+      originalJournalEntryId: journalId, reversalJournalEntryId: reversalId,
     }, req.authUser?.id ?? null, false, tx);
   }
 }
@@ -11954,6 +12162,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
         req.authUser!.id,
         tx,
       );
+      const stageMaterials = await issueStageRawMaterials(
+        tx, ctx.cid, ctx.order, updated, req.authUser!.id, req,
+      );
       await freezeStageResourceCosts(
         tx,
         ctx.cid,
@@ -11987,6 +12198,8 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
           wasteReason: wasteReason ?? null,
           wasteType: wasteType ?? null,
           wasteClassification: wasteClassification ?? null, actualHours,
+          materialIssueJournalEntryId: stageMaterials.journalEntryId,
+          materialIssueAmount: stageMaterials.amount,
           resourceAccrualJournalEntryId: stageAccrual.journalEntryId,
           resourceAccrualAmount: stageAccrual.amount },
         req.authUser!.id,
