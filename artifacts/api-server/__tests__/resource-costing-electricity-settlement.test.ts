@@ -150,6 +150,20 @@ test("v1 route freezes source-linked kWh evidence and provisional pending utilit
   assert.match(source, /updates\.actualCost = String\(wipBalance\)/);
 });
 
+test("stage-posted electricity accrual is cleared once for active WIP and reversed exactly", async () => {
+  const [production, settlement] = await Promise.all([
+    readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/pendingUtilitySettlement.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(production, /"pending_machine_electricity"/);
+  assert.match(production, /pendingUtilitySettlement === true/);
+  assert.match(settlement, /stage_resource_accrual_posted/);
+  assert.match(settlement, /stageAccruedEvidenceIds\.has\(row\.stageResourceCostId\)/);
+  assert.match(settlement, /order\.status === "completed" \|\| stageAccruedOrderIds\.has\(Number\(order\.id\)\)/);
+  assert.match(settlement, /settlement\.accruedAmount > 0/);
+  assert.match(settlement, /order\.status === "completed" \|\| settlement\.accruedAmount > 0/);
+});
+
 test("both facades advertise the source-settled v1 capability", async () => {
   const [production, simple] = await Promise.all([
     readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),

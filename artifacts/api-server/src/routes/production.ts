@@ -10930,11 +10930,12 @@ async function postStagePendingSourceAccruals(
     eq(productionStageResourceCostsTable.orderId, order.id),
     eq(productionStageResourceCostsTable.stageId, stage.id),
     inArray(productionStageResourceCostsTable.sourceType, [
-      "pending_payroll", "pending_fixed_asset_depreciation",
+      "pending_payroll", "pending_fixed_asset_depreciation", "pending_machine_electricity",
     ]),
   ));
   const rows = pendingRows.filter((row: any) =>
-    (row.snapshot as Record<string, unknown>)?.pendingSourceSettlement === true &&
+    ((row.snapshot as Record<string, unknown>)?.pendingSourceSettlement === true ||
+      (row.snapshot as Record<string, unknown>)?.pendingUtilitySettlement === true) &&
     num(row.amount) > 0,
   );
   if (!rows.length) return { journalEntryId: null as number | null, amount: 0 };
@@ -10949,7 +10950,7 @@ async function postStagePendingSourceAccruals(
     const accountId = Number(snapshot.provisionalAccrualAccountId);
     const amount = num(snapshot.provisionalAccrualAmount ?? row.amount);
     if (!Number.isInteger(accountId) || accountId <= 0 || !(amount > 0)) {
-      throw Object.assign(new Error("استحقاق العمالة أو الإهلاك يحتاج حساب امتصاص صالحاً قبل إكمال المرحلة"), { status: 422 });
+      throw Object.assign(new Error("الاستحقاق المؤقت للموارد يحتاج حساب امتصاص صالحاً قبل إكمال المرحلة"), { status: 422 });
     }
     if (accountId === Number(order.wipAccountId)) {
       throw Object.assign(new Error("يجب أن يختلف حساب الاستحقاق المؤقت عن حساب WIP"), { status: 422 });
@@ -10977,7 +10978,7 @@ async function postStagePendingSourceAccruals(
     lines: [
       { accountId: order.wipAccountId, debit: amount, description: "تكلفة موارد المرحلة — WIP" },
       ...[...byAccrualAccount].map(([accountId, credit]) => ({
-        accountId, credit, description: "استحقاق مؤقت لرواتب/إهلاك موارد الإنتاج",
+        accountId, credit, description: "استحقاق مؤقت لموارد الإنتاج",
       })),
     ],
     dx: tx,
