@@ -7,6 +7,8 @@ The company-level comprehensive-costing toggle must only set the resource-costin
 
 For v1 orders, the approved accounting target is to post material and resource costs to WIP as each production stage completes. Each BOM material belongs to an explicitly selected stage; stock and its cost are issued at that stage, not duplicated from an order-start issue. Payroll, depreciation, and electricity may use provisional amounts when the actual monthly source is not yet posted; when the actual source posts, clear the provisional accrual and capitalize only the actual variance. Source-period ownership follows the production period, not the journal-entry date.
 
+For date-filled maamoul production, recipe ingredients such as flour, oil, sugar, dates, water, and salt are consumed once at the kneading stage. Freezing, date injection, baking, and packaging must not issue those same ingredient lines again. A separate packaging material may be assigned to packaging only when it exists as its own BOM line and quantity.
+
 **Why:** The user confirmed that production must not wait for monthly payroll or depreciation journals and that stage completion should carry the full stage cost. Explicit material-to-stage links prevent guessed allocation; deferring issue prevents double capitalization.
 
 **How to apply:** Preserve v0 behavior. In v1, coordinate stage material issue, resource posting, monthly-source settlement, capacity claims, final receipt, and cancellation/reversal as one lifecycle. Do not report stage posting as complete until every path and reversal is implemented and tested.
