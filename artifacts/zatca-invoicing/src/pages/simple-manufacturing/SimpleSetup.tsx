@@ -28,6 +28,7 @@ export function SimpleSetup({
   onLoadBom,
   onSaveRouting,
   onLoadRouting,
+  onSaveMachine,
   onSaveTemplate,
    onSaveWarehouse,
    onSaveAccounting,
@@ -41,6 +42,7 @@ export function SimpleSetup({
   onLoadBom: (id: number) => Promise<any>;
   onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null; resourceMode: "labor" | "machine" | "both"; resourceId?: string; workerCount?: number }> }) => Promise<unknown>;
   onLoadRouting: (id: number) => Promise<any>;
+  onSaveMachine: (data: { id?: number; name?: string; electricityEnabled: boolean; electricityKw: number | null }) => Promise<any>;
   onSaveTemplate: (data: { id?: number; name: string; productItemId: string; plannedQty: string; unitCode: string }) => Promise<unknown>;
   onSaveWarehouse: (data: { code: string; nameAr: string; isDefault: boolean }) => Promise<unknown>;
   onSaveAccounting: (data: {
@@ -95,6 +97,13 @@ export function SimpleSetup({
   const [editingTemplateId, setEditingTemplateId] = useState<number | null>(null);
   const [loadingBomId, setLoadingBomId] = useState<number | null>(null);
   const [loadingRoutingId, setLoadingRoutingId] = useState<number | null>(null);
+  const [machineDialogStage, setMachineDialogStage] = useState<number | null>(null);
+  const [machineForm, setMachineForm] = useState<{
+    id?: number;
+    name: string;
+    electricityEnabled: boolean;
+    electricityKw: string;
+  }>({ name: "", electricityEnabled: true, electricityKw: "" });
 
   const resetBom = () => {
     setEditingBomId(null);
@@ -121,6 +130,40 @@ export function SimpleSetup({
   const startRoutingCreate = () => {
     resetRouting();
     setOpenRouting(true);
+  };
+
+  const openMachineSettings = (stageIndex: number, machine?: NonNullable<Catalog["machines"]>[number]) => {
+    setMachineForm(machine
+      ? {
+        id: machine.id,
+        name: machine.name,
+        electricityEnabled: machine.electricityEnabled === true,
+        electricityKw: machine.electricityKw == null ? "" : String(machine.electricityKw),
+      }
+      : { name: "", electricityEnabled: true, electricityKw: "" });
+    setMachineDialogStage(stageIndex);
+  };
+
+  const saveMachineSettings = async () => {
+    const name = machineForm.name.trim();
+    const electricityKw = machineForm.electricityKw.trim()
+      ? Number(machineForm.electricityKw) : null;
+    if (!machineForm.id && !name) return;
+    if (machineForm.electricityEnabled && !(electricityKw && Number.isFinite(electricityKw) && electricityKw > 0)) return;
+    const row = await onSaveMachine({
+      ...(machineForm.id ? { id: machineForm.id } : { name }),
+      electricityEnabled: machineForm.electricityEnabled,
+      electricityKw,
+    });
+    const machineId = Number(row?.id ?? machineForm.id);
+    if (!Number.isInteger(machineId) || machineId <= 0 || machineDialogStage == null) {
+      throw new Error("لم يتم حفظ الآلة أو قدرتها بشكل صحيح");
+    }
+    setRoutingStages(stages => stages.map((stage, index) => index === machineDialogStage
+      ? { ...stage, resourceId: String(machineId), resourceMode: stage.resourceMode === "labor" ? "both" : stage.resourceMode }
+      : stage));
+    setMachineDialogStage(null);
+    setMachineForm({ name: "", electricityEnabled: true, electricityKw: "" });
   };
 
   const startTemplateCreate = () => {
@@ -602,7 +645,15 @@ export function SimpleSetup({
                          )}
                          {(stage.resourceMode === "machine" || stage.resourceMode === "both") && (
                            <div className="space-y-1">
-                              <label className="text-xs font-medium text-slate-600">آلة المرحلة</label>
+                               <div className="flex items-center justify-between gap-2">
+                                 <label className="text-xs font-medium text-slate-600">آلة المرحلة</label>
+                                 {canCreate && (
+                                   <Button type="button" variant="ghost" size="sm" className="h-7 px-2"
+                                     disabled={busy} onClick={() => openMachineSettings(index)}>
+                                     <Plus className="h-3 w-3 me-1" /> إضافة آلة وقدرة
+                                   </Button>
+                                 )}
+                               </div>
                               <SearchCombobox
                                 value={stage.resourceId ?? ""}
                                 placeholder="اختر آلة محفوظة…"
@@ -611,7 +662,7 @@ export function SimpleSetup({
                                   { value: "", label: "اختر آلة محفوظة…" },
                                   ...(catalog.machines ?? []).map(machine => ({
                                     value: String(machine.id),
-                                    label: machine.name,
+                                     label: `${machine.name}${machine.electricityEnabled && machine.electricityKw ? ` — ${machine.electricityKw} kW` : " — الكهرباء غير مفعلة"}`,
                                   })),
                                 ]}
                                 onValueChange={resourceId => setRoutingStages(stages => stages.map((s, i) => i === index
@@ -620,8 +671,22 @@ export function SimpleSetup({
                               />
                               {(() => {
                                 const machine = (catalog.machines ?? []).find(row => String(row.id) === stage.resourceId);
-                                if (!machine?.electricityEnabled) return null;
-                                 return <p className="text-[11px] leading-5 text-amber-800">كهرباء مفعلة ({machine.electricityKw ?? "—"} kW): عند تنفيذ أمر v1 تُجمّد ساعات الآلة وkWh/التعريفة. مع فاتورة صناعية مرتبطة تبقى المعالجة مرتبطة بالمصدر؛ بلا فاتورة يرسمل الخادم التقدير المجمد في الاستلام بحساب الاستحقاق/الامتصاص ثم تُحدّد الفاتورة والمصنع ومركز التكلفة صراحةً في الإقفال لتصفية التقدير وتسوية الفرق فقط.</p>;
+                                 if (!machine) return null;
+                                 return (
+                                   <div className="space-y-1">
+                                     <p className={`text-[11px] leading-5 ${machine.electricityEnabled ? "text-amber-800" : "text-slate-500"}`}>
+                                       {machine.electricityEnabled
+                                         ? `قدرة الآلة المحفوظة: ${machine.electricityKw ?? "—"} kW. تُنسخ الآلة وقدرتها تلقائياً إلى مراحل أوامر التصنيع الناتجة من هذا المسار.`
+                                         : "لم تُفعّل كهرباء هذه الآلة بعد؛ فعّلها وأدخل قدرتها لتظهر تلقائياً في أوامر التصنيع."}
+                                     </p>
+                                     {canEdit && (
+                                       <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs"
+                                         disabled={busy} onClick={() => openMachineSettings(index, machine)}>
+                                         إعداد قدرة هذه الآلة
+                                       </Button>
+                                     )}
+                                   </div>
+                                 );
                               })()}
                            </div>
                          )}
@@ -663,6 +728,55 @@ export function SimpleSetup({
                 )} onClick={async () => { await onSaveRouting({ ...routing, id: editingRoutingId ?? undefined, stages: routingStages }); setOpenRouting(false); resetRouting(); }} className="w-full">
                   {editingRoutingId ? "تحديث المسار" : "حفظ المسار"}
                 </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={machineDialogStage !== null} onOpenChange={open => {
+            if (!open && !busy) setMachineDialogStage(null);
+          }}>
+            <DialogContent dir="rtl" className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>{machineForm.id ? "إعداد قدرة الآلة" : "إضافة آلة إلى المرحلة"}</DialogTitle>
+                <DialogDescription>
+                  القدرة تحفظ على سجل الآلة نفسه، ويستخدمها كل مسار أو أمر مرتبط بهذه الآلة.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                {machineForm.id ? (
+                  <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm font-medium">{machineForm.name}</div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">اسم الآلة</label>
+                    <Input value={machineForm.name}
+                      onChange={event => setMachineForm(current => ({ ...current, name: event.target.value }))}
+                      maxLength={200} placeholder="مثال: ماكينة التعبئة" />
+                  </div>
+                )}
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <Switch checked={machineForm.electricityEnabled}
+                    onCheckedChange={electricityEnabled => setMachineForm(current => ({ ...current, electricityEnabled }))} />
+                  احتساب استهلاك كهرباء الآلة
+                </label>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">قدرة الآلة (kW)</label>
+                  <Input type="text" inputMode="decimal" dir="ltr"
+                    value={machineForm.electricityKw}
+                    onChange={event => setMachineForm(current => ({ ...current, electricityKw: event.target.value }))}
+                    disabled={!machineForm.electricityEnabled}
+                    placeholder="مثال: 7.5" />
+                  <p className="text-xs leading-5 text-slate-500">
+                    عند حفظ المسار واستخدامه في أمر تصنيع، تُنسخ الآلة لهذه المرحلة، ويُحتسب تقدير الكهرباء من قدرتها وساعات تشغيل المرحلة الفعلية.
+                  </p>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="outline" disabled={busy} onClick={() => setMachineDialogStage(null)}>إلغاء</Button>
+                  <Button type="button" disabled={busy || (!machineForm.id && !machineForm.name.trim()) ||
+                    (machineForm.electricityEnabled && !(Number(machineForm.electricityKw) > 0))}
+                    onClick={() => void saveMachineSettings().catch(() => {})}>
+                    {machineForm.id ? "حفظ القدرة وربطها" : "حفظ الآلة وربطها"}
+                  </Button>
+                </div>
               </div>
             </DialogContent>
           </Dialog>

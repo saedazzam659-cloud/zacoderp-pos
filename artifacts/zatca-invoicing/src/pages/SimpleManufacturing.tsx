@@ -405,6 +405,21 @@ export default function SimpleManufacturing() {
     }), data.id ? "تم تحديث مسار الإنتاج" : "تم حفظ مسار الإنتاج");
   };
 
+  const handleSaveMachine = async (data: {
+    id?: number;
+    name?: string;
+    electricityEnabled: boolean;
+    electricityKw: number | null;
+  }) => {
+    const path = data.id
+      ? `/api/simple-manufacturing/setup/machines/${Number(data.id)}`
+      : "/api/simple-manufacturing/setup/machines";
+    return mutate(() => request(path, {
+      method: data.id ? "PATCH" : "POST",
+      body: JSON.stringify(data),
+    }), data.id ? "تم تحديث قدرة الآلة" : "تمت إضافة الآلة وقدرتها");
+  };
+
   const handleLoadBom = async (id: number) => {
     try {
       return await request(`/api/simple-manufacturing/bom-templates/${id}`);
@@ -584,6 +599,7 @@ export default function SimpleManufacturing() {
              onLoadBom={handleLoadBom}
             onSaveRouting={handleSaveRouting}
              onLoadRouting={handleLoadRouting}
+            onSaveMachine={handleSaveMachine}
             onSaveTemplate={handleSaveTemplate}
             onSaveWarehouse={handleSaveWarehouse}
             onSaveAccounting={handleSaveAccounting}

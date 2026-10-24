@@ -114,7 +114,8 @@ router.get("/", view, (_req, res) => {
       "/orders", "/templates", "/setup/materials", "/setup/products",
       "/orders/pending-source-settlements",
       "/setup/warehouses", "/setup/accounting", "/setup/bom", "/setup/bom/:id",
-      "/setup/routing", "/setup/routing/:id", "/templates/:id", "/reports",
+      "/setup/routing", "/setup/routing/:id", "/setup/machines", "/setup/machines/:id",
+      "/templates/:id", "/reports",
       "/orders/:id/stages", "/orders/:id/stages/:stageId/start",
       "/orders/:id/stages/:stageId/complete", "/orders/:id/waste-records",
       "/overhead-closures", "/overhead-closures/:id/reopen",
@@ -506,6 +507,101 @@ router.get("/work-centers", view, async (req, res) => {
       String(req.query.q ?? "").trim(),
       req.query.activeOnly === "1",
     ));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/setup/machines", create, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  const electricityEnabled = req.body?.electricityEnabled === true;
+  const rawKw = req.body?.electricityKw;
+  const electricityKw = rawKw == null || rawKw === "" ? null : Number(rawKw);
+  if (!name || name.length > 200) {
+    return void res.status(400).json({ error: "اسم الآلة مطلوب وبحد أقصى 200 حرف" });
+  }
+  if (req.body?.electricityEnabled !== undefined &&
+      typeof req.body.electricityEnabled !== "boolean") {
+    return void res.status(400).json({ error: "إعداد كهرباء الآلة غير صالح" });
+  }
+  if (electricityKw !== null && (!Number.isFinite(electricityKw) || electricityKw <= 0)) {
+    return void res.status(400).json({ error: "قدرة الآلة بالكيلوواط يجب أن تكون موجبة" });
+  }
+  if (electricityEnabled && !(electricityKw && electricityKw > 0)) {
+    return void res.status(400).json({ error: "أدخل قدرة الآلة بالكيلوواط عند تفعيل الكهرباء" });
+  }
+  try {
+    const [machine] = await db.insert(productionResourcesTable).values({
+      companyId: cid,
+      branchId: null,
+      name,
+      type: "machine",
+      status: "available",
+      capacityPerHour: "0",
+      fixedAssetId: null,
+      electricityEnabled,
+      electricityKw: electricityKw == null ? null : String(electricityKw),
+      meta: {},
+    }).returning({
+      id: productionResourcesTable.id,
+      name: productionResourcesTable.name,
+      fixedAssetId: productionResourcesTable.fixedAssetId,
+      electricityEnabled: productionResourcesTable.electricityEnabled,
+      electricityKw: productionResourcesTable.electricityKw,
+    });
+    res.status(201).json(machine);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch("/setup/machines/:id", edit, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return void res.status(400).json({ error: "رقم الآلة غير صالح" });
+  }
+  const electricityEnabled = req.body?.electricityEnabled;
+  const rawKw = req.body?.electricityKw;
+  const electricityKw = rawKw == null || rawKw === "" ? null : Number(rawKw);
+  if (typeof electricityEnabled !== "boolean") {
+    return void res.status(400).json({ error: "حدد حالة كهرباء الآلة" });
+  }
+  if (electricityKw !== null && (!Number.isFinite(electricityKw) || electricityKw <= 0)) {
+    return void res.status(400).json({ error: "قدرة الآلة بالكيلوواط يجب أن تكون موجبة" });
+  }
+  if (electricityEnabled && !(electricityKw && electricityKw > 0)) {
+    return void res.status(400).json({ error: "أدخل قدرة الآلة بالكيلوواط عند تفعيل الكهرباء" });
+  }
+  const branchResult = effectiveBranchCondition(
+    req, productionResourcesTable.branchId, req.body?.branchId,
+  );
+  if ("deny" in branchResult) {
+    return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+  }
+  try {
+    const conditions = [
+      eq(productionResourcesTable.id, id),
+      eq(productionResourcesTable.companyId, cid),
+      eq(productionResourcesTable.type, "machine"),
+    ];
+    if (branchResult.cond) conditions.push(branchResult.cond);
+    const [machine] = await db.update(productionResourcesTable).set({
+      electricityEnabled,
+      electricityKw: electricityKw == null ? null : String(electricityKw),
+      updatedAt: new Date(),
+    }).where(and(...conditions)).returning({
+      id: productionResourcesTable.id,
+      name: productionResourcesTable.name,
+      fixedAssetId: productionResourcesTable.fixedAssetId,
+      electricityEnabled: productionResourcesTable.electricityEnabled,
+      electricityKw: productionResourcesTable.electricityKw,
+    });
+    if (!machine) return void res.status(404).json({ error: "الآلة غير موجودة أو خارج نطاقك" });
+    res.json(machine);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

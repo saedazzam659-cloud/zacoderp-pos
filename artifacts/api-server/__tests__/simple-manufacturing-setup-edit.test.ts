@@ -66,3 +66,34 @@ test("SimpleSetup opens the existing dialogs for double-click editing and sends 
   assert.match(controller, /setup\/routing\/\$\{Number\(data\.id\)\}/);
   assert.match(controller, /method: data\.id \? "PATCH" : "POST"/);
 });
+
+test("Smart Manufacturing route setup saves machine power on the selected shared resource", async () => {
+  const [facade, setup, controller, production] = await Promise.all([
+    readFile(new URL("../src/routes/simple-manufacturing.ts", import.meta.url), "utf8"),
+    readFile(
+      new URL("../../zatca-invoicing/src/pages/simple-manufacturing/SimpleSetup.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../zatca-invoicing/src/pages/SimpleManufacturing.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(facade, /router\.post\("\/setup\/machines", create,/);
+  assert.match(facade, /router\.patch\("\/setup\/machines\/:id", edit,/);
+  assert.match(facade, /electricityEnabled && !\(electricityKw && electricityKw > 0\)/);
+  assert.match(facade, /effectiveBranchCondition\(\s*req,\s*productionResourcesTable\.branchId/);
+  assert.match(setup, /إضافة آلة وقدرة/);
+  assert.match(setup, /قدرة الآلة المحفوظة:/);
+  assert.match(setup, /onSaveMachine\(/);
+  assert.match(setup, /resourceId: String\(machineId\)/);
+  assert.match(controller, /setup\/machines\/\$\{Number\(data\.id\)\}/);
+  assert.match(controller, /setup\/machines"/);
+
+  const automaticCopyStart = production.indexOf("// ─── PHASE C: Auto-copy active production routing");
+  const automaticCopyEnd = production.indexOf("routingLoaded = rs.length;", automaticCopyStart);
+  const automaticCopy = production.slice(automaticCopyStart, automaticCopyEnd);
+  assert.match(automaticCopy, /resourceId:\s*s\.resourceId/);
+});
