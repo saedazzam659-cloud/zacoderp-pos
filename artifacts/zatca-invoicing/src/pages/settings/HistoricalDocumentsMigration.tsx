@@ -332,7 +332,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       ["2", "كل صف يمثل صنفًا واحدًا. كرر بيانات رأس الفاتورة في كل صف من صفوف الفاتورة نفسها."],
       ["3", "لا تغير اسم ورقة «بيانات الفواتير» ولا أسماء الأعمدة الإنجليزية فيها؛ هي مفاتيح القراءة."],
       ["4", "استخدم أكواد العميل/المورد والفرع والصنف والمخزن المسجلة بالفعل في الشركة؛ لا تكتب أسماء بديلة."],
-      ["5", "source_doc_number هو رقم المستند في النظام القديم، وليس رقم التسلسل الجديد. يُحفظ كمرجع في ملاحظة الترحيل، والنظام يولد رقمه الرسمي من مسلسل نوع المستند والفترة."],
+      ["5", "source_doc_number هو رقم المستند في النظام القديم، وليس رقم التسلسل الجديد. يحفظ كمرجع مستقل يمكن البحث به، والنظام يولد رقمه الرسمي من مسلسل نوع المستند والفترة."],
       ["6", "يحدد document_date الفترة المالية. يجب أن تكون الفترة التي تغطي التاريخ مفتوحة، مع مسلسل سنوي مستقل ومجهز لهذا النوع والفرع."],
       ["7", "في المرتجع، اكتب رقم الفاتورة الأصلية القديمة في source_invoice_number واستورد الفاتورة الأصلية ضمن الدفعة قبل المرتجع."],
       ["8", "payment_type يقبل: آجل أو نقدي أو بنكي. عند النقدي املأ cash_box_code، وعند البنكي املأ bank_account_code."],
@@ -340,7 +340,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       ["10", "الإجماليات subtotal وvat_amount وdiscount_amount وtotal_amount تخص الفاتورة كاملة، لذا كرر القيم نفسها في كل صف."],
       [""],
       ["العمود", "المعنى", "مطلوب؟", "مثال"],
-      ["source_doc_number", "رقم الفاتورة/المرتجع القديم؛ يُحفظ كمرجع منفصل عن رقم التسلسل الذي ينشئه النظام.", "نعم", sourceNumber],
+      ["source_doc_number", "رقم الفاتورة/المرتجع القديم؛ لفاتورة المبيعات يحفظ في حقل مستقل قابل للبحث، ولا يحل محل رقم التسلسل.", "نعم", sourceNumber],
       ["document_date", "تاريخ المستند الذي يحدد السنة والفترة المالية.", "نعم", "2026-01-15"],
       ["party_code", kind.startsWith("sales") ? "كود العميل الموجود في النظام." : "كود المورد الموجود في النظام.", "نعم", partyCode],
       ["branch_code", "كود الفرع المسجل في الشركة.", "نعم", "BR-EXAMPLE"],
@@ -620,7 +620,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           lines: mappedLines,
         };
         if (doc.kind === "sales_invoice") {
-          Object.assign(payload, { invoiceDate: doc.date, customerId: party.id });
+          Object.assign(payload, { invoiceDate: doc.date, customerId: party.id, legacyDocNumber: doc.sourceNumber });
         } else if (doc.kind === "purchase_invoice") {
           Object.assign(payload, { invoiceDate: doc.date, supplierInvoiceDate: doc.date, supplierInvoiceNumber: doc.sourceNumber, supplierId: party.id });
         } else if (doc.kind === "sales_return") {

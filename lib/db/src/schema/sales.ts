@@ -18,6 +18,7 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   projectId:      integer("project_id"),
   branchId:       integer("branch_id"),
   docNumber:      text("doc_number"),
+  legacyDocNumber: text("legacy_doc_number"),
   invoiceDate:    text("invoice_date").notNull(),
   customerId:     integer("customer_id").references(() => customersTable.id),
   // Optional manual party name used only by print templates when no customer

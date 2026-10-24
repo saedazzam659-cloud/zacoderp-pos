@@ -1766,7 +1766,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
       return;
     }
     const header = [
-      "#","رقم الفاتورة","التاريخ","العميل","الرقم الضريبي","هاتف العميل","الفرع","المندوب",
+      "#","رقم الفاتورة","رقمها القديم","التاريخ","العميل","الرقم الضريبي","هاتف العميل","الفرع","المندوب",
       "نوع الدفع","العملة",
       ...(user?.company?.showFreeQuantity !== false ? ["الكمية المجانية"] : []),
       "المجموع","الخصم","الضريبة","الإجمالي","العمولة",
@@ -1775,6 +1775,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     const rows = filtered.map((inv: any, idx: number) => [
       idx + 1,
       inv.docNumber ?? `SI-${inv.id}`,
+      inv.legacyDocNumber ?? "",
       inv.invoiceDate ?? "",
       cusMap[inv.customerId]?.name ?? "",
       cusMap[inv.customerId]?.vat ?? "",
@@ -1970,6 +1971,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     return [
       { header: "#",                 key: "_idx",         width: 5  },
       { header: "رقم الفاتورة",      key: "docNumber",    width: 14 },
+      { header: "رقمها القديم",      key: "legacyDocNumber", width: 18 },
       { header: "التاريخ",           key: "invoiceDate",  width: 12 },
       { header: "العميل",            key: "customerName", width: 26 },
       { header: "الرقم الضريبي",     key: "vat",          width: 16 },
@@ -1994,6 +1996,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
     return filtered.map((inv: any, idx: number) => ({
       _idx:         idx + 1,
       docNumber:    inv.docNumber ?? `SI-${inv.id}`,
+      legacyDocNumber: inv.legacyDocNumber ?? "",
       invoiceDate:  inv.invoiceDate ?? "",
       customerName: cusMap[inv.customerId]?.name ?? "—",
       vat:          cusMap[inv.customerId]?.vat ?? "",
@@ -2510,7 +2513,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
         <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
           {fp.isVisible("search") && (
           <Input
-            placeholder="بحث (رقم فاتورة، رقم/اسم العميل، الفرع، المنطقة، هاتف، ملاحظات)…"
+            placeholder="بحث (رقم الفاتورة أو رقمها القديم، العميل، الفرع، الهاتف، ملاحظات)…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="h-7 text-xs w-full sm:w-56"
@@ -2937,7 +2940,16 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
                       case "_idx":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{absIdx + 1}</td>;
                       case "doc":
-                        return <td key={col.key} className="px-2 py-1 border border-slate-200 font-mono font-semibold text-rose-700 text-center">{inv.docNumber ?? `SI-${inv.id}`}</td>;
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <div className="font-mono font-semibold text-rose-700">{inv.docNumber ?? `SI-${inv.id}`}</div>
+                            {inv.legacyDocNumber && (
+                              <div className="mt-0.5 text-[11px] font-normal text-slate-500">
+                                الرقم القديم: <span className="font-mono">{inv.legacyDocNumber}</span>
+                              </div>
+                            )}
+                          </td>
+                        );
                       case "date":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center whitespace-nowrap">{inv.invoiceDate}</td>;
                       case "customer":

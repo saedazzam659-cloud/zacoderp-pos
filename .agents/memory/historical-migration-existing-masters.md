@@ -9,6 +9,6 @@ The user will manually create the fiscal years and annual document sequences in 
 
 Keep each document's legacy source number separate from the ERP-generated official sequence number. The source number is a historical/customer reference, not a sequence to reserve or reuse.
 
-**Why:** The user confirmed that target master data, fiscal years, and annual sequences are managed manually; historical import should use the normal document lifecycle without altering company setup.
+**Why:** The user confirmed that target master data, fiscal years, and annual sequences are managed manually. They also need the old invoice number searchable because customers hold copies bearing that number; it must remain a separate reference from the new ERP sequence.
 
 **How to apply:** Resolve relationships using stable company-local codes/identifiers. Flag missing or ambiguous matches for correction; never silently create duplicate masters or guess a financial relationship. Require fiscal periods and sequences to be configured before import; do not create or reset them automatically.

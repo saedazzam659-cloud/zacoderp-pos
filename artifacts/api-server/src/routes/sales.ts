@@ -1625,6 +1625,7 @@ router.get("/sales-invoices", requirePermission("sales_invoices", "view"), async
         search
           ? or(
               ilike(salesInvoicesTable.docNumber, searchPattern),
+              ilike(salesInvoicesTable.legacyDocNumber, searchPattern),
               ilike(salesInvoicesTable.notes, searchPattern),
               // Correlated EXISTS keeps customer-name search inside PostgreSQL.
               // It avoids materialising a potentially huge customer-id array
@@ -2782,7 +2783,7 @@ router.post("/sales-invoices", async (req, res) => {
     // immediately even if the app UI is stale. NULL map = all allowed.
     if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "create"))) return;
     timing?.mark("mobile-rights");
-    const { docNumber, invoiceDate, customerId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { docNumber, legacyDocNumber, invoiceDate, customerId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
@@ -3090,6 +3091,7 @@ router.post("/sales-invoices", async (req, res) => {
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       projectId: await resolveProjectLink(cid, req.body.projectId, branchId, req.authUser),
       docNumber: resolvedDocNumber, invoiceDate,
+      legacyDocNumber: legacyDocNumber == null ? null : String(legacyDocNumber).trim() || null,
       customerId: customerId ? Number(customerId) : null,
       manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!customerId),
       paymentType: pType,
@@ -3322,7 +3324,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     timing?.mark("invoice-read");
     // docNumber is intentionally not destructured here — it is immutable on
     // edit (see the .set() below).
-    const { invoiceDate, customerId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { legacyDocNumber, invoiceDate, customerId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             documentOfferId, costCenter, taxId } = req.body;
@@ -3466,6 +3468,9 @@ router.put("/sales-invoices/:id", async (req, res) => {
           return selected;
         })(),
         invoiceDate,
+        ...(Object.prototype.hasOwnProperty.call(req.body ?? {}, "legacyDocNumber")
+          ? { legacyDocNumber: legacyDocNumber == null ? null : String(legacyDocNumber).trim() || null }
+          : {}),
         customerId: customerId ? Number(customerId) : null,
         manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!customerId),
         paymentType: pType,
