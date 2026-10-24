@@ -29,6 +29,18 @@ test("shared execution router exposes the scoped resource setup contract", async
   assert.match(source, /fixedAssetsTable\.nameAr/);
   assert.match(source, /fixedAssetsTable\.code/);
   assert.doesNotMatch(source, /fixedAssetsTable\.purchaseValue[\s\S]*resource-catalog/);
+
+  const catalogStart = source.indexOf('productionExecutionRouter.get("/orders/:id/resource-catalog"');
+  const catalogEnd = source.indexOf('productionExecutionRouter.post("/orders/:id/setup/work-centers"', catalogStart);
+  const resourceCatalog = source.slice(catalogStart, catalogEnd);
+  assert.match(resourceCatalog, /eq\(fixedAssetsTable\.usedInManufacturing,\s*true\)/);
+  assert.match(resourceCatalog, /assetId == null \|\| eligibleAssetIds\.has\(assetId\)/);
+  assert.match(resourceCatalog, /linkedAssetIdSet\.has\(asset\.id\)/);
+
+  const machineSetupStart = source.indexOf('productionExecutionRouter.post("/orders/:id/setup/machines"');
+  const machineSetupEnd = source.indexOf('productionExecutionRouter.get("/orders/:id/stages"', machineSetupStart);
+  const machineSetup = source.slice(machineSetupStart, machineSetupEnd);
+  assert.match(machineSetup, /eq\(fixedAssetsTable\.usedInManufacturing,\s*true\)/);
 });
 
 test("new production orders copy linked machine and labor assignments from active routes", async () => {

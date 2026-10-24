@@ -10961,6 +10961,18 @@ productionExecutionRouter.get("/orders/:id/resource-catalog", async (req, res) =
       .from(productionResourcesTable)
       .where(machineWhere)
       .orderBy(asc(productionResourcesTable.name));
+    const eligibleAssets = await db.select({
+      id: fixedAssetsTable.id,
+      nameAr: fixedAssetsTable.nameAr,
+      nameEn: fixedAssetsTable.nameEn,
+      code: fixedAssetsTable.code,
+    }).from(fixedAssetsTable).where(and(
+      eq(fixedAssetsTable.companyId, cid),
+      orderBranchResourceCondition(fixedAssetsTable, order.branchId),
+      eq(fixedAssetsTable.status, "active"),
+      eq(fixedAssetsTable.usedInManufacturing, true),
+    ));
+    const eligibleAssetIds = new Set(eligibleAssets.map(asset => asset.id));
     const machines = resources.map((resource) => ({
       id: resource.id,
       name: resource.name,
@@ -10969,7 +10981,14 @@ productionExecutionRouter.get("/orders/:id/resource-catalog", async (req, res) =
         resourceRelationshipId(resource.meta, "fixedAssetId"),
       electricityEnabled: resource.electricityEnabled,
       electricityKw: resource.electricityKw,
-    }));
+    })).filter((machine) => {
+      const assetId = machine.fixedAssetId;
+      // Keep standalone/rented machines and already-saved order selections.
+      // A newly selectable linked machine must reference an active asset
+      // explicitly marked for manufacturing.
+      return assetId == null || eligibleAssetIds.has(assetId) ||
+        savedMachineIds.includes(machine.id);
+    });
     const workCenters = await db
       .select({
         id: workCentersTable.id,
@@ -10979,26 +10998,19 @@ productionExecutionRouter.get("/orders/:id/resource-catalog", async (req, res) =
       .from(workCentersTable)
       .where(eq(workCentersTable.companyId, cid))
       .orderBy(asc(workCentersTable.nameAr), asc(workCentersTable.id));
-    const linkedAssetIds = [...new Set(
-      machines.map((machine) => machine.fixedAssetId).filter((id): id is number => id != null),
-    )];
-    const assetStatus = linkedAssetIds.length
-      ? or(eq(fixedAssetsTable.status, "active"), inArray(fixedAssetsTable.id, linkedAssetIds))
-      : eq(fixedAssetsTable.status, "active");
-    const assets = await db
-      .select({
-        id: fixedAssetsTable.id,
-        nameAr: fixedAssetsTable.nameAr,
-        nameEn: fixedAssetsTable.nameEn,
-        code: fixedAssetsTable.code,
-      })
-      .from(fixedAssetsTable)
-      .where(and(
-        eq(fixedAssetsTable.companyId, cid),
-        orderBranchResourceCondition(fixedAssetsTable, order.branchId),
-        assetStatus,
-      ))
-      .orderBy(asc(fixedAssetsTable.nameAr), asc(fixedAssetsTable.id));
+    const resourceAssetLinks = await db.select({
+      fixedAssetId: productionResourcesTable.fixedAssetId,
+      meta: productionResourcesTable.meta,
+    }).from(productionResourcesTable).where(and(
+      eq(productionResourcesTable.companyId, cid),
+      eq(productionResourcesTable.type, "machine"),
+    ));
+    const linkedAssetIds = [...new Set(resourceAssetLinks
+      .map((resource) => resource.fixedAssetId ??
+        resourceRelationshipId(resource.meta, "fixedAssetId"))
+      .filter((id): id is number => id != null))];
+    const linkedAssetIdSet = new Set(linkedAssetIds);
+    const assets = eligibleAssets.filter(asset => !linkedAssetIdSet.has(asset.id));
     res.json({
       workCenters: workCenters.map((center) => ({
         id: center.id,
@@ -11122,10 +11134,14 @@ productionExecutionRouter.post("/orders/:id/setup/machines", async (req, res) =>
             eq(fixedAssetsTable.id, fixedAssetId),
             eq(fixedAssetsTable.companyId, ctx.cid),
             eq(fixedAssetsTable.status, "active"),
+            eq(fixedAssetsTable.usedInManufacturing, true),
           ))
           .limit(1);
         if (!asset) {
-          throw Object.assign(new Error("الأصل الثابت غير موجود أو غير متاح للربط"), { status: 400 });
+          throw Object.assign(
+            new Error("الأصل الثابت يجب أن يكون نشطاً ومفعّلاً للاستخدام في التصنيع"),
+            { status: 400 },
+          );
         }
         if (asset.branchId != null && asset.branchId !== ctx.order.branchId) {
           throw Object.assign(new Error("الأصل الثابت خارج نطاق فرع أمر الإنتاج"), { status: 400 });

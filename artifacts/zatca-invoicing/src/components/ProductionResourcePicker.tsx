@@ -108,11 +108,12 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
             <div className="space-y-1.5"><Label>مركز العمل</Label><SearchCombobox value={center} onValueChange={setCenter} items={[{ value: "", label: "بدون مركز" }, ...centers]} disabled={saving} /></div>
             <div className="space-y-1.5"><Label>ربط الأصل الثابت</Label><SearchCombobox value={mode} onValueChange={setMode} disabled={saving}
               items={[{ value: "unlinked", label: "آلة بدون أصل / مؤجرة" }, { value: "linked", label: "ربط بأصل ثابت موجود" }]} /></div>
-            {mode === "linked" && <div className="space-y-1.5"><Label>الأصل الثابت</Label><SearchCombobox value={asset}
+            {mode === "linked" && <div className="space-y-1.5"><Label>الأصل الثابت المستخدم في التصنيع</Label><SearchCombobox value={asset}
               onValueChange={value => { setAsset(value); const row = catalog.assets.find(x => String(x.id) === value); if (!name.trim() && row) setName(row.nameAr || row.name || ""); }}
               items={catalog.assets.map(row => ({ value: String(row.id), label: `${row.code ? `${row.code} — ` : ""}${row.nameAr || row.name || row.id}` }))}
               disabled={saving} placeholder="ابحث عن أصل ثابت" />
-              {!catalog.assets.length && <p className="text-xs text-amber-700">لا توجد أصول متاحة للربط ضمن نطاق هذا الأمر.</p>}
+              {!catalog.assets.length && <p className="text-xs text-amber-700">لا توجد أصول نشطة ومفعّلة للتصنيع وغير مرتبطة بآلة محفوظة. الأصل المرتبط يظهر كآلة في قائمة الآلات.</p>}
+              <p className="text-xs text-slate-500">تظهر هنا الأصول المفعّلة للتصنيع فقط. إذا كان الأصل مرتبطًا بآلة محفوظة، اختاري الآلة نفسها بدل إنشاء ربط مكرر.</p>
             </div>}
             <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 space-y-2">
               <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-amber-950">
