@@ -349,7 +349,7 @@ test("source invariant: starting a trial is an atomic off-to-trial transition", 
 });
 
 test("source invariant: acceleration telemetry DDL is central-only", () => {
-  const centralStart = ensureSchemaSrc.indexOf("async function ensureCentralAgentInvoiceAccelerationSchema(");
+  const centralStart = ensureSchemaSrc.indexOf("async function ensureCentralAgentControlSchema(");
   const runHealStart = ensureSchemaSrc.indexOf("async function runHeal(", centralStart);
   const centralBody = ensureSchemaSrc.slice(centralStart, runHealStart);
   assert.ok(centralStart !== -1, "central acceleration schema helper must exist");
@@ -357,7 +357,7 @@ test("source invariant: acceleration telemetry DDL is central-only", () => {
   assert.ok(centralBody.includes("agent_invoice_samples"), "central helper must create the telemetry table");
 
   const identityStart = ensureSchemaSrc.indexOf("async function ensureTenantIdentityIndexes(");
-  const identityEnd = ensureSchemaSrc.indexOf("async function ensureCentralAgentInvoiceAccelerationSchema(", identityStart);
+  const identityEnd = ensureSchemaSrc.indexOf("async function ensureCentralAgentControlSchema(", identityStart);
   const identityBody = ensureSchemaSrc.slice(identityStart, identityEnd);
   assert.ok(
     !identityBody.includes("agent_invoice_samples"),
@@ -382,7 +382,7 @@ test("source invariant: acceleration telemetry DDL is central-only", () => {
     );
   }
   assert.ok(
-    ensureSchemaSrc.includes("excludedColumns: CENTRAL_ONLY_AGENT_ACCELERATION_COLUMNS"),
+    ensureSchemaSrc.includes("excludedColumns: CENTRAL_ONLY_AGENT_CONTROL_COLUMNS"),
     "both external healing paths must receive the central-column exclusion list",
   );
 });

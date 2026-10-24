@@ -33,7 +33,9 @@ test("source-query contract excludes unposted recognition, VAT, and duplicated a
   assert.match(sources, /total_amount::numeric - i\.vat_amount::numeric\) \* COALESCE\(i\.exchange_rate::numeric, 1\)/);
   assert.match(sources, /total_amount::numeric - r\.vat_amount::numeric\) \* COALESCE\(r\.exchange_rate::numeric, 1\)/);
   assert.match(sources, /alloc\.source_type='purchase_invoice_line'/);
-  const returnExpense = sources.slice(sources.indexOf("'purchase_return_expense'"), sources.indexOf("UNION ALL", sources.indexOf("'purchase_return_expense'")));
+  const returnStart = sources.indexOf("SELECT 'purchase_return_expense'");
+  const returnEnd = sources.indexOf("UNION ALL", returnStart);
+  const returnExpense = sources.slice(returnStart, returnEnd < 0 ? undefined : returnEnd);
   assert.match(returnExpense, /jel\.debit::numeric - jel\.credit::numeric/);
   assert.doesNotMatch(returnExpense, /NOT EXISTS|purchase_allocated/);
   assert.match(sources, /a\.account_type='expense'/);

@@ -17,10 +17,15 @@ function scenario(currentQty: number, priorQty = 0, priorDate = "2026-01-01", di
     subcontractorContractId: bill.subcontractorContractId,
     quantity: "100", unitPrice: "10", unit: "m3",
   };
+  const contract = {
+    id: direction === "outgoing" ? 3 : 4,
+    companyId: 1, projectId: 2, vatPercent: "0", priceIncludesVat: false,
+  };
   const line = { id: 8, currentQty: String(currentQty), changeOrderId: null, changeOrderSubcontractId: null };
   const results: unknown[][] = [
     [{ line, boq }],
     [boq],
+    [contract],
     priorQty ? [{
       billId: 10, billDate: priorDate,
       line: { currentQty: String(priorQty), currentValue: String(priorQty * 10) },

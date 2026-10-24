@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -30,8 +30,15 @@ import {
   verifyPackageEntry,
   type ExternalPackageEntry,
 } from "../src/lib/agentExternalPackages.ts";
+import { pool } from "@workspace/db";
 
 const execFileAsync = promisify(execFile);
+
+after(async () => {
+  // Route imports pull in auth/database modules even though these tests do not
+  // query PostgreSQL. Close the lazy pool so this test worker can exit.
+  try { await pool.end(); } catch { /* already ended is fine */ }
+});
 
 test("central release policy never exposes a version to legacy cron requests", () => {
   assert.equal(isManualAgentReleaseRequest(undefined), false);
