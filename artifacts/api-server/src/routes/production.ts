@@ -69,7 +69,6 @@ import {
   QC_RESULTS,
   PRODUCTION_ORDER_STATUSES,
   PRODUCTION_STATUS_TRANSITIONS,
-  PRODUCTION_STAGE_STATUSES,
   usersTable,
   employeesTable,
   payrollAllocationSnapshotsTable,
@@ -12630,6 +12629,13 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (!ctx) return;
     assertStageExecutionMutable(ctx.order);
     const stageId = Number(req.params.stageId);
+    const rawBody = req.body;
+    if (rawBody && typeof rawBody === "object" &&
+        Object.prototype.hasOwnProperty.call(rawBody, "status")) {
+      return void res.status(400).json({
+        error: "لا يمكن تغيير حالة المرحلة عبر التحديث العام؛ استخدم إجراء المرحلة المخصص",
+      });
+    }
     const b = stageExecutionRequestBody(req) as Record<string, any>;
     const execution = normalizeStageExecutionPayload(b);
     const [current] = await db.select().from(productionOrderStagesTable).where(and(
@@ -12709,18 +12715,6 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
     if (execution.notes !== undefined) updates.notes = execution.notes;
     if (execution.operatorUserId !== undefined) updates.operatorUserId = execution.operatorUserId;
     if (execution.operatorEmployeeId !== undefined) updates.operatorEmployeeId = execution.operatorEmployeeId;
-    if (
-      typeof b.status === "string" &&
-      (PRODUCTION_STAGE_STATUSES as readonly string[]).includes(b.status)
-    ) {
-      updates.status = b.status;
-      if (b.status === "in_progress") updates.startedAt = new Date();
-      if (b.status === "done") updates.completedAt = new Date();
-      if (b.status === "pending") {
-        updates.startedAt = null;
-        updates.completedAt = null;
-      }
-    }
     if (Object.keys(updates).length === 0) {
       res.status(400).json({ error: "لا يوجد تحديث" });
       return;
@@ -12768,9 +12762,9 @@ productionExecutionRouter.patch("/orders/:id/stages/:stageId", async (req, res) 
   }
 });
 
-// Re-open a completed stage for a corrective execution. Generic PATCH must
-// never turn a done row into an unvalidated done row; correction goes through
-// this explicit transition and then the complete endpoint.
+// Re-open a completed stage for a corrective execution. Generic PATCH rejects
+// lifecycle status changes; correction goes through this explicit transition
+// and then the complete endpoint so stock and cost postings stay in sync.
 productionExecutionRouter.post("/orders/:id/stages/:stageId/reopen", async (req, res) => {
   try {
     const ctx = await loadOrderForStages(req, res);
