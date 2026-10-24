@@ -67,7 +67,7 @@ test("actual utility settlement clears provisional accrual and capitalizes only 
   assert.throws(() => settleProvisionalResourceCost(550, -1), /غير صالح/);
 });
 
-test("actual payroll/depreciation settling during WIP does not reverse an accrual not yet posted", () => {
+test("actual payroll/depreciation settling during WIP clears only a posted provisional accrual", () => {
   assert.deepEqual(pendingResourceSettlementPosting(550, 500, false), {
     destinationDebit: 550,
     accrualDebit: 0,
@@ -79,6 +79,12 @@ test("actual payroll/depreciation settling during WIP does not reverse an accrua
     accrualDebit: 500,
     destinationCredit: 500,
     destinationNet: 50,
+  });
+  assert.deepEqual(pendingResourceSettlementPosting(450, 500, true), {
+    destinationDebit: 450,
+    accrualDebit: 500,
+    destinationCredit: 500,
+    destinationNet: -50,
   });
 });
 
@@ -126,6 +132,10 @@ test("v1 route freezes source-linked kWh evidence and provisional pending utilit
   assert.match(freeze, /sourceAllocationId: electricityAllocation\?\.id \?\? null/);
   assert.match(freeze, /provisionalAccrualAccountId: electricityAllocation \? null : order\.overheadAccountId/);
   assert.match(freeze, /provisional_wip_accrual_cleared_by_actual_utility_source/);
+  assert.match(source, /async function postStagePendingSourceAccruals/);
+  assert.match(source, /entryType: "production_stage_resource_accrual"/);
+  assert.match(source, /stageAccrualClaims\.has\(Number\(evidence\.id\)\)/);
+  assert.match(source, /reverseStageResourceAccrualPostings\(tx, cid, order, todayIso, req\)/);
   assert.match(freeze, /sourceType: "pending_payroll"/);
   assert.match(freeze, /sourceType: "pending_fixed_asset_depreciation"/);
   assert.match(source, /"pending_machine_electricity"[\s\S]*"pending_payroll"[\s\S]*"pending_fixed_asset_depreciation"/);

@@ -396,6 +396,10 @@ async function settlePendingResourceEvidence(evidenceId: number) {
       eq(productionOrdersTable.companyId, evidence.companyId),
     )).for("update").limit(1);
     const completedOrder = order?.status === "completed";
+    const stageAccrualClaims = order
+      ? await stageResourceAccrualClaimIds(tx, evidence.companyId, order.id)
+      : new Set<number>();
+    const provisionalAccrualWasPosted = completedOrder || stageAccrualClaims.has(Number(evidence.id));
     if (!order || (!completedOrder && !["in_production", "paused", "quality_check"].includes(String(order.status))) ||
         !order.issueJournalEntryId || (!completedOrder && !order.wipAccountId)) return;
     const [lockedEvidence] = await tx.select().from(productionStageResourceCostsTable)
@@ -537,9 +541,9 @@ async function settlePendingResourceEvidence(evidenceId: number) {
     }
     const destinationAccountId = completedOrder ? order.finishedGoodsAccountId : order.wipAccountId;
     const settlementPosting = pendingResourceSettlementPosting(
-      actualAmount, accruedAmount, completedOrder,
+      actualAmount, accruedAmount, provisionalAccrualWasPosted,
     );
-    const orderActualCostIncrease = completedOrder
+    const orderActualCostIncrease = provisionalAccrualWasPosted
       ? settlementPosting.destinationNet
       : settlementPosting.destinationDebit;
     if (settlementPosting.accrualDebit > 0 &&
@@ -8276,8 +8280,10 @@ export async function productionStatusHandler(req: any, res: any) {
           ))
           : [];
         const settledStageCostIds = new Set(settledEvidence.map((row: any) => Number(row.stageResourceCostId)));
+        const stageAccrualClaims = await stageResourceAccrualClaimIds(tx, cid, order.id);
         for (const evidence of resourceEvidence) {
-          if (settledStageCostIds.has(Number(evidence.id))) continue;
+          if (settledStageCostIds.has(Number(evidence.id)) ||
+              stageAccrualClaims.has(Number(evidence.id))) continue;
           const snapshot = (evidence.snapshot ?? {}) as Record<string, unknown>;
           const accountId = Number(snapshot.provisionalAccrualAccountId);
           const amount = num(snapshot.provisionalAccrualAmount ?? evidence.amount);
@@ -8649,6 +8655,7 @@ export async function productionStatusHandler(req: any, res: any) {
         description: `عكس صرف وتكلفة أمر إنتاج مكتمل ${order.orderNumber}`,
         lines: issueReversalLines, dx: tx,
       });
+      await reverseStageResourceAccrualPostings(tx, cid, order, todayIso, req);
       // Driver reconciliations are separate immutable delta JEs. Reverse
       // their exact posted lines as part of an order reversal so their source
       // capacity is economically released without touching base allocations.
@@ -8818,6 +8825,7 @@ export async function productionStatusHandler(req: any, res: any) {
         lines: issueReversalLines,
         dx: tx,
       });
+      await reverseStageResourceAccrualPostings(tx, cid, order, todayIso, req);
       // A transport linked after issue owns a separate WIP delta.  The normal
       // issue reversal only covers sources present at issue time, so invert
       // late deltas under this same order lock/transaction as well.
@@ -10867,6 +10875,178 @@ async function freezeStageResourceCosts(
     .onConflictDoNothing();
 }
 
+async function stageResourceAccrualClaimIds(tx: any, cid: number, orderId: number) {
+  const events = await tx.select({ payload: productionEventsTable.payload })
+    .from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, cid),
+      eq(productionEventsTable.orderId, orderId),
+      eq(productionEventsTable.eventType, "stage_resource_accrual_posted"),
+    ));
+  const claimed = new Set<number>();
+  for (const event of events) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    for (const value of Array.isArray(payload.stageResourceCostIds) ? payload.stageResourceCostIds : []) {
+      const id = Number(value);
+      if (Number.isInteger(id) && id > 0) claimed.add(id);
+    }
+  }
+  return claimed;
+}
+
+async function postStagePendingSourceAccruals(
+  tx: any, cid: number, order: any, stage: any, actorId: number, req: any,
+) {
+  if (Number(order.resourceCostingVersion) < 1) {
+    return { journalEntryId: null as number | null, amount: 0 };
+  }
+  const pendingRows = await tx.select({
+    id: productionStageResourceCostsTable.id,
+    amount: productionStageResourceCostsTable.amount,
+    snapshot: productionStageResourceCostsTable.snapshot,
+    component: productionStageResourceCostsTable.component,
+  }).from(productionStageResourceCostsTable).where(and(
+    eq(productionStageResourceCostsTable.companyId, cid),
+    eq(productionStageResourceCostsTable.orderId, order.id),
+    eq(productionStageResourceCostsTable.stageId, stage.id),
+    inArray(productionStageResourceCostsTable.sourceType, [
+      "pending_payroll", "pending_fixed_asset_depreciation",
+    ]),
+  ));
+  const rows = pendingRows.filter((row: any) =>
+    (row.snapshot as Record<string, unknown>)?.pendingSourceSettlement === true &&
+    num(row.amount) > 0,
+  );
+  if (!rows.length) return { journalEntryId: null as number | null, amount: 0 };
+
+  const alreadyClaimed = await stageResourceAccrualClaimIds(tx, cid, order.id);
+  const unclaimed = rows.filter((row: any) => !alreadyClaimed.has(Number(row.id)));
+  if (!unclaimed.length) return { journalEntryId: null as number | null, amount: 0 };
+
+  const byAccrualAccount = new Map<number, number>();
+  for (const row of unclaimed) {
+    const snapshot = row.snapshot as Record<string, unknown>;
+    const accountId = Number(snapshot.provisionalAccrualAccountId);
+    const amount = num(snapshot.provisionalAccrualAmount ?? row.amount);
+    if (!Number.isInteger(accountId) || accountId <= 0 || !(amount > 0)) {
+      throw Object.assign(new Error("استحقاق العمالة أو الإهلاك يحتاج حساب امتصاص صالحاً قبل إكمال المرحلة"), { status: 422 });
+    }
+    if (accountId === Number(order.wipAccountId)) {
+      throw Object.assign(new Error("يجب أن يختلف حساب الاستحقاق المؤقت عن حساب WIP"), { status: 422 });
+    }
+    await validatePostingAccount(tx, cid, accountId);
+    byAccrualAccount.set(accountId, Number(((byAccrualAccount.get(accountId) ?? 0) + amount).toFixed(2)));
+  }
+  const amount = Number([...byAccrualAccount.values()].reduce((sum, value) => sum + value, 0).toFixed(2));
+  if (!(amount > 0)) return { journalEntryId: null as number | null, amount: 0 };
+  const postingDate = new Date(stage.completedAt ?? new Date()).toISOString().slice(0, 10);
+  const writable = await assertWritableForDate(cid, postingDate);
+  if (!writable.ok) {
+    throw Object.assign(new Error(writable.reason), { status: 423 });
+  }
+  const journalEntryId = await createJournalEntry({
+    companyId: cid,
+    audit: { req },
+    branchId: order.branchId,
+    date: postingDate,
+    docNumber: `${order.orderNumber}-STG-${stage.sequence}-ACCR`,
+    entryType: "production_stage_resource_accrual",
+    status: "posted",
+    costCenter: order.costCenter ?? null,
+    description: `استحقاق مؤقت لموارد مرحلة ${stage.nameAr || stage.code} — ${order.orderNumber}`,
+    lines: [
+      { accountId: order.wipAccountId, debit: amount, description: "تكلفة موارد المرحلة — WIP" },
+      ...[...byAccrualAccount].map(([accountId, credit]) => ({
+        accountId, credit, description: "استحقاق مؤقت لرواتب/إهلاك موارد الإنتاج",
+      })),
+    ],
+    dx: tx,
+  });
+  const ids = unclaimed.map((row: any) => Number(row.id));
+  await writeEvent(cid, order.id, "stage_resource_accrual_posted", {
+    stageId: stage.id,
+    stageResourceCostIds: ids,
+    journalEntryId,
+    amount,
+  }, actorId, false, tx);
+  const [freshOrder] = await tx.select({ actualCost: productionOrdersTable.actualCost })
+    .from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.companyId, cid),
+      eq(productionOrdersTable.id, order.id),
+    )).for("update").limit(1);
+  await tx.update(productionOrdersTable).set({
+    actualCost: String((num(freshOrder?.actualCost) + amount).toFixed(2)),
+    updatedAt: new Date(),
+  }).where(and(
+    eq(productionOrdersTable.companyId, cid),
+    eq(productionOrdersTable.id, order.id),
+  ));
+  return { journalEntryId, amount };
+}
+
+async function reverseStageResourceAccrualPostings(
+  tx: any, cid: number, order: any, reversalDate: string, req: any,
+) {
+  const events = await tx.select({ payload: productionEventsTable.payload })
+    .from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, cid),
+      eq(productionEventsTable.orderId, order.id),
+      eq(productionEventsTable.eventType, "stage_resource_accrual_posted"),
+    ));
+  const reversals = await tx.select({ payload: productionEventsTable.payload })
+    .from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, cid),
+      eq(productionEventsTable.orderId, order.id),
+      eq(productionEventsTable.eventType, "stage_resource_accrual_reversed"),
+    ));
+  const reversedIds = new Set(reversals.map((event: any) =>
+    Number((event.payload as Record<string, unknown> | null)?.originalJournalEntryId),
+  ));
+  for (const event of events) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    const journalId = Number(payload.journalEntryId);
+    if (!Number.isInteger(journalId) || journalId <= 0 || reversedIds.has(journalId)) continue;
+    const [original] = await tx.select({
+      id: journalEntriesTable.id,
+      status: journalEntriesTable.status,
+    }).from(journalEntriesTable).where(and(
+      eq(journalEntriesTable.id, journalId),
+      eq(journalEntriesTable.companyId, cid),
+    )).for("update").limit(1);
+    if (!original) throw Object.assign(new Error("قيد استحقاق موارد المرحلة الأصلي غير موجود ولا يمكن عكسه"), { status: 409 });
+    const lines = await tx.select({
+      accountId: journalEntryLinesTable.accountId,
+      debit: journalEntryLinesTable.debit,
+      credit: journalEntryLinesTable.credit,
+      description: journalEntryLinesTable.description,
+      costCenter: journalEntryLinesTable.costCenter,
+    }).from(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, journalId));
+    if (lines.length < 2) throw Object.assign(new Error("سطور قيد استحقاق موارد المرحلة غير مكتملة"), { status: 409 });
+    const reversalId = await createJournalEntry({
+      companyId: cid,
+      audit: { req },
+      branchId: order.branchId,
+      date: reversalDate,
+      docNumber: `${order.orderNumber}-STG-ACCR-REV-${journalId}`,
+      entryType: "production_stage_resource_accrual_reversal",
+      status: original.status,
+      costCenter: order.costCenter ?? null,
+      description: `عكس استحقاق موارد المراحل لأمر ${order.orderNumber}`,
+      lines: lines.map((line: any) => ({
+        accountId: line.accountId,
+        debit: num(line.credit),
+        credit: num(line.debit),
+        description: `عكس: ${line.description ?? order.orderNumber}`,
+        costCenter: line.costCenter,
+      })),
+      dx: tx,
+    });
+    await writeEvent(cid, order.id, "stage_resource_accrual_reversed", {
+      originalJournalEntryId: journalId,
+      reversalJournalEntryId: reversalId,
+    }, req.authUser?.id ?? null, false, tx);
+  }
+}
+
 async function loadStageUnitCatalog(
   cid: number,
   order: { unitCode?: string | null; productItemId?: number | null },
@@ -11781,6 +11961,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
         updated,
         req.authUser!.id,
       );
+      const stageAccrual = await postStagePendingSourceAccruals(
+        tx, ctx.cid, ctx.order, updated, req.authUser!.id, req,
+      );
 
       await writeEvent(
         ctx.cid,
@@ -11803,7 +11986,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
           workerEmployeeIds: updated.workerEmployeeIds ?? [],
           wasteReason: wasteReason ?? null,
           wasteType: wasteType ?? null,
-          wasteClassification: wasteClassification ?? null, actualHours },
+          wasteClassification: wasteClassification ?? null, actualHours,
+          resourceAccrualJournalEntryId: stageAccrual.journalEntryId,
+          resourceAccrualAmount: stageAccrual.amount },
         req.authUser!.id,
         false,
         tx,
