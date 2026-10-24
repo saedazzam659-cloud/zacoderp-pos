@@ -58,6 +58,34 @@ type Stage = {
   notes: string;
 };
 
+function getStageCompletionIssue(stage: Stage): string | null {
+  const input = Number(stage.inputQty);
+  const output = Number(stage.outputQty);
+  const waste = Number(stage.wasteQty);
+  if (![input, output, waste].every(value => Number.isFinite(value) && value >= 0)) {
+    return "أدخل كميات صحيحة غير سالبة قبل إنهاء المرحلة.";
+  }
+  const quantityFactor = stage.quantityUnit ? Number(stage.quantityUnitFactor) : 1;
+  const wasteFactor = stage.wasteUnit ? Number(stage.wasteUnitFactor) : 1;
+
+  if (!Number.isFinite(quantityFactor) || quantityFactor <= 0 ||
+      !Number.isFinite(wasteFactor) || wasteFactor <= 0) {
+    return "أدخل معامل تحويل موجبًا لوحدة المرحلة والهالك قبل الإنهاء.";
+  }
+  if ((output * quantityFactor) + (waste * wasteFactor) >
+      (input * quantityFactor) + 0.00005) {
+    return "مجموع الناتج والهالك بعد التحويل أكبر من كمية الإدخال.";
+  }
+  if (input > 0 && output === 0 &&
+      (waste * wasteFactor) < (input * quantityFactor) - 0.00005) {
+    return "الناتج صفر. سجّل كامل كمية الإدخال كهالك، أو أدخل كمية الإنتاج الفعلية.";
+  }
+  if (waste > 0 && (!(stage.wasteReason ?? "").trim() || !(stage.wasteType ?? "").trim() || !stage.wasteClassification)) {
+    return "أدخل سبب الهالك ونوعه وتصنيفه قبل إنهاء المرحلة.";
+  }
+  return null;
+}
+
 const STAGE_TAB_TONES = [
   {
     idle: "border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100",
@@ -343,6 +371,13 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
 
   const sendStageAction = async (stageId: string, action: "start" | "complete" | "update", stageData: Stage) => {
     if (!canExecute || !isExecuting) return;
+    if (action === "complete") {
+      const completionIssue = getStageCompletionIssue(stageData);
+      if (completionIssue) {
+        toast({ title: "لا يمكن إنهاء المرحلة", description: completionIssue, variant: "destructive" });
+        return;
+      }
+    }
     if (
       (stageData.quantityUnitCustomMode && !stageData.quantityUnit) ||
       (stageData.wasteUnitCustomMode && !stageData.wasteUnit) ||
@@ -537,6 +572,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
               const activeStage = stages.find(s => s.id === activeTabId);
               const currentIndex = stages.findIndex(s => s.id === activeTabId);
               if (!activeStage) return null;
+              const completionIssue = getStageCompletionIssue(activeStage);
               
               return (
                 <div role="tabpanel" id={`stage-panel-${orderId}-${activeStage.id}`} aria-labelledby={`stage-tab-${orderId}-${activeStage.id}`} className="animate-in fade-in duration-200 motion-reduce:animate-none" key={activeStage.id}>
@@ -586,8 +622,8 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                           )}
                           {activeStage.status === "in_progress" && (
                             <Button 
-                              size="sm" variant="outline" className="h-8 bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700" 
-                              disabled={busyStage === activeStage.id}
+                                size="sm" variant="outline" className="h-8 bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700"
+                                disabled={busyStage === activeStage.id || Boolean(completionIssue)}
                               onClick={() => sendStageAction(activeStage.id, "complete", activeStage)}
                             >
                               <Square className="h-3.5 w-3.5 me-1" /> إنهاء المرحلة
@@ -619,11 +655,11 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><ArrowDownToLine className="h-3.5 w-3.5 text-slate-400" /> الكمية المدخلة</Label>
-                          <Input type="number" step="0.01" value={activeStage.inputQty} onChange={e => handleUpdateStage(activeStage.id, { inputQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
+                           <Input type="number" min="0" step="0.01" value={activeStage.inputQty} onChange={e => handleUpdateStage(activeStage.id, { inputQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5"><ArrowUpFromLine className="h-3.5 w-3.5 text-slate-400" /> الكمية المنتجة</Label>
-                          <Input type="number" step="0.01" value={activeStage.outputQty} onChange={e => handleUpdateStage(activeStage.id, { outputQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
+                           <Input type="number" min="0" step="0.01" value={activeStage.outputQty} onChange={e => handleUpdateStage(activeStage.id, { outputQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-slate-200 focus-visible:ring-violet-500" />
                         </div>
                       </div>
 
@@ -720,6 +756,9 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                         <div className="font-bold text-sm text-rose-800 flex items-center gap-1.5 border-b border-rose-100 pb-2">
                           <Activity className="h-4 w-4" /> فاقد العملية (هذه المرحلة — لا ينشئ مصروفاً مستقلاً)
                         </div>
+                        <p className="text-xs leading-5 text-slate-600">
+                          أدخل الإنتاج الفعلي والهالك إن وُجد. إذا كان الإنتاج صفراً، سجّل كامل المدخل كهالك وحدد نوعه وسببه؛ ولا يجوز أن يتجاوز مجموع الناتج والهالك كمية الإدخال بعد التحويل.
+                        </p>
                         <StageUnitSelector
                           value={activeStage.wasteUnit}
                           factor={activeStage.wasteUnitFactor}
@@ -738,7 +777,7 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-rose-900">كمية الهالك</Label>
-                            <Input type="number" step="0.01" value={activeStage.wasteQty} onChange={e => handleUpdateStage(activeStage.id, { wasteQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
+                            <Input type="number" min="0" step="0.01" value={activeStage.wasteQty} onChange={e => handleUpdateStage(activeStage.id, { wasteQty: Number(e.target.value) })} disabled={!isExecuting || !canExecute || (activeStage.status === "done" || activeStage.status === "skipped")} className="bg-white border-rose-200 focus-visible:ring-rose-500" />
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-semibold text-rose-900">طبيعي أم تالف</Label>
@@ -775,6 +814,13 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                         />
                       </div>
                     </div>
+
+                      {activeStage.status === "in_progress" && completionIssue && (
+                        <div role="alert" className="md:col-span-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm leading-6 text-amber-900">
+                          <AlertTriangle className="mt-1 h-4 w-4 shrink-0" />
+                          <span><strong>قبل إنهاء المرحلة:</strong> {completionIssue}</span>
+                        </div>
+                      )}
 
                     <div className="md:col-span-2 flex flex-wrap gap-3 items-center justify-between pt-5 border-t border-slate-200 mt-2">
                       <div className="flex gap-2">

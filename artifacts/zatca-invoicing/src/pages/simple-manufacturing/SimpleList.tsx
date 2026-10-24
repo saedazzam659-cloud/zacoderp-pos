@@ -487,7 +487,14 @@ export function SimpleOrderList({
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[760px] table-fixed text-sm">
+              <colgroup>
+                <col className="w-[18%]" />
+                <col className="w-[27%]" />
+                <col className="w-[13%]" />
+                <col className="w-[14%]" />
+                <col className="w-[28%]" />
+              </colgroup>
               <thead>
                 <tr className="border-b bg-slate-50 text-slate-500 text-right">
                   <th className="px-4 py-3 font-medium">رقم الأمر</th>
@@ -500,21 +507,23 @@ export function SimpleOrderList({
               <tbody>
                 {orders.map(order => (
                   <tr key={order.id} className="border-b hover:bg-slate-50/80 transition-colors">
-                    <td className="px-4 py-3 font-semibold text-violet-700">{order.orderNumber}</td>
+                    <td className="px-4 py-3 whitespace-nowrap font-semibold text-violet-700">{order.orderNumber}</td>
                     <td className="px-4 py-3 font-medium">{productName(order.productItemId)}</td>
-                    <td className="px-4 py-3">{formatQuantity(order.plannedQty)}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap">{formatQuantity(order.plannedQty)}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <Badge variant="outline" className="bg-white">{statusLabel(order.status)}</Badge>
                     </td>
-                    <td className="px-4 py-3 text-left flex gap-2 justify-end">
-                      <Button size="sm" variant="outline" onClick={() => onOpenOrder(order)} className="bg-white">
-                        التفاصيل
-                      </Button>
-                      <Link href={`/simple-manufacturing/orders/${order.id}`}>
-                        <Button size="sm" variant="secondary" className="bg-slate-100 hover:bg-slate-200">
-                          دورة الحياة
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button size="sm" variant="outline" onClick={() => onOpenOrder(order)} className="bg-white">
+                          التفاصيل
                         </Button>
-                      </Link>
+                        <Link href={`/simple-manufacturing/orders/${order.id}`}>
+                          <Button size="sm" variant="secondary" className="bg-slate-100 hover:bg-slate-200">
+                            دورة الحياة
+                          </Button>
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}
