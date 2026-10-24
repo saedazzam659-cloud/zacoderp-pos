@@ -11166,7 +11166,7 @@ async function postStagePendingSourceAccruals(
   return { journalEntryId, amount };
 }
 
-async function postStageLinkedSourceCosts(
+export async function postStageLinkedSourceCosts(
   tx: any, cid: number, order: any, stage: any, actorId: number, req: any,
 ) {
   if (Number(order.resourceCostingVersion) < 1) {
