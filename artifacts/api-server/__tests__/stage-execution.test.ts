@@ -252,3 +252,20 @@ test("routing material defaults seed a new order while order-level choices remai
   assert.match(wizard, /defaults\.get\(Number\(line\.id\)\)/);
   assert.match(wizard, /setMaterialStageAssignments/);
 });
+
+test("generic stage PATCH cannot bypass completion postings by changing status", async () => {
+  const production = await readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8");
+  const patchStart = production.indexOf(
+    'productionExecutionRouter.patch("/orders/:id/stages/:stageId"',
+  );
+  const reopenStart = production.indexOf(
+    'productionExecutionRouter.post("/orders/:id/stages/:stageId/reopen"',
+    patchStart,
+  );
+  assert.ok(patchStart >= 0 && reopenStart > patchStart, "expected stage PATCH and reopen routes");
+
+  const patchRoute = production.slice(patchStart, reopenStart);
+  assert.match(patchRoute, /hasOwnProperty\.call\(rawBody,\s*"status"\)/);
+  assert.match(patchRoute, /res\.status\(400\)\.json/);
+  assert.doesNotMatch(patchRoute, /updates\.status\s*=/);
+});
