@@ -476,11 +476,12 @@ export default function SimpleManufacturing() {
     defaultWasteAccountId: number | null;
     electricityTariffPerKwh?: number | null;
     internalTransportEnabled?: boolean;
+    comprehensiveCostingEnabled?: boolean;
   }) => {
     return mutate(() => request("/api/simple-manufacturing/setup/accounting", {
       method: "PUT",
       body: JSON.stringify(data),
-    }), "تم حفظ حسابات التصنيع");
+    }), "تم حفظ إعدادات التصنيع");
   };
 
   return (

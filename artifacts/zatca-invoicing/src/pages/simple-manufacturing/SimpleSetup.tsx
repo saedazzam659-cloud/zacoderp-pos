@@ -53,6 +53,7 @@ export function SimpleSetup({
     defaultWasteAccountId: number | null;
     electricityTariffPerKwh?: number | null;
     internalTransportEnabled?: boolean;
+     comprehensiveCostingEnabled?: boolean;
   }) => Promise<unknown>;
 }) {
   const { fmtQty } = useFmt();
@@ -83,11 +84,18 @@ export function SimpleSetup({
   const [internalTransportEnabled, setInternalTransportEnabled] = useState(
     catalog.accounting?.settings?.internalTransportEnabled === true,
   );
+  const [comprehensiveCostingEnabled, setComprehensiveCostingEnabled] = useState(
+    catalog.accounting?.settings?.comprehensiveCostingEnabled === true,
+  );
   const [savingTransportSetting, setSavingTransportSetting] = useState(false);
 
   useEffect(() => {
     setInternalTransportEnabled(catalog.accounting?.settings?.internalTransportEnabled === true);
   }, [catalog.accounting?.settings?.internalTransportEnabled]);
+
+  useEffect(() => {
+    setComprehensiveCostingEnabled(catalog.accounting?.settings?.comprehensiveCostingEnabled === true);
+  }, [catalog.accounting?.settings?.comprehensiveCostingEnabled]);
 
   // Dialog open states
   const [openMat, setOpenMat] = useState(false);
@@ -331,6 +339,60 @@ export function SimpleSetup({
               aria-label="تفعيل النقل الداخلي"
             />
             <span className="text-xs font-medium">{internalTransportEnabled ? "مفعّل" : "متوقف"}</span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-indigo-200 bg-indigo-50/30 shadow-sm md:col-span-2">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base text-indigo-950">
+            <span aria-hidden="true">◉</span>
+            تكلفة الموارد قبل ترحيل مصادرها
+          </CardTitle>
+          <CardDescription>
+            فعّل التكلفة الشاملة لتسجيل تكلفة العمالة وإهلاك الأصول على مراحل التصنيع قبل ترحيل مسير الرواتب أو قيد الإهلاك.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center justify-between gap-4">
+          <div className="text-sm">
+            <div className="font-semibold">
+              {comprehensiveCostingEnabled ? "تكلفة الموارد مفعّلة للأوامر الجديدة" : "تكلفة الموارد متوقفة"}
+            </div>
+            <p className="mt-1 max-w-3xl text-xs text-slate-600">
+              تُسجّل المبالغ مؤقتاً على الإنتاج تحت التشغيل عند إكمال المرحلة، ثم تُسوّى عند ترحيل مصدر الرواتب أو الإهلاك. لا يتغير هذا الإعداد في أوامر الإنتاج القائمة.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={comprehensiveCostingEnabled}
+              disabled={savingTransportSetting || busy || !canEdit}
+              onCheckedChange={async (checked) => {
+                const previous = comprehensiveCostingEnabled;
+                setComprehensiveCostingEnabled(checked);
+                setSavingTransportSetting(true);
+                try {
+                  await onSaveAccounting({
+                    defaultWipAccountId: catalog.accounting?.settings?.defaultWipAccountId ?? null,
+                    defaultRawInventoryAccountId: catalog.accounting?.settings?.defaultRawInventoryAccountId ?? null,
+                    defaultFinishedGoodsAccountId: catalog.accounting?.settings?.defaultFinishedGoodsAccountId ?? null,
+                    defaultOverheadAccountId: catalog.accounting?.settings?.defaultOverheadAccountId ?? null,
+                    defaultWasteAccountId: catalog.accounting?.settings?.defaultWasteAccountId ?? null,
+                    electricityTariffPerKwh: catalog.accounting?.settings?.electricityTariffPerKwh == null
+                      ? null : Number(catalog.accounting.settings.electricityTariffPerKwh),
+                    internalTransportEnabled,
+                    comprehensiveCostingEnabled: checked,
+                  });
+                } catch {
+                  setComprehensiveCostingEnabled(previous);
+                } finally {
+                  setSavingTransportSetting(false);
+                }
+              }}
+              aria-label="تفعيل تكلفة الموارد قبل ترحيل مصادرها"
+            />
+            <span className="text-xs font-medium">
+              {comprehensiveCostingEnabled ? "مفعّل" : "متوقف"}
+            </span>
           </div>
         </CardContent>
       </Card>
