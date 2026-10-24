@@ -392,6 +392,7 @@ export default function SimpleManufacturing() {
       resourceId: s.resourceId ? Number(s.resourceId) : null,
       workerCount: s.workerCount == null ? null : Number(s.workerCount),
       workerEmployeeIds: Array.isArray(s.workerEmployeeIds) ? s.workerEmployeeIds.map(Number) : [],
+      materialLineIds: Array.isArray(s.materialLineIds) ? s.materialLineIds.map(Number) : [],
     }));
     const path = data.id
       ? `/api/simple-manufacturing/setup/routing/${Number(data.id)}`

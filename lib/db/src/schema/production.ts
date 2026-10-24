@@ -994,6 +994,7 @@ export const productionRoutingStagesTable = pgTable(
     ),
     workerCount: integer("worker_count"),
     workerEmployeeIds: jsonb("worker_employee_ids").$type<number[]>(),
+    materialLineIds: jsonb("material_line_ids").$type<number[]>().notNull().default([]),
     expectedWasteRatio: numeric("expected_waste_ratio", {
       precision: 6,
       scale: 4,

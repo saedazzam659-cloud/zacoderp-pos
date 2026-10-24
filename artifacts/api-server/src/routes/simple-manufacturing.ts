@@ -1553,6 +1553,9 @@ async function normalizeSetupRouting(cid: number, body: any) {
       workerEmployeeIds: Array.isArray(x.workerEmployeeIds)
         ? [...new Set(x.workerEmployeeIds.map(Number))]
         : [],
+      materialLineIds: Array.isArray(x.materialLineIds)
+        ? [...new Set(x.materialLineIds.map(Number))]
+        : [],
       notes: x.notes ? String(x.notes) : null,
       icon: x.icon ? String(x.icon) : null,
       color: x.color ? String(x.color) : null,
@@ -1570,6 +1573,7 @@ async function normalizeSetupRouting(cid: number, body: any) {
     (x.workerCount !== null &&
       (!Number.isInteger(x.workerCount) || x.workerCount <= 0)) ||
     x.workerEmployeeIds.some((id: number) => !Number.isInteger(id) || id <= 0) ||
+    x.materialLineIds.some((id: number) => !Number.isInteger(id) || id <= 0) ||
     (x.expectedCostAccountId !== null &&
       (!Number.isInteger(x.expectedCostAccountId) || x.expectedCostAccountId <= 0)) ||
     !Number.isFinite(x.expectedWasteRatio) || x.expectedWasteRatio < 0 ||
@@ -1623,6 +1627,33 @@ async function normalizeSetupRouting(cid: number, body: any) {
       ));
     if (permittedEmployees.length !== workerEmployeeIds.length) {
       throw setupError("أحد الموظفين المعيّنين غير نشط أو لا ينتمي إلى هذه الشركة");
+    }
+  }
+  const materialLineIds = [...new Set<number>(
+    normalizedStages.flatMap((stage: any) => stage.materialLineIds),
+  )];
+  const materialOwners = new Map<number, string>();
+  for (const stage of normalizedStages) {
+    for (const lineId of stage.materialLineIds) {
+      const owner = materialOwners.get(lineId);
+      if (owner && owner !== stage.code) {
+        throw setupError("لا يمكن ربط سطر المادة نفسه بأكثر من مرحلة في المسار");
+      }
+      materialOwners.set(lineId, stage.code);
+    }
+  }
+  if (materialLineIds.length) {
+    const permittedLines = await db.select({ id: bomTemplateLinesTable.id })
+      .from(bomTemplateLinesTable)
+      .innerJoin(bomTemplatesTable, eq(bomTemplatesTable.id, bomTemplateLinesTable.templateId))
+      .where(and(
+        eq(bomTemplatesTable.companyId, cid),
+        eq(bomTemplatesTable.productItemId, productItemId),
+        eq(bomTemplatesTable.isActive, true),
+        inArray(bomTemplateLinesTable.id, materialLineIds),
+      ));
+    if (permittedLines.length !== materialLineIds.length) {
+      throw setupError("أحد أسطر مواد المرحلة غير موجود في وصفة نشطة للمنتج");
     }
   }
   const accountIds: number[] = [...new Set<number>(
@@ -1806,6 +1837,7 @@ router.post("/setup/routing", edit, async (req, res) => {
         resourceId: x.resourceId,
         workerCount: x.workerCount,
         workerEmployeeIds: x.workerEmployeeIds,
+      materialLineIds: x.materialLineIds,
       expectedDurationMinutes: x.expectedDurationMinutes,
       expectedWasteRatio: String(x.expectedWasteRatio),
       expectedCost: String(x.expectedCost),
@@ -1866,6 +1898,7 @@ router.patch("/setup/routing/:id", edit, async (req, res) => {
         resourceId: x.resourceId,
         workerCount: x.workerCount,
         workerEmployeeIds: x.workerEmployeeIds,
+        materialLineIds: x.materialLineIds,
         expectedDurationMinutes: x.expectedDurationMinutes,
         expectedWasteRatio: String(x.expectedWasteRatio),
         expectedCost: String(x.expectedCost),

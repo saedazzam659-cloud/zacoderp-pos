@@ -460,10 +460,19 @@ export function SimpleWizard({
       return;
     }
     const codes = new Set(stages.map((stage: any) => String(stage.code ?? "")).filter(Boolean));
+    const defaults = new Map<number, string>();
+    for (const stage of stages) {
+      const code = String(stage.code ?? "");
+      for (const lineId of Array.isArray(stage.materialLineIds) ? stage.materialLineIds : []) {
+        const id = Number(lineId);
+        if (Number.isInteger(id) && id > 0) defaults.set(id, code);
+      }
+    }
     setMaterialStageAssignments(current => {
       const next = Object.fromEntries(lines.map((line: any) => {
         const key = String(line.id);
-        const saved = String(current[key] ?? "");
+        const configured = defaults.get(Number(line.id)) ?? "";
+        const saved = String(current[key] ?? configured);
         return [key, codes.has(saved) ? saved : ""];
       }));
       return JSON.stringify(current) === JSON.stringify(next) ? current : next;

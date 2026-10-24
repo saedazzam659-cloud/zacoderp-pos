@@ -14,3 +14,9 @@ Routing stages may assign multiple employees. Copy those IDs into each productio
 **Why:** The owner needs route defaults to flow into manufacturing orders while allowing order-specific staffing changes, without changing established accounting attribution.
 
 **How to apply:** Validate every assigned employee as active and company-scoped; validate branch scope when executing an order stage. Keep assignment lists separate from singular legacy operator fields.
+
+Material-stage assignments are tied to recipe-line IDs and copied into each new production order. Changes to a reusable route must not rewrite existing orders; each new order can adjust its mapping before stock is issued.
+
+**Why:** The user chose an independent snapshot per order and needs to avoid ambiguous mapping when a recipe repeats the same item on multiple lines.
+
+**How to apply:** Preserve the order's material-stage mapping as its own snapshot. Never silently reassign a material line with an active stock issue; any later edit must preserve the issue history.

@@ -69,6 +69,7 @@ export type Catalog = {
         resourceId?: number | null;
         workerCount?: number | null;
       workerEmployeeIds?: number[];
+      materialLineIds?: number[];
     }>;
   }>;
   accounting?: {

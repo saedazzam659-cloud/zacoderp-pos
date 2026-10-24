@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useFmt } from "@/hooks/use-fmt";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,7 +40,7 @@ export function SimpleSetup({
   onSaveMaterial: (data: { code: string; nameAr: string; itemNature: string; unitId: string }) => Promise<any>;
   onSaveBom: (data: { id?: number; productItemId: string; nameAr: string; outputQty: string; outputUnitCode: string; lines: Array<{ itemId: string; quantity: string; unitCode: string }> }) => Promise<unknown>;
   onLoadBom: (id: number) => Promise<any>;
-  onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null; resourceMode: "labor" | "machine" | "both"; resourceId?: string; workerCount?: number }> }) => Promise<unknown>;
+  onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null; resourceMode: "labor" | "machine" | "both"; resourceId?: string; workerCount?: number; materialLineIds?: string[] }> }) => Promise<unknown>;
   onLoadRouting: (id: number) => Promise<any>;
   onSaveMachine: (data: { id?: number; name?: string; electricityEnabled: boolean; electricityKw: number | null }) => Promise<any>;
   onSaveTemplate: (data: { id?: number; name: string; productItemId: string; plannedQty: string; unitCode: string }) => Promise<unknown>;
@@ -60,6 +60,8 @@ export function SimpleSetup({
   const [bom, setBom] = useState({ productItemId: "", nameAr: "", outputQty: "1", outputUnitCode: "" });
   const [bomLines, setBomLines] = useState<Array<{ itemId: string; quantity: string; unitCode: string }>>([{ itemId: "", quantity: "1", unitCode: "" }]);
   const [routing, setRouting] = useState({ productItemId: "", nameAr: "" });
+  const [routingMaterialOptions, setRoutingMaterialOptions] = useState<Array<{ id: number; nameAr: string; code: string; detail: string }>>([]);
+  const routingMaterialLoadRef = useRef(0);
   const [routingStages, setRoutingStages] = useState<Array<{
     nameAr: string;
     expectedDurationMinutes: number;
@@ -74,7 +76,8 @@ export function SimpleSetup({
     resourceId?: string;
     workerCount?: number;
     workerEmployeeIds?: string[];
-  }>>([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [] }]);
+    materialLineIds?: string[];
+  }>>([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [], materialLineIds: [] }]);
   const [template, setTemplate] = useState({ name: "", productItemId: "", plannedQty: "1", unitCode: "" });
   const [warehouse, setWarehouse] = useState({ code: "", nameAr: "", isDefault: false });
   const [internalTransportEnabled, setInternalTransportEnabled] = useState(
@@ -112,9 +115,36 @@ export function SimpleSetup({
   };
 
   const resetRouting = () => {
+    routingMaterialLoadRef.current++;
+    setRoutingMaterialOptions([]);
     setEditingRoutingId(null);
     setRouting({ productItemId: "", nameAr: "" });
-    setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1 }]);
+    setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, materialLineIds: [] }]);
+  };
+
+  const loadRoutingMaterialsForProduct = async (productItemId: string) => {
+    const requestId = ++routingMaterialLoadRef.current;
+    setRoutingMaterialOptions([]);
+    const template = catalog.bomTemplates?.find(row => String(row.productItemId) === productItemId);
+    if (!productItemId || !template) return [];
+    const detail = await onLoadBom(template.id);
+    if (requestId !== routingMaterialLoadRef.current) return [];
+    const options: Array<{ id: number; nameAr: string; code: string; detail: string }> = [];
+    for (const line of Array.isArray(detail?.lines) ? detail.lines : []) {
+      const id = Number(line?.id);
+      const itemId = Number(line?.itemId);
+      if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(itemId) || itemId <= 0) continue;
+      const item = catalog.items.find(candidate => candidate.id === itemId);
+      if (!item || (item.itemNature && !["raw", "consumable"].includes(item.itemNature))) continue;
+      options.push({
+        id,
+        nameAr: String(line.description || item.nameAr || `صنف #${itemId}`),
+        code: String(item.code || ""),
+        detail: `${line.quantity ?? ""} ${line.unitCode ?? ""}`.trim(),
+      });
+    }
+    setRoutingMaterialOptions(options);
+    return options.map(option => String(option.id));
   };
 
   const resetTemplate = () => {
@@ -221,6 +251,7 @@ export function SimpleSetup({
         productItemId: String(detail?.productItemId ?? ""),
         nameAr: String(detail?.nameAr ?? ""),
       });
+      const validLineIds = await loadRoutingMaterialsForProduct(String(detail?.productItemId ?? ""));
       setRoutingStages(stages.length
         ? stages
           .slice()
@@ -239,6 +270,8 @@ export function SimpleSetup({
             resourceId: stage?.resourceId == null ? "" : String(stage.resourceId),
             workerCount: Number(stage?.workerCount ?? 1) || 1,
             workerEmployeeIds: Array.isArray(stage?.workerEmployeeIds) ? stage.workerEmployeeIds.map(String) : [],
+            materialLineIds: (Array.isArray(stage?.materialLineIds) ? stage.materialLineIds : [])
+              .map(String).filter((lineId: string) => validLineIds.includes(lineId)),
           }))
         : [{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [] }]);
       setOpenRouting(true);
@@ -572,7 +605,13 @@ export function SimpleSetup({
                         labelEn: i.nameEn || undefined,
                       })),
                     ]}
-                    onValueChange={value => setRouting({ ...routing, productItemId: value })}
+                    onValueChange={value => {
+                      setRouting(current => ({ ...current, productItemId: value }));
+                      if (value !== routing.productItemId) {
+                        setRoutingStages(stages => stages.map(stage => ({ ...stage, materialLineIds: [] })));
+                      }
+                      void loadRoutingMaterialsForProduct(value).catch(() => {});
+                    }}
                   />
                 </div>
                 <div className="space-y-2">
@@ -619,6 +658,37 @@ export function SimpleSetup({
                            <Input type="text" inputMode="numeric" value={stage.expectedDurationMinutes || ""} onChange={e => setRoutingStages(stages => stages.map((s, i) => i === index ? { ...s, expectedDurationMinutes: Number(e.target.value) || 0 } : s))} placeholder="مثال: 20" />
                          </label>
                        </div>
+                        <div className="mt-3 space-y-1.5">
+                          <label className="text-xs font-medium text-slate-600">مواد المرحلة</label>
+                          <div className="grid max-h-36 gap-1 overflow-y-auto rounded-md border bg-white/80 p-2 sm:grid-cols-2">
+                            {routingMaterialOptions.map(item => {
+                                const selected = (stage.materialLineIds ?? []).includes(String(item.id));
+                                return (
+                                  <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-slate-50">
+                                    <input
+                                      type="checkbox"
+                                      checked={selected}
+                                      disabled={!canEdit}
+                                      onChange={event => setRoutingStages(stages => stages.map((current, i) => {
+                                        if (i !== index) return current;
+                                        const ids = new Set(current.materialLineIds ?? []);
+                                        if (event.target.checked) ids.add(String(item.id));
+                                        else ids.delete(String(item.id));
+                                        return { ...current, materialLineIds: [...ids] };
+                                      }))}
+                                    />
+                                    <span>{item.nameAr}</span>
+                                    <span className="text-slate-400" dir="ltr">{item.code}</span>
+                                    <span className="text-slate-400">{item.detail}</span>
+                                  </label>
+                                );
+                              })}
+                            {!routingMaterialOptions.length && (
+                              <p className="text-xs text-slate-500">أنشئ قائمة مكونات نشطة للمنتج أولاً لتحديد مواد المرحلة.</p>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-500">تُنسخ هذه المواد إلى أوامر الإنتاج الجديدة فقط، ويمكن تعديل توزيعها قبل الصرف.</p>
+                        </div>
                        <div className="grid gap-3 sm:grid-cols-3">
                          <div className="space-y-1">
                            <label className="text-xs font-medium text-slate-600">موارد المرحلة</label>
@@ -715,7 +785,7 @@ export function SimpleSetup({
                   })}
                   <Button type="button" variant="outline" size="sm"
                      className="h-11 w-full justify-center border-dashed border-violet-300 bg-violet-50/40 font-semibold text-violet-800 hover:bg-violet-50 dark:border-violet-800 dark:bg-violet-950/20 dark:text-violet-200 dark:hover:bg-violet-950/50"
-                     onClick={() => setRoutingStages(stages => [...stages, { nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [] }])}
+                      onClick={() => setRoutingStages(stages => [...stages, { nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [], materialLineIds: [] }])}
                     disabled={!canEdit}>
                     <Plus className="mr-1 h-4 w-4" /> إضافة مرحلة
                   </Button>

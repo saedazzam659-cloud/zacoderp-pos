@@ -238,3 +238,17 @@ test("stage execution exposes assigned raw materials and posted issue status", a
   assert.match(executionUi, /المصروف من المخزون/);
   assert.match(executionUi, /سيُصرف عند إنهاء المرحلة/);
 });
+
+test("routing material defaults seed a new order while order-level choices remain editable", async () => {
+  const [setup, orderRoute, wizard] = await Promise.all([
+    readFile(new URL("../src/routes/simple-manufacturing.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../zatca-invoicing/src/pages/simple-manufacturing/SimpleWizard.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(setup, /materialLineIds: Array\.isArray\(x\.materialLineIds\)/);
+  assert.match(setup, /materialLineIds: x\.materialLineIds/);
+  assert.match(orderRoute, /configuredStageByBomLine\.get\(Number\(line\.id\)\)/);
+  assert.match(wizard, /defaults\.get\(Number\(line\.id\)\)/);
+  assert.match(wizard, /setMaterialStageAssignments/);
+});

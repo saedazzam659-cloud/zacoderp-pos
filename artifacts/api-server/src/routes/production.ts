@@ -6588,6 +6588,13 @@ export async function productionWizardHandler(req: any, res: any) {
       const bomLines = tmpl ? await tx.select().from(bomTemplateLinesTable)
         .where(eq(bomTemplateLinesTable.templateId, tmpl.id)) : [];
       if (!tmpl || !bomLines.length) throw Object.assign(new Error("لا يوجد قالب مكونات نشط للمنتج المختار"), { status: 400 });
+      const configuredStageByBomLine = new Map<number, string>();
+      for (const stage of stages) {
+        for (const rawLineId of Array.isArray(stage.materialLineIds) ? stage.materialLineIds : []) {
+          const lineId = Number(rawLineId);
+          if (Number.isInteger(lineId) && lineId > 0) configuredStageByBomLine.set(lineId, String(stage.code));
+        }
+      }
       // A runnable recipe must point at real, active tenant items. Text-only
       // legacy lines are not enough for stock issue and would make the compact
       // setup look valid while silently producing no inventory movement.
@@ -6627,7 +6634,11 @@ export async function productionWizardHandler(req: any, res: any) {
       let rawCost = 0;
       const itemRows: any[] = [];
       for (const line of bomLines) {
-        const assignedStageCode = String(requestedStageAssignments[String(line.id)] ?? "").trim();
+        const assignedStageCode = String(
+          requestedStageAssignments[String(line.id)] ??
+          configuredStageByBomLine.get(Number(line.id)) ??
+          "",
+        ).trim();
         if (resourceCostingVersion >= 1 && !stageCodes.has(assignedStageCode)) {
           throw Object.assign(
             new Error(`حدّد مرحلة صالحة لاستهلاك المادة «${line.description}»`),
