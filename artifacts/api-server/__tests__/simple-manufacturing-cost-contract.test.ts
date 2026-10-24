@@ -80,6 +80,19 @@ test("v1 raw materials are issued to WIP only when their assigned stage complete
   assert.match(production, /reverseStageMaterialIssuePostings/);
 });
 
+test("v1 linked payroll is deferred to stage completion without a second driver journal", async () => {
+  const production = await readFile(
+    new URL("../src/routes/production.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(production, /const deferStagePayroll = Number\(order\.resourceCostingVersion\) >= 1/);
+  assert.match(production, /frozenCosts\.filter\(\(row\) => row\.sourceType !== "payroll"\)/);
+  assert.match(production, /async function postStageLinkedSourceCosts/);
+  assert.match(production, /stage_linked_resource_cost_posted/);
+  assert.match(production, /stagePostedByAllocation/);
+  assert.match(production, /postingDelta: stagedPosted == null/);
+});
+
 test("v1 material costs require and freeze an explicit route stage assignment", async () => {
   const [production, wizardUi] = await Promise.all([
     readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),

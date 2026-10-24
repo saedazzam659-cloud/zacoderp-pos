@@ -7403,6 +7403,28 @@ async function reconcileFinalStageDrivers(
     eq(productionCostAllocationsTable.companyId, cid),
     eq(productionCostAllocationsTable.orderId, order.id),
   ));
+  const linkedPostingEvents = Number(order.resourceCostingVersion) >= 1
+    ? await tx.select({ payload: productionEventsTable.payload }).from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, cid),
+      eq(productionEventsTable.orderId, order.id),
+      eq(productionEventsTable.eventType, "stage_linked_resource_cost_posted"),
+    ))
+    : [];
+  const stagePostedByAllocation = new Map<number, number>();
+  for (const event of linkedPostingEvents) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    for (const item of Array.isArray(payload.sourceAllocations) ? payload.sourceAllocations : []) {
+      const row = item as Record<string, unknown>;
+      const allocationId = Number(row.sourceAllocationId);
+      const amount = num(row.amount);
+      if (Number.isInteger(allocationId) && allocationId > 0 && amount > 0) {
+        stagePostedByAllocation.set(
+          allocationId,
+          Number(((stagePostedByAllocation.get(allocationId) ?? 0) + amount).toFixed(2)),
+        );
+      }
+    }
+  }
   const existing = await tx.select().from(productionDriverReconciliationsTable).where(and(
     eq(productionDriverReconciliationsTable.companyId, cid),
     eq(productionDriverReconciliationsTable.orderId, order.id),
@@ -7443,8 +7465,12 @@ async function reconcileFinalStageDrivers(
       method as "operating_hours" | "fixed_hourly_rate" | "production_quantity",
       num(allocation.sourceAmount), actual, denominator,
     );
-    rows.push({ allocation, meta, method, planned, denominator, actual, target,
-      delta: Number((target - num(allocation.allocatedAmount)).toFixed(2)) });
+    const delta = Number((target - num(allocation.allocatedAmount)).toFixed(2));
+    const stagedPosted = stagePostedByAllocation.get(Number(allocation.id));
+    rows.push({ allocation, meta, method, planned, denominator, actual, target, delta,
+      postingDelta: stagedPosted == null
+        ? delta
+        : Number((target - stagedPosted).toFixed(2)) });
   }
   if (!rows.length) return 0;
   // Company-wide source capacity includes every branch's original allocations
@@ -7485,11 +7511,11 @@ async function reconcileFinalStageDrivers(
   const lines: JLine[] = [];
   let net = 0;
   for (const row of rows) {
-    if (Math.abs(row.delta) < 0.005) continue;
-    net += row.delta;
+    if (Math.abs(row.postingDelta) < 0.005) continue;
+    net += row.postingDelta;
     const accounts = Array.isArray(row.meta.reclassificationAccounts) ? row.meta.reclassificationAccounts : [];
-    const splits = allocateToSourceAccounts(Math.abs(row.delta), accounts);
-    lines.push(...splits.map((split) => row.delta > 0
+    const splits = allocateToSourceAccounts(Math.abs(row.postingDelta), accounts);
+    lines.push(...splits.map((split) => row.postingDelta > 0
       ? { accountId: split.accountId, credit: split.amount, description: "فرق محرك فعلي لمصدر تكلفة" }
       : { accountId: split.accountId, debit: split.amount, description: "عكس فرق محرك فعلي لمصدر تكلفة" }));
   }
@@ -7779,8 +7805,20 @@ export async function productionStatusHandler(req: any, res: any) {
         res.status(400).json({ error: "حساب التكاليف الصناعية غير المباشرة مطلوب قبل بدء الإنتاج" }); return;
       }
       let sourceCredits: { accountId: number; amount: number }[];
+       const deferStagePayroll = Number(order.resourceCostingVersion) >= 1 && payrollSnapshots.length > 0;
+       if (deferStagePayroll) {
+         const stages = await tx.select({ resourceMode: productionOrderStagesTable.resourceMode })
+           .from(productionOrderStagesTable)
+           .where(eq(productionOrderStagesTable.orderId, order.id));
+         if (!stages.some((stage: any) => ["labor", "both"].includes(String(stage.resourceMode ?? "labor")))) {
+           res.status(409).json({ error: "مصدر الرواتب مرتبط بالأمر لكن لا توجد مرحلة موارد عمالة لترحيله عند اكتمالها." });
+           return;
+         }
+       }
       try {
-        sourceCredits = sourceReclassificationLines(frozenCosts);
+         sourceCredits = sourceReclassificationLines(deferStagePayroll
+           ? frozenCosts.filter((row) => row.sourceType !== "payroll")
+           : frozenCosts);
       } catch {
         res.status(409).json({ error: "تعذر تحديد حساب المصروف الأصلي لأحد مصادر التكلفة. أنشئ لقطة حديثة بعد مراجعة القيد المصدر." });
         return;
@@ -7967,7 +8005,8 @@ export async function productionStatusHandler(req: any, res: any) {
       }
 
       const internalTransportCost = transportSnapshots.reduce((sum, x) => sum + num(x.allocatedAmount), 0);
-      const wipDr = rawTotal + labor + overhead + internalTransportCost;
+       const deferredStagePayrollAmount = deferStagePayroll ? frozenLabor : 0;
+       const wipDr = rawTotal + labor + overhead + internalTransportCost - deferredStagePayrollAmount;
 
       // d) Issue JE: source snapshots reclassify the debit accounts of their
       // already-posted journals (DR WIP / CR original expense). Only the
@@ -8256,9 +8295,8 @@ export async function productionStatusHandler(req: any, res: any) {
         tx, cid, order, producedQty, req.authUser!.id, req,
       );
       // Unposted sources have no original expense debit to reclassify yet.
-      // Capitalize their frozen provisional amount in the receipt JE; linked
-      // posted sources already reached WIP through source allocation and driver
-      // reconciliation and must not be added here a second time.
+      // Capitalize only unclaimed provisional amounts at receipt; stage-posted
+      // claims and linked source costs are already in WIP and must not repeat.
       const provisionalAccruals = new Map<number, number>();
       if (Number(order.resourceCostingVersion) >= 1) {
         const resourceEvidence = await tx.select({
@@ -11006,6 +11044,125 @@ async function postStagePendingSourceAccruals(
   return { journalEntryId, amount };
 }
 
+async function postStageLinkedSourceCosts(
+  tx: any, cid: number, order: any, stage: any, actorId: number, req: any,
+) {
+  if (Number(order.resourceCostingVersion) < 1) {
+    return { journalEntryId: null as number | null, amount: 0 };
+  }
+  const evidence = await tx.select({
+    id: productionStageResourceCostsTable.id,
+    sourceType: productionStageResourceCostsTable.sourceType,
+    amount: productionStageResourceCostsTable.amount,
+    snapshot: productionStageResourceCostsTable.snapshot,
+  }).from(productionStageResourceCostsTable).where(and(
+    eq(productionStageResourceCostsTable.companyId, cid),
+    eq(productionStageResourceCostsTable.orderId, order.id),
+    eq(productionStageResourceCostsTable.stageId, stage.id),
+    eq(productionStageResourceCostsTable.sourceType, "payroll"),
+  ));
+  const rows = evidence.filter((row: any) => {
+    const snapshot = (row.snapshot ?? {}) as Record<string, unknown>;
+    return Number.isInteger(Number(snapshot.sourceAllocationId)) &&
+      Number(snapshot.sourceAllocationId) > 0 && num(row.amount) > 0;
+  });
+  if (!rows.length) return { journalEntryId: null as number | null, amount: 0 };
+  const alreadyPostedEvents = await tx.select({ payload: productionEventsTable.payload })
+    .from(productionEventsTable).where(and(
+      eq(productionEventsTable.companyId, cid),
+      eq(productionEventsTable.orderId, order.id),
+      eq(productionEventsTable.eventType, "stage_linked_resource_cost_posted"),
+    ));
+  const alreadyPosted = new Set<number>();
+  for (const event of alreadyPostedEvents) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    for (const id of Array.isArray(payload.stageResourceCostIds) ? payload.stageResourceCostIds : []) {
+      const value = Number(id);
+      if (Number.isInteger(value) && value > 0) alreadyPosted.add(value);
+    }
+  }
+  const unposted = rows.filter((row: any) => !alreadyPosted.has(Number(row.id)));
+  if (!unposted.length) return { journalEntryId: null as number | null, amount: 0 };
+  const allocationIds = [...new Set(unposted.map((row: any) =>
+    Number((row.snapshot as Record<string, unknown>).sourceAllocationId),
+  ))];
+  const allocations = await tx.select({
+    id: productionCostAllocationsTable.id,
+    snapshotMeta: productionCostAllocationsTable.snapshotMeta,
+  }).from(productionCostAllocationsTable).where(and(
+    eq(productionCostAllocationsTable.companyId, cid),
+    eq(productionCostAllocationsTable.orderId, order.id),
+    inArray(productionCostAllocationsTable.id, allocationIds),
+  ));
+  const allocationById = new Map<number, any>(allocations.map((row: any) => [Number(row.id), row]));
+  if (allocations.length !== allocationIds.length) {
+    throw Object.assign(new Error("مصدر تكلفة المرحلة لم يعد مرتبطاً بلقطة الأمر"), { status: 409 });
+  }
+  let amount = 0;
+  const credits = new Map<number, number>();
+  const sourceAllocations: Array<{ sourceAllocationId: number; amount: number }> = [];
+  for (const row of unposted) {
+    const snapshot = row.snapshot as Record<string, unknown>;
+    const sourceAllocationId = Number(snapshot.sourceAllocationId);
+    const sourceAllocation = allocationById.get(sourceAllocationId);
+    const rowAmount = Number(num(row.amount).toFixed(2));
+    const lines = sourceReclassificationLines([{
+      allocatedAmount: rowAmount,
+      snapshotMeta: sourceAllocation.snapshotMeta,
+    }]);
+    const credited = Number(lines.reduce((sum, line) => sum + line.amount, 0).toFixed(2));
+    if (Math.abs(credited - rowAmount) > 0.005) {
+      throw Object.assign(new Error("حسابات إعادة تصنيف مصدر تكلفة المرحلة لا تطابق مبلغها"), { status: 422 });
+    }
+    amount = Number((amount + rowAmount).toFixed(2));
+    sourceAllocations.push({ sourceAllocationId, amount: rowAmount });
+    for (const line of lines) {
+      credits.set(line.accountId, Number(((credits.get(line.accountId) ?? 0) + line.amount).toFixed(2)));
+    }
+  }
+  if (!(amount > 0)) return { journalEntryId: null as number | null, amount: 0 };
+  const postingDate = new Date(stage.completedAt ?? new Date()).toISOString().slice(0, 10);
+  const writable = await assertWritableForDate(cid, postingDate);
+  if (!writable.ok) throw Object.assign(new Error(writable.reason), { status: 423 });
+  const journalEntryId = await createJournalEntry({
+    companyId: cid, audit: { req }, branchId: order.branchId, date: postingDate,
+    docNumber: `${order.orderNumber}-STG-${stage.sequence}-SRC`,
+    entryType: "production_stage_linked_resource_cost", status: "posted",
+    costCenter: order.costCenter ?? null,
+    description: `تكلفة موارد مرتبطة بمرحلة ${stage.nameAr || stage.code} — ${order.orderNumber}`,
+    lines: [
+      { accountId: order.wipAccountId, debit: amount, description: "موارد المرحلة المرتبطة — WIP" },
+      ...[...credits].map(([accountId, credit]) => ({
+        accountId, credit, description: "إعادة تصنيف مصدر تكلفة مرحلي",
+      })),
+    ],
+    dx: tx,
+  });
+  await writeEvent(cid, order.id, "stage_linked_resource_cost_posted", {
+    stageId: stage.id,
+    stageResourceCostIds: unposted.map((row: any) => Number(row.id)),
+    sourceAllocations,
+    journalEntryId,
+    amount,
+  }, actorId, false, tx);
+  const [freshOrder] = await tx.select({
+    actualCost: productionOrdersTable.actualCost,
+    issueJournalEntryId: productionOrdersTable.issueJournalEntryId,
+  }).from(productionOrdersTable).where(and(
+    eq(productionOrdersTable.companyId, cid),
+    eq(productionOrdersTable.id, order.id),
+  )).for("update").limit(1);
+  await tx.update(productionOrdersTable).set({
+    actualCost: String((num(freshOrder?.actualCost) + amount).toFixed(2)),
+    issueJournalEntryId: freshOrder?.issueJournalEntryId ?? journalEntryId,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(productionOrdersTable.companyId, cid),
+    eq(productionOrdersTable.id, order.id),
+  ));
+  return { journalEntryId, amount };
+}
+
 async function issueStageRawMaterials(
   tx: any, cid: number, order: any, stage: any, actorId: number, req: any,
 ) {
@@ -11150,7 +11307,9 @@ async function reverseStageResourceAccrualPostings(
     .from(productionEventsTable).where(and(
       eq(productionEventsTable.companyId, cid),
       eq(productionEventsTable.orderId, order.id),
-      eq(productionEventsTable.eventType, "stage_resource_accrual_posted"),
+      inArray(productionEventsTable.eventType, [
+        "stage_resource_accrual_posted", "stage_linked_resource_cost_posted",
+      ]),
     ));
   const reversals = await tx.select({ payload: productionEventsTable.payload })
     .from(productionEventsTable).where(and(
@@ -12182,6 +12341,9 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
         updated,
         req.authUser!.id,
       );
+      const stageLinkedSources = await postStageLinkedSourceCosts(
+        tx, ctx.cid, ctx.order, updated, req.authUser!.id, req,
+      );
       const stageAccrual = await postStagePendingSourceAccruals(
         tx, ctx.cid, ctx.order, updated, req.authUser!.id, req,
       );
@@ -12210,6 +12372,8 @@ productionExecutionRouter.post("/orders/:id/stages/:stageId/complete", async (re
           wasteClassification: wasteClassification ?? null, actualHours,
           materialIssueJournalEntryId: stageMaterials.journalEntryId,
           materialIssueAmount: stageMaterials.amount,
+          linkedResourceJournalEntryId: stageLinkedSources.journalEntryId,
+          linkedResourceAmount: stageLinkedSources.amount,
           resourceAccrualJournalEntryId: stageAccrual.journalEntryId,
           resourceAccrualAmount: stageAccrual.amount },
         req.authUser!.id,
