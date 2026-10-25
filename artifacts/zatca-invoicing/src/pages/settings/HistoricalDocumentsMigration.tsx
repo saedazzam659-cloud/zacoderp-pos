@@ -332,8 +332,10 @@ function parseDocuments(
     const unitPrice = requiredNum(row.unit_price);
     const lineTotal = requiredNum(row.line_total);
     const discount = num(row.discount_percent ?? 0);
+    const lineDiscountAmount = num(row.line_discount_amount ?? 0);
     const vatRate = requiredNum(row.vat_rate);
-    if (![qty, unitPrice, lineTotal, discount, vatRate].every(Number.isFinite) || qty <= 0 || unitPrice < 0 || lineTotal < 0 || discount < 0 || discount > 100 || vatRate < 0) {
+    if (![qty, unitPrice, lineTotal, discount, lineDiscountAmount, vatRate].every(Number.isFinite)
+      || qty <= 0 || unitPrice < 0 || lineTotal < 0 || discount < 0 || discount > 100 || lineDiscountAmount < 0 || vatRate < 0) {
       doc.issues.push("بيانات كمية/سعر/خصم/ضريبة غير صالحة");
     }
     doc.lines.push({
@@ -342,7 +344,7 @@ function parseDocuments(
       unitName: String(row.unit_name ?? "").trim(),
       warehouseCode: String(row.warehouse_code ?? "").trim(),
       qty, unitPrice, lineTotal, discount, vatRate,
-      discountAmount: num(row.line_discount_amount ?? 0),
+      discountAmount: lineDiscountAmount,
       freeQty: num(row.free_qty ?? 0),
       itemName: String(row.item_name ?? "").trim(),
       notes: String(row.line_notes ?? "").trim() || null,
@@ -360,6 +362,24 @@ function parseDocuments(
     }
   });
   return [...grouped.values()];
+}
+
+const editableLineFields = new Set(["qty", "unit_price", "discount_percent", "line_discount_amount", "vat_rate", "line_total"]);
+
+function invalidLineField(line: Line): string | null {
+  const checks: Array<[string, unknown, (value: number) => boolean]> = [
+    ["qty", line.qty, (value) => value > 0],
+    ["unit_price", line.unitPrice, (value) => value >= 0],
+    ["discount_percent", line.discount, (value) => value >= 0 && value <= 100],
+    ["line_discount_amount", line.discountAmount, (value) => value >= 0],
+    ["vat_rate", line.vatRate, (value) => value >= 0],
+    ["line_total", line.lineTotal, (value) => value >= 0],
+  ];
+  for (const [field, raw, valid] of checks) {
+    const value = requiredNum(raw);
+    if (!Number.isFinite(value) || !valid(value)) return field;
+  }
+  return null;
 }
 
 function historicalDocRows(doc: HistoricalDoc) {
@@ -436,6 +456,10 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [postingMode, setPostingMode] = useState<HistoricalImportMode>("financial_inventory");
   const [importBranchCode, setImportBranchCode] = useState("");
   const [importWarehouseCode, setImportWarehouseCode] = useState("");
+  const [importUnitCode, setImportUnitCode] = useState("");
+  const [applyBatchDefaults, setApplyBatchDefaults] = useState(true);
+  const [lineEditDrafts, setLineEditDrafts] = useState<Record<string, string>>({});
+  const lineInputRefs = useRef(new Map<string, HTMLInputElement>());
   const [swapFrom, setSwapFrom] = useState("qty");
   const [swapTo, setSwapTo] = useState("unit_price");
   const [fileNames, setFileNames] = useState<string[]>([]);
@@ -452,13 +476,13 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [saveAsDraftOnly, setSaveAsDraftOnly] = useState(false);
 
   const issueCount = useMemo(() => docs.reduce((sum, doc) => sum + doc.issues.filter(
-    (issue) => !((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب")
+    (issue) => !(((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && issue === "كود الفرع مطلوب")
       && !((postingMode === "archive_only" || saveAsDraftOnly) && issue === "طريقة السداد مطلوبة"),
-  ).length, 0), [docs, importBranchCode, postingMode, saveAsDraftOnly]);
+  ).length, 0), [docs, importBranchCode, applyBatchDefaults, postingMode, saveAsDraftOnly]);
   const validDocs = useMemo(() => docs.filter((doc) => doc.issues.every(
-    (issue) => ((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب")
+    (issue) => (((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && issue === "كود الفرع مطلوب")
       || ((postingMode === "archive_only" || saveAsDraftOnly) && issue === "طريقة السداد مطلوبة"),
-  )), [docs, importBranchCode, postingMode, saveAsDraftOnly]);
+  )), [docs, importBranchCode, applyBatchDefaults, postingMode, saveAsDraftOnly]);
 
   async function loadMasters() {
     if (masters) return masters;
@@ -488,6 +512,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     if (!files.length) return;
     setFileNames(files.map((file) => file.name));
     setDocs([]);
+    setLineEditDrafts({});
     setResults([]);
     setSourceWarnings([]);
     setSaveAsDraftOnly(false);
@@ -583,7 +608,18 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   }
 
   function downloadNormalizedFile() {
-    const rows = docs.flatMap((doc) => historicalDocRows(doc));
+    const rows = docs.flatMap((doc) => historicalDocRows(doc).map((row: Record<string, any>, lineIndex) => {
+      const line = doc.lines[lineIndex];
+      const effectiveUnitCode = (applyBatchDefaults && importUnitCode) || line.unitOverrideCode || line.unitCode;
+      const effectiveUnit = (masters?.units ?? []).find((unit: any) => norm(unit.code) === norm(effectiveUnitCode));
+      return {
+        ...row,
+        branch_code: (applyBatchDefaults && importBranchCode) || doc.branchOverrideCode || doc.branchCode,
+        warehouse_code: (applyBatchDefaults && importWarehouseCode) || line.warehouseOverrideCode || line.warehouseCode,
+        unit_code: effectiveUnitCode,
+        unit_name: effectiveUnit?.nameAr ?? effectiveUnit?.name ?? line.unitName ?? "",
+      };
+    }));
     if (!rows.length) return;
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.json_to_sheet(rows, { header: reviewColumns.map(([field]) => field) });
@@ -609,6 +645,51 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       : doc));
     setPeriodScan(null);
     setResults([]);
+  }
+
+  function lineEditKey(docKey: string, lineIndex: number, field: string) {
+    return `${docKey}|${lineIndex}|${field}`;
+  }
+
+  function setLineEditDraft(docKey: string, lineIndex: number, field: string, value: string) {
+    setLineEditDrafts((current) => ({ ...current, [lineEditKey(docKey, lineIndex, field)]: value }));
+  }
+
+  function commitLineEdit(docKey: string, lineIndex: number, field: string) {
+    const key = lineEditKey(docKey, lineIndex, field);
+    const draft = lineEditDrafts[key];
+    if (draft === undefined) return;
+    const value = draft.trim() === "" && field === "discount_percent" ? "0" : draft;
+    setDocs((current) => current.map((doc) => {
+      if (doc.key !== docKey) return doc;
+      const rows = historicalDocRows(doc) as Array<Record<string, any>>;
+      if (!rows[lineIndex]) return doc;
+      rows[lineIndex][field] = value;
+      return reparseEditedDoc(doc, rows);
+    }));
+    if (draft.trim() === "" || Number.isFinite(requiredNum(value))) {
+      setLineEditDrafts((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    }
+    setPeriodScan(null);
+    setResults([]);
+  }
+
+  function focusFirstInvalidLine(doc: HistoricalDoc) {
+    const lineIndex = doc.lines.findIndex((line) => invalidLineField(line));
+    if (lineIndex < 0) return;
+    const field = invalidLineField(doc.lines[lineIndex]);
+    if (!field) return;
+    const key = lineEditKey(doc.key, lineIndex, field);
+    requestAnimationFrame(() => {
+      const input = lineInputRefs.current.get(key);
+      input?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+      input?.focus();
+      input?.select();
+    });
   }
 
   function setLineOverride(docKey: string, lineIndex: number, field: "warehouseOverrideCode" | "unitOverrideCode", value: string) {
@@ -697,7 +778,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   }
 
   function validateAgainstMasters(doc: HistoricalDoc, sourceIds: Record<string, number>, allowMissingPayment = false) {
-    const issues = doc.issues.filter((issue) => !((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
+    const batchBranchCode = applyBatchDefaults ? importBranchCode : "";
+    const issues = doc.issues.filter((issue) => !((batchBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
     const indexes = {
       items: indexByCode(masters?.items),
       units: indexByCode(masters?.units),
@@ -716,12 +798,12 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       doc.kind.startsWith("sales") ? "العميل" : "المورد",
       issues,
     );
-    const branch = resolveCode(indexes.branches, doc.branchOverrideCode || importBranchCode || doc.branchCode, "الفرع", issues);
+    const branch = resolveCode(indexes.branches, batchBranchCode || doc.branchOverrideCode || doc.branchCode, "الفرع", issues);
     const lines = doc.lines.map((line) => {
       const item = resolveCodeOrName(masters?.items ?? [], indexes.items, line.itemCode, line.itemName, "الصنف", issues);
-      const warehouseCode = line.warehouseOverrideCode || importWarehouseCode || line.warehouseCode;
+      const warehouseCode = (applyBatchDefaults && importWarehouseCode) || line.warehouseOverrideCode || line.warehouseCode;
       const warehouse = warehouseCode ? resolveCode(indexes.warehouses, warehouseCode, "المخزن", issues) : null;
-      const requestedUnitCode = line.unitOverrideCode || line.unitCode;
+      const requestedUnitCode = (applyBatchDefaults && importUnitCode) || line.unitOverrideCode || line.unitCode;
       const unit = requestedUnitCode || line.unitName
         ? resolveCodeOrName(masters?.units ?? [], indexes.units, requestedUnitCode ?? "", line.unitName ?? "", "وحدة القياس", issues)
         : null;
@@ -1108,7 +1190,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           {fileNames.length > 0 && <span className="text-xs text-muted-foreground">{fileNames.join("، ")}</span>}
         </div>
         <p className="text-xs text-muted-foreground">
-          الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP. بعد التحويل تقدر تبدّل قيم عمودين بسرعة، وتحدد فرعًا أو مخزنًا لكل مستند/سطر، وتختار وحدة قياس معتمدة لكل صنف.
+          الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP. بعد التحويل تقدر تطبق فرعًا ومخزنًا ووحدة على الدفعة كلها، أو تخصصها لكل مستند/سطر.
         </p>
         {masterError && <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-800">{masterError}</div>}
         {!!docs.length && (
@@ -1126,6 +1208,18 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                  </>
                )}
             </div>}
+            <label className="flex items-center gap-2 rounded border border-sky-200 bg-sky-50 p-3 text-xs">
+              <input
+                type="checkbox"
+                checked={applyBatchDefaults}
+                onChange={(event) => {
+                  setApplyBatchDefaults(event.target.checked);
+                  setPeriodScan(null);
+                  setResults([]);
+                }}
+              />
+              <span>تطبيق الفرع والمخزن ووحدة القياس المحددة على كل المستندات والسطور (يمكن إيقافه للتخصيص الفردي)</span>
+            </label>
             <div className="flex flex-wrap gap-2 text-xs">
               <Badge variant="outline">{docs.length} مستند</Badge>
               <Badge variant={issueCount ? "destructive" : "outline"}>{issueCount} خطأ إدخال</Badge>
@@ -1164,8 +1258,24 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                   </SelectContent>
                 </Select>
               </label>
+              <label className="space-y-1 text-xs">
+                <span className="font-medium">وحدة القياس الافتراضية (اختياري، تطبّق على كل السطور)</span>
+                <Select value={importUnitCode || "__item_unit__"} onValueChange={(value) => {
+                  setImportUnitCode(value === "__item_unit__" ? "" : value);
+                  setPeriodScan(null);
+                  setResults([]);
+                }}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__item_unit__">استخدم وحدة الصنف/الملف</SelectItem>
+                    {(masters.units ?? []).map((unit: any) => <SelectItem key={String(unit.code)} value={String(unit.code)}>
+                      {unit.code} — {unit.nameAr ?? unit.name ?? ""}
+                    </SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </label>
               <p className="text-muted-foreground md:col-span-2">
-                اختيار الفرع أو المخزن هنا هو قرار إدخال صريح منك، ويظهر في معاينة الأعمدة بدل القيمة المستخرجة.
+                القيم هنا تظهر في كل سطر بالمعاينة عند تفعيل التطبيق الجماعي. اختيار وحدة موحدة يظل خاضعًا للتحقق من ارتباطها بكل صنف.
               </p>
             </div>}
             <div className="flex flex-wrap items-end gap-2 rounded border p-3">
@@ -1190,18 +1300,29 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                 يطبّق التبديل على جميع الصفوف في الدفعة ويعيد فحصها؛ راجع الناتج قبل المتابعة.
               </p>
             </div>
+            <p className="text-xs text-muted-foreground">انقر مرتين على مستند به خطأ للانتقال إلى أول حقل غير صالح وتعديله مباشرة.</p>
             <div className="max-h-56 overflow-auto rounded border">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">فرع هذا المستند</th><th className="p-2">الحالة</th></tr></thead>
                 <tbody>{docs.map((doc) => {
-                  const visibleIssues = doc.issues.filter((issue) => !((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
-                  return <tr key={doc.key} className="border-t">
+                  const visibleIssues = doc.issues.filter((issue) => !(((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
+                  return <tr
+                    key={doc.key}
+                    className={`border-t ${visibleIssues.length ? "cursor-pointer hover:bg-amber-50" : ""}`}
+                    title={visibleIssues.length ? "انقر مرتين للانتقال لأول سطر به خطأ" : undefined}
+                    onDoubleClick={() => focusFirstInvalidLine(doc)}
+                  >
                     <td className="p-2">{doc.sourceNumber}</td><td className="p-2" dir="ltr">{doc.date}</td><td className="p-2">{kindLabels[doc.kind]}</td><td className="p-2">{doc.lines.length}</td>
                     <td className="min-w-56 p-2">
-                      <Select value={doc.branchOverrideCode || "__source__"} onValueChange={(value) => setDocumentBranchOverride(doc.key, value)}>
+                      <Select
+                        value={applyBatchDefaults && importBranchCode ? "__batch__" : doc.branchOverrideCode || "__source__"}
+                        disabled={applyBatchDefaults && !!importBranchCode}
+                        onValueChange={(value) => setDocumentBranchOverride(doc.key, value)}
+                      >
                         <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__source__">{importBranchCode ? "استخدم فرع الدفعة" : doc.branchCode ? `استخدم فرع الملف (${doc.branchCode})` : "اختر فرعًا"}</SelectItem>
+                          {applyBatchDefaults && importBranchCode && <SelectItem value="__batch__">فرع الدفعة ({importBranchCode})</SelectItem>}
+                          <SelectItem value="__source__">{applyBatchDefaults && importBranchCode ? "استخدم فرع الدفعة" : doc.branchCode ? `استخدم فرع الملف (${doc.branchCode})` : "اختر فرعًا"}</SelectItem>
                           {(masters?.branches ?? []).map((branch: any) => <SelectItem key={String(branch.code)} value={String(branch.code)}>
                             {branch.code} — {branch.nameAr ?? branch.name ?? ""}
                           </SelectItem>)}
@@ -1228,19 +1349,28 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {docs.flatMap((doc) => doc.lines.map((line: any, lineIndex) => (
-                      <tr key={`${doc.key}-${lineIndex}`} className="border-t">
+                    {docs.flatMap((doc) => doc.lines.map((line: any, lineIndex) => {
+                      const badField = invalidLineField(line);
+                      const effectiveUnitCode = (applyBatchDefaults && importUnitCode) || line.unitOverrideCode || line.unitCode;
+                      const effectiveUnit = (masters?.units ?? []).find((unit: any) => norm(unit.code) === norm(effectiveUnitCode));
+                      const editableValues: Record<string, unknown> = {
+                        qty: line.qty, unit_price: line.unitPrice, discount_percent: line.discount,
+                        line_discount_amount: line.discountAmount, vat_rate: line.vatRate, line_total: line.lineTotal,
+                      };
+                      return <tr
+                        key={`${doc.key}-${lineIndex}`}
+                        className={`border-t ${badField ? "bg-red-50" : ""}`}
+                        data-import-line={`${doc.key}-${lineIndex}`}
+                      >
                         {reviewColumns.map(([field]) => {
-                          const effectiveUnitCode = line.unitOverrideCode || line.unitCode;
-                          const effectiveUnit = (masters?.units ?? []).find((unit: any) => norm(unit.code) === norm(effectiveUnitCode));
                           const values: Record<string, unknown> = {
                             source_doc_number: doc.sourceNumber, document_date: doc.date,
                             party_code: doc.partyCode, party_name: doc.partyName,
-                            branch_code: doc.branchOverrideCode || importBranchCode || doc.branchCode,
+                            branch_code: (applyBatchDefaults && importBranchCode) || doc.branchOverrideCode || doc.branchCode,
                             item_code: line.itemCode, item_name: line.itemName,
-                            unit_code: line.unitOverrideCode || line.unitCode,
+                            unit_code: (applyBatchDefaults && importUnitCode) || line.unitOverrideCode || line.unitCode,
                             unit_name: effectiveUnit?.nameAr ?? effectiveUnit?.name ?? line.unitName ?? line.unit,
-                            warehouse_code: line.warehouseOverrideCode || importWarehouseCode || line.warehouseCode,
+                            warehouse_code: (applyBatchDefaults && importWarehouseCode) || line.warehouseOverrideCode || line.warehouseCode,
                             qty: line.qty, free_qty: line.freeQty, unit_price: line.unitPrice,
                             discount_percent: line.discount, line_discount_amount: line.discountAmount,
                             vat_rate: line.vatRate, line_total: line.lineTotal,
@@ -1252,11 +1382,39 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                             price_includes_vat: doc.priceIncludesVat ? "نعم" : "لا",
                             total_expenses_loaded: doc.totalExpensesLoaded, line_notes: line.notes,
                           };
+                          if (editableLineFields.has(field)) {
+                            const editKey = lineEditKey(doc.key, lineIndex, field);
+                            const rawValue = editableValues[field];
+                            const value = lineEditDrafts[editKey] ?? (Number.isFinite(rawValue) ? String(rawValue) : "");
+                            return <td key={field} className="min-w-28 p-1">
+                              <input
+                                ref={(element) => {
+                                  if (element) lineInputRefs.current.set(editKey, element);
+                                  else lineInputRefs.current.delete(editKey);
+                                }}
+                                type="text"
+                                inputMode="decimal"
+                                aria-label={`${field} للمصدر ${doc.sourceNumber}، السطر ${lineIndex + 1}`}
+                                value={value}
+                                onChange={(event) => setLineEditDraft(doc.key, lineIndex, field, event.target.value)}
+                                onBlur={() => commitLineEdit(doc.key, lineIndex, field)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") event.currentTarget.blur();
+                                }}
+                                className={`w-full rounded border bg-background px-2 py-1 text-right outline-none focus:ring-2 focus:ring-primary ${badField === field ? "border-red-500 ring-1 ring-red-300" : "border-input"}`}
+                              />
+                            </td>;
+                          }
                           if (field === "warehouse_code") return <td key={field} className="min-w-48 p-1">
-                            <Select value={line.warehouseOverrideCode || "__source__"} onValueChange={(value) => setLineOverride(doc.key, lineIndex, "warehouseOverrideCode", value)}>
+                            <Select
+                              value={applyBatchDefaults && importWarehouseCode ? "__batch__" : line.warehouseOverrideCode || "__source__"}
+                              disabled={applyBatchDefaults && !!importWarehouseCode}
+                              onValueChange={(value) => setLineOverride(doc.key, lineIndex, "warehouseOverrideCode", value)}
+                            >
                               <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="__source__">{line.warehouseCode || importWarehouseCode || "اختر مخزنًا"}</SelectItem>
+                                {applyBatchDefaults && importWarehouseCode && <SelectItem value="__batch__">مخزن الدفعة ({importWarehouseCode})</SelectItem>}
+                                <SelectItem value="__source__">{line.warehouseCode || "اختر مخزنًا"}</SelectItem>
                                 {(masters?.warehouses ?? []).map((warehouse: any) => <SelectItem key={String(warehouse.code)} value={String(warehouse.code)}>
                                   {warehouse.code} — {warehouse.nameAr ?? warehouse.name ?? ""}
                                 </SelectItem>)}
@@ -1264,9 +1422,14 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                             </Select>
                           </td>;
                           if (field === "unit_code") return <td key={field} className="min-w-48 p-1">
-                            <Select value={line.unitOverrideCode || "__source__"} onValueChange={(value) => setLineOverride(doc.key, lineIndex, "unitOverrideCode", value)}>
+                            <Select
+                              value={applyBatchDefaults && importUnitCode ? "__batch__" : line.unitOverrideCode || "__source__"}
+                              disabled={applyBatchDefaults && !!importUnitCode}
+                              onValueChange={(value) => setLineOverride(doc.key, lineIndex, "unitOverrideCode", value)}
+                            >
                               <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                               <SelectContent>
+                                {applyBatchDefaults && importUnitCode && <SelectItem value="__batch__">وحدة الدفعة ({importUnitCode})</SelectItem>}
                                 <SelectItem value="__source__">{line.unitCode || line.unitName || "وحدة الصنف الأساسية"}</SelectItem>
                                 {(masters?.units ?? []).map((unit: any) => <SelectItem key={String(unit.code)} value={String(unit.code)}>
                                   {unit.code} — {unit.nameAr ?? unit.name ?? ""}
@@ -1277,8 +1440,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                           const value = values[field];
                           return <td key={field} className="whitespace-nowrap p-2">{value == null || value === "" ? "—" : String(value)}</td>;
                         })}
-                      </tr>
-                    )))}
+                      </tr>;
+                    }))}
                   </tbody>
                 </table>
               </div>
@@ -1313,13 +1476,28 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
               مسار أوامر الشراء منفصل عن الفواتير: سيُنشئ أوامر شراء بحالة مسودة فقط، ولن يرحّل قيدًا ماليًا أو حركة مخزون. بيانات السداد في الملف لا تُسجّل كدفعات.
             </div>}
             <div className="flex flex-wrap gap-2">
-              {kind !== "purchase_order" && <Button variant="outline" onClick={scanPeriods} disabled={busy || issueCount > 0 || !masters}>
+              {kind !== "purchase_order" && <Button
+                variant="outline"
+                onClick={scanPeriods}
+                disabled={busy || issueCount > 0 || !masters}
+                title={issueCount > 0 ? "عالج أخطاء الإدخال أولًا" : undefined}
+              >
                 {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <CheckCircle2 className="ml-1 h-4 w-4" />}فحص الفترات المالية
               </Button>}
-                <Button onClick={importDocuments} disabled={busy || !periodsReady || issueCount > 0 || !masters}>
+                <Button
+                  onClick={importDocuments}
+                  disabled={busy || !periodsReady || issueCount > 0 || !masters}
+                  title={issueCount > 0 ? "عالج أخطاء الإدخال أولًا" : !periodsReady ? "افحص الفترات المالية أولًا" : undefined}
+                >
                   {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <Upload className="ml-1 h-4 w-4" />}{kind === "purchase_order" ? "حفظ أوامر الشراء كمسودات" : saveAsDraftOnly ? "حفظ الفواتير كمسودات" : postingMode === "archive_only" ? "حفظ المستندات للأرشفة" : "إنشاء وترحيل المستندات"}
               </Button>
             </div>
+            {issueCount > 0 && <div role="status" className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950">
+              الأزرار متوقفة لحماية البيانات. أصلح {issueCount} خطأ أولًا بالنقر مرتين على المستند المعني؛ بعد ذلك افحص الفترات المالية، ثم سيتاح الحفظ كمسودة.
+            </div>}
+            {!issueCount && kind !== "purchase_order" && !periodsReady && <div className="text-xs text-muted-foreground">
+              أصلح أخطاء الإدخال إن وجدت، ثم اضغط «فحص الفترات المالية». يتاح الحفظ بعد اجتياز الفحص.
+            </div>}
           </>
         )}
         {periodScan && (

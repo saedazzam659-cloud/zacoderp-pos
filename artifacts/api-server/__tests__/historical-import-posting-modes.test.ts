@@ -45,3 +45,14 @@ test("historical importer preserves staged financial mode and does not post draf
   assert.match(ui, /paymentType: doc\.paymentType \|\| \(\(postingMode === "archive_only" \|\| saveAsDraftOnly\) \? "credit" : ""\)/);
   assert.match(ui, /postingMode !== "archive_only" && !saveAsDraftOnly && created\.status !== "posted"/);
 });
+
+test("historical import review applies batch defaults and lets users jump to and correct invalid line values", async () => {
+  const ui = await readFile(new URL("../../zatca-invoicing/src/pages/settings/HistoricalDocumentsMigration.tsx", import.meta.url), "utf8");
+  assert.match(ui, /تطبيق الفرع والمخزن ووحدة القياس المحددة على كل المستندات والسطور/);
+  assert.match(ui, /applyBatchDefaults && importUnitCode/);
+  assert.match(ui, /applyBatchDefaults && importWarehouseCode/);
+  assert.match(ui, /onDoubleClick=\{\(\) => focusFirstInvalidLine\(doc\)\}/);
+  assert.match(ui, /scrollIntoView\(\{ behavior: "smooth", block: "center", inline: "center" \}\)/);
+  assert.match(ui, /editableLineFields\.has\(field\)/);
+  assert.match(ui, /عالج أخطاء الإدخال أولًا/);
+});
