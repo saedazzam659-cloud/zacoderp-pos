@@ -680,15 +680,36 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
 
   function focusFirstInvalidLine(doc: HistoricalDoc) {
     const lineIndex = doc.lines.findIndex((line) => invalidLineField(line));
-    if (lineIndex < 0) return;
-    const field = invalidLineField(doc.lines[lineIndex]);
-    if (!field) return;
-    const key = lineEditKey(doc.key, lineIndex, field);
     requestAnimationFrame(() => {
-      const input = lineInputRefs.current.get(key);
-      input?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-      input?.focus();
-      input?.select();
+      if (lineIndex >= 0) {
+        const field = invalidLineField(doc.lines[lineIndex]);
+        const input = field ? lineInputRefs.current.get(lineEditKey(doc.key, lineIndex, field)) : null;
+        if (input) {
+          input.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+          input.focus();
+          input.select();
+          return;
+        }
+      }
+
+      const issue = doc.issues.find((entry) => !(
+        (((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && entry === "كود الفرع مطلوب")
+        || ((postingMode === "archive_only" || saveAsDraftOnly) && entry === "طريقة السداد مطلوبة")
+      )) ?? "";
+      const mentionedValue = issue.match(/"([^"]+)"/)?.[1];
+      const targetLineIndex = mentionedValue
+        ? doc.lines.findIndex((line) => [line.itemCode, line.itemName, line.unitCode, line.unitName].some(
+          (value) => norm(value) === norm(mentionedValue),
+        ))
+        : -1;
+      const fallbackLineIndex = targetLineIndex >= 0 ? targetLineIndex : doc.lines.length ? 0 : -1;
+      const target = fallbackLineIndex >= 0
+        ? [...document.querySelectorAll<HTMLElement>("[data-import-line]")]
+          .find((element) => element.dataset.importLine === `${doc.key}-${fallbackLineIndex}`)
+        : [...document.querySelectorAll<HTMLElement>("[data-import-document]")]
+          .find((element) => element.dataset.importDocument === doc.key);
+      target?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+      target?.focus({ preventScroll: true });
     });
   }
 
@@ -1300,7 +1321,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                 يطبّق التبديل على جميع الصفوف في الدفعة ويعيد فحصها؛ راجع الناتج قبل المتابعة.
               </p>
             </div>
-            <p className="text-xs text-muted-foreground">انقر مرتين على مستند به خطأ للانتقال إلى أول حقل غير صالح وتعديله مباشرة.</p>
+            <p className="text-xs text-muted-foreground">اضغط «تفاصيل» بجوار الخطأ للانتقال إلى السطر المرتبط به؛ وإذا كان الخطأ رقميًا سيُفتح الحقل للتعديل.</p>
             <div className="max-h-56 overflow-auto rounded border">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">فرع هذا المستند</th><th className="p-2">الحالة</th></tr></thead>
@@ -1308,8 +1329,9 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                   const visibleIssues = doc.issues.filter((issue) => !(((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
                   return <tr
                     key={doc.key}
+                    data-import-document={doc.key}
+                    tabIndex={-1}
                     className={`border-t ${visibleIssues.length ? "cursor-pointer hover:bg-amber-50" : ""}`}
-                    title={visibleIssues.length ? "انقر مرتين للانتقال لأول سطر به خطأ" : undefined}
                     onDoubleClick={() => focusFirstInvalidLine(doc)}
                   >
                     <td className="p-2">{doc.sourceNumber}</td><td className="p-2" dir="ltr">{doc.date}</td><td className="p-2">{kindLabels[doc.kind]}</td><td className="p-2">{doc.lines.length}</td>
@@ -1329,7 +1351,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                         </SelectContent>
                       </Select>
                     </td>
-                    <td className="p-2">{visibleIssues.length ? <span className="text-red-700">{visibleIssues[0]}</span> : <span className="text-emerald-700">جاهز للفحص</span>}</td>
+                    <td className="p-2">{visibleIssues.length ? <div className="flex items-center gap-1 text-red-700">
+                      <button
+                        type="button"
+                        className="shrink-0 text-blue-700 underline underline-offset-2 hover:text-blue-900"
+                        onClick={() => focusFirstInvalidLine(doc)}
+                        aria-label={`تفاصيل الخطأ للمستند ${doc.sourceNumber}`}
+                      >تفاصيل</button>
+                      <span>{visibleIssues[0]}</span>
+                    </div> : <span className="text-emerald-700">جاهز للفحص</span>}</td>
                   </tr>;
                 })}</tbody>
               </table>
@@ -1359,6 +1389,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                       };
                       return <tr
                         key={`${doc.key}-${lineIndex}`}
+                        tabIndex={-1}
                         className={`border-t ${badField ? "bg-red-50" : ""}`}
                         data-import-line={`${doc.key}-${lineIndex}`}
                       >
