@@ -1371,6 +1371,18 @@ export async function reverseSalesReturnStockForUnpost(input: {
 }
 
 const router = Router();
+const HISTORICAL_IMPORT_MODES = new Set(["financial_inventory", "financial_only", "inventory_only", "archive_only"]);
+function normalizeHistoricalImportMode(value: unknown, user: any): string | null {
+  if (value == null || value === "") return null;
+  if (user?.role !== "admin" && user?.role !== "superadmin") {
+    throw Object.assign(new Error("استيراد المستندات التاريخية متاح للمدير فقط"), { status: 403 });
+  }
+  const mode = String(value);
+  if (!HISTORICAL_IMPORT_MODES.has(mode)) {
+    throw Object.assign(new Error("وضع ترحيل الاستيراد التاريخي غير صالح"), { status: 400 });
+  }
+  return mode;
+}
 router.use(extractAuth);
 router.use(async (_req, res, next) => {
   try { await ensureProjectFinancialLinks(); next(); }
@@ -2753,6 +2765,7 @@ router.post("/sales-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     if (!(await enforceDraftSaveMode(req, res, cid, "sales_invoice"))) return;
+    const requestedHistoricalImportMode = normalizeHistoricalImportMode(req.body?.historicalImportMode, req.authUser);
     const clientRequestId = parseInvoiceClientRequestId(req.body);
     const requestWantsInlineIssue = req.body?.saveAsDraft !== true && (isMobileChannel(req) || (req as any).resolvedMobileSalesContext === true) &&
       req.body?.mobileSaveMode === "issue";
@@ -3108,6 +3121,7 @@ router.post("/sales-invoices", async (req, res) => {
       // sentinel during this same request.  Success changes it to posted;
       // any failure deletes it via the compensation callback below.
       status: issueInline ? "cancelled" : "draft", notes: notes || null,
+      historicalImportMode: requestedHistoricalImportMode,
       // Creation channel — 'mobile' when the companion app created the doc.
       sourceChannel: String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile" ? "mobile" : null,
       posSessionId: validPosSessionId,
@@ -3610,6 +3624,11 @@ async function postSalesInvoiceHandler(
     let inv = initialInvoice;
     let lines = initialLines;
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    const historicalImportMode = (inv as any).historicalImportMode ?? "financial_inventory";
+    if (historicalImportMode === "archive_only") {
+      res.status(409).json({ error: "هذا المستند مؤرشف فقط ولا يمكن ترحيله." });
+      return;
+    }
     const inlineIssueCancelled = !!onFailure && inv.status === "cancelled";
     if (inv.status !== "draft" && !inlineIssueCancelled) {
       res.status(400).json({
@@ -4009,7 +4028,7 @@ async function postSalesInvoiceHandler(
       if (!salesAccId) { res.status(400).json({ error: "لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)" }); return; }
       // COGS account only needed when there IS cost to book — an all-SERVICE
       // invoice has zero COGS and must post without a configured COGS account.
-      if (totalCogs > 0 && !cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
+      if (historicalImportMode !== "inventory_only" && totalCogs > 0 && !cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
       // Inventory account is taken from each warehouse, not the invoice. Verify every used warehouse has one.
       const missingWh: string[] = [];
       for (const [widStr, amt] of Object.entries(cogsByWarehouse)) {
@@ -4191,7 +4210,7 @@ async function postSalesInvoiceHandler(
       customerArPromise,
     ]);
     timing?.mark("party-accounts");
-    if (!partyAccountId) {
+    if (historicalImportMode !== "inventory_only" && !partyAccountId) {
       res.status(400).json({ error:
         inv.paymentType === "cash" ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
         : inv.paymentType === "bank" ? "الحساب البنكي لا يحتوي على حساب محاسبي مرتبط"
@@ -4199,11 +4218,14 @@ async function postSalesInvoiceHandler(
       return;
     }
 
-    if (discountAmt > 0 && !discountAccId) {
+    if (historicalImportMode !== "inventory_only" && discountAmt > 0 && !discountAccId) {
       res.status(400).json({ error: "لم يتم تحديد حساب الخصم المسموح به (اضبطه من ربط القيود المحاسبية)" }); return;
     }
-    if (vatAmt > 0 && !taxAccId) {
+    if (historicalImportMode !== "inventory_only" && vatAmt > 0 && !taxAccId) {
       res.status(400).json({ error: "لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)" }); return;
+    }
+    if (historicalImportMode === "financial_only" && stockOps.some((op) => !Number.isFinite(op.avgCost) || op.avgCost <= 0)) {
+      throw Object.assign(new Error("تعذر تحديد تكلفة موثوقة من تكلفة النظام لأحد الأصناف؛ لم يتم ترحيل الفاتورة."), { status: 400 });
     }
 
     // Debit-side lines shared by both JE shapes (GDN-sourced and normal):
@@ -4224,7 +4246,7 @@ async function postSalesInvoiceHandler(
           ];
 
     let journalId: number | null = null;
-    {
+    if (historicalImportMode !== "inventory_only") {
     // GDN-sourced invoices: replace the revenue + inventory credits with a
     // single CREDIT to Delivery Clearing. The clearing account was DEBITED
     // at GDN-post time (Dr Clearing / Cr Inventory), so this credit unwinds
@@ -4296,6 +4318,7 @@ async function postSalesInvoiceHandler(
     }  // end JE block
     timing?.mark("journal-entry");
 
+    if (historicalImportMode !== "financial_only") {
     // ─── ACTUAL STOCK MUTATION ───
     // Group repeated lines by item/warehouse so each balance is touched once.
     // Distinct balances are independent and can be updated with modest
@@ -4405,6 +4428,7 @@ async function postSalesInvoiceHandler(
       lines.map((line) => ({ id: line.id, itemId: line.itemId })),
     );
     timing?.mark("stock-ledger-bulk");
+    }
 
     const [updated] = await tx.update(salesInvoicesTable)
       .set({
@@ -5165,6 +5189,7 @@ router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     if (!(await enforceDraftSaveMode(req, res, cid, "sales_return"))) return;
+    const requestedHistoricalImportMode = normalizeHistoricalImportMode(req.body?.historicalImportMode, req.authUser);
     let clientRequestId: string | null;
     try { clientRequestId = parseInvoiceClientRequestId(req.body); }
     catch (error: any) {
@@ -5196,14 +5221,19 @@ router.post("/sales-returns", async (req, res) => {
     let resolvedCustomerId: number | null = customerId ? Number(customerId) : null;
     let resolvedBranchId:   number | null = branchId   ? Number(branchId)   : null;
     let sourcePosSessionId: number | null = null;
-    if ((!resolvedCustomerId || !resolvedBranchId) && invoiceId) {
+    if (invoiceId) {
       const [src] = await db.select({
         customerId: salesInvoicesTable.customerId,
         branchId:   salesInvoicesTable.branchId,
         posSessionId: salesInvoicesTable.posSessionId,
+        historicalImportMode: salesInvoicesTable.historicalImportMode,
       }).from(salesInvoicesTable)
         .where(and(eq(salesInvoicesTable.id, Number(invoiceId)), eq(salesInvoicesTable.companyId, cid)));
       if (src) {
+        if ((src.historicalImportMode ?? "financial_inventory") !== (requestedHistoricalImportMode ?? "financial_inventory")) {
+          res.status(409).json({ error: "يجب أن يتبع وضع ترحيل المرتجع وضع فاتورة المبيعات الأصلية." });
+          return;
+        }
         if (!resolvedCustomerId) resolvedCustomerId = src.customerId ?? null;
         if (!resolvedBranchId)   resolvedBranchId   = src.branchId   ?? null;
         sourcePosSessionId = src.posSessionId ?? null;
@@ -5293,6 +5323,7 @@ router.post("/sales-returns", async (req, res) => {
       discountAmount: discR.toFixed(2),
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       status: "draft", notes: notes || null,
+      historicalImportMode: requestedHistoricalImportMode,
       // Creation channel — 'mobile' when the companion app created the doc.
       sourceChannel: String(req.headers["x-app-channel"] ?? "").toLowerCase() === "mobile" ? "mobile" : null,
       // Manual session (admin-created) the user is currently working under,
@@ -5598,6 +5629,11 @@ router.patch(
         ...branchScopeSpread(req, salesReturnsTable.branchId, undefined),
       ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
+    const historicalImportMode = (ret as any).historicalImportMode ?? "financial_inventory";
+    if (historicalImportMode === "archive_only") {
+      res.status(409).json({ error: "هذا المستند مؤرشف فقط ولا يمكن ترحيله." });
+      return;
+    }
     if (ret.status !== "draft") {
       res.status(400).json({
         error: ret.status === "posted" ? "المرتجع مُرحَّل مسبقاً" : "لا يمكن ترحيل مرتجع ملغى أو غير مسودة",
@@ -5611,7 +5647,7 @@ router.patch(
     // another branch may legitimately be returned through this branch).
     if (ret.invoiceId) {
       const [srcCheck] = await db
-        .select({ id: salesInvoicesTable.id })
+        .select({ id: salesInvoicesTable.id, historicalImportMode: salesInvoicesTable.historicalImportMode })
         .from(salesInvoicesTable)
         .where(and(
           eq(salesInvoicesTable.id, ret.invoiceId),
@@ -5619,6 +5655,10 @@ router.patch(
         ));
       if (!srcCheck) {
         res.status(400).json({ error: "الفاتورة المصدر غير موجودة في هذه الشركة — فك ربط الفاتورة أو اختر فاتورة صحيحة." });
+        return;
+      }
+      if ((srcCheck.historicalImportMode ?? "financial_inventory") !== historicalImportMode) {
+        res.status(409).json({ error: "يجب أن يتبع وضع ترحيل المرتجع وضع فاتورة المبيعات الأصلية." });
         return;
       }
     }
@@ -5927,10 +5967,14 @@ router.patch(
 
       // Aggregate cost across all parts (weighted-sum) for JE math.
       const lineRestoredCost = parts.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
+      if (historicalImportMode === "financial_only" && lineRestoredCost <= 0) {
+        throw Object.assign(new Error("تعذر تحديد تكلفة نظام موثوقة لأحد أصناف المرتجع؛ لم يتم ترحيل المستند."), { status: 400 });
+      }
       totalCogs += lineRestoredCost;
       cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineRestoredCost;
 
       // Single balance update for the full qty using the weighted unit cost.
+      if (historicalImportMode !== "financial_only") {
       const wac = qty > 0 ? lineRestoredCost / qty : costUnit;
       await upsertBalance(cid, line.itemId, line.warehouseId, qty, wac, tx);
       let cursor = await getBalance(cid, line.itemId, line.warehouseId, tx);
@@ -5955,6 +5999,7 @@ router.patch(
           expiryDate:  p.expiryDate,
           notes:       `${line.notes ?? ""}${p.batchNumber ? ` — استرجاع تشغيلة ${p.batchNumber}` : ""}`.trim() || undefined,
         }, tx);
+      }
       }
     }
 
@@ -5992,8 +6037,8 @@ router.patch(
     const cogsAccId     = pickAccount(ret.cogsAccountId,     mapSr("sales_return", "cogs")       ?? mapSi("sales_invoice", "cogs"));
     const taxAccId      = pickAccount(ret.taxAccountId,      mapSr("sales_return", "vat_output") ?? mapSi("sales_invoice", "vat_output"));
     const discountAccId = pickAccount(ret.discountAccountId, mapSr("sales_return", "discount")   ?? mapSi("sales_invoice", "discount"));
-    if (!salesAccId) throw Object.assign(new Error("لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)"), { status: 400 });
-    if (!cogsAccId) throw Object.assign(new Error("لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)"), { status: 400 });
+    if (historicalImportMode !== "inventory_only" && !salesAccId) throw Object.assign(new Error("لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)"), { status: 400 });
+    if (historicalImportMode !== "inventory_only" && !cogsAccId) throw Object.assign(new Error("لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)"), { status: 400 });
     // Inventory account derived from warehouse — verify each used warehouse has one
     const missingWh: string[] = [];
     for (const [widStr, amt] of Object.entries(cogsByWarehouse)) {
@@ -6001,7 +6046,7 @@ router.patch(
       const wid = Number(widStr);
       if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
     }
-    if (missingWh.length) {
+    if (historicalImportMode !== "inventory_only" && missingWh.length) {
       throw Object.assign(new Error(`لم يتم ربط حساب محاسبي للمخزن/المخازن التالية: ${missingWh.join("، ")}.`), { status: 400 });
     }
 
@@ -6050,19 +6095,19 @@ router.patch(
       (ret.paymentType === "cash" || ret.paymentType === "bank")
          ? await getCustomerAccountId(cid, ret.customerId, tx)
         : null;
-    if (!partyAccountId) {
+    if (historicalImportMode !== "inventory_only" && !partyAccountId) {
       throw Object.assign(new Error(
         ret.paymentType === "cash" ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
         : ret.paymentType === "bank" ? "الحساب البنكي لا يحتوي على حساب محاسبي مرتبط"
         : "العميل لا يحتوي على حساب محاسبي مرتبط",
       ), { status: 400 });
     }
-    if (vatAmt > 0 && !taxAccId)
+    if (historicalImportMode !== "inventory_only" && vatAmt > 0 && !taxAccId)
       throw Object.assign(new Error("لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)"), { status: 400 });
-    if (discountAmt > 0 && !discountAccId)
+    if (historicalImportMode !== "inventory_only" && discountAmt > 0 && !discountAccId)
       throw Object.assign(new Error("لم يتم تحديد حساب الخصم المسموح به (اضبطه من ربط القيود المحاسبية)"), { status: 400 });
 
-    const journalId = await createJournalEntry({
+    const journalId = historicalImportMode === "inventory_only" ? null : await createJournalEntry({
       companyId: cid,
       audit: { req },
       branchId: ret.branchId,

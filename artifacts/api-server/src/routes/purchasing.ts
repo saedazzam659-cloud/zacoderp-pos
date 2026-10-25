@@ -620,6 +620,18 @@ function deferredLineFields(l: any) {
 }
 
 const router = Router();
+const HISTORICAL_IMPORT_MODES = new Set(["financial_inventory", "financial_only", "inventory_only", "archive_only"]);
+function normalizeHistoricalImportMode(value: unknown, user: any): string | null {
+  if (value == null || value === "") return null;
+  if (user?.role !== "admin" && user?.role !== "superadmin") {
+    throw Object.assign(new Error("استيراد المستندات التاريخية متاح للمدير فقط"), { status: 403 });
+  }
+  const mode = String(value);
+  if (!HISTORICAL_IMPORT_MODES.has(mode)) {
+    throw Object.assign(new Error("وضع ترحيل الاستيراد التاريخي غير صالح"), { status: 400 });
+  }
+  return mode;
+}
   // ─────────────────────────────────────────────────────────────────────────
   // Gemini-first transparent redirect (see notes in routes/ai.ts).
   // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
@@ -1672,6 +1684,7 @@ router.post("/purchase-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     if (!(await enforceDraftSaveMode(req, res, cid, "purchase_invoice"))) return;
+    const requestedHistoricalImportMode = normalizeHistoricalImportMode(req.body?.historicalImportMode, req.authUser);
     const clientRequestId = parseInvoiceClientRequestId(req.body);
     if (clientRequestId) {
       const replayId = await findInvoiceCreateReplay(db, cid, "purchase_invoice", clientRequestId);
@@ -1786,6 +1799,7 @@ router.post("/purchase-invoices", async (req, res) => {
       costCenter:         costCenter ? String(costCenter).trim() || null : null,
       taxId:              taxId ? Number(taxId) : null,
       status: "draft", notes: notes || null,
+      historicalImportMode: requestedHistoricalImportMode,
       createdById: (req as any).authUser?.id ?? null,
     };
     const createInvoice = async (executor: any) => {
@@ -2032,6 +2046,11 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
     let [inv] = await db.select().from(purchaseInvoicesTable)
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    const historicalImportMode = (inv as any).historicalImportMode ?? "financial_inventory";
+    if (historicalImportMode === "archive_only") {
+      res.status(409).json({ error: "هذا المستند مؤرشف فقط ولا يمكن ترحيله." });
+      return;
+    }
     if (inv.status === "posted") { res.status(400).json({ error: "الفاتورة مُرحَّلة مسبقاً" }); return; }
     if (inv.status !== "draft") { res.status(400).json({ error: "لا يمكن ترحيل إلا فواتير الشراء المسودة" }); return; }
     if (String(inv.docNumber ?? "").startsWith("D-PI-")) {
@@ -2323,6 +2342,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
 
       if (grnSourced) continue;
 
+      if (historicalImportMode !== "financial_only") {
       await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
       costRefreshItemIds.add(line.itemId);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
@@ -2342,6 +2362,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
         expiryDate:  line.expiryDate  ? String(line.expiryDate)  : null,
         notes:       line.notes ?? undefined,
       });
+      }
     }
 
     // Write the new company-wide weighted-average cost back to the item master
@@ -2424,7 +2445,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
     }
     // SERVICE items must carry a cost account (e.g. مشاريع تحت التنفيذ).
     if (serviceMissing.length) missing.push(`حساب التكلفة للأصناف الخدمية: ${serviceMissing.join("، ")}`);
-    if (missing.length) {
+    if (missing.length && historicalImportMode !== "inventory_only") {
       throw new Error(`يجب تحديد الحسابات التالية قبل الترحيل: ${missing.join("، ")}`);
     }
 
@@ -2678,7 +2699,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
     }
 
     const updated = await db.transaction(async (tx) => {
-      const journalId = await createJournalEntry({
+      const journalId = historicalImportMode === "inventory_only" ? null : await createJournalEntry({
         companyId:    cid,
         audit:        { req },
         branchId:     inv.branchId,
@@ -3920,6 +3941,7 @@ router.post("/purchase-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     if (!(await enforceDraftSaveMode(req, res, cid, "purchase_return"))) return;
+    const requestedHistoricalImportMode = normalizeHistoricalImportMode(req.body?.historicalImportMode, req.authUser);
     let clientRequestId: string | null;
     try { clientRequestId = parseInvoiceClientRequestId(req.body); }
     catch (error: any) {
@@ -3963,10 +3985,21 @@ router.post("/purchase-returns", async (req, res) => {
       if (usageV.length) { res.status(403).json({ error: usageViolationMessage(usageV, "save"), code: "ITEM_USAGE_BLOCKED", violations: usageV }); return; }
     }
     let resolvedSupplierId: number | null = supplierId ? Number(supplierId) : null;
-    if (!resolvedSupplierId && invoiceId) {
-      const [sourceInvoice] = await db.select({ supplierId: purchaseInvoicesTable.supplierId })
+    if (invoiceId) {
+      const [sourceInvoice] = await db.select({
+        supplierId: purchaseInvoicesTable.supplierId,
+        historicalImportMode: purchaseInvoicesTable.historicalImportMode,
+      })
         .from(purchaseInvoicesTable)
         .where(and(eq(purchaseInvoicesTable.id, Number(invoiceId)), eq(purchaseInvoicesTable.companyId, cid)));
+      if (!sourceInvoice) {
+        res.status(400).json({ error: "فاتورة المشتريات المصدر غير موجودة في هذه الشركة" });
+        return;
+      }
+      if ((sourceInvoice.historicalImportMode ?? "financial_inventory") !== (requestedHistoricalImportMode ?? "financial_inventory")) {
+        res.status(409).json({ error: "يجب أن يتبع وضع ترحيل المرتجع وضع فاتورة الشراء الأصلية." });
+        return;
+      }
       if (sourceInvoice?.supplierId != null) resolvedSupplierId = sourceInvoice.supplierId;
     }
     if (!supplierId && resolvedSupplierId) {
@@ -4085,6 +4118,7 @@ router.post("/purchase-returns", async (req, res) => {
         taxId:              taxId ? Number(taxId) : null,
         postVariance: postVariance === true || postVariance === "true",
         status: "draft", notes: notes || null,
+        historicalImportMode: requestedHistoricalImportMode,
         createdById: req.authUser?.id ?? null,
       }, tx);
       if (lines?.length) {
@@ -4265,6 +4299,11 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
         ...branchScopeSpread(req, purchaseReturnsTable.branchId, undefined),
       ));
     if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
+    const historicalImportMode = (ret as any).historicalImportMode ?? "financial_inventory";
+    if (historicalImportMode === "archive_only") {
+      res.status(409).json({ error: "هذا المستند مؤرشف فقط ولا يمكن ترحيله." });
+      return;
+    }
     if (ret.status === "posted") { res.status(400).json({ error: "المرتجع مُرحَّل مسبقاً" }); return; }
     if (ret.status !== "draft") { res.status(400).json({ error: "لا يمكن ترحيل إلا مرتجعات الشراء المسودة" }); return; }
     if (String(ret.docNumber ?? "").startsWith("D-PR-")) {
@@ -4311,7 +4350,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
         if (source?.status !== "posted") throw new Error("يجب أن تكون الفاتورة ذات التكلفة المحملة مرحلة قبل ترحيل مرتجعها");
       }
       const [srcCheck] = await db
-        .select({ id: purchaseInvoicesTable.id })
+        .select({ id: purchaseInvoicesTable.id, historicalImportMode: purchaseInvoicesTable.historicalImportMode })
         .from(purchaseInvoicesTable)
         .where(and(
           eq(purchaseInvoicesTable.id, ret.invoiceId),
@@ -4319,6 +4358,10 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
         ));
       if (!srcCheck) {
         res.status(400).json({ error: "فاتورة المشتريات المصدر غير موجودة في هذه الشركة — فك ربط الفاتورة أو اختر فاتورة صحيحة." });
+        return;
+      }
+      if ((srcCheck.historicalImportMode ?? "financial_inventory") !== historicalImportMode) {
+        res.status(409).json({ error: "يجب أن يتبع وضع ترحيل المرتجع وضع فاتورة الشراء الأصلية." });
         return;
       }
     }
@@ -4572,6 +4615,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
       // used when the return posts WITHOUT a variance line (default).
       docNetByWarehouse[whCcKey] = (docNetByWarehouse[whCcKey] ?? 0) + paidLineValue;
 
+      if (historicalImportMode !== "financial_only") {
       const wac = qty > 0 ? lineRemovedCost / qty : costUnit;
       const [priorLandedBalance] = sourceHasInternalLandedCosts ? await db.select().from(stockBalanceTable).where(and(
         eq(stockBalanceTable.companyId, cid), eq(stockBalanceTable.itemId, line.itemId), eq(stockBalanceTable.warehouseId, line.warehouseId),
@@ -4609,6 +4653,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
           expiryDate:  p.expiryDate,
           notes:       `${line.notes ?? ""}${p.batchNumber ? ` — ارتجاع تشغيلة ${p.batchNumber}` : ""}`.trim() || undefined,
         });
+      }
       }
     }
 
@@ -4734,7 +4779,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
     if (needsVarianceLine && !varianceAccId) {
       missing.push(`حساب فروق سعر مرتجع المشتريات (الفرق = ${varianceDelta.toFixed(2)} ر.س — اربط الحساب من /admin/accounting-mappings تحت "مرتجع المشتريات")`);
     }
-    if (missing.length) {
+    if (missing.length && historicalImportMode !== "inventory_only") {
       throw new Error(`يجب تحديد الحسابات التالية قبل الترحيل: ${missing.join("، ")}`);
     }
 
@@ -4818,7 +4863,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
 
     const desc = `قيد مرتجع مشتريات رقم ${ret.docNumber || ret.id}`;
     const updated = await db.transaction(async (tx) => {
-      const journalId = await createJournalEntry({
+      const journalId = historicalImportMode === "inventory_only" ? null : await createJournalEntry({
         companyId:    cid,
         audit:        { req },
         branchId:     ret.branchId,

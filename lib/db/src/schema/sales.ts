@@ -39,6 +39,7 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   // vat_rate flowing into this document's lines. NULL = legacy/default 15%.
   taxId:          integer("tax_id"),
   status:         salesInvoiceStatusEnum("status").notNull().default("draft"),
+  historicalImportMode: text("historical_import_mode"),
   isSequenceProtected: boolean("is_sequence_protected").notNull().default(false),
   notes:          text("notes"),
   // Accounts used to build the journal entry on posting
@@ -176,6 +177,7 @@ export const salesReturnsTable = pgTable("sales_returns", {
   priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
   taxId:        integer("tax_id"),
   status:       text("status").notNull().default("draft"),
+  historicalImportMode: text("historical_import_mode"),
   isSequenceProtected: boolean("is_sequence_protected").notNull().default(false),
   notes:        text("notes"),
   // Manual (admin-created) session this return was recorded under, if any.

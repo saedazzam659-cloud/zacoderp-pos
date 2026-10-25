@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { exportData, ensureFiscalYears, scanHistorical } from "@/lib/dataIoApi";
 
 type Kind = "sales_invoice" | "purchase_invoice" | "sales_return" | "purchase_return";
+type HistoricalImportMode = "financial_inventory" | "financial_only" | "inventory_only" | "archive_only";
 type Master = Record<string, any[]>;
 type Line = Record<string, any>;
 type HistoricalDoc = {
@@ -41,6 +42,12 @@ const kindLabels: Record<Kind, string> = {
   purchase_invoice: "فاتورة مشتريات",
   sales_return: "مرتجع مبيعات",
   purchase_return: "مرتجع مشتريات",
+};
+const importModeLabels: Record<HistoricalImportMode, string> = {
+  financial_inventory: "مالي ومخزني",
+  financial_only: "مالي فقط",
+  inventory_only: "مخزني فقط",
+  archive_only: "أرشفة فقط",
 };
 const requiredHeaders = [
   "source_doc_number", "document_date", "party_code", "branch_code", "item_code",
@@ -407,6 +414,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [kind, setKind] = useState<Kind>("sales_invoice");
+  const [postingMode, setPostingMode] = useState<HistoricalImportMode>("financial_inventory");
   const [importBranchCode, setImportBranchCode] = useState("");
   const [importWarehouseCode, setImportWarehouseCode] = useState("");
   const [swapFrom, setSwapFrom] = useState("qty");
@@ -818,7 +826,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     try {
       let sequenceProblems: Array<{ sourceNumber: string; status: string; detail: string }>;
       try {
-        sequenceProblems = await preflightAnnualSequences(refs);
+        sequenceProblems = postingMode === "archive_only" ? [] : await preflightAnnualSequences(refs);
       } catch (error: any) {
         toast({
           title: "تعذر فحص المسلسلات السنوية",
@@ -875,6 +883,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           discountAmount: doc.discountAmount.toFixed(2), totalAmount: doc.totalAmount.toFixed(2),
           totalExpensesLoaded: doc.totalExpensesLoaded.toFixed(2),
           priceIncludesVat: doc.priceIncludesVat, notes: `استيراد تاريخي — رقم المصدر: ${doc.sourceNumber}`,
+          historicalImportMode: postingMode,
+          ...(postingMode === "archive_only" ? { saveAsDraft: true } : {}),
           lines: mappedLines,
         };
         if (doc.kind === "sales_invoice") {
@@ -890,33 +900,38 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           const created = await requestJson(createPath, token, "POST", payload);
           const id = Number(created.id);
           if (!Number.isInteger(id) || id <= 0) throw new Error("لم يُرجع النظام رقم المستند");
-          if (created.status !== "posted") await requestJson(postPath(id), token, "PATCH", {});
+          const savedMode = created.historicalImportMode ?? "financial_inventory";
+          if (savedMode !== postingMode) throw new Error("رقم المستند المصدر سبق استيراده بوضع مختلف؛ لن نغيّر طريقة ترحيله تلقائيًا.");
+          if (postingMode !== "archive_only" && created.status !== "posted") await requestJson(postPath(id), token, "PATCH", {});
           if (doc.kind.endsWith("_invoice")) nextSourceIds[`${doc.kind.startsWith("sales") ? "sales" : "purchase"}:${doc.sourceNumber}`] = id;
-          nextResults.push({ sourceNumber: doc.sourceNumber, status: "تم الترحيل", detail: created.idempotentReplay ? "استُعيد المستند السابق ثم اكتمل الترحيل" : `${kindLabels[doc.kind]} — ${created.docNumber ?? id}` });
+          const resultStatus = postingMode === "archive_only" ? "تمت الأرشفة" : "تم الترحيل";
+          nextResults.push({ sourceNumber: doc.sourceNumber, status: resultStatus, detail: `${importModeLabels[postingMode]} — ${created.idempotentReplay ? "استُعيد المستند السابق" : kindLabels[doc.kind]} — ${created.docNumber ?? id}` });
         } catch (error: any) {
           nextResults.push({ sourceNumber: doc.sourceNumber, status: "تعذر الترحيل", detail: error?.message ?? "خطأ غير معروف" });
         }
         setSourceInvoiceIds({ ...nextSourceIds });
         setResults([...nextResults]);
       }
-      toast({ title: "انتهى ترحيل المستندات", description: `${nextResults.filter((item) => item.status === "تم الترحيل").length} ناجح من ${nextResults.length}` });
+      toast({ title: "انتهى استيراد المستندات", description: `${nextResults.filter((item) => item.status === "تم الترحيل" || item.status === "تمت الأرشفة").length} ناجح من ${nextResults.length}` });
     } finally {
       setBusy(false);
     }
   }
 
   const periodsReady = !!periodScan
-    && !(periodScan.yearsToCreate?.length)
-    && !(periodScan.periodsMissing?.length)
-    && !(periodScan.orphans?.length)
-    && !(periodScan.closedPeriodConflicts?.length);
+    && (postingMode === "archive_only" || (
+      !(periodScan.yearsToCreate?.length)
+      && !(periodScan.periodsMissing?.length)
+      && !(periodScan.orphans?.length)
+      && !(periodScan.closedPeriodConflicts?.length)
+    ));
 
   return (
     <Card>
       <CardContent className="space-y-4 p-4" dir="rtl">
         <div>
           <h3 className="font-bold">استيراد المستندات التاريخية</h3>
-          <p className="text-xs text-muted-foreground">يُنشأ كل مستند برقمه الرسمي من المسلسل المطابق لتاريخ المستند، ثم يُرحّل عبر واجهة النظام المعتادة. لا تُعاد بيانات التأسيس أو إعدادات الفترات والمسلسلات. استورد فواتير الشراء قبل المبيعات عند الحاجة للمخزون؛ والمرتجعات تتطلب استيراد فواتيرها المصدر أولاً في الجلسة نفسها.</p>
+          <p className="text-xs text-muted-foreground">في أوضاع الترحيل يُنشأ كل مستند برقمه الرسمي من المسلسل المطابق لتاريخه. وضع الأرشفة يحفظه كمسودة بلا رقم رسمي. لا تُعاد بيانات التأسيس أو إعدادات الفترات والمسلسلات. استورد الفاتورة المصدر قبل المرتجع في الجلسة نفسها.</p>
           <p className="mt-2 rounded-md border border-sky-200 bg-sky-50 p-2 text-xs leading-6 text-sky-950">
             القالب يحتوي على شرح عربي، ورقة فارغة للرفع، ومثال مستقل. استخدم أكواد العملاء والموردين والأصناف المسجلة بالفعل، ورقم النظام القديم في source_doc_number؛ لا تستبدل به رقم التسلسل الذي ينشئه النظام.
           </p>
@@ -1093,12 +1108,33 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                 </table>
               </div>
             </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-xs">
+                <span className="font-medium">أثر الاعتماد</span>
+                <Select value={postingMode} onValueChange={(value) => {
+                  setPostingMode(value as HistoricalImportMode);
+                  setResults([]);
+                  setPeriodScan(null);
+                }}>
+                  <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                  <SelectContent>{Object.entries(importModeLabels).map(([value, label]) =>
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  )}</SelectContent>
+                </Select>
+              </label>
+              <div className={`rounded-md border p-2 text-xs leading-5 ${postingMode === "financial_only" || postingMode === "inventory_only" ? "border-amber-300 bg-amber-50 text-amber-950" : "border-slate-200 bg-slate-50 text-slate-800"}`}>
+                {postingMode === "financial_inventory" && "سيُرحّل القيد المالي وحركات المخزون حسب مسار النظام المعتاد."}
+                {postingMode === "financial_only" && "سيُرحّل القيد المالي بتكلفة النظام دون تغيير الكميات. قد تختلف تقارير الحسابات والمخزون."}
+                {postingMode === "inventory_only" && "سيُحدّث المخزون وتكلفته دون قيد محاسبي. قد تختلف تقارير الحسابات والمخزون."}
+                {postingMode === "archive_only" && "سيُحفظ المستند كمسودة مرجعية فقط، دون ترحيل أو رقم رسمي."}
+              </div>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={scanPeriods} disabled={busy || issueCount > 0 || !masters}>
                 {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <CheckCircle2 className="ml-1 h-4 w-4" />}فحص الفترات المالية
               </Button>
               <Button onClick={importDocuments} disabled={busy || !periodsReady || issueCount > 0 || !masters}>
-                {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <Upload className="ml-1 h-4 w-4" />}إنشاء وترحيل المستندات
+                {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <Upload className="ml-1 h-4 w-4" />}{postingMode === "archive_only" ? "حفظ المستندات للأرشفة" : "إنشاء وترحيل المستندات"}
               </Button>
             </div>
           </>

@@ -104,6 +104,7 @@ export const purchaseInvoicesTable = pgTable("purchase_invoices", {
   // Dynamic tax catalog reference (soft ref to taxes.id). NULL = default 15%.
   taxId:                integer("tax_id"),
   status:               purchaseInvoiceStatusEnum("status").notNull().default("draft"),
+  historicalImportMode: text("historical_import_mode"),
   isSequenceProtected:  boolean("is_sequence_protected").notNull().default(false),
   inventoryAccountId:   integer("inventory_account_id"),
   taxAccountId:         integer("tax_account_id"),
@@ -268,6 +269,7 @@ export const purchaseReturnsTable = pgTable("purchase_returns", {
   // no variance line.
   postVariance:  boolean("post_variance").notNull().default(false),
   status:        text("status").notNull().default("draft"),
+  historicalImportMode: text("historical_import_mode"),
   isSequenceProtected: boolean("is_sequence_protected").notNull().default(false),
   inventoryAccountId: integer("inventory_account_id"),
   taxAccountId:       integer("tax_account_id"),
