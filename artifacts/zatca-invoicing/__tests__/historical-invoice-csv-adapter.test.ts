@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  convertLinkedPurchaseInvoiceCsv,
+  convertLinkedPurchaseOrderCsv,
   convertLinkedSalesInvoiceCsv,
   isInvoiceHeaderCsv,
   isInvoiceItemsCsv,
@@ -34,7 +34,7 @@ test("recognizes and converts linked invoice and item CSV exports", () => {
 test("rejects unpaired or financially inconsistent rows instead of dropping data", () => {
   assert.throws(
     () => convertLinkedSalesInvoiceCsv(invoices, items.replace("11.50,10,VAT", "9.00,10,VAT")),
-    /إجمالي سطور الفاتورة/,
+    /إجمالي سطور فاتورة المبيعات/,
   );
   assert.throws(
     () => convertLinkedSalesInvoiceCsv(invoices, items.replace("?00001", "?99999")),
@@ -58,7 +58,7 @@ test("repairs a legacy item row split inside its quoted description", () => {
   assert.equal(converted.rows[1].item_name, "صنف ثان");
 });
 
-test("converts linked purchase-order exports to purchase invoice rows and preserves payment uncertainty", () => {
+test("converts linked purchase-order exports to operational purchase-order rows", () => {
   const purchaseHeaders = [
     "PurchaseOrderNo,SupplierNo,Date,CurrencyCode,SupplierBusinessName,SummaryTotal,SummaryPaid,SummaryDiscount,PaymentStatus",
     "PO-100,0007,2026-08-06,SAR,مورد تجريبي,115.00,115.00,0,Paid",
@@ -69,14 +69,14 @@ test("converts linked purchase-order exports to purchase invoice rows and preser
   ].join("\n");
 
   assert.equal(isPurchaseOrderHeaderCsv(purchaseHeaders), true);
-  const converted = convertLinkedPurchaseInvoiceCsv(purchaseHeaders, purchaseItems);
+  const converted = convertLinkedPurchaseOrderCsv(purchaseHeaders, purchaseItems);
   assert.equal(converted.rows.length, 1);
   assert.equal(converted.rows[0].source_doc_number, "PO-100");
   assert.equal(converted.rows[0].party_code, "0007");
   assert.equal(converted.rows[0].item_name, "صنف مشتريات");
   assert.equal(converted.rows[0].payment_type, "");
   assert.equal(converted.rows[0].line_total, "115");
-  assert.equal(converted.warnings.length, 3);
-  assert.match(converted.warnings[0], /PurchaseOrderNo/);
-  assert.match(converted.warnings[1], /لا يثبت استلام البضاعة/);
+  assert.equal(converted.warnings.length, 2);
+  assert.match(converted.warnings[0], /أوامر شراء فقط/);
+  assert.match(converted.warnings[1], /تم تجاهل حقول PaymentStatus/);
 });

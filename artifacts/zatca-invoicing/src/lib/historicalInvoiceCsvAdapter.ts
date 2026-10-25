@@ -124,7 +124,7 @@ export function decodeInvoiceCsv(bytes: ArrayBuffer): string {
 function convertLinkedInvoiceCsv(
   invoicesText: string,
   itemsText: string,
-  sourceKind: "sales" | "purchase",
+  sourceKind: "sales" | "purchase_order",
 ): { rows: CsvRow[]; warnings: string[] } {
   const invoiceGrid = parseCsvGrid(invoicesText);
   const itemGrid = parseCsvGrid(itemsText);
@@ -134,12 +134,13 @@ function convertLinkedInvoiceCsv(
 
   const invoiceHeaders = headerIndex(invoiceGrid[0]);
   const itemHeaders = headerIndex(itemGrid[0]);
-  const numberField = sourceKind === "sales" ? "InvoiceNo" : "PurchaseOrderNo";
-  const partyNumberField = sourceKind === "sales" ? "ClientNo" : "SupplierNo";
-  const businessNameField = sourceKind === "sales" ? "ClientBusinessName" : "SupplierBusinessName";
-  const firstNameField = sourceKind === "sales" ? "ClientFirstName" : "SupplierFirstName";
-  const lastNameField = sourceKind === "sales" ? "ClientLastName" : "SupplierLastName";
-  const documentLabel = sourceKind === "sales" ? "فاتورة المبيعات" : "فاتورة المشتريات";
+  const isSales = sourceKind === "sales";
+  const numberField = isSales ? "InvoiceNo" : "PurchaseOrderNo";
+  const partyNumberField = isSales ? "ClientNo" : "SupplierNo";
+  const businessNameField = isSales ? "ClientBusinessName" : "SupplierBusinessName";
+  const firstNameField = isSales ? "ClientFirstName" : "SupplierFirstName";
+  const lastNameField = isSales ? "ClientLastName" : "SupplierLastName";
+  const documentLabel = isSales ? "فاتورة المبيعات" : "أمر الشراء";
   const requiredInvoiceFields = [numberField.toLocaleLowerCase(), "date", partyNumberField.toLocaleLowerCase(), "currencycode", "summarytotal"];
   const requiredItemFields = ["no", "item", "unit_price", "quantity", "subtotal", "subtotal_without_tax", "tax1_value", "tax1_amount"];
   if (requiredInvoiceFields.some((field) => !invoiceHeaders.has(field))) {
@@ -185,7 +186,7 @@ function convertLinkedInvoiceCsv(
     const paymentStatus = value(header, invoiceHeaders, "PaymentStatus");
     const normalizedPaymentStatus = paymentStatus.toLocaleLowerCase().replace(/\s+/g, " ").trim();
     const paid = toNumber(value(header, invoiceHeaders, "SummaryPaid"));
-    if (paid > 0 || normalizedPaymentStatus === "paid" || normalizedPaymentStatus === "partial paid") {
+    if (isSales && (paid > 0 || normalizedPaymentStatus === "paid" || normalizedPaymentStatus === "partial paid")) {
       warnings.push(`${documentLabel} ${number}: المصدر يذكر دفعة سابقة؛ الملفان لا يحتويان وسيلة أو مستند التحصيل لربطها.`);
     }
 
@@ -222,7 +223,7 @@ function convertLinkedInvoiceCsv(
         vat_amount: roundMoney(vatAmount),
         discount_amount: value(header, invoiceHeaders, "SummaryDiscount") || "0",
         total_amount: value(header, invoiceHeaders, "SummaryTotal"),
-        payment_type: paid <= 0 && normalizedPaymentStatus === "unpaid" ? "credit" : "",
+        payment_type: !isSales ? "" : paid <= 0 && normalizedPaymentStatus === "unpaid" ? "credit" : "",
         currency_code: currency,
         exchange_rate: currency === "SAR" ? "1" : "",
         cash_box_code: "",
@@ -240,13 +241,13 @@ export function convertLinkedSalesInvoiceCsv(invoicesText: string, itemsText: st
   return convertLinkedInvoiceCsv(invoicesText, itemsText, "sales");
 }
 
-export function convertLinkedPurchaseInvoiceCsv(invoicesText: string, itemsText: string) {
-  const converted = convertLinkedInvoiceCsv(invoicesText, itemsText, "purchase");
+export function convertLinkedPurchaseOrderCsv(invoicesText: string, itemsText: string) {
+  const converted = convertLinkedInvoiceCsv(invoicesText, itemsText, "purchase_order");
   return {
     ...converted,
     warnings: [
-      "رأس الملف يستخدم PurchaseOrderNo وليس رقم فاتورة المورد؛ راجع رقم المستند وتأكد أنه يطابق رقم الفاتورة.",
-      "ملف أمر الشراء لا يثبت استلام البضاعة؛ لا تُرحّل حركة المخزون إلا بعد تأكيد الكميات المستلمة فعليًا.",
+      "سيُحفظ الملف كأوامر شراء فقط؛ لا تُنشأ فواتير أو دفعات أو قيود أو حركات مخزون.",
+      "تم تجاهل حقول PaymentStatus وSummaryPaid وSummaryUnpaid وSummaryDeposit؛ حفظ أمر الشراء لا يسجل أي عملية سداد.",
       ...converted.warnings,
     ],
   };

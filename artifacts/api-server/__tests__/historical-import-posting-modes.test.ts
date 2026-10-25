@@ -35,7 +35,9 @@ test("historical importer preserves staged financial mode and does not post draf
   const ui = await readFile(new URL("../../zatca-invoicing/src/pages/settings/HistoricalDocumentsMigration.tsx", import.meta.url), "utf8");
   assert.match(ui, /financial_inventory.*financial_only.*inventory_only.*archive_only/s);
   assert.match(ui, /historicalImportMode: postingMode/);
-  assert.match(ui, /converted\.warnings\.length\) setSaveAsDraftOnly\(true\)/);
+  assert.match(ui, /if \(converted\.warnings\.length && sourceKind !== "purchase_order"\)/);
+  assert.match(ui, /doc\.kind === "purchase_order" \? "\/api\/purchasing\/purchase-orders"/);
+  assert.match(ui, /مسودة أمر شراء — بلا قيد مالي أو حركة مخزون/);
   assert.match(ui, /postingMode === "archive_only" \|\| saveAsDraftOnly/);
   assert.match(ui, /saveAsDraft: true/);
   assert.match(ui, /paymentType: doc\.paymentType \|\| \(\(postingMode === "archive_only" \|\| saveAsDraftOnly\) \? "credit" : ""\)/);

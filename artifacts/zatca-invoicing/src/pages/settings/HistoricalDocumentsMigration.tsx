@@ -8,14 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { exportData, ensureFiscalYears, scanHistorical } from "@/lib/dataIoApi";
 import {
   convertLinkedSalesInvoiceCsv,
-  convertLinkedPurchaseInvoiceCsv,
+  convertLinkedPurchaseOrderCsv,
   decodeInvoiceCsv,
   isInvoiceHeaderCsv,
   isInvoiceItemsCsv,
   isPurchaseOrderHeaderCsv,
 } from "@/lib/historicalInvoiceCsvAdapter";
 
-type Kind = "sales_invoice" | "purchase_invoice" | "sales_return" | "purchase_return";
+type Kind = "sales_invoice" | "purchase_invoice" | "sales_return" | "purchase_return" | "purchase_order";
 type HistoricalImportMode = "financial_inventory" | "financial_only" | "inventory_only" | "archive_only";
 type Master = Record<string, any[]>;
 type Line = Record<string, any>;
@@ -50,6 +50,7 @@ const kindLabels: Record<Kind, string> = {
   purchase_invoice: "فاتورة مشتريات",
   sales_return: "مرتجع مبيعات",
   purchase_return: "مرتجع مشتريات",
+  purchase_order: "أمر شراء",
 };
 const importModeLabels: Record<HistoricalImportMode, string> = {
   financial_inventory: "مالي ومخزني",
@@ -192,6 +193,9 @@ async function extractInvoiceRowsFromFile(file: File, kind: Kind, token: string 
   if (file.size > 13_000_000) throw new Error("حجم الملف يتجاوز 13 ميجابايت؛ قسّمه أو استخدم نسخة أصغر.");
   const extension = file.name.toLowerCase().split(".").pop() ?? "";
   const tabular = ["xlsx", "xls", "xlsm", "ods", "csv"].includes(extension);
+  if (kind === "purchase_order" && !tabular) {
+    throw new Error("استيراد أوامر الشراء متاح من ملفات CSV/Excel المنظمة؛ لا تستخدم OCR للفواتير في هذا المسار.");
+  }
   const supported = [...(tabular ? ["xlsx", "xls", "xlsm", "ods", "csv"] : []), "pdf", "docx", "jpg", "jpeg", "png", "webp"];
   if (!supported.includes(extension)) {
     throw new Error(`صيغة .${extension || "?"} غير مدعومة. ارفع PDF أو Excel/CSV أو Word أو صورة.`);
@@ -305,7 +309,7 @@ function parseDocuments(rows: any[], kind: Kind, preserveMissingValues = false):
     }
     if (!sourceNumber) doc.issues.push("رقم المستند المصدر مطلوب");
     if (!validIsoDate(date)) doc.issues.push("التاريخ غير صالح، استخدم YYYY-MM-DD");
-    if (!String(row.payment_type ?? "").trim()) doc.issues.push("طريقة السداد مطلوبة");
+    if (kind !== "purchase_order" && !String(row.payment_type ?? "").trim()) doc.issues.push("طريقة السداد مطلوبة");
     if (!String(row.currency_code ?? "").trim()) doc.issues.push("رمز العملة مطلوب");
     if (normalizeBoolean(row.price_includes_vat) === null) {
       doc.issues.push("حدد price_includes_vat بنعم أو لا");
@@ -497,15 +501,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       }
       const sourceHeaderFile = salesHeaderFile ?? purchaseHeaderFile;
       if (sourceHeaderFile && invoiceItemsFile) {
-        const sourceKind = salesHeaderFile ? "sales_invoice" : "purchase_invoice";
+        const sourceKind = salesHeaderFile ? "sales_invoice" : "purchase_order";
         if (kind !== sourceKind) {
           throw new Error(sourceKind === "sales_invoice"
             ? "الملفان يحتويان فواتير مبيعات؛ اختر «فاتورة مبيعات» قبل رفعهما."
-            : "الملفان يحتويان أوامر/فواتير مشتريات؛ اختر «فاتورة مشتريات» قبل رفعهما.");
+            : "الملفان يحتويان أوامر شراء؛ اختر «أمر شراء» قبل رفعهما.");
         }
         const converted = sourceKind === "sales_invoice"
           ? convertLinkedSalesInvoiceCsv(sourceHeaderFile.text, invoiceItemsFile.text)
-          : convertLinkedPurchaseInvoiceCsv(sourceHeaderFile.text, invoiceItemsFile.text);
+          : convertLinkedPurchaseOrderCsv(sourceHeaderFile.text, invoiceItemsFile.text);
         parsed.push(...parseDocuments(converted.rows, kind, true).map((doc) => ({
           ...doc,
           key: `${doc.key}|source-pair`,
@@ -514,9 +518,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         pairedFiles.add(sourceHeaderFile.index);
         pairedFiles.add(invoiceItemsFile.index);
         setSourceWarnings(converted.warnings);
-        if (converted.warnings.length) {
+        if (converted.warnings.length && sourceKind !== "purchase_order") {
           setSaveAsDraftOnly(true);
-          if (sourceKind === "purchase_invoice") setPostingMode("financial_inventory");
         }
       } else if (sourceHeaderFile || invoiceItemsFile) {
         throw new Error("هذا التصدير يتكون من ملفين مترابطين. ارفع ملف الرؤوس وملف الأصناف معًا.");
@@ -716,7 +719,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         ? resolveCodeOrName(masters?.units ?? [], indexes.units, requestedUnitCode ?? "", line.unitName ?? "", "وحدة القياس", issues)
         : null;
       const itemType = String(item?.itemType ?? item?.type ?? "stock").toLowerCase();
-      if (item && !warehouse && itemType !== "service" && itemType !== "prepaid_expense") {
+      if (doc.kind !== "purchase_order" && item && !warehouse && itemType !== "service" && itemType !== "prepaid_expense") {
         issues.push(`اختر مخزن الإدخال للصنف ${line.itemCode}`);
       }
       return {
@@ -732,7 +735,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     });
     const cashBox = doc.paymentType === "cash" ? resolveCode(indexes.cashBoxes, doc.cashBoxCode, "الخزنة", issues) : null;
     const bank = doc.paymentType === "bank" ? resolveCode(indexes.bankAccounts, doc.bankAccountCode, "الحساب البنكي", issues) : null;
-    if (!allowMissingPayment && !["credit", "cash", "bank"].includes(doc.paymentType)) {
+    if (doc.kind !== "purchase_order" && !allowMissingPayment && !["credit", "cash", "bank"].includes(doc.paymentType)) {
       issues.push("طريقة السداد يجب أن تكون: آجل أو نقدي أو بنكي");
     }
     if (doc.kind.endsWith("_return") && !doc.sourceInvoiceNumber) issues.push("رقم الفاتورة المصدر مطلوب للمرتجع");
@@ -867,7 +870,10 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   }
 
   async function importDocuments() {
-    if (!masters || !periodScan || periodScan.periodsMissing?.length || periodScan.closedPeriodConflicts?.length || periodScan.yearsToCreate?.length) return;
+    if (!masters) return;
+    if (kind !== "purchase_order" && (
+      !periodScan || periodScan.periodsMissing?.length || periodScan.closedPeriodConflicts?.length || periodScan.yearsToCreate?.length
+    )) return;
     const anticipatedSources = { ...sourceInvoiceIds };
     for (const doc of docs) {
       if (doc.kind.endsWith("_invoice")) {
@@ -893,7 +899,9 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     try {
       let sequenceProblems: Array<{ sourceNumber: string; status: string; detail: string }>;
       try {
-        sequenceProblems = postingMode === "archive_only" ? [] : await preflightAnnualSequences(refs);
+        sequenceProblems = kind === "purchase_order" || postingMode === "archive_only"
+          ? []
+          : await preflightAnnualSequences(refs);
       } catch (error: any) {
         toast({
           title: "تعذر فحص المسلسلات السنوية",
@@ -915,8 +923,33 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         Number(a.doc.kind.endsWith("_return")) - Number(b.doc.kind.endsWith("_return"))
         || a.doc.date.localeCompare(b.doc.date)
       );
+      let existingOrderReferences = new Set<string>();
+      if (kind === "purchase_order") {
+        try {
+          const existingOrders = await requestJson(`/api/purchasing/purchase-orders?companyId=${cid}`, token) as any[];
+          existingOrderReferences = new Set(
+            existingOrders.map((order) => norm(order.supplierInvoiceNumber)).filter(Boolean),
+          );
+        } catch (error: any) {
+          toast({
+            title: "تعذر فحص أوامر الشراء الموجودة",
+            description: error?.message ?? "أوقفنا الاستيراد لمنع إنشاء أوامر مكررة.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
       for (const entry of ordered) {
         const { doc, party, branch, lines, cashBox, bank } = entry;
+        if (doc.kind === "purchase_order" && existingOrderReferences.has(norm(doc.sourceNumber))) {
+          nextResults.push({
+            sourceNumber: doc.sourceNumber,
+            status: "موجود مسبقًا",
+            detail: "يوجد أمر شراء بنفس رقم المرجع؛ تم تخطيه لمنع التكرار.",
+          });
+          setResults([...nextResults]);
+          continue;
+        }
         const currentSourceId = doc.sourceInvoiceNumber
           ? nextSourceIds[`${doc.kind.startsWith("sales") ? "sales" : "purchase"}:${doc.sourceInvoiceNumber}`]
           : undefined;
@@ -925,11 +958,13 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           setResults([...nextResults]);
           continue;
         }
-        const createPath = doc.kind === "sales_invoice" ? "/api/sales/sales-invoices"
+        const createPath = doc.kind === "purchase_order" ? "/api/purchasing/purchase-orders"
+          : doc.kind === "sales_invoice" ? "/api/sales/sales-invoices"
           : doc.kind === "purchase_invoice" ? "/api/purchasing/purchase-invoices"
           : doc.kind === "sales_return" ? "/api/sales/sales-returns"
           : "/api/purchasing/purchase-returns";
-        const postPath = doc.kind === "sales_invoice" ? (id: number) => `/api/sales/sales-invoices/${id}/post`
+        const postPath = doc.kind === "purchase_order" ? null
+          : doc.kind === "sales_invoice" ? (id: number) => `/api/sales/sales-invoices/${id}/post`
           : doc.kind === "purchase_invoice" ? (id: number) => `/api/purchasing/purchase-invoices/${id}/post`
           : doc.kind === "sales_return" ? (id: number) => `/api/sales/sales-returns/${id}/post`
           : (id: number) => `/api/purchasing/purchase-returns/${id}/post`;
@@ -941,7 +976,28 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           discountAmount: line.discountAmount, vatRate: line.vatRate,
           lineTotal: line.lineTotal, notes: line.notes,
         }));
-        const payload: any = {
+        const payload: any = doc.kind === "purchase_order" ? {
+          companyId: cid,
+          branchId: branch.id,
+          supplierInvoiceNumber: doc.sourceNumber,
+          orderDate: doc.date,
+          supplierId: party.id,
+          paymentType: "credit",
+          currencyCode: doc.currencyCode,
+          exchangeRate: String(doc.exchangeRate),
+          subtotal: doc.subtotal.toFixed(2),
+          vatAmount: doc.vatAmount.toFixed(2),
+          discountAmount: doc.discountAmount.toFixed(2),
+          totalAmount: doc.totalAmount.toFixed(2),
+          priceIncludesVat: doc.priceIncludesVat,
+          notes: `استيراد أمر شراء تاريخي — رقم المصدر: ${doc.sourceNumber}`,
+          lines: mappedLines.map((line: any) => ({
+            ...line,
+            freeQty: line.freeQty ?? "0",
+            discount: line.discount ?? 0,
+            discountAmount: line.discountAmount ?? "0",
+          })),
+        } : {
           companyId: cid, clientRequestId: await stableKey(cid, doc.kind, doc.sourceNumber, doc.date),
           branchId: branch.id,
           paymentType: doc.paymentType || ((postingMode === "archive_only" || saveAsDraftOnly) ? "credit" : ""),
@@ -955,7 +1011,10 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           ...((postingMode === "archive_only" || saveAsDraftOnly) ? { saveAsDraft: true } : {}),
           lines: mappedLines,
         };
-        if (doc.kind === "sales_invoice") {
+        if (doc.kind === "purchase_order") {
+          // Purchase-order creation is operational only; the existing API
+          // creates a draft without posting finance or inventory.
+        } else if (doc.kind === "sales_invoice") {
           Object.assign(payload, { invoiceDate: doc.date, customerId: party.id, legacyDocNumber: doc.sourceNumber });
         } else if (doc.kind === "purchase_invoice") {
           Object.assign(payload, { invoiceDate: doc.date, supplierInvoiceDate: doc.date, supplierInvoiceNumber: doc.sourceNumber, supplierId: party.id });
@@ -969,17 +1028,22 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           const id = Number(created.id);
           if (!Number.isInteger(id) || id <= 0) throw new Error("لم يُرجع النظام رقم المستند");
           const savedMode = created.historicalImportMode ?? "financial_inventory";
-          if (savedMode !== postingMode) throw new Error("رقم المستند المصدر سبق استيراده بوضع مختلف؛ لن نغيّر طريقة ترحيله تلقائيًا.");
-          if (postingMode !== "archive_only" && !saveAsDraftOnly && created.status !== "posted") {
+          if (doc.kind !== "purchase_order" && savedMode !== postingMode) throw new Error("رقم المستند المصدر سبق استيراده بوضع مختلف؛ لن نغيّر طريقة ترحيله تلقائيًا.");
+          if (doc.kind !== "purchase_order" && postingMode !== "archive_only" && !saveAsDraftOnly && created.status !== "posted") {
+            if (!postPath) throw new Error("لا يوجد مسار ترحيل لهذا النوع من المستندات.");
             await requestJson(postPath(id), token, "PATCH", {});
           }
+          if (doc.kind === "purchase_order") existingOrderReferences.add(norm(doc.sourceNumber));
           if (doc.kind.endsWith("_invoice")) nextSourceIds[`${doc.kind.startsWith("sales") ? "sales" : "purchase"}:${doc.sourceNumber}`] = id;
-          const resultStatus = postingMode === "archive_only" ? "تمت الأرشفة"
+          const resultStatus = doc.kind === "purchase_order" ? "تم حفظ أمر الشراء"
+            : postingMode === "archive_only" ? "تمت الأرشفة"
             : saveAsDraftOnly ? "تم الحفظ كمسودة" : "تم الترحيل";
           nextResults.push({
             sourceNumber: doc.sourceNumber,
             status: resultStatus,
-            detail: `${saveAsDraftOnly && postingMode !== "archive_only" ? "مسودة قابلة للتعديل — بلا ترحيل" : importModeLabels[postingMode]} — ${created.idempotentReplay ? "استُعيد المستند السابق" : kindLabels[doc.kind]} — ${created.docNumber ?? id}`,
+            detail: doc.kind === "purchase_order"
+              ? `مسودة أمر شراء — بلا قيد مالي أو حركة مخزون — ${created.docNumber ?? id}`
+              : `${saveAsDraftOnly && postingMode !== "archive_only" ? "مسودة قابلة للتعديل — بلا ترحيل" : importModeLabels[postingMode]} — ${created.idempotentReplay ? "استُعيد المستند السابق" : kindLabels[doc.kind]} — ${created.docNumber ?? id}`,
           });
         } catch (error: any) {
           nextResults.push({ sourceNumber: doc.sourceNumber, status: "تعذر الترحيل", detail: error?.message ?? "خطأ غير معروف" });
@@ -989,20 +1053,20 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       }
       toast({
         title: "انتهى استيراد المستندات",
-        description: `${nextResults.filter((item) => item.status === "تم الترحيل" || item.status === "تمت الأرشفة" || item.status === "تم الحفظ كمسودة").length} ناجح من ${nextResults.length}`,
+        description: `${nextResults.filter((item) => ["تم الترحيل", "تمت الأرشفة", "تم الحفظ كمسودة", "تم حفظ أمر الشراء"].includes(item.status)).length} ناجح من ${nextResults.length}`,
       });
     } finally {
       setBusy(false);
     }
   }
 
-  const periodsReady = !!periodScan
+  const periodsReady = kind === "purchase_order" || (!!periodScan
     && (postingMode === "archive_only" || (
       !(periodScan.yearsToCreate?.length)
       && !(periodScan.periodsMissing?.length)
       && !(periodScan.orphans?.length)
       && !(periodScan.closedPeriodConflicts?.length)
-    ));
+    )));
 
   return (
     <Card>
@@ -1015,7 +1079,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-           <Select value={kind} onValueChange={(value) => { setKind(value as Kind); setDocs([]); setFileNames([]); setPeriodScan(null); setResults([]); }}>
+            <Select value={kind} onValueChange={(value) => {
+              setKind(value as Kind);
+              setDocs([]);
+              setFileNames([]);
+              setPeriodScan(null);
+              setResults([]);
+              setSourceWarnings([]);
+              setSaveAsDraftOnly(false);
+            }}>
             <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(kindLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
           </Select>
@@ -1037,9 +1109,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
             {!!sourceWarnings.length && <div className="rounded border border-amber-300 bg-amber-50 p-3 text-xs leading-6 text-amber-950">
               <div className="mb-1 font-semibold">تنبيه من بيانات المصدر</div>
               {sourceWarnings.slice(0, 8).map((warning) => <div key={warning}>{warning}</div>)}
-              {sourceWarnings.length > 8 && <div>وتوجد تنبيهات أخرى لعدد {sourceWarnings.length - 8} فاتورة.</div>}
-              <div className="mt-1">ملفات الفواتير لا تحتوي قيود التحصيل؛ لم تُضف أي دفعات تلقائيًا.</div>
-              <div>ستُحفظ الفواتير كمسودات قابلة للتعديل دون ترحيل مالي أو مخزني حتى تُستكمل بيانات التحصيل.</div>
+               {sourceWarnings.length > 8 && <div>وتوجد تنبيهات أخرى لعدد {sourceWarnings.length - 8} مستند.</div>}
+               {kind === "purchase_order" ? (
+                 <div className="mt-1">الحفظ ينشئ أوامر شراء فقط؛ لا تُنشأ فواتير أو دفعات ولا تتغير الأرصدة أو كميات المخزون.</div>
+               ) : (
+                 <>
+                   <div className="mt-1">ملفات الفواتير لا تحتوي قيود التحصيل؛ لم تُضف أي دفعات تلقائيًا.</div>
+                   <div>ستُحفظ الفواتير كمسودات قابلة للتعديل دون ترحيل مالي أو مخزني حتى تُستكمل بيانات التحصيل.</div>
+                 </>
+               )}
             </div>}
             <div className="flex flex-wrap gap-2 text-xs">
               <Badge variant="outline">{docs.length} مستند</Badge>
@@ -1198,7 +1276,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                 </table>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            {kind !== "purchase_order" ? <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-2 text-xs">
                 <span className="font-medium">أثر الاعتماد</span>
                 <Select value={postingMode} onValueChange={(value) => {
@@ -1224,13 +1302,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                   : "سيُحدّث المخزون وتكلفته دون قيد محاسبي. قد تختلف تقارير الحسابات والمخزون.")}
                 {postingMode === "archive_only" && "سيُحفظ المستند كمسودة مرجعية فقط، دون قيد محاسبي أو حركة مخزون أو رقم رسمي. يمكن تأجيل الترحيل حتى استكمال بيانات التحصيل."}
               </div>
-            </div>
+            </div> : <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs leading-6 text-sky-950">
+              مسار أوامر الشراء منفصل عن الفواتير: سيُنشئ أوامر شراء بحالة مسودة فقط، ولن يرحّل قيدًا ماليًا أو حركة مخزون. بيانات السداد في الملف لا تُسجّل كدفعات.
+            </div>}
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={scanPeriods} disabled={busy || issueCount > 0 || !masters}>
+              {kind !== "purchase_order" && <Button variant="outline" onClick={scanPeriods} disabled={busy || issueCount > 0 || !masters}>
                 {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <CheckCircle2 className="ml-1 h-4 w-4" />}فحص الفترات المالية
-              </Button>
+              </Button>}
                 <Button onClick={importDocuments} disabled={busy || !periodsReady || issueCount > 0 || !masters}>
-                  {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <Upload className="ml-1 h-4 w-4" />}{saveAsDraftOnly ? "حفظ الفواتير كمسودات" : postingMode === "archive_only" ? "حفظ المستندات للأرشفة" : "إنشاء وترحيل المستندات"}
+                  {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <Upload className="ml-1 h-4 w-4" />}{kind === "purchase_order" ? "حفظ أوامر الشراء كمسودات" : saveAsDraftOnly ? "حفظ الفواتير كمسودات" : postingMode === "archive_only" ? "حفظ المستندات للأرشفة" : "إنشاء وترحيل المستندات"}
               </Button>
             </div>
           </>
