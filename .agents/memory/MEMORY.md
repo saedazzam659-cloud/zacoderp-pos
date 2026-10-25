@@ -92,3 +92,4 @@
 - [Artifact environment in workspace builds](artifact-env-in-workspace-builds.md) — Vite build configs must tolerate absent service PORT/BASE_PATH when root builds run recursively.
 - [Zid invoice source boundary](zid-invoice-source-boundary.md) — each company chooses Zid or ERP as its sole ZATCA issuer; use official OAuth and never accept pasted tokens.
 - [Grid localization coverage](grid-localization-boundary.md) — audit every grid heading and surrounding control in both languages; keep entered business data unchanged.
+- [External invoice import boundary](external-invoice-import-boundary.md) — convert source files into the existing unified invoice rows for review; never infer missing facts or post on extraction alone.

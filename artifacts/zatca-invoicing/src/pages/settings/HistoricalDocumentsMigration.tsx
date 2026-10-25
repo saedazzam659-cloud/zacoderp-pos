@@ -160,8 +160,8 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
 async function extractInvoiceRowsFromFile(file: File, kind: Kind, token: string | null) {
   if (file.size > 13_000_000) throw new Error("حجم الملف يتجاوز 13 ميجابايت؛ قسّمه أو استخدم نسخة أصغر.");
   const extension = file.name.toLowerCase().split(".").pop() ?? "";
-  const tabular = ["xlsx", "xls", "csv"].includes(extension);
-  const supported = [...(tabular ? ["xlsx", "xls", "csv"] : []), "pdf", "docx", "jpg", "jpeg", "png", "webp"];
+  const tabular = ["xlsx", "xls", "xlsm", "ods", "csv"].includes(extension);
+  const supported = [...(tabular ? ["xlsx", "xls", "xlsm", "ods", "csv"] : []), "pdf", "docx", "jpg", "jpeg", "png", "webp"];
   if (!supported.includes(extension)) {
     throw new Error(`صيغة .${extension || "?"} غير مدعومة. ارفع PDF أو Excel/CSV أو Word أو صورة.`);
   }
@@ -208,10 +208,10 @@ async function extractInvoiceRowsFromFile(file: File, kind: Kind, token: string 
   if (!Array.isArray(result?.rows) || !result.rows.length) {
     throw new Error("لم يعثر الملف على سطور فواتير قابلة للتحويل.");
   }
-  return parseDocuments(result.rows, kind);
+  return parseDocuments(result.rows, kind, true);
 }
 
-function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
+function parseDocuments(rows: any[], kind: Kind, preserveMissingValues = false): HistoricalDoc[] {
   const grouped = new Map<string, HistoricalDoc>();
   rows.forEach((row) => {
     const sourceNumber = String(row.source_doc_number ?? "").trim();
@@ -223,8 +223,12 @@ function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
         key, kind, sourceNumber, date,
         sourceInvoiceNumber: String(row.source_invoice_number ?? "").trim(),
         partyName: String(row.party_name ?? "").trim(),
-        paymentType: normalizePaymentType(row.payment_type ?? "credit") || "credit",
-        currencyCode: String(row.currency_code ?? "SAR").trim().toUpperCase() || "SAR",
+        paymentType: preserveMissingValues
+          ? normalizePaymentType(row.payment_type ?? "")
+          : normalizePaymentType(row.payment_type ?? "credit") || "credit",
+        currencyCode: preserveMissingValues
+          ? String(row.currency_code ?? "").trim().toUpperCase()
+          : String(row.currency_code ?? "SAR").trim().toUpperCase() || "SAR",
         exchangeRate: requiredNum(row.exchange_rate),
         subtotal: requiredNum(row.subtotal),
         vatAmount: requiredNum(row.vat_amount),
@@ -248,8 +252,12 @@ function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
         ["party_code", doc.partyCode, String(row.party_code ?? "").trim()],
         ["party_name", doc.partyName, String(row.party_name ?? "").trim()],
         ["branch_code", doc.branchCode, String(row.branch_code ?? "").trim()],
-        ["payment_type", doc.paymentType, normalizePaymentType(row.payment_type ?? "credit") || "credit"],
-        ["currency_code", doc.currencyCode, String(row.currency_code ?? "SAR").trim().toUpperCase() || "SAR"],
+        ["payment_type", doc.paymentType, preserveMissingValues
+          ? normalizePaymentType(row.payment_type ?? "")
+          : normalizePaymentType(row.payment_type ?? "credit") || "credit"],
+        ["currency_code", doc.currencyCode, preserveMissingValues
+          ? String(row.currency_code ?? "").trim().toUpperCase()
+          : String(row.currency_code ?? "SAR").trim().toUpperCase() || "SAR"],
         ["source_invoice_number", doc.sourceInvoiceNumber, String(row.source_invoice_number ?? "").trim()],
         ["cash_box_code", doc.cashBoxCode, String(row.cash_box_code ?? "").trim()],
         ["bank_account_code", doc.bankAccountCode, String(row.bank_account_code ?? "").trim()],
@@ -328,6 +336,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [kind, setKind] = useState<Kind>("sales_invoice");
+  const [importBranchCode, setImportBranchCode] = useState("");
+  const [importWarehouseCode, setImportWarehouseCode] = useState("");
   const [fileNames, setFileNames] = useState<string[]>([]);
   const [docs, setDocs] = useState<HistoricalDoc[]>([]);
   const [masters, setMasters] = useState<Master | null>(null);
@@ -339,8 +349,12 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [results, setResults] = useState<Array<{ sourceNumber: string; status: string; detail: string }>>([]);
   const [sourceInvoiceIds, setSourceInvoiceIds] = useState<Record<string, number>>({});
 
-  const issueCount = useMemo(() => docs.reduce((sum, doc) => sum + doc.issues.length, 0), [docs]);
-  const validDocs = useMemo(() => docs.filter((doc) => doc.issues.length === 0), [docs]);
+  const issueCount = useMemo(() => docs.reduce((sum, doc) => sum + doc.issues.filter(
+    (issue) => !(importBranchCode && issue === "كود الفرع مطلوب"),
+  ).length, 0), [docs, importBranchCode]);
+  const validDocs = useMemo(() => docs.filter((doc) => doc.issues.every(
+    (issue) => importBranchCode && issue === "كود الفرع مطلوب",
+  )), [docs, importBranchCode]);
 
   async function loadMasters() {
     if (masters) return masters;
@@ -369,6 +383,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   async function onFiles(files: File[]) {
     if (!files.length) return;
     setFileNames(files.map((file) => file.name));
+    setDocs([]);
     setResults([]);
     setPeriodScan(null);
     setBusy(true);
@@ -394,7 +409,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       // silently double their lines. Flag possible duplicates for correction.
       const duplicateGroups = new Map<string, number[]>();
       parsed.forEach((doc, index) => {
-        const duplicateKey = [doc.kind, norm(doc.sourceNumber), doc.date, norm(doc.partyCode)].join("|");
+        const duplicateKey = [doc.kind, norm(doc.sourceNumber), doc.date, norm(doc.partyCode || doc.partyName)].join("|");
         if (!norm(doc.sourceNumber)) return;
         const indexes = duplicateGroups.get(duplicateKey) ?? [];
         indexes.push(index);
@@ -495,7 +510,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   }
 
   function validateAgainstMasters(doc: HistoricalDoc, sourceIds: Record<string, number>) {
-    const issues = [...doc.issues];
+    const issues = doc.issues.filter((issue) => !(importBranchCode && issue === "كود الفرع مطلوب"));
     const indexes = {
       items: indexByCode(masters?.items),
       parties: indexByCode(doc.kind.startsWith("sales") ? masters?.customers : masters?.suppliers),
@@ -513,13 +528,14 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       doc.kind.startsWith("sales") ? "العميل" : "المورد",
       issues,
     );
-    const branch = resolveCode(indexes.branches, doc.branchCode, "الفرع", issues);
+    const branch = resolveCode(indexes.branches, importBranchCode || doc.branchCode, "الفرع", issues);
     const lines = doc.lines.map((line) => {
       const item = resolveCodeOrName(masters?.items ?? [], indexes.items, line.itemCode, line.itemName, "الصنف", issues);
-      const warehouse = line.warehouseCode ? resolveCode(indexes.warehouses, line.warehouseCode, "المخزن", issues) : null;
+      const warehouseCode = importWarehouseCode || line.warehouseCode;
+      const warehouse = warehouseCode ? resolveCode(indexes.warehouses, warehouseCode, "المخزن", issues) : null;
       const itemType = String(item?.itemType ?? item?.type ?? "stock").toLowerCase();
       if (item && !warehouse && itemType !== "service" && itemType !== "prepaid_expense") {
-        issues.push(`المخزن مطلوب للصنف ${line.itemCode}`);
+        issues.push(`اختر مخزن الإدخال للصنف ${line.itemCode}`);
       }
       return {
         ...line,
@@ -796,14 +812,17 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
             <SelectContent>{Object.entries(kindLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
           </Select>
            <Button variant="outline" onClick={downloadTemplate}><FileDown className="ml-1 h-4 w-4" />تنزيل النموذج مع شرح وأمثلة</Button>
-          <input ref={fileRef} className="hidden" type="file" accept=".xlsx,.xls,.csv" multiple onChange={(event) => {
+          <input ref={fileRef} className="hidden" type="file" accept=".xlsx,.xls,.xlsm,.ods,.csv,.pdf,.docx,.jpg,.jpeg,.png,.webp" multiple onChange={(event) => {
             const files = Array.from(event.currentTarget.files ?? []);
             event.currentTarget.value = "";
             if (files.length) void onFiles(files);
           }} />
-          <Button onClick={() => fileRef.current?.click()} disabled={loading || busy}><Upload className="ml-1 h-4 w-4" />{loading ? "تحميل المطابقات…" : "رفع ملف أو عدة ملفات"}</Button>
+          <Button onClick={() => fileRef.current?.click()} disabled={loading || busy}><Upload className="ml-1 h-4 w-4" />{busy ? "قراءة الملفات وتحويلها…" : loading ? "تحميل المطابقات…" : "رفع ملف أو عدة ملفات"}</Button>
           {fileNames.length > 0 && <span className="text-xs text-muted-foreground">{fileNames.join("، ")}</span>}
         </div>
+        <p className="text-xs text-muted-foreground">
+          الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP. يحوّل النظام الملف إلى أعمدة نموذج الفواتير الموحد، ثم يعرض النتيجة والأخطاء للمراجعة قبل المتابعة.
+        </p>
         {masterError && <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-800">{masterError}</div>}
         {!!docs.length && (
           <>
@@ -812,14 +831,95 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
               <Badge variant={issueCount ? "destructive" : "outline"}>{issueCount} خطأ إدخال</Badge>
               <Badge variant="outline">{validDocs.length} صالح مبدئيًا</Badge>
             </div>
+            {masters && <div className="grid gap-3 rounded border bg-muted/20 p-3 md:grid-cols-2">
+              <label className="space-y-1 text-xs">
+                <span className="font-medium">فرع الإدخال داخل النظام</span>
+                <Select value={importBranchCode || "__document__"} onValueChange={(value) => {
+                  setImportBranchCode(value === "__document__" ? "" : value);
+                  setPeriodScan(null);
+                }}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__document__">استخدم كود الفرع المستخرج من الملف</SelectItem>
+                    {(masters.branches ?? []).map((branch: any) => <SelectItem key={String(branch.code)} value={String(branch.code)}>
+                      {branch.code} — {branch.nameAr ?? branch.name ?? ""}
+                    </SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="space-y-1 text-xs">
+                <span className="font-medium">مخزن الإدخال (اختياري، يطبّق على كل السطور)</span>
+                <Select value={importWarehouseCode || "__document__"} onValueChange={(value) => {
+                  setImportWarehouseCode(value === "__document__" ? "" : value);
+                  setPeriodScan(null);
+                }}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__document__">استخدم كود المخزن المستخرج من الملف</SelectItem>
+                    {(masters.warehouses ?? []).map((warehouse: any) => <SelectItem key={String(warehouse.code)} value={String(warehouse.code)}>
+                      {warehouse.code} — {warehouse.nameAr ?? warehouse.name ?? ""}
+                    </SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </label>
+              <p className="text-muted-foreground md:col-span-2">
+                اختيار الفرع أو المخزن هنا هو قرار إدخال صريح منك، ويظهر في معاينة الأعمدة بدل القيمة المستخرجة.
+              </p>
+            </div>}
             <div className="max-h-56 overflow-auto rounded border">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">الحالة</th></tr></thead>
-                <tbody>{docs.map((doc) => <tr key={doc.key} className="border-t">
-                  <td className="p-2">{doc.sourceNumber}</td><td className="p-2" dir="ltr">{doc.date}</td><td className="p-2">{kindLabels[doc.kind]}</td><td className="p-2">{doc.lines.length}</td>
-                  <td className="p-2">{doc.issues.length ? <span className="text-red-700">{doc.issues[0]}</span> : <span className="text-emerald-700">جاهز للفحص</span>}</td>
-                </tr>)}</tbody>
+                <tbody>{docs.map((doc) => {
+                  const visibleIssues = doc.issues.filter((issue) => !(importBranchCode && issue === "كود الفرع مطلوب"));
+                  return <tr key={doc.key} className="border-t">
+                    <td className="p-2">{doc.sourceNumber}</td><td className="p-2" dir="ltr">{doc.date}</td><td className="p-2">{kindLabels[doc.kind]}</td><td className="p-2">{doc.lines.length}</td>
+                    <td className="p-2">{visibleIssues.length ? <span className="text-red-700">{visibleIssues[0]}</span> : <span className="text-emerald-700">جاهز للفحص</span>}</td>
+                  </tr>;
+                })}</tbody>
               </table>
+            </div>
+            <div>
+              <div className="mb-2 text-sm font-semibold">مراجعة الصفوف على أعمدة نموذج النظام الموحد</div>
+              <div className="max-h-72 overflow-auto rounded border">
+                <table className="min-w-[1900px] text-xs">
+                  <thead className="sticky top-0 bg-muted">
+                    <tr className="text-right">
+                      {[
+                        ["source_doc_number", "رقم المصدر"], ["document_date", "التاريخ"],
+                        ["party_code", "كود العميل/المورد"], ["party_name", "اسم العميل/المورد"],
+                        ["branch_code", "كود الفرع"], ["item_code", "كود الصنف"], ["item_name", "اسم الصنف"],
+                        ["warehouse_code", "كود المخزن"], ["qty", "الكمية"], ["free_qty", "مجاني"],
+                        ["unit_price", "سعر الوحدة"], ["discount_percent", "خصم %"],
+                        ["line_discount_amount", "خصم السطر"], ["vat_rate", "الضريبة %"],
+                        ["line_total", "إجمالي السطر"], ["subtotal", "الإجمالي قبل الضريبة"],
+                        ["vat_amount", "قيمة الضريبة"], ["discount_amount", "خصم المستند"],
+                        ["total_amount", "الإجمالي"], ["payment_type", "السداد"],
+                        ["currency_code", "العملة"], ["exchange_rate", "سعر الصرف"],
+                        ["cash_box_code", "كود الخزنة"], ["bank_account_code", "كود البنك"],
+                        ["source_invoice_number", "الفاتورة الأصلية"], ["price_includes_vat", "السعر شامل الضريبة؟"],
+                        ["total_expenses_loaded", "مصاريف محملة"], ["line_notes", "ملاحظات السطر"],
+                      ].map(([key, label]) => <th key={key} className="whitespace-nowrap p-2">{label}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {docs.flatMap((doc) => doc.lines.map((line: any, lineIndex) => (
+                      <tr key={`${doc.key}-${lineIndex}`} className="border-t">
+                        {[
+                          doc.sourceNumber, doc.date, doc.partyCode, doc.partyName, importBranchCode || doc.branchCode,
+                          line.itemCode, line.itemName, importWarehouseCode || line.warehouseCode, line.qty, line.freeQty,
+                          line.unitPrice, line.discount, line.discountAmount, line.vatRate, line.lineTotal,
+                          doc.subtotal, doc.vatAmount, doc.discountAmount, doc.totalAmount, doc.paymentType,
+                          doc.currencyCode, doc.exchangeRate, doc.cashBoxCode, doc.bankAccountCode,
+                          doc.sourceInvoiceNumber, doc.priceIncludesVat ? "نعم" : "لا",
+                          doc.totalExpensesLoaded, line.notes,
+                        ].map((value, cellIndex) => (
+                          <td key={cellIndex} className="whitespace-nowrap p-2">{value == null || value === "" ? "—" : String(value)}</td>
+                        ))}
+                      </tr>
+                    )))}
+                  </tbody>
+                </table>
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={scanPeriods} disabled={busy || issueCount > 0 || !masters}>
