@@ -6,6 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { exportData, ensureFiscalYears, scanHistorical } from "@/lib/dataIoApi";
+import {
+  convertLinkedSalesInvoiceCsv,
+  decodeInvoiceCsv,
+  isInvoiceHeaderCsv,
+  isInvoiceItemsCsv,
+} from "@/lib/historicalInvoiceCsvAdapter";
 
 type Kind = "sales_invoice" | "purchase_invoice" | "sales_return" | "purchase_return";
 type HistoricalImportMode = "financial_inventory" | "financial_only" | "inventory_only" | "archive_only";
@@ -429,6 +435,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [periodRanges, setPeriodRanges] = useState<Record<number, { startDate: string; endDate: string }>>({});
   const [results, setResults] = useState<Array<{ sourceNumber: string; status: string; detail: string }>>([]);
   const [sourceInvoiceIds, setSourceInvoiceIds] = useState<Record<string, number>>({});
+  const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
 
   const issueCount = useMemo(() => docs.reduce((sum, doc) => sum + doc.issues.filter(
     (issue) => !((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"),
@@ -466,11 +473,36 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     setFileNames(files.map((file) => file.name));
     setDocs([]);
     setResults([]);
+    setSourceWarnings([]);
     setPeriodScan(null);
     setBusy(true);
     try {
       const parsed: HistoricalDoc[] = [];
+      const csvFiles = await Promise.all(files.map(async (file, index) => {
+        if (!file.name.toLowerCase().endsWith(".csv")) return null;
+        return { index, file, text: decodeInvoiceCsv(await file.arrayBuffer()) };
+      }));
+      const invoiceHeaderFile = csvFiles.find((entry) => entry && isInvoiceHeaderCsv(entry.text));
+      const invoiceItemsFile = csvFiles.find((entry) => entry && isInvoiceItemsCsv(entry.text));
+      const pairedFiles = new Set<number>();
+      if (invoiceHeaderFile && invoiceItemsFile) {
+        if (kind !== "sales_invoice") {
+          throw new Error("الملفان يحتويان فواتير مبيعات؛ اختر «فاتورة مبيعات» قبل رفعهما.");
+        }
+        const converted = convertLinkedSalesInvoiceCsv(invoiceHeaderFile.text, invoiceItemsFile.text);
+        parsed.push(...parseDocuments(converted.rows, kind, true).map((doc) => ({
+          ...doc,
+          key: `${doc.key}|source-pair`,
+          sourceFileName: `${invoiceHeaderFile.file.name} + ${invoiceItemsFile.file.name}`,
+        })));
+        pairedFiles.add(invoiceHeaderFile.index);
+        pairedFiles.add(invoiceItemsFile.index);
+        setSourceWarnings(converted.warnings);
+      } else if (invoiceHeaderFile || invoiceItemsFile) {
+        throw new Error("هذا التصدير يتكون من ملفين مترابطين. ارفع ملف Invoices.csv وملف Invoice_items.csv معًا.");
+      }
       for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+        if (pairedFiles.has(fileIndex)) continue;
         const file = files[fileIndex];
         try {
           const extracted = await extractInvoiceRowsFromFile(file, kind, token);
@@ -518,6 +550,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     } finally {
       setBusy(false);
     }
+  }
+
+  function downloadNormalizedFile() {
+    const rows = docs.flatMap((doc) => historicalDocRows(doc));
+    if (!rows.length) return;
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.json_to_sheet(rows, { header: reviewColumns.map(([field]) => field) });
+    XLSX.utils.book_append_sheet(workbook, sheet, "بيانات الفواتير");
+    XLSX.writeFile(workbook, "الفواتير-بعد-التحويل-للنموذج-الموحد.xlsx");
   }
 
   function swapReviewColumns() {
@@ -956,6 +997,12 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         {masterError && <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-800">{masterError}</div>}
         {!!docs.length && (
           <>
+            {!!sourceWarnings.length && <div className="rounded border border-amber-300 bg-amber-50 p-3 text-xs leading-6 text-amber-950">
+              <div className="mb-1 font-semibold">تنبيه من بيانات المصدر</div>
+              {sourceWarnings.slice(0, 8).map((warning) => <div key={warning}>{warning}</div>)}
+              {sourceWarnings.length > 8 && <div>وتوجد تنبيهات أخرى لعدد {sourceWarnings.length - 8} فاتورة.</div>}
+              <div className="mt-1">ملفات الفواتير لا تحتوي قيود التحصيل؛ لم تُضف أي دفعات تلقائيًا.</div>
+            </div>}
             <div className="flex flex-wrap gap-2 text-xs">
               <Badge variant="outline">{docs.length} مستند</Badge>
               <Badge variant={issueCount ? "destructive" : "outline"}>{issueCount} خطأ إدخال</Badge>
@@ -1044,7 +1091,12 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
               </table>
             </div>
             <div>
-              <div className="mb-2 text-sm font-semibold">مراجعة الصفوف على أعمدة نموذج النظام الموحد</div>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-semibold">مراجعة الصفوف على أعمدة نموذج النظام الموحد</div>
+                <Button variant="outline" size="sm" onClick={downloadNormalizedFile}>
+                  <FileDown className="ml-1 h-4 w-4" />تنزيل الملف بعد التحويل
+                </Button>
+              </div>
               <div className="max-h-72 overflow-auto rounded border">
                 <table className="min-w-[2100px] text-xs">
                   <thead className="sticky top-0 bg-muted">
