@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  convertLinkedPurchaseInvoiceCsv,
   convertLinkedSalesInvoiceCsv,
   isInvoiceHeaderCsv,
   isInvoiceItemsCsv,
+  isPurchaseOrderHeaderCsv,
 } from "../src/lib/historicalInvoiceCsvAdapter";
 
 const invoices = [
@@ -54,4 +56,27 @@ test("repairs a legacy item row split inside its quoted description", () => {
   const converted = convertLinkedSalesInvoiceCsv(splitInvoices, splitItems);
   assert.equal(converted.rows.length, 2);
   assert.equal(converted.rows[1].item_name, "صنف ثان");
+});
+
+test("converts linked purchase-order exports to purchase invoice rows and preserves payment uncertainty", () => {
+  const purchaseHeaders = [
+    "PurchaseOrderNo,SupplierNo,Date,CurrencyCode,SupplierBusinessName,SummaryTotal,SummaryPaid,SummaryDiscount,PaymentStatus",
+    "PO-100,0007,2026-08-06,SAR,مورد تجريبي,115.00,115.00,0,Paid",
+  ].join("\n");
+  const purchaseItems = [
+    "no,item,description,unit_price,quantity,subtotal,subtotal_without_tax,tax1_name,tax1_value,tax1_amount,tax2_name,tax2_value,tax2_amount",
+    '"PO-100,""صنف مشتريات"",""وصف"",100,1,115,100,VAT,15,15,"" "","" "",0"',
+  ].join("\n");
+
+  assert.equal(isPurchaseOrderHeaderCsv(purchaseHeaders), true);
+  const converted = convertLinkedPurchaseInvoiceCsv(purchaseHeaders, purchaseItems);
+  assert.equal(converted.rows.length, 1);
+  assert.equal(converted.rows[0].source_doc_number, "PO-100");
+  assert.equal(converted.rows[0].party_code, "0007");
+  assert.equal(converted.rows[0].item_name, "صنف مشتريات");
+  assert.equal(converted.rows[0].payment_type, "");
+  assert.equal(converted.rows[0].line_total, "115");
+  assert.equal(converted.warnings.length, 3);
+  assert.match(converted.warnings[0], /PurchaseOrderNo/);
+  assert.match(converted.warnings[1], /لا يثبت استلام البضاعة/);
 });

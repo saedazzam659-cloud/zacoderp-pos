@@ -8,9 +8,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { exportData, ensureFiscalYears, scanHistorical } from "@/lib/dataIoApi";
 import {
   convertLinkedSalesInvoiceCsv,
+  convertLinkedPurchaseInvoiceCsv,
   decodeInvoiceCsv,
   isInvoiceHeaderCsv,
   isInvoiceItemsCsv,
+  isPurchaseOrderHeaderCsv,
 } from "@/lib/historicalInvoiceCsvAdapter";
 
 type Kind = "sales_invoice" | "purchase_invoice" | "sales_return" | "purchase_return";
@@ -486,25 +488,38 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         if (!file.name.toLowerCase().endsWith(".csv")) return null;
         return { index, file, text: decodeInvoiceCsv(await file.arrayBuffer()) };
       }));
-      const invoiceHeaderFile = csvFiles.find((entry) => entry && isInvoiceHeaderCsv(entry.text));
+      const salesHeaderFile = csvFiles.find((entry) => entry && isInvoiceHeaderCsv(entry.text));
+      const purchaseHeaderFile = csvFiles.find((entry) => entry && isPurchaseOrderHeaderCsv(entry.text));
       const invoiceItemsFile = csvFiles.find((entry) => entry && isInvoiceItemsCsv(entry.text));
       const pairedFiles = new Set<number>();
-      if (invoiceHeaderFile && invoiceItemsFile) {
-        if (kind !== "sales_invoice") {
-          throw new Error("الملفان يحتويان فواتير مبيعات؛ اختر «فاتورة مبيعات» قبل رفعهما.");
+      if (salesHeaderFile && purchaseHeaderFile) {
+        throw new Error("الدفعة تحتوي أكثر من ملف رؤوس معروف؛ ارفع ملفَي نوع مستند واحد في كل مرة.");
+      }
+      const sourceHeaderFile = salesHeaderFile ?? purchaseHeaderFile;
+      if (sourceHeaderFile && invoiceItemsFile) {
+        const sourceKind = salesHeaderFile ? "sales_invoice" : "purchase_invoice";
+        if (kind !== sourceKind) {
+          throw new Error(sourceKind === "sales_invoice"
+            ? "الملفان يحتويان فواتير مبيعات؛ اختر «فاتورة مبيعات» قبل رفعهما."
+            : "الملفان يحتويان أوامر/فواتير مشتريات؛ اختر «فاتورة مشتريات» قبل رفعهما.");
         }
-        const converted = convertLinkedSalesInvoiceCsv(invoiceHeaderFile.text, invoiceItemsFile.text);
+        const converted = sourceKind === "sales_invoice"
+          ? convertLinkedSalesInvoiceCsv(sourceHeaderFile.text, invoiceItemsFile.text)
+          : convertLinkedPurchaseInvoiceCsv(sourceHeaderFile.text, invoiceItemsFile.text);
         parsed.push(...parseDocuments(converted.rows, kind, true).map((doc) => ({
           ...doc,
           key: `${doc.key}|source-pair`,
-          sourceFileName: `${invoiceHeaderFile.file.name} + ${invoiceItemsFile.file.name}`,
+          sourceFileName: `${sourceHeaderFile.file.name} + ${invoiceItemsFile.file.name}`,
         })));
-        pairedFiles.add(invoiceHeaderFile.index);
+        pairedFiles.add(sourceHeaderFile.index);
         pairedFiles.add(invoiceItemsFile.index);
         setSourceWarnings(converted.warnings);
-        if (converted.warnings.length) setSaveAsDraftOnly(true);
-      } else if (invoiceHeaderFile || invoiceItemsFile) {
-        throw new Error("هذا التصدير يتكون من ملفين مترابطين. ارفع ملف Invoices.csv وملف Invoice_items.csv معًا.");
+        if (converted.warnings.length) {
+          setSaveAsDraftOnly(true);
+          if (sourceKind === "purchase_invoice") setPostingMode("financial_inventory");
+        }
+      } else if (sourceHeaderFile || invoiceItemsFile) {
+        throw new Error("هذا التصدير يتكون من ملفين مترابطين. ارفع ملف الرؤوس وملف الأصناف معًا.");
       }
       for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
         if (pairedFiles.has(fileIndex)) continue;

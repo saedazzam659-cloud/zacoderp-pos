@@ -82,6 +82,11 @@ export function isInvoiceHeaderCsv(text: string): boolean {
   return headers.has("invoiceno") && headers.has("clientno") && headers.has("summarytotal");
 }
 
+export function isPurchaseOrderHeaderCsv(text: string): boolean {
+  const headers = headerIndex(parseCsvGrid(text)[0] ?? []);
+  return headers.has("purchaseorderno") && headers.has("supplierno") && headers.has("summarytotal");
+}
+
 export function isInvoiceItemsCsv(text: string): boolean {
   const headers = headerIndex(parseCsvGrid(text)[0] ?? []);
   return headers.has("no") && headers.has("item") && headers.has("unit_price") && headers.has("quantity");
@@ -116,9 +121,10 @@ export function decodeInvoiceCsv(bytes: ArrayBuffer): string {
  * unified historical invoice row contract. No invoice or master data is
  * created here; callers still run the normal review and master matching.
  */
-export function convertLinkedSalesInvoiceCsv(
+function convertLinkedInvoiceCsv(
   invoicesText: string,
   itemsText: string,
+  sourceKind: "sales" | "purchase",
 ): { rows: CsvRow[]; warnings: string[] } {
   const invoiceGrid = parseCsvGrid(invoicesText);
   const itemGrid = parseCsvGrid(itemsText);
@@ -128,10 +134,16 @@ export function convertLinkedSalesInvoiceCsv(
 
   const invoiceHeaders = headerIndex(invoiceGrid[0]);
   const itemHeaders = headerIndex(itemGrid[0]);
-  const requiredInvoiceFields = ["invoiceno", "date", "clientno", "currencycode", "summarytotal"];
+  const numberField = sourceKind === "sales" ? "InvoiceNo" : "PurchaseOrderNo";
+  const partyNumberField = sourceKind === "sales" ? "ClientNo" : "SupplierNo";
+  const businessNameField = sourceKind === "sales" ? "ClientBusinessName" : "SupplierBusinessName";
+  const firstNameField = sourceKind === "sales" ? "ClientFirstName" : "SupplierFirstName";
+  const lastNameField = sourceKind === "sales" ? "ClientLastName" : "SupplierLastName";
+  const documentLabel = sourceKind === "sales" ? "فاتورة المبيعات" : "فاتورة المشتريات";
+  const requiredInvoiceFields = [numberField.toLocaleLowerCase(), "date", partyNumberField.toLocaleLowerCase(), "currencycode", "summarytotal"];
   const requiredItemFields = ["no", "item", "unit_price", "quantity", "subtotal", "subtotal_without_tax", "tax1_value", "tax1_amount"];
   if (requiredInvoiceFields.some((field) => !invoiceHeaders.has(field))) {
-    throw new Error("ملف الفواتير لا يحتوي الأعمدة المطلوبة: InvoiceNo وDate وClientNo وCurrencyCode وSummaryTotal.");
+    throw new Error(`ملف الرؤوس لا يحتوي أعمدة ${numberField} و${partyNumberField} والتاريخ والعملة والإجمالي المطلوبة.`);
   }
   if (requiredItemFields.some((field) => !itemHeaders.has(field))) {
     throw new Error("ملف الأصناف لا يحتوي أعمدة الفاتورة والصنف والسعر والكمية والضريبة المطلوبة.");
@@ -139,7 +151,7 @@ export function convertLinkedSalesInvoiceCsv(
 
   const invoiceByNumber = new Map<string, string[]>();
   for (const row of invoiceGrid.slice(1)) {
-    const number = value(row, invoiceHeaders, "InvoiceNo");
+    const number = value(row, invoiceHeaders, numberField);
     if (!number) continue;
     if (invoiceByNumber.has(number)) throw new Error(`رقم الفاتورة ${number} مكرر في ملف الرؤوس.`);
     invoiceByNumber.set(number, row);
@@ -150,7 +162,7 @@ export function convertLinkedSalesInvoiceCsv(
   const itemsByInvoice = new Map<string, string[][]>();
   for (const row of itemRows) {
     const rawNumber = value(row, itemHeaders, "no");
-    const number = rawNumber.replace(/^\?+/, "");
+    const number = rawNumber.replace(/^[\uFEFF?]+/, "");
     if (!number) continue;
     const current = itemsByInvoice.get(number) ?? [];
     current.push(row);
@@ -174,7 +186,7 @@ export function convertLinkedSalesInvoiceCsv(
     const normalizedPaymentStatus = paymentStatus.toLocaleLowerCase().replace(/\s+/g, " ").trim();
     const paid = toNumber(value(header, invoiceHeaders, "SummaryPaid"));
     if (paid > 0 || normalizedPaymentStatus === "paid" || normalizedPaymentStatus === "partial paid") {
-      warnings.push(`الفاتورة ${number}: المصدر يذكر دفعة سابقة؛ ملفا الفواتير لا يحتويان وسيلة أو مستند التحصيل لربطها.`);
+      warnings.push(`${documentLabel} ${number}: المصدر يذكر دفعة سابقة؛ الملفان لا يحتويان وسيلة أو مستند التحصيل لربطها.`);
     }
 
     const subtotal = lines.reduce((sum, line) => sum + toNumber(value(line, itemHeaders, "subtotal_without_tax")), 0);
@@ -182,16 +194,16 @@ export function convertLinkedSalesInvoiceCsv(
     const sourceTotal = toNumber(value(header, invoiceHeaders, "SummaryTotal"), Number.NaN);
     const lineTotal = lines.reduce((sum, line) => sum + toNumber(value(line, itemHeaders, "subtotal")), 0);
     if (!Number.isFinite(sourceTotal) || Math.abs(lineTotal - sourceTotal) > Math.max(0.02, lines.length * 0.01)) {
-      throw new Error(`إجمالي سطور الفاتورة ${number} لا يطابق إجمالي الرأس؛ أوقفنا التحويل بدل تغيير المبالغ.`);
+      throw new Error(`إجمالي سطور ${documentLabel} ${number} لا يطابق إجمالي الرأس؛ أوقفنا التحويل بدل تغيير المبالغ.`);
     }
-    const partyName = value(header, invoiceHeaders, "ClientBusinessName")
-      || [value(header, invoiceHeaders, "ClientFirstName"), value(header, invoiceHeaders, "ClientLastName")].filter(Boolean).join(" ");
+    const partyName = value(header, invoiceHeaders, businessNameField)
+      || [value(header, invoiceHeaders, firstNameField), value(header, invoiceHeaders, lastNameField)].filter(Boolean).join(" ");
     for (const line of lines) {
       rows.push({
         source_doc_number: number,
         document_date: value(header, invoiceHeaders, "Date") || value(header, invoiceHeaders, "IssueDate"),
         source_invoice_number: "",
-        party_code: value(header, invoiceHeaders, "ClientNo"),
+        party_code: value(header, invoiceHeaders, partyNumberField),
         party_name: partyName,
         branch_code: "",
         item_code: "",
@@ -222,4 +234,20 @@ export function convertLinkedSalesInvoiceCsv(
     }
   }
   return { rows, warnings };
+}
+
+export function convertLinkedSalesInvoiceCsv(invoicesText: string, itemsText: string) {
+  return convertLinkedInvoiceCsv(invoicesText, itemsText, "sales");
+}
+
+export function convertLinkedPurchaseInvoiceCsv(invoicesText: string, itemsText: string) {
+  const converted = convertLinkedInvoiceCsv(invoicesText, itemsText, "purchase");
+  return {
+    ...converted,
+    warnings: [
+      "رأس الملف يستخدم PurchaseOrderNo وليس رقم فاتورة المورد؛ راجع رقم المستند وتأكد أنه يطابق رقم الفاتورة.",
+      "ملف أمر الشراء لا يثبت استلام البضاعة؛ لا تُرحّل حركة المخزون إلا بعد تأكيد الكميات المستلمة فعليًا.",
+      ...converted.warnings,
+    ],
+  };
 }
