@@ -12,6 +12,7 @@ type Master = Record<string, any[]>;
 type Line = Record<string, any>;
 type HistoricalDoc = {
   key: string;
+  sourceFileName?: string;
   kind: Kind;
   sourceNumber: string;
   date: string;
@@ -237,7 +238,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [kind, setKind] = useState<Kind>("sales_invoice");
-  const [fileName, setFileName] = useState("");
+  const [fileNames, setFileNames] = useState<string[]>([]);
   const [docs, setDocs] = useState<HistoricalDoc[]>([]);
   const [masters, setMasters] = useState<Master | null>(null);
   const [masterError, setMasterError] = useState("");
@@ -275,30 +276,66 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     }
   }
 
-  async function onFile(file: File) {
-    setFileName(file.name);
+  async function onFiles(files: File[]) {
+    if (!files.length) return;
+    setFileNames(files.map((file) => file.name));
     setResults([]);
     setPeriodScan(null);
     try {
-      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
-       const dataSheetName = workbook.SheetNames.find((name) => name === "بيانات الفواتير");
-       const sheet = dataSheetName
-         ? workbook.Sheets[dataSheetName]
-         : workbook.Sheets[workbook.SheetNames[0]];
-      if (!sheet) throw new Error("الملف لا يحتوي على ورقة بيانات");
-      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "", raw: true });
-      if (!rows.length) throw new Error("الملف فارغ");
-      const headerMap = new Map(Object.keys(rows[0]).map((header) => [norm(header).replaceAll(" ", "_"), header]));
-      const missing = requiredHeaders.filter((header) => !headerMap.has(header));
-      if (missing.length) throw new Error(`أعمدة مطلوبة غير موجودة: ${missing.join(", ")}`);
-      const normalizedRows = rows.map((row) => Object.fromEntries([...headerMap].map(([canonical, original]) => [
-        canonical,
-        canonical === "document_date" ? normalizeDate(row[original]) : row[original],
-      ])));
-      const parsed = parseDocuments(normalizedRows, kind);
+      const parsedFiles = await Promise.all(files.map(async (file, fileIndex) => {
+        try {
+          const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+          const dataSheetName = workbook.SheetNames.find((name) => name === "بيانات الفواتير");
+          const sheet = dataSheetName
+            ? workbook.Sheets[dataSheetName]
+            : workbook.Sheets[workbook.SheetNames[0]];
+          if (!sheet) throw new Error("الملف لا يحتوي على ورقة بيانات");
+          const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "", raw: true });
+          if (!rows.length) throw new Error("الملف فارغ");
+          const headerMap = new Map(Object.keys(rows[0]).map((header) => [norm(header).replaceAll(" ", "_"), header]));
+          const missing = requiredHeaders.filter((header) => !headerMap.has(header));
+          if (missing.length) throw new Error(`أعمدة مطلوبة غير موجودة: ${missing.join(", ")}`);
+          const normalizedRows = rows.map((row) => Object.fromEntries([...headerMap].map(([canonical, original]) => [
+            canonical,
+            canonical === "document_date" ? normalizeDate(row[original]) : row[original],
+          ])));
+          return parseDocuments(normalizedRows, kind).map((doc) => ({
+            ...doc,
+            key: `${doc.key}|file:${fileIndex}`,
+            sourceFileName: file.name,
+          }));
+        } catch (error: any) {
+          throw new Error(`${file.name}: ${error?.message ?? "تعذرت قراءة الملف"}`);
+        }
+      }));
+      const parsed = parsedFiles.flat();
+
+      // Do not merge equal invoice numbers from different files: that could
+      // silently double their lines. Flag possible duplicates for correction.
+      const duplicateGroups = new Map<string, number[]>();
+      parsed.forEach((doc, index) => {
+        const duplicateKey = [doc.kind, norm(doc.sourceNumber), doc.date, norm(doc.partyCode)].join("|");
+        if (!norm(doc.sourceNumber)) return;
+        const indexes = duplicateGroups.get(duplicateKey) ?? [];
+        indexes.push(index);
+        duplicateGroups.set(duplicateKey, indexes);
+      });
+      for (const indexes of duplicateGroups.values()) {
+        if (indexes.length < 2) continue;
+        for (const index of indexes) {
+          const otherFiles = indexes
+            .filter((otherIndex) => otherIndex !== index)
+            .map((otherIndex) => parsed[otherIndex].sourceFileName ?? "ملف آخر");
+          parsed[index].issues.push(`تكرار محتمل لنفس رقم المستند والجهة والتاريخ في ملفات الدفعة: ${otherFiles.join("، ")}`);
+        }
+      }
+
       setDocs(parsed);
       await loadMasters();
-      toast({ title: `تمت قراءة ${parsed.length} مستندًا`, description: "ستظهر أخطاء المطابقة قبل أي حفظ." });
+      toast({
+        title: `تمت قراءة ${parsed.length} مستندًا من ${files.length} ملف`,
+        description: "ستظهر أخطاء المطابقة والتكرار قبل أي حفظ.",
+      });
     } catch (error: any) {
       setDocs([]);
       toast({ title: error?.message ?? "تعذرت قراءة الملف", variant: "destructive" });
@@ -664,14 +701,18 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select value={kind} onValueChange={(value) => { setKind(value as Kind); setDocs([]); setPeriodScan(null); setResults([]); }}>
+           <Select value={kind} onValueChange={(value) => { setKind(value as Kind); setDocs([]); setFileNames([]); setPeriodScan(null); setResults([]); }}>
             <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(kindLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
           </Select>
            <Button variant="outline" onClick={downloadTemplate}><FileDown className="ml-1 h-4 w-4" />تنزيل النموذج مع شرح وأمثلة</Button>
-          <input ref={fileRef} className="hidden" type="file" accept=".xlsx,.xls,.csv" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ""; if (file) void onFile(file); }} />
-          <Button onClick={() => fileRef.current?.click()} disabled={loading || busy}><Upload className="ml-1 h-4 w-4" />{loading ? "تحميل المطابقات…" : "رفع ملف"}</Button>
-          {fileName && <span className="text-xs text-muted-foreground">{fileName}</span>}
+          <input ref={fileRef} className="hidden" type="file" accept=".xlsx,.xls,.csv" multiple onChange={(event) => {
+            const files = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = "";
+            if (files.length) void onFiles(files);
+          }} />
+          <Button onClick={() => fileRef.current?.click()} disabled={loading || busy}><Upload className="ml-1 h-4 w-4" />{loading ? "تحميل المطابقات…" : "رفع ملف أو عدة ملفات"}</Button>
+          {fileNames.length > 0 && <span className="text-xs text-muted-foreground">{fileNames.join("، ")}</span>}
         </div>
         {masterError && <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-800">{masterError}</div>}
         {!!docs.length && (
