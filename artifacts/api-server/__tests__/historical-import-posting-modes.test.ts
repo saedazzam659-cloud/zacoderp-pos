@@ -56,6 +56,10 @@ test("historical import review applies batch defaults and lets users jump to and
   assert.match(ui, /تفاصيل الخطأ للمستند \$\{doc\.sourceNumber\}/);
   assert.match(ui, /data-import-line/);
   assert.match(ui, /target\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(ui, /const itemIssue = issue\.includes\("الصنف:"\)/);
+  assert.match(ui, /استبدل كود المصدر بكود صنف مسجل في هذه الشركة/);
+  assert.match(ui, /editableTextLineFields\.has\(field\)/);
+  assert.match(ui, /field === "item_code" \? "كود الصنف" : "اسم الصنف"/);
   assert.match(ui, /editableLineFields\.has\(field\)/);
   assert.match(ui, /عالج أخطاء الإدخال أولًا/);
 });

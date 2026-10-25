@@ -365,6 +365,7 @@ function parseDocuments(
 }
 
 const editableLineFields = new Set(["qty", "unit_price", "discount_percent", "line_discount_amount", "vat_rate", "line_total"]);
+const editableTextLineFields = new Set(["item_code", "item_name"]);
 
 function invalidLineField(line: Line): string | null {
   const checks: Array<[string, unknown, (value: number) => boolean]> = [
@@ -659,7 +660,9 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     const key = lineEditKey(docKey, lineIndex, field);
     const draft = lineEditDrafts[key];
     if (draft === undefined) return;
-    const value = draft.trim() === "" && field === "discount_percent" ? "0" : draft;
+    const value = editableTextLineFields.has(field)
+      ? draft.trim()
+      : draft.trim() === "" && field === "discount_percent" ? "0" : draft;
     setDocs((current) => current.map((doc) => {
       if (doc.key !== docKey) return doc;
       const rows = historicalDocRows(doc) as Array<Record<string, any>>;
@@ -667,7 +670,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       rows[lineIndex][field] = value;
       return reparseEditedDoc(doc, rows);
     }));
-    if (draft.trim() === "" || Number.isFinite(requiredNum(value))) {
+    if (editableTextLineFields.has(field) || draft.trim() === "" || Number.isFinite(requiredNum(value))) {
       setLineEditDrafts((current) => {
         const next = { ...current };
         delete next[key];
@@ -679,11 +682,42 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   }
 
   function focusFirstInvalidLine(doc: HistoricalDoc) {
+    const issue = doc.issues.find((entry) => !(
+      (((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && entry === "كود الفرع مطلوب")
+      || ((postingMode === "archive_only" || saveAsDraftOnly) && entry === "طريقة السداد مطلوبة")
+    )) ?? "";
+    const itemIssue = issue.includes("الصنف:");
+    const mentionedValue = issue.match(/"([^"]+)"/)?.[1];
+    const matchedIssueLine = mentionedValue
+      ? doc.lines.findIndex((line) => [line.itemCode, line.itemName, line.unitCode, line.unitName].some(
+        (value) => norm(value) === norm(mentionedValue),
+      ))
+      : -1;
     const lineIndex = doc.lines.findIndex((line) => invalidLineField(line));
+    const targetLineIndex = itemIssue && matchedIssueLine >= 0
+      ? matchedIssueLine
+      : lineIndex >= 0 ? lineIndex : matchedIssueLine >= 0 ? matchedIssueLine : doc.lines.length ? 0 : -1;
+    const targetField = itemIssue ? "item_code" : lineIndex >= 0 ? invalidLineField(doc.lines[lineIndex]) : null;
+    if (itemIssue) {
+      toast({
+        title: "كود الصنف غير مطابق",
+        description: "استبدل كود المصدر بكود صنف مسجل في هذه الشركة، أو صحح اسم الصنف في السطر المحدد.",
+        variant: "destructive",
+      });
+    } else if (lineIndex >= 0) {
+      toast({
+        title: "راجع قيمة السطر",
+        description: "تم تحديد الحقل الرقمي غير الصالح؛ أدخل قيمة صحيحة ثم انتقل إلى الخطأ التالي.",
+      });
+    } else {
+      toast({
+        title: "راجع بيانات المستند",
+        description: issue || "تم الانتقال إلى السطر المرتبط بالمستند.",
+      });
+    }
     requestAnimationFrame(() => {
-      if (lineIndex >= 0) {
-        const field = invalidLineField(doc.lines[lineIndex]);
-        const input = field ? lineInputRefs.current.get(lineEditKey(doc.key, lineIndex, field)) : null;
+      if (targetLineIndex >= 0 && targetField) {
+        const input = lineInputRefs.current.get(lineEditKey(doc.key, targetLineIndex, targetField));
         if (input) {
           input.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
           input.focus();
@@ -692,17 +726,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         }
       }
 
-      const issue = doc.issues.find((entry) => !(
-        (((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && entry === "كود الفرع مطلوب")
-        || ((postingMode === "archive_only" || saveAsDraftOnly) && entry === "طريقة السداد مطلوبة")
-      )) ?? "";
-      const mentionedValue = issue.match(/"([^"]+)"/)?.[1];
-      const targetLineIndex = mentionedValue
-        ? doc.lines.findIndex((line) => [line.itemCode, line.itemName, line.unitCode, line.unitName].some(
-          (value) => norm(value) === norm(mentionedValue),
-        ))
-        : -1;
-      const fallbackLineIndex = targetLineIndex >= 0 ? targetLineIndex : doc.lines.length ? 0 : -1;
+      const fallbackLineIndex = targetLineIndex;
       const target = fallbackLineIndex >= 0
         ? [...document.querySelectorAll<HTMLElement>("[data-import-line]")]
           .find((element) => element.dataset.importLine === `${doc.key}-${fallbackLineIndex}`)
@@ -1321,7 +1345,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                 يطبّق التبديل على جميع الصفوف في الدفعة ويعيد فحصها؛ راجع الناتج قبل المتابعة.
               </p>
             </div>
-            <p className="text-xs text-muted-foreground">اضغط «تفاصيل» بجوار الخطأ للانتقال إلى السطر المرتبط به؛ وإذا كان الخطأ رقميًا سيُفتح الحقل للتعديل.</p>
+            <p className="text-xs text-muted-foreground">اضغط «تفاصيل» بجوار الخطأ لعرض اقتراح التصحيح والانتقال إلى الحقل المعني. يمكن تعديل كود الصنف أو اسمه مباشرة في الجدول.</p>
             <div className="max-h-56 overflow-auto rounded border">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">فرع هذا المستند</th><th className="p-2">الحالة</th></tr></thead>
@@ -1413,6 +1437,28 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                             price_includes_vat: doc.priceIncludesVat ? "نعم" : "لا",
                             total_expenses_loaded: doc.totalExpensesLoaded, line_notes: line.notes,
                           };
+                          if (editableTextLineFields.has(field)) {
+                            const editKey = lineEditKey(doc.key, lineIndex, field);
+                            const rawValue = values[field];
+                            const value = lineEditDrafts[editKey] ?? String(rawValue ?? "");
+                            return <td key={field} className="min-w-36 p-1">
+                              <input
+                                ref={(element) => {
+                                  if (element) lineInputRefs.current.set(editKey, element);
+                                  else lineInputRefs.current.delete(editKey);
+                                }}
+                                type="text"
+                                aria-label={`${field === "item_code" ? "كود الصنف" : "اسم الصنف"} للمصدر ${doc.sourceNumber}، السطر ${lineIndex + 1}`}
+                                value={value}
+                                onChange={(event) => setLineEditDraft(doc.key, lineIndex, field, event.target.value)}
+                                onBlur={() => commitLineEdit(doc.key, lineIndex, field)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") event.currentTarget.blur();
+                                }}
+                                className="w-full rounded border border-input bg-background px-2 py-1 text-right outline-none focus:ring-2 focus:ring-primary"
+                              />
+                            </td>;
+                          }
                           if (editableLineFields.has(field)) {
                             const editKey = lineEditKey(doc.key, lineIndex, field);
                             const rawValue = editableValues[field];
