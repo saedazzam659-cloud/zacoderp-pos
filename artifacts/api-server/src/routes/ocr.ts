@@ -130,7 +130,7 @@ const INVOICE_MIMES = new Set(["application/pdf", "image/png", "image/jpeg", "im
 const INVOICE_KINDS = new Set(["sales_invoice", "purchase_invoice", "sales_return", "purchase_return"]);
 const INVOICE_FIELDS = [
   "source_doc_number", "document_date", "source_invoice_number", "party_code", "party_name",
-  "branch_code", "item_code", "item_name", "warehouse_code", "qty", "free_qty", "unit_price",
+  "branch_code", "item_code", "item_name", "unit_code", "unit_name", "warehouse_code", "qty", "free_qty", "unit_price",
   "discount_percent", "line_discount_amount", "vat_rate", "line_total", "subtotal", "vat_amount",
   "discount_amount", "total_amount", "payment_type", "currency_code", "exchange_rate",
   "cash_box_code", "bank_account_code", "price_includes_vat", "total_expenses_loaded", "line_notes",
@@ -182,7 +182,7 @@ router.post("/extract-invoices", requireAiFeature("data_import_ai"), async (req,
     "Each row is exactly one invoice line. Repeat all header fields on every line. If a value is unreadable or absent, return an empty string; never infer or invent a party, item, code, price, quantity, date, tax, or total.",
     "Preserve printed codes and Arabic names. Normalize dates to YYYY-MM-DD only when unambiguous; otherwise empty.",
     "Keep printed amount and tax values as written, without recomputing them. Use source_doc_number for the external invoice/return number. For returns, source_invoice_number is the original invoice number only when printed.",
-    "Map line item code/name, quantity, free quantity, unit price, discount percent or amount, VAT rate, line total, and notes when visible. Only use known template fields.",
+    "Map line item code/name, printed unit-of-measure code/name, quantity, free quantity, unit price, discount percent or amount, VAT rate, line total, and notes when visible. Only use known template fields.",
     "For missing payment/currency/branch/warehouse values leave empty. Do not assume defaults.",
     "If the document contains multiple invoices, return rows for each and keep their source_doc_number distinct. Exclude unrelated text and examples.",
   ].join("\n");

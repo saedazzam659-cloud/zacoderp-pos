@@ -18,6 +18,7 @@ type HistoricalDoc = {
   date: string;
   sourceInvoiceNumber: string;
   partyName: string;
+  branchOverrideCode?: string;
   paymentType: string;
   currencyCode: string;
   exchangeRate: number;
@@ -47,6 +48,21 @@ const requiredHeaders = [
   "discount_amount", "total_amount", "vat_rate", "payment_type", "currency_code",
   "exchange_rate", "price_includes_vat",
 ];
+const reviewColumns = [
+  ["source_doc_number", "رقم المصدر"], ["document_date", "التاريخ"],
+  ["party_code", "كود العميل/المورد"], ["party_name", "اسم العميل/المورد"],
+  ["branch_code", "كود الفرع"], ["item_code", "كود الصنف"], ["item_name", "اسم الصنف"],
+  ["unit_code", "كود الوحدة"], ["unit_name", "اسم الوحدة"], ["warehouse_code", "كود المخزن"],
+  ["qty", "الكمية"], ["free_qty", "مجاني"], ["unit_price", "سعر الوحدة"],
+  ["discount_percent", "خصم %"], ["line_discount_amount", "خصم السطر"],
+  ["vat_rate", "الضريبة %"], ["line_total", "إجمالي السطر"],
+  ["subtotal", "الإجمالي قبل الضريبة"], ["vat_amount", "قيمة الضريبة"],
+  ["discount_amount", "خصم المستند"], ["total_amount", "الإجمالي"],
+  ["payment_type", "السداد"], ["currency_code", "العملة"], ["exchange_rate", "سعر الصرف"],
+  ["cash_box_code", "كود الخزنة"], ["bank_account_code", "كود البنك"],
+  ["source_invoice_number", "الفاتورة الأصلية"], ["price_includes_vat", "السعر شامل الضريبة؟"],
+  ["total_expenses_loaded", "مصاريف محملة"], ["line_notes", "ملاحظات السطر"],
+] as const;
 
 function norm(value: unknown) { return String(value ?? "").trim().toLocaleLowerCase(); }
 function normalizePaymentType(value: unknown) {
@@ -296,6 +312,8 @@ function parseDocuments(rows: any[], kind: Kind, preserveMissingValues = false):
     }
     doc.lines.push({
       itemCode: String(row.item_code ?? "").trim(),
+      unitCode: String(row.unit_code ?? "").trim(),
+      unitName: String(row.unit_name ?? "").trim(),
       warehouseCode: String(row.warehouse_code ?? "").trim(),
       qty, unitPrice, lineTotal, discount, vatRate,
       discountAmount: num(row.line_discount_amount ?? 0),
@@ -318,6 +336,59 @@ function parseDocuments(rows: any[], kind: Kind, preserveMissingValues = false):
   return [...grouped.values()];
 }
 
+function historicalDocRows(doc: HistoricalDoc) {
+  const booleanUnknown = doc.issues.includes("حدد price_includes_vat بنعم أو لا");
+  return doc.lines.map((line: any) => ({
+    source_doc_number: doc.sourceNumber,
+    document_date: doc.date,
+    source_invoice_number: doc.sourceInvoiceNumber,
+    party_code: doc.partyCode,
+    party_name: doc.partyName,
+    branch_code: doc.branchCode,
+    item_code: line.itemCode,
+    item_name: line.itemName,
+    unit_code: line.unitCode,
+    unit_name: line.unitName,
+    warehouse_code: line.warehouseCode,
+    qty: Number.isFinite(line.qty) ? line.qty : "",
+    free_qty: line.freeQty,
+    unit_price: Number.isFinite(line.unitPrice) ? line.unitPrice : "",
+    discount_percent: Number.isFinite(line.discount) ? line.discount : "",
+    line_discount_amount: line.discountAmount,
+    vat_rate: Number.isFinite(line.vatRate) ? line.vatRate : "",
+    line_total: Number.isFinite(line.lineTotal) ? line.lineTotal : "",
+    subtotal: Number.isFinite(doc.subtotal) ? doc.subtotal : "",
+    vat_amount: Number.isFinite(doc.vatAmount) ? doc.vatAmount : "",
+    discount_amount: Number.isFinite(doc.discountAmount) ? doc.discountAmount : "",
+    total_amount: Number.isFinite(doc.totalAmount) ? doc.totalAmount : "",
+    payment_type: doc.paymentType,
+    currency_code: doc.currencyCode,
+    exchange_rate: Number.isFinite(doc.exchangeRate) ? doc.exchangeRate : "",
+    cash_box_code: doc.cashBoxCode,
+    bank_account_code: doc.bankAccountCode,
+    price_includes_vat: booleanUnknown ? "" : String(doc.priceIncludesVat),
+    total_expenses_loaded: Number.isFinite(doc.totalExpensesLoaded) ? doc.totalExpensesLoaded : "",
+    line_notes: line.notes ?? "",
+  }));
+}
+
+function reparseEditedDoc(doc: HistoricalDoc, rows: any[]) {
+  const parsed = parseDocuments(rows, doc.kind, true)[0];
+  if (!parsed) return doc;
+  return {
+    ...parsed,
+    key: doc.key,
+    sourceFileName: doc.sourceFileName,
+    branchOverrideCode: doc.branchOverrideCode,
+    issues: [...parsed.issues, ...doc.issues.filter((issue) => issue.startsWith("تكرار محتمل"))],
+    lines: parsed.lines.map((line: any, index: number) => ({
+      ...line,
+      warehouseOverrideCode: doc.lines[index]?.warehouseOverrideCode,
+      unitOverrideCode: doc.lines[index]?.unitOverrideCode,
+    })),
+  };
+}
+
 async function requestJson(url: string, token: string | null, method = "GET", body?: unknown) {
   const response = await fetch(url, {
     method,
@@ -338,6 +409,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [kind, setKind] = useState<Kind>("sales_invoice");
   const [importBranchCode, setImportBranchCode] = useState("");
   const [importWarehouseCode, setImportWarehouseCode] = useState("");
+  const [swapFrom, setSwapFrom] = useState("qty");
+  const [swapTo, setSwapTo] = useState("unit_price");
   const [fileNames, setFileNames] = useState<string[]>([]);
   const [docs, setDocs] = useState<HistoricalDoc[]>([]);
   const [masters, setMasters] = useState<Master | null>(null);
@@ -350,10 +423,10 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [sourceInvoiceIds, setSourceInvoiceIds] = useState<Record<string, number>>({});
 
   const issueCount = useMemo(() => docs.reduce((sum, doc) => sum + doc.issues.filter(
-    (issue) => !(importBranchCode && issue === "كود الفرع مطلوب"),
+    (issue) => !((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"),
   ).length, 0), [docs, importBranchCode]);
   const validDocs = useMemo(() => docs.filter((doc) => doc.issues.every(
-    (issue) => importBranchCode && issue === "كود الفرع مطلوب",
+    (issue) => (importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب",
   )), [docs, importBranchCode]);
 
   async function loadMasters() {
@@ -362,7 +435,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     try {
       const blob = await exportData(token, {
         companyId: cid,
-        types: ["items", "customers", "suppliers", "branches", "warehouses", "cashBoxes", "bankAccounts"],
+         types: ["items", "customers", "suppliers", "branches", "warehouses", "units", "cashBoxes", "bankAccounts"],
         format: "json",
       });
       const payload = JSON.parse(await blob.text());
@@ -439,10 +512,43 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     }
   }
 
+  function swapReviewColumns() {
+    if (!swapFrom || !swapTo || swapFrom === swapTo) return;
+    setDocs((current) => current.map((doc) => reparseEditedDoc(doc, historicalDocRows(doc).map((row) => {
+      const next: Record<string, any> = { ...row };
+      [next[swapFrom], next[swapTo]] = [next[swapTo], next[swapFrom]];
+      return next;
+    }))));
+    setPeriodScan(null);
+    setResults([]);
+    toast({ title: "تم تبديل القيم بين العمودين", description: "راجع الصفوف والأخطاء قبل فحص الفترات." });
+  }
+
+  function setDocumentBranchOverride(docKey: string, value: string) {
+    setDocs((current) => current.map((doc) => doc.key === docKey
+      ? { ...doc, branchOverrideCode: value === "__source__" ? "" : value }
+      : doc));
+    setPeriodScan(null);
+    setResults([]);
+  }
+
+  function setLineOverride(docKey: string, lineIndex: number, field: "warehouseOverrideCode" | "unitOverrideCode", value: string) {
+    setDocs((current) => current.map((doc) => doc.key === docKey
+      ? {
+          ...doc,
+          lines: doc.lines.map((line: any, index) => index === lineIndex
+            ? { ...line, [field]: value === "__source__" ? "" : value }
+            : line),
+        }
+      : doc));
+    setPeriodScan(null);
+    setResults([]);
+  }
+
   function downloadTemplate() {
     const headers = [
       "source_doc_number", "document_date", "party_code", "branch_code", "item_code", "item_name",
-      "warehouse_code", "qty", "free_qty", "unit_price", "discount_percent", "line_discount_amount",
+      "unit_code", "unit_name", "warehouse_code", "qty", "free_qty", "unit_price", "discount_percent", "line_discount_amount",
       "vat_rate", "line_total", "subtotal", "vat_amount", "discount_amount", "total_amount",
       "payment_type", "currency_code", "exchange_rate", "cash_box_code", "bank_account_code",
       "source_invoice_number", "line_notes", "price_includes_vat", "total_expenses_loaded",
@@ -455,7 +561,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       : kind === "purchase_return" ? "OLD-P-001" : "";
     const example = [
       sourceNumber, "2026-01-15", partyCode, "BR-EXAMPLE", "ITEM-EXAMPLE",
-      "مثال — استبدل بكود الصنف الموجود", "WH-EXAMPLE", 2, 0, 100, 0, 0,
+      "مثال — استبدل بكود الصنف الموجود", "", "", "WH-EXAMPLE", 2, 0, 100, 0, 0,
       15, 230, 200, 30, 0, 230, "آجل", "SAR", 1, "", "",
       sourceInvoiceNumber, "مثال عربي — احذف هذا السطر أو استبدله", "لا", 0,
     ];
@@ -481,6 +587,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       ["item_code", "كود الصنف الموجود في النظام.", "نعم", "ITEM-EXAMPLE"],
       ["item_name", "اسم توضيحي فقط؛ إذا تركته فارغًا يستخدم النظام اسم الصنف المسجل.", "اختياري", "صنف تجريبي"],
       ["warehouse_code", "كود المخزن الذي تخصه حركة الصنف؛ مطلوب للأصناف المخزنية.", "حسب الصنف", "WH-EXAMPLE"],
+      ["unit_code", "كود وحدة موجودة ومرتبطة بالصنف؛ اتركه فارغًا لاستخدام وحدة الصنف الأساسية.", "اختياري", "UNIT-01"],
+      ["unit_name", "اسم وحدة القياس في المستند المصدر؛ يستخدم للبحث عن تطابق فريد عند غياب كود الوحدة.", "اختياري", "قطعة"],
       ["qty / free_qty", "الكمية المباعة أو المشتراة والكمية المجانية.", "الكمية مطلوبة", "2 / 0"],
       ["unit_price", "سعر الوحدة قبل الضريبة.", "نعم", "100"],
       ["discount_percent / line_discount_amount", "خصم السطر كنسبة ومبلغ.", "اختياري", "0 / 0"],
@@ -510,9 +618,10 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   }
 
   function validateAgainstMasters(doc: HistoricalDoc, sourceIds: Record<string, number>) {
-    const issues = doc.issues.filter((issue) => !(importBranchCode && issue === "كود الفرع مطلوب"));
+    const issues = doc.issues.filter((issue) => !((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
     const indexes = {
       items: indexByCode(masters?.items),
+      units: indexByCode(masters?.units),
       parties: indexByCode(doc.kind.startsWith("sales") ? masters?.customers : masters?.suppliers),
       branches: indexByCode(masters?.branches),
       warehouses: indexByCode(masters?.warehouses),
@@ -528,11 +637,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       doc.kind.startsWith("sales") ? "العميل" : "المورد",
       issues,
     );
-    const branch = resolveCode(indexes.branches, importBranchCode || doc.branchCode, "الفرع", issues);
+    const branch = resolveCode(indexes.branches, doc.branchOverrideCode || importBranchCode || doc.branchCode, "الفرع", issues);
     const lines = doc.lines.map((line) => {
       const item = resolveCodeOrName(masters?.items ?? [], indexes.items, line.itemCode, line.itemName, "الصنف", issues);
-      const warehouseCode = importWarehouseCode || line.warehouseCode;
+      const warehouseCode = line.warehouseOverrideCode || importWarehouseCode || line.warehouseCode;
       const warehouse = warehouseCode ? resolveCode(indexes.warehouses, warehouseCode, "المخزن", issues) : null;
+      const requestedUnitCode = line.unitOverrideCode || line.unitCode;
+      const unit = requestedUnitCode || line.unitName
+        ? resolveCodeOrName(masters?.units ?? [], indexes.units, requestedUnitCode ?? "", line.unitName ?? "", "وحدة القياس", issues)
+        : null;
       const itemType = String(item?.itemType ?? item?.type ?? "stock").toLowerCase();
       if (item && !warehouse && itemType !== "service" && itemType !== "prepaid_expense") {
         issues.push(`اختر مخزن الإدخال للصنف ${line.itemCode}`);
@@ -542,8 +655,9 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         itemId: item?.id ?? null,
         itemName: line.itemName || item?.nameAr || item?.name || line.itemCode,
         itemCode: item?.code ?? line.itemCode,
-        unitId: item?.unitId ?? null,
-        unit: item?.unitName ?? item?.unit ?? null,
+        unitCode: unit?.code ?? requestedUnitCode ?? "",
+        unitId: unit?.id ?? item?.unitId ?? null,
+        unit: unit?.nameAr ?? unit?.name ?? line.unitName ?? item?.unitName ?? item?.unit ?? null,
         warehouseId: warehouse?.id ?? null,
       };
     });
@@ -746,7 +860,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           : (id: number) => `/api/purchasing/purchase-returns/${id}/post`;
         const mappedLines = lines.map((line: any) => ({
           itemId: line.itemId, itemName: line.itemName, itemCode: line.itemCode,
-          unitId: line.unitId, unit: line.unit, warehouseId: line.warehouseId, qty: line.qty, freeQty: line.freeQty,
+          unitId: line.unitId, unitCode: line.unitCode || undefined, unit: line.unit,
+          warehouseId: line.warehouseId, qty: line.qty, freeQty: line.freeQty,
           unitPrice: line.unitPrice, discount: line.discount,
           discountAmount: line.discountAmount, vatRate: line.vatRate,
           lineTotal: line.lineTotal, notes: line.notes,
@@ -821,7 +936,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           {fileNames.length > 0 && <span className="text-xs text-muted-foreground">{fileNames.join("، ")}</span>}
         </div>
         <p className="text-xs text-muted-foreground">
-          الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP. يحوّل النظام الملف إلى أعمدة نموذج الفواتير الموحد، ثم يعرض النتيجة والأخطاء للمراجعة قبل المتابعة.
+          الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP. بعد التحويل تقدر تبدّل قيم عمودين بسرعة، وتحدد فرعًا أو مخزنًا لكل مستند/سطر، وتختار وحدة قياس معتمدة لكل صنف.
         </p>
         {masterError && <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-800">{masterError}</div>}
         {!!docs.length && (
@@ -837,6 +952,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                 <Select value={importBranchCode || "__document__"} onValueChange={(value) => {
                   setImportBranchCode(value === "__document__" ? "" : value);
                   setPeriodScan(null);
+                  setResults([]);
                 }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -852,6 +968,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                 <Select value={importWarehouseCode || "__document__"} onValueChange={(value) => {
                   setImportWarehouseCode(value === "__document__" ? "" : value);
                   setPeriodScan(null);
+                  setResults([]);
                 }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -866,13 +983,46 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                 اختيار الفرع أو المخزن هنا هو قرار إدخال صريح منك، ويظهر في معاينة الأعمدة بدل القيمة المستخرجة.
               </p>
             </div>}
+            <div className="flex flex-wrap items-end gap-2 rounded border p-3">
+              <div className="w-52 space-y-1 text-xs">
+                <div className="font-medium">العمود الذي يحمل القيمة الخطأ</div>
+                <Select value={swapFrom} onValueChange={setSwapFrom}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{reviewColumns.map(([field, label]) =>
+                    <SelectItem key={field} value={field}>{label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="w-52 space-y-1 text-xs">
+                <div className="font-medium">العمود الصحيح لتبديل القيم معه</div>
+                <Select value={swapTo} onValueChange={setSwapTo}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{reviewColumns.map(([field, label]) =>
+                    <SelectItem key={field} value={field}>{label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <Button variant="outline" disabled={busy || swapFrom === swapTo} onClick={swapReviewColumns}>تبديل القيم بين العمودين</Button>
+              <p className="w-full text-xs text-muted-foreground">
+                يطبّق التبديل على جميع الصفوف في الدفعة ويعيد فحصها؛ راجع الناتج قبل المتابعة.
+              </p>
+            </div>
             <div className="max-h-56 overflow-auto rounded border">
               <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">الحالة</th></tr></thead>
+                <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">فرع هذا المستند</th><th className="p-2">الحالة</th></tr></thead>
                 <tbody>{docs.map((doc) => {
-                  const visibleIssues = doc.issues.filter((issue) => !(importBranchCode && issue === "كود الفرع مطلوب"));
+                  const visibleIssues = doc.issues.filter((issue) => !((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
                   return <tr key={doc.key} className="border-t">
                     <td className="p-2">{doc.sourceNumber}</td><td className="p-2" dir="ltr">{doc.date}</td><td className="p-2">{kindLabels[doc.kind]}</td><td className="p-2">{doc.lines.length}</td>
+                    <td className="min-w-56 p-2">
+                      <Select value={doc.branchOverrideCode || "__source__"} onValueChange={(value) => setDocumentBranchOverride(doc.key, value)}>
+                        <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__source__">{importBranchCode ? "استخدم فرع الدفعة" : doc.branchCode ? `استخدم فرع الملف (${doc.branchCode})` : "اختر فرعًا"}</SelectItem>
+                          {(masters?.branches ?? []).map((branch: any) => <SelectItem key={String(branch.code)} value={String(branch.code)}>
+                            {branch.code} — {branch.nameAr ?? branch.name ?? ""}
+                          </SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </td>
                     <td className="p-2">{visibleIssues.length ? <span className="text-red-700">{visibleIssues[0]}</span> : <span className="text-emerald-700">جاهز للفحص</span>}</td>
                   </tr>;
                 })}</tbody>
@@ -881,40 +1031,62 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
             <div>
               <div className="mb-2 text-sm font-semibold">مراجعة الصفوف على أعمدة نموذج النظام الموحد</div>
               <div className="max-h-72 overflow-auto rounded border">
-                <table className="min-w-[1900px] text-xs">
+                <table className="min-w-[2100px] text-xs">
                   <thead className="sticky top-0 bg-muted">
                     <tr className="text-right">
-                      {[
-                        ["source_doc_number", "رقم المصدر"], ["document_date", "التاريخ"],
-                        ["party_code", "كود العميل/المورد"], ["party_name", "اسم العميل/المورد"],
-                        ["branch_code", "كود الفرع"], ["item_code", "كود الصنف"], ["item_name", "اسم الصنف"],
-                        ["warehouse_code", "كود المخزن"], ["qty", "الكمية"], ["free_qty", "مجاني"],
-                        ["unit_price", "سعر الوحدة"], ["discount_percent", "خصم %"],
-                        ["line_discount_amount", "خصم السطر"], ["vat_rate", "الضريبة %"],
-                        ["line_total", "إجمالي السطر"], ["subtotal", "الإجمالي قبل الضريبة"],
-                        ["vat_amount", "قيمة الضريبة"], ["discount_amount", "خصم المستند"],
-                        ["total_amount", "الإجمالي"], ["payment_type", "السداد"],
-                        ["currency_code", "العملة"], ["exchange_rate", "سعر الصرف"],
-                        ["cash_box_code", "كود الخزنة"], ["bank_account_code", "كود البنك"],
-                        ["source_invoice_number", "الفاتورة الأصلية"], ["price_includes_vat", "السعر شامل الضريبة؟"],
-                        ["total_expenses_loaded", "مصاريف محملة"], ["line_notes", "ملاحظات السطر"],
-                      ].map(([key, label]) => <th key={key} className="whitespace-nowrap p-2">{label}</th>)}
+                      {reviewColumns.map(([key, label]) => <th key={key} className="whitespace-nowrap p-2">{label}</th>)}
                     </tr>
                   </thead>
                   <tbody>
                     {docs.flatMap((doc) => doc.lines.map((line: any, lineIndex) => (
                       <tr key={`${doc.key}-${lineIndex}`} className="border-t">
-                        {[
-                          doc.sourceNumber, doc.date, doc.partyCode, doc.partyName, importBranchCode || doc.branchCode,
-                          line.itemCode, line.itemName, importWarehouseCode || line.warehouseCode, line.qty, line.freeQty,
-                          line.unitPrice, line.discount, line.discountAmount, line.vatRate, line.lineTotal,
-                          doc.subtotal, doc.vatAmount, doc.discountAmount, doc.totalAmount, doc.paymentType,
-                          doc.currencyCode, doc.exchangeRate, doc.cashBoxCode, doc.bankAccountCode,
-                          doc.sourceInvoiceNumber, doc.priceIncludesVat ? "نعم" : "لا",
-                          doc.totalExpensesLoaded, line.notes,
-                        ].map((value, cellIndex) => (
-                          <td key={cellIndex} className="whitespace-nowrap p-2">{value == null || value === "" ? "—" : String(value)}</td>
-                        ))}
+                        {reviewColumns.map(([field]) => {
+                          const effectiveUnitCode = line.unitOverrideCode || line.unitCode;
+                          const effectiveUnit = (masters?.units ?? []).find((unit: any) => norm(unit.code) === norm(effectiveUnitCode));
+                          const values: Record<string, unknown> = {
+                            source_doc_number: doc.sourceNumber, document_date: doc.date,
+                            party_code: doc.partyCode, party_name: doc.partyName,
+                            branch_code: doc.branchOverrideCode || importBranchCode || doc.branchCode,
+                            item_code: line.itemCode, item_name: line.itemName,
+                            unit_code: line.unitOverrideCode || line.unitCode,
+                            unit_name: effectiveUnit?.nameAr ?? effectiveUnit?.name ?? line.unitName ?? line.unit,
+                            warehouse_code: line.warehouseOverrideCode || importWarehouseCode || line.warehouseCode,
+                            qty: line.qty, free_qty: line.freeQty, unit_price: line.unitPrice,
+                            discount_percent: line.discount, line_discount_amount: line.discountAmount,
+                            vat_rate: line.vatRate, line_total: line.lineTotal,
+                            subtotal: doc.subtotal, vat_amount: doc.vatAmount, discount_amount: doc.discountAmount,
+                            total_amount: doc.totalAmount, payment_type: doc.paymentType,
+                            currency_code: doc.currencyCode, exchange_rate: doc.exchangeRate,
+                            cash_box_code: doc.cashBoxCode, bank_account_code: doc.bankAccountCode,
+                            source_invoice_number: doc.sourceInvoiceNumber,
+                            price_includes_vat: doc.priceIncludesVat ? "نعم" : "لا",
+                            total_expenses_loaded: doc.totalExpensesLoaded, line_notes: line.notes,
+                          };
+                          if (field === "warehouse_code") return <td key={field} className="min-w-48 p-1">
+                            <Select value={line.warehouseOverrideCode || "__source__"} onValueChange={(value) => setLineOverride(doc.key, lineIndex, "warehouseOverrideCode", value)}>
+                              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__source__">{line.warehouseCode || importWarehouseCode || "اختر مخزنًا"}</SelectItem>
+                                {(masters?.warehouses ?? []).map((warehouse: any) => <SelectItem key={String(warehouse.code)} value={String(warehouse.code)}>
+                                  {warehouse.code} — {warehouse.nameAr ?? warehouse.name ?? ""}
+                                </SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </td>;
+                          if (field === "unit_code") return <td key={field} className="min-w-48 p-1">
+                            <Select value={line.unitOverrideCode || "__source__"} onValueChange={(value) => setLineOverride(doc.key, lineIndex, "unitOverrideCode", value)}>
+                              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__source__">{line.unitCode || line.unitName || "وحدة الصنف الأساسية"}</SelectItem>
+                                {(masters?.units ?? []).map((unit: any) => <SelectItem key={String(unit.code)} value={String(unit.code)}>
+                                  {unit.code} — {unit.nameAr ?? unit.name ?? ""}
+                                </SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </td>;
+                          const value = values[field];
+                          return <td key={field} className="whitespace-nowrap p-2">{value == null || value === "" ? "—" : String(value)}</td>;
+                        })}
                       </tr>
                     )))}
                   </tbody>
