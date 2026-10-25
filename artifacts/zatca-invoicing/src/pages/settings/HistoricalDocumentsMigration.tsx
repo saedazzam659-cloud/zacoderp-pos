@@ -246,7 +246,12 @@ async function extractInvoiceRowsFromFile(file: File, kind: Kind, token: string 
   return parseDocuments(result.rows, kind, true);
 }
 
-function parseDocuments(rows: any[], kind: Kind, preserveMissingValues = false): HistoricalDoc[] {
+function parseDocuments(
+  rows: any[],
+  kind: Kind,
+  preserveMissingValues = false,
+  allowMissingPayment = false,
+): HistoricalDoc[] {
   const grouped = new Map<string, HistoricalDoc>();
   rows.forEach((row) => {
     const sourceNumber = String(row.source_doc_number ?? "").trim();
@@ -309,7 +314,9 @@ function parseDocuments(rows: any[], kind: Kind, preserveMissingValues = false):
     }
     if (!sourceNumber) doc.issues.push("رقم المستند المصدر مطلوب");
     if (!validIsoDate(date)) doc.issues.push("التاريخ غير صالح، استخدم YYYY-MM-DD");
-    if (kind !== "purchase_order" && !String(row.payment_type ?? "").trim()) doc.issues.push("طريقة السداد مطلوبة");
+    if (kind !== "purchase_order" && !allowMissingPayment && !String(row.payment_type ?? "").trim()) {
+      doc.issues.push("طريقة السداد مطلوبة");
+    }
     if (!String(row.currency_code ?? "").trim()) doc.issues.push("رمز العملة مطلوب");
     if (normalizeBoolean(row.price_includes_vat) === null) {
       doc.issues.push("حدد price_includes_vat بنعم أو لا");
@@ -510,7 +517,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         const converted = sourceKind === "sales_invoice"
           ? convertLinkedSalesInvoiceCsv(sourceHeaderFile.text, invoiceItemsFile.text)
           : convertLinkedPurchaseOrderCsv(sourceHeaderFile.text, invoiceItemsFile.text);
-        parsed.push(...parseDocuments(converted.rows, kind, true).map((doc) => ({
+        parsed.push(...parseDocuments(converted.rows, kind, true, converted.warnings.length > 0).map((doc) => ({
           ...doc,
           key: `${doc.key}|source-pair`,
           sourceFileName: `${sourceHeaderFile.file.name} + ${invoiceItemsFile.file.name}`,

@@ -36,6 +36,8 @@ test("historical importer preserves staged financial mode and does not post draf
   assert.match(ui, /financial_inventory.*financial_only.*inventory_only.*archive_only/s);
   assert.match(ui, /historicalImportMode: postingMode/);
   assert.match(ui, /if \(converted\.warnings\.length && sourceKind !== "purchase_order"\)/);
+  assert.match(ui, /parseDocuments\(converted\.rows, kind, true, converted\.warnings\.length > 0\)/);
+  assert.match(ui, /!allowMissingPayment && !String\(row\.payment_type/);
   assert.match(ui, /doc\.kind === "purchase_order" \? "\/api\/purchasing\/purchase-orders"/);
   assert.match(ui, /مسودة أمر شراء — بلا قيد مالي أو حركة مخزون/);
   assert.match(ui, /postingMode === "archive_only" \|\| saveAsDraftOnly/);
