@@ -17,6 +17,7 @@ type HistoricalDoc = {
   sourceNumber: string;
   date: string;
   sourceInvoiceNumber: string;
+  partyName: string;
   paymentType: string;
   currencyCode: string;
   exchangeRate: number;
@@ -106,6 +107,29 @@ function resolveCode(index: Map<string, any[]>, code: string, label: string, iss
   }
   return unique[0];
 }
+function resolveCodeOrName(rows: any[], index: Map<string, any[]>, code: string, name: string, label: string, issues: string[]) {
+  const matches = index.get(norm(code)) ?? [];
+  const uniqueCodeMatches = [...new Map(matches.map((row) => [row.id ?? row, row])).values()];
+  if (uniqueCodeMatches.length === 1) return uniqueCodeMatches[0];
+  if (uniqueCodeMatches.length > 1) {
+    issues.push(`${label}: الرمز "${code}" يطابق أكثر من سجل`);
+    return null;
+  }
+  const wantedName = norm(name);
+  const nameMatches = wantedName
+    ? rows.filter((row) => [row.nameAr, row.nameEn, row.name, row.partyName].some((value) => norm(value) === wantedName))
+    : [];
+  const uniqueNameMatches = [...new Map(nameMatches.map((row) => [row.id ?? row, row])).values()];
+  if (uniqueNameMatches.length === 1) return uniqueNameMatches[0];
+  if (uniqueNameMatches.length > 1) {
+    issues.push(`${label}: الاسم "${name}" يطابق أكثر من سجل؛ أدخل الكود لتحديده.`);
+  } else if (code || name) {
+    issues.push(`${label}: لا يوجد تطابق للكود أو الاسم "${code || name}"`);
+  } else {
+    issues.push(`${label}: الكود أو الاسم مطلوب`);
+  }
+  return null;
+}
 async function stableKey(companyId: number, kind: Kind, sourceNumber: string, date: string) {
   const input = new TextEncoder().encode(`${companyId}|${kind}|${sourceNumber}|${date}`);
   const digest = await crypto.subtle.digest("SHA-256", input);
@@ -123,6 +147,70 @@ function normalizeDate(value: unknown) {
   return raw;
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function extractInvoiceRowsFromFile(file: File, kind: Kind, token: string | null) {
+  if (file.size > 13_000_000) throw new Error("حجم الملف يتجاوز 13 ميجابايت؛ قسّمه أو استخدم نسخة أصغر.");
+  const extension = file.name.toLowerCase().split(".").pop() ?? "";
+  const tabular = ["xlsx", "xls", "csv"].includes(extension);
+  const supported = [...(tabular ? ["xlsx", "xls", "csv"] : []), "pdf", "docx", "jpg", "jpeg", "png", "webp"];
+  if (!supported.includes(extension)) {
+    throw new Error(`صيغة .${extension || "?"} غير مدعومة. ارفع PDF أو Excel/CSV أو Word أو صورة.`);
+  }
+
+  let extractedText = "";
+  if (tabular) {
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+    const dataSheetName = workbook.SheetNames.find((name) => name === "بيانات الفواتير");
+    const sheet = dataSheetName ? workbook.Sheets[dataSheetName] : workbook.Sheets[workbook.SheetNames[0]];
+    if (!sheet) throw new Error("الملف لا يحتوي على ورقة بيانات");
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "", raw: true });
+    if (!rows.length) throw new Error("الملف فارغ");
+    const headerMap = new Map(Object.keys(rows[0]).map((header) => [norm(header).replaceAll(" ", "_"), header]));
+    if (requiredHeaders.every((header) => headerMap.has(header))) {
+      const normalizedRows = rows.map((row) => Object.fromEntries([...headerMap].map(([canonical, original]) => [
+        canonical,
+        canonical === "document_date" ? normalizeDate(row[original]) : row[original],
+      ])));
+      return parseDocuments(normalizedRows, kind);
+    }
+    extractedText = workbook.SheetNames.map((name) => {
+      const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[name], {
+        header: 1, defval: "", raw: false, blankrows: false,
+      });
+      return `Sheet: ${name}\n${JSON.stringify(matrix)}`;
+    }).join("\n\n");
+  } else if (extension === "docx") {
+    const mammoth: any = await import("mammoth");
+    const result = await (mammoth.default ?? mammoth).extractRawText({ arrayBuffer: await file.arrayBuffer() });
+    extractedText = String(result.value ?? "");
+  }
+
+  const body: Record<string, unknown> = { filename: file.name, kind };
+  if (extractedText) {
+    body.extractedText = extractedText;
+  } else {
+    const fallbackMime: Record<string, string> = {
+      pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
+    };
+    body.mime = file.type || fallbackMime[extension];
+    body.documentBase64 = arrayBufferToBase64(await file.arrayBuffer());
+  }
+  const result = await requestJson("/api/ocr/extract-invoices", token, "POST", body);
+  if (!Array.isArray(result?.rows) || !result.rows.length) {
+    throw new Error("لم يعثر الملف على سطور فواتير قابلة للتحويل.");
+  }
+  return parseDocuments(result.rows, kind);
+}
+
 function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
   const grouped = new Map<string, HistoricalDoc>();
   rows.forEach((row) => {
@@ -134,6 +222,7 @@ function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
       doc = {
         key, kind, sourceNumber, date,
         sourceInvoiceNumber: String(row.source_invoice_number ?? "").trim(),
+        partyName: String(row.party_name ?? "").trim(),
         paymentType: normalizePaymentType(row.payment_type ?? "credit") || "credit",
         currencyCode: String(row.currency_code ?? "SAR").trim().toUpperCase() || "SAR",
         exchangeRate: requiredNum(row.exchange_rate),
@@ -157,6 +246,7 @@ function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
     if (doc.lines.length > 0) {
       const repeatedFields: Array<[string, string, string]> = [
         ["party_code", doc.partyCode, String(row.party_code ?? "").trim()],
+        ["party_name", doc.partyName, String(row.party_name ?? "").trim()],
         ["branch_code", doc.branchCode, String(row.branch_code ?? "").trim()],
         ["payment_type", doc.paymentType, normalizePaymentType(row.payment_type ?? "credit") || "credit"],
         ["currency_code", doc.currencyCode, String(row.currency_code ?? "SAR").trim().toUpperCase() || "SAR"],
@@ -181,7 +271,7 @@ function parseDocuments(rows: any[], kind: Kind): HistoricalDoc[] {
     if (normalizeBoolean(row.price_includes_vat) === null) {
       doc.issues.push("حدد price_includes_vat بنعم أو لا");
     }
-    if (!doc.partyCode) doc.issues.push("كود العميل/المورد مطلوب");
+    if (!doc.partyCode && !doc.partyName) doc.issues.push("بيانات العميل/المورد غير مقروءة");
     if (!doc.branchCode) doc.issues.push("كود الفرع مطلوب");
     for (const keyName of ["exchangeRate", "subtotal", "vatAmount", "discountAmount", "totalAmount", "totalExpensesLoaded"] as const) {
       if (!Number.isFinite(doc[keyName])) doc.issues.push(`قيمة ${keyName} غير رقمية`);
@@ -281,34 +371,24 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     setFileNames(files.map((file) => file.name));
     setResults([]);
     setPeriodScan(null);
+    setBusy(true);
     try {
-      const parsedFiles = await Promise.all(files.map(async (file, fileIndex) => {
+      const parsed: HistoricalDoc[] = [];
+      for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+        const file = files[fileIndex];
         try {
-          const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
-          const dataSheetName = workbook.SheetNames.find((name) => name === "بيانات الفواتير");
-          const sheet = dataSheetName
-            ? workbook.Sheets[dataSheetName]
-            : workbook.Sheets[workbook.SheetNames[0]];
-          if (!sheet) throw new Error("الملف لا يحتوي على ورقة بيانات");
-          const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "", raw: true });
-          if (!rows.length) throw new Error("الملف فارغ");
-          const headerMap = new Map(Object.keys(rows[0]).map((header) => [norm(header).replaceAll(" ", "_"), header]));
-          const missing = requiredHeaders.filter((header) => !headerMap.has(header));
-          if (missing.length) throw new Error(`أعمدة مطلوبة غير موجودة: ${missing.join(", ")}`);
-          const normalizedRows = rows.map((row) => Object.fromEntries([...headerMap].map(([canonical, original]) => [
-            canonical,
-            canonical === "document_date" ? normalizeDate(row[original]) : row[original],
-          ])));
-          return parseDocuments(normalizedRows, kind).map((doc) => ({
+          const extracted = await extractInvoiceRowsFromFile(file, kind, token);
+          for (const doc of extracted) {
+            parsed.push({
             ...doc,
             key: `${doc.key}|file:${fileIndex}`,
             sourceFileName: file.name,
-          }));
+            });
+          }
         } catch (error: any) {
           throw new Error(`${file.name}: ${error?.message ?? "تعذرت قراءة الملف"}`);
         }
-      }));
-      const parsed = parsedFiles.flat();
+      }
 
       // Do not merge equal invoice numbers from different files: that could
       // silently double their lines. Flag possible duplicates for correction.
@@ -339,6 +419,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     } catch (error: any) {
       setDocs([]);
       toast({ title: error?.message ?? "تعذرت قراءة الملف", variant: "destructive" });
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -422,10 +504,18 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       cashBoxes: indexByCode(masters?.cashBoxes),
       bankAccounts: indexByCode(masters?.bankAccounts),
     };
-    const party = resolveCode(indexes.parties, doc.partyCode, doc.kind.startsWith("sales") ? "العميل" : "المورد", issues);
+    const partyRows = doc.kind.startsWith("sales") ? masters?.customers ?? [] : masters?.suppliers ?? [];
+    const party = resolveCodeOrName(
+      partyRows,
+      indexes.parties,
+      doc.partyCode,
+      doc.partyName,
+      doc.kind.startsWith("sales") ? "العميل" : "المورد",
+      issues,
+    );
     const branch = resolveCode(indexes.branches, doc.branchCode, "الفرع", issues);
     const lines = doc.lines.map((line) => {
-      const item = resolveCode(indexes.items, line.itemCode, "الصنف", issues);
+      const item = resolveCodeOrName(masters?.items ?? [], indexes.items, line.itemCode, line.itemName, "الصنف", issues);
       const warehouse = line.warehouseCode ? resolveCode(indexes.warehouses, line.warehouseCode, "المخزن", issues) : null;
       const itemType = String(item?.itemType ?? item?.type ?? "stock").toLowerCase();
       if (item && !warehouse && itemType !== "service" && itemType !== "prepaid_expense") {
