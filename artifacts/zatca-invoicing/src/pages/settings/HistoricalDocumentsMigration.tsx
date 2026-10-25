@@ -436,13 +436,16 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [results, setResults] = useState<Array<{ sourceNumber: string; status: string; detail: string }>>([]);
   const [sourceInvoiceIds, setSourceInvoiceIds] = useState<Record<string, number>>({});
   const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
+  const [saveAsDraftOnly, setSaveAsDraftOnly] = useState(false);
 
   const issueCount = useMemo(() => docs.reduce((sum, doc) => sum + doc.issues.filter(
-    (issue) => !((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"),
-  ).length, 0), [docs, importBranchCode]);
+    (issue) => !((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب")
+      && !((postingMode === "archive_only" || saveAsDraftOnly) && issue === "طريقة السداد مطلوبة"),
+  ).length, 0), [docs, importBranchCode, postingMode, saveAsDraftOnly]);
   const validDocs = useMemo(() => docs.filter((doc) => doc.issues.every(
-    (issue) => (importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب",
-  )), [docs, importBranchCode]);
+    (issue) => ((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب")
+      || ((postingMode === "archive_only" || saveAsDraftOnly) && issue === "طريقة السداد مطلوبة"),
+  )), [docs, importBranchCode, postingMode, saveAsDraftOnly]);
 
   async function loadMasters() {
     if (masters) return masters;
@@ -474,6 +477,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     setDocs([]);
     setResults([]);
     setSourceWarnings([]);
+    setSaveAsDraftOnly(false);
     setPeriodScan(null);
     setBusy(true);
     try {
@@ -498,6 +502,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         pairedFiles.add(invoiceHeaderFile.index);
         pairedFiles.add(invoiceItemsFile.index);
         setSourceWarnings(converted.warnings);
+        if (converted.warnings.length) setSaveAsDraftOnly(true);
       } else if (invoiceHeaderFile || invoiceItemsFile) {
         throw new Error("هذا التصدير يتكون من ملفين مترابطين. ارفع ملف Invoices.csv وملف Invoice_items.csv معًا.");
       }
@@ -666,7 +671,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     XLSX.writeFile(workbook, `نموذج-${kind}-فواتير-تاريخية.xlsx`);
   }
 
-  function validateAgainstMasters(doc: HistoricalDoc, sourceIds: Record<string, number>) {
+  function validateAgainstMasters(doc: HistoricalDoc, sourceIds: Record<string, number>, allowMissingPayment = false) {
     const issues = doc.issues.filter((issue) => !((importBranchCode || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
     const indexes = {
       items: indexByCode(masters?.items),
@@ -712,7 +717,9 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     });
     const cashBox = doc.paymentType === "cash" ? resolveCode(indexes.cashBoxes, doc.cashBoxCode, "الخزنة", issues) : null;
     const bank = doc.paymentType === "bank" ? resolveCode(indexes.bankAccounts, doc.bankAccountCode, "الحساب البنكي", issues) : null;
-    if (!["credit", "cash", "bank"].includes(doc.paymentType)) issues.push("طريقة السداد يجب أن تكون: آجل أو نقدي أو بنكي");
+    if (!allowMissingPayment && !["credit", "cash", "bank"].includes(doc.paymentType)) {
+      issues.push("طريقة السداد يجب أن تكون: آجل أو نقدي أو بنكي");
+    }
     if (doc.kind.endsWith("_return") && !doc.sourceInvoiceNumber) issues.push("رقم الفاتورة المصدر مطلوب للمرتجع");
     const sourceInvoiceId = doc.sourceInvoiceNumber ? sourceIds[`${doc.kind.startsWith("sales") ? "sales" : "purchase"}:${doc.sourceInvoiceNumber}`] : undefined;
     if (doc.kind.endsWith("_return") && doc.sourceInvoiceNumber && !sourceInvoiceId) {
@@ -733,7 +740,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     const periodsById = new Map(periods.map((period: any) => [Number(period.id), period]));
     const groups = new Map<string, { doc: HistoricalDoc; branch: any; docs: HistoricalDoc[] }>();
     for (const { doc, branch } of refs) {
-      const key = JSON.stringify([doc.kind, doc.date, Number(branch.id), doc.paymentType]);
+      const effectivePaymentType = doc.paymentType || (saveAsDraftOnly ? "credit" : "");
+      const key = JSON.stringify([doc.kind, doc.date, Number(branch.id), effectivePaymentType]);
       const group = groups.get(key);
       if (group) group.docs.push(doc);
       else groups.set(key, { doc, branch, docs: [doc] });
@@ -753,7 +761,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           companyId: String(cid),
           date: doc.date,
           branchId: String(branch.id),
-          paymentType: doc.paymentType,
+          paymentType: doc.paymentType || (saveAsDraftOnly ? "credit" : ""),
         });
         const preview = await requestJson(
           `/api/sequences/peek/${encodeURIComponent(doc.kind)}?${query.toString()}`,
@@ -851,7 +859,10 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         anticipatedSources[`${doc.kind.startsWith("sales") ? "sales" : "purchase"}:${doc.sourceNumber}`] = -1;
       }
     }
-    const refs = docs.map((doc) => ({ doc, ...validateAgainstMasters(doc, anticipatedSources) }));
+    const refs = docs.map((doc) => ({
+      doc,
+      ...validateAgainstMasters(doc, anticipatedSources, postingMode === "archive_only" || saveAsDraftOnly),
+    }));
     const blocked = refs.filter((entry) => entry.issues.length > 0);
     if (blocked.length) {
       setDocs((current) => current.map((doc) => {
@@ -917,7 +928,8 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         }));
         const payload: any = {
           companyId: cid, clientRequestId: await stableKey(cid, doc.kind, doc.sourceNumber, doc.date),
-          branchId: branch.id, paymentType: doc.paymentType,
+          branchId: branch.id,
+          paymentType: doc.paymentType || ((postingMode === "archive_only" || saveAsDraftOnly) ? "credit" : ""),
           cashBoxId: cashBox?.id ?? null, bankAccountId: bank?.id ?? null,
           currencyCode: doc.currencyCode, exchangeRate: doc.exchangeRate,
           subtotal: doc.subtotal.toFixed(2), vatAmount: doc.vatAmount.toFixed(2),
@@ -925,7 +937,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           totalExpensesLoaded: doc.totalExpensesLoaded.toFixed(2),
           priceIncludesVat: doc.priceIncludesVat, notes: `استيراد تاريخي — رقم المصدر: ${doc.sourceNumber}`,
           historicalImportMode: postingMode,
-          ...(postingMode === "archive_only" ? { saveAsDraft: true } : {}),
+          ...((postingMode === "archive_only" || saveAsDraftOnly) ? { saveAsDraft: true } : {}),
           lines: mappedLines,
         };
         if (doc.kind === "sales_invoice") {
@@ -943,17 +955,27 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           if (!Number.isInteger(id) || id <= 0) throw new Error("لم يُرجع النظام رقم المستند");
           const savedMode = created.historicalImportMode ?? "financial_inventory";
           if (savedMode !== postingMode) throw new Error("رقم المستند المصدر سبق استيراده بوضع مختلف؛ لن نغيّر طريقة ترحيله تلقائيًا.");
-          if (postingMode !== "archive_only" && created.status !== "posted") await requestJson(postPath(id), token, "PATCH", {});
+          if (postingMode !== "archive_only" && !saveAsDraftOnly && created.status !== "posted") {
+            await requestJson(postPath(id), token, "PATCH", {});
+          }
           if (doc.kind.endsWith("_invoice")) nextSourceIds[`${doc.kind.startsWith("sales") ? "sales" : "purchase"}:${doc.sourceNumber}`] = id;
-          const resultStatus = postingMode === "archive_only" ? "تمت الأرشفة" : "تم الترحيل";
-          nextResults.push({ sourceNumber: doc.sourceNumber, status: resultStatus, detail: `${importModeLabels[postingMode]} — ${created.idempotentReplay ? "استُعيد المستند السابق" : kindLabels[doc.kind]} — ${created.docNumber ?? id}` });
+          const resultStatus = postingMode === "archive_only" ? "تمت الأرشفة"
+            : saveAsDraftOnly ? "تم الحفظ كمسودة" : "تم الترحيل";
+          nextResults.push({
+            sourceNumber: doc.sourceNumber,
+            status: resultStatus,
+            detail: `${saveAsDraftOnly && postingMode !== "archive_only" ? "مسودة قابلة للتعديل — بلا ترحيل" : importModeLabels[postingMode]} — ${created.idempotentReplay ? "استُعيد المستند السابق" : kindLabels[doc.kind]} — ${created.docNumber ?? id}`,
+          });
         } catch (error: any) {
           nextResults.push({ sourceNumber: doc.sourceNumber, status: "تعذر الترحيل", detail: error?.message ?? "خطأ غير معروف" });
         }
         setSourceInvoiceIds({ ...nextSourceIds });
         setResults([...nextResults]);
       }
-      toast({ title: "انتهى استيراد المستندات", description: `${nextResults.filter((item) => item.status === "تم الترحيل" || item.status === "تمت الأرشفة").length} ناجح من ${nextResults.length}` });
+      toast({
+        title: "انتهى استيراد المستندات",
+        description: `${nextResults.filter((item) => item.status === "تم الترحيل" || item.status === "تمت الأرشفة" || item.status === "تم الحفظ كمسودة").length} ناجح من ${nextResults.length}`,
+      });
     } finally {
       setBusy(false);
     }
@@ -1002,6 +1024,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
               {sourceWarnings.slice(0, 8).map((warning) => <div key={warning}>{warning}</div>)}
               {sourceWarnings.length > 8 && <div>وتوجد تنبيهات أخرى لعدد {sourceWarnings.length - 8} فاتورة.</div>}
               <div className="mt-1">ملفات الفواتير لا تحتوي قيود التحصيل؛ لم تُضف أي دفعات تلقائيًا.</div>
+              <div>ستُحفظ الفواتير كمسودات قابلة للتعديل دون ترحيل مالي أو مخزني حتى تُستكمل بيانات التحصيل.</div>
             </div>}
             <div className="flex flex-wrap gap-2 text-xs">
               <Badge variant="outline">{docs.length} مستند</Badge>
@@ -1175,18 +1198,24 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                 </Select>
               </label>
               <div className={`rounded-md border p-2 text-xs leading-5 ${postingMode === "financial_only" || postingMode === "inventory_only" ? "border-amber-300 bg-amber-50 text-amber-950" : "border-slate-200 bg-slate-50 text-slate-800"}`}>
-                {postingMode === "financial_inventory" && "سيُرحّل القيد المالي وحركات المخزون حسب مسار النظام المعتاد."}
-                {postingMode === "financial_only" && "سيُرحّل القيد المالي بتكلفة النظام دون تغيير الكميات. قد تختلف تقارير الحسابات والمخزون."}
-                {postingMode === "inventory_only" && "سيُحدّث المخزون وتكلفته دون قيد محاسبي. قد تختلف تقارير الحسابات والمخزون."}
-                {postingMode === "archive_only" && "سيُحفظ المستند كمسودة مرجعية فقط، دون ترحيل أو رقم رسمي."}
+                {postingMode === "financial_inventory" && (saveAsDraftOnly
+                  ? "ستُحفظ كمسودات قابلة للتعديل فقط؛ لن تُرحّل القيود أو حركات المخزون قبل مراجعة بيانات السداد."
+                  : "سيُرحّل القيد المالي وحركات المخزون حسب مسار النظام المعتاد.")}
+                {postingMode === "financial_only" && (saveAsDraftOnly
+                  ? "ستُحفظ كمسودات فقط؛ لن يُرحّل القيد المالي قبل مراجعة بيانات السداد."
+                  : "سيُرحّل القيد المالي بتكلفة النظام دون تغيير الكميات. قد تختلف تقارير الحسابات والمخزون.")}
+                {postingMode === "inventory_only" && (saveAsDraftOnly
+                  ? "ستُحفظ كمسودات فقط؛ لن تُحدّث الكميات قبل مراجعة بيانات السداد."
+                  : "سيُحدّث المخزون وتكلفته دون قيد محاسبي. قد تختلف تقارير الحسابات والمخزون.")}
+                {postingMode === "archive_only" && "سيُحفظ المستند كمسودة مرجعية فقط، دون قيد محاسبي أو حركة مخزون أو رقم رسمي. يمكن تأجيل الترحيل حتى استكمال بيانات التحصيل."}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={scanPeriods} disabled={busy || issueCount > 0 || !masters}>
                 {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <CheckCircle2 className="ml-1 h-4 w-4" />}فحص الفترات المالية
               </Button>
-              <Button onClick={importDocuments} disabled={busy || !periodsReady || issueCount > 0 || !masters}>
-                {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <Upload className="ml-1 h-4 w-4" />}{postingMode === "archive_only" ? "حفظ المستندات للأرشفة" : "إنشاء وترحيل المستندات"}
+                <Button onClick={importDocuments} disabled={busy || !periodsReady || issueCount > 0 || !masters}>
+                  {busy ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <Upload className="ml-1 h-4 w-4" />}{saveAsDraftOnly ? "حفظ الفواتير كمسودات" : postingMode === "archive_only" ? "حفظ المستندات للأرشفة" : "إنشاء وترحيل المستندات"}
               </Button>
             </div>
           </>

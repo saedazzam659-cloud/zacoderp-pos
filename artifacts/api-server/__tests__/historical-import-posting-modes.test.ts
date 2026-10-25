@@ -31,10 +31,13 @@ test("historical posting mode is stored and enforced in all invoice and return p
   assert.match(purchasing, /historicalImportMode: purchaseInvoicesTable\.historicalImportMode/);
 });
 
-test("historical importer carries the chosen mode and keeps archive-only documents unnumbered drafts", async () => {
+test("historical importer preserves staged financial mode and does not post draft-only imports", async () => {
   const ui = await readFile(new URL("../../zatca-invoicing/src/pages/settings/HistoricalDocumentsMigration.tsx", import.meta.url), "utf8");
   assert.match(ui, /financial_inventory.*financial_only.*inventory_only.*archive_only/s);
   assert.match(ui, /historicalImportMode: postingMode/);
-  assert.match(ui, /postingMode === "archive_only" \? \{ saveAsDraft: true \}/);
-  assert.match(ui, /postingMode !== "archive_only".*requestJson\(postPath/);
+  assert.match(ui, /converted\.warnings\.length\) setSaveAsDraftOnly\(true\)/);
+  assert.match(ui, /postingMode === "archive_only" \|\| saveAsDraftOnly/);
+  assert.match(ui, /saveAsDraft: true/);
+  assert.match(ui, /paymentType: doc\.paymentType \|\| \(\(postingMode === "archive_only" \|\| saveAsDraftOnly\) \? "credit" : ""\)/);
+  assert.match(ui, /postingMode !== "archive_only" && !saveAsDraftOnly && created\.status !== "posted"/);
 });
