@@ -6,7 +6,9 @@ authors = [
     { name = "saedazzam659-cloud", email = "saedazzam659@gmail.com" }
 ]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "python-docx>=1.2.0",
+]
 
 [project.scripts]
 repl-nix-workspace = "repl_nix_workspace:main"
