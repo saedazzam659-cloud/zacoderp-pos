@@ -47,6 +47,19 @@ test("historical importer preserves staged financial mode and does not post draf
   assert.match(ui, /kind === "purchase_order" \|\| postingMode === "archive_only" \|\| saveAsDraftOnly/);
 });
 
+test("historical importer uses the mounted fiscal-year API routes", async () => {
+  const [ui, routes, fiscalPeriods] = await Promise.all([
+    readFile(new URL("../../zatca-invoicing/src/pages/settings/HistoricalDocumentsMigration.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/fiscal-periods.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(routes, /router\.use\("\/fiscal",\s*fiscalPeriodsRouter\)/);
+  assert.match(fiscalPeriods, /router\.get\("\/years"/);
+  assert.match(ui, /\/api\/fiscal\/years\?companyId=/);
+  assert.match(ui, /\/api\/fiscal\/years\/\$\{(?:year\.id|referenceFiscalYearId)\}\?companyId=/);
+  assert.doesNotMatch(ui, /\/api\/fiscal-years\/years/);
+});
+
 test("historical import review applies batch defaults and lets users jump to and correct invalid line values", async () => {
   const ui = await readFile(new URL("../../zatca-invoicing/src/pages/settings/HistoricalDocumentsMigration.tsx", import.meta.url), "utf8");
   assert.match(ui, /تطبيق الفرع والمخزن ووحدة القياس المحددة على كل المستندات والسطور/);

@@ -537,9 +537,9 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     setReferenceFiscalYearId("");
     if (!token || !cid) return () => { active = false; };
     void (async () => {
-      const years = await requestJson(`/api/fiscal-years/years?companyId=${cid}`, token) as any[];
+      const years = await requestJson(`/api/fiscal/years?companyId=${cid}`, token) as any[];
       const details = await Promise.all(years.map((year) =>
-        requestJson(`/api/fiscal-years/years/${year.id}?companyId=${cid}`, token) as Promise<any>,
+        requestJson(`/api/fiscal/years/${year.id}?companyId=${cid}`, token) as Promise<any>,
       ));
       if (active) {
         setFiscalYears(details.map((detail) => ({ ...detail.year, periods: detail.periods ?? [] })));
@@ -1019,10 +1019,10 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   async function preflightAnnualSequences(refs: Array<{ doc: HistoricalDoc; branch: any }>) {
     const [sequenceRows, years] = await Promise.all([
       requestJson(`/api/sequences?companyId=${cid}`, token) as Promise<any[]>,
-      requestJson(`/api/fiscal-years/years?companyId=${cid}`, token) as Promise<any[]>,
+      requestJson(`/api/fiscal/years?companyId=${cid}`, token) as Promise<any[]>,
     ]);
     const yearDetails = await Promise.all(years.map((year) =>
-      requestJson(`/api/fiscal-years/years/${year.id}?companyId=${cid}`, token) as Promise<any>,
+      requestJson(`/api/fiscal/years/${year.id}?companyId=${cid}`, token) as Promise<any>,
     ));
     const periods = yearDetails.flatMap((detail) => detail.periods ?? []);
     const periodsById = new Map(periods.map((period: any) => [Number(period.id), period]));
