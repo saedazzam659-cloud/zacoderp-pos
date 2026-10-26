@@ -177,6 +177,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   training_room: "training_room",
   multi_link: "multi_link",
   zid_integration: "zid_integration",
+  salla_integration: "salla_integration",
   // متابعة الديمو للشركات — وحدة اختيارية مغلقة افتراضيًا. لا تستخدم
   // مسارات السوبر أدمن؛ واجهات الشركة المنفصلة تطبق عزل المصدر + الشركة.
   demo_analytics: "demo_analytics",
@@ -197,7 +198,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "module_dashboards", "simple_manufacturing", "internal_control",
-  "zid_integration",
+  "zid_integration", "salla_integration",
   "school", "clothing",
   "additional_accounting_reports",
   "additional_sales_reports",

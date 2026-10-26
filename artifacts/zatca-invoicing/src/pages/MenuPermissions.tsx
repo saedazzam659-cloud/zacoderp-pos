@@ -52,7 +52,7 @@ const DEFAULT_OFF_KEYS = new Set<string>([
   "egypt_tax", "jordan_tax", "school", "additional_accounting_reports",
   "additional_sales_reports", "additional_purchase_reports",
   "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
-  "zid_integration",
+  "zid_integration", "salla_integration",
 ]);
 
 // Default for a key ABSENT from the saved JSON: legacy-baseline keys stay
