@@ -700,3 +700,17 @@ mtime_ms = 1793032768403
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/9ab70040-799f-45e0-9ff6-cdd973121c59/c1388cb5-fa7f-401e-9743-215b5eede00e"
 storage_version_token = "1793033049313409"
 content_type = "application/pdf"
+
+[[outputs]]
+id = "KnvK1ST7jtKlDg96awLG_"
+uri = "file://attached_assets/%D9%81%D8%A7%D8%AA%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%85%D8%A8%D9%8A%D8%B9%D8%A7%D8%AA_SC-202600018_EUR_%D9%85%D8%A4%D9%82%D8%AA%D8%A9.pdf"
+type = "pdf"
+title = "فاتورة SC-202600018 — عملة EUR واضحة"
+description = "نسخة مؤقتة من الملف المرفوع؛ الإجماليات الأصلية موسومة بـ EUR، بينما مكافئات SAR وسعر الصرف ورمز QR محفوظة كما في الفاتورة."
+logical_id = "321ea47f-a960-4136-9150-2ad60247e3ab"
+content_hash = "sha256:6ff7dec77942222909301018a8fdcfb86a82cc4d241bc3baff0361ca57ac5609"
+size = 301782
+mtime_ms = 1793033837952
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/321ea47f-a960-4136-9150-2ad60247e3ab/569c33e9-558b-443f-99f4-29b9933e3982"
+storage_version_token = "1793033864530776"
+content_type = "application/pdf"
