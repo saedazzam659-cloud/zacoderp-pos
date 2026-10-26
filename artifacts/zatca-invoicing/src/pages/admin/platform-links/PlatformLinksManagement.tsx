@@ -35,7 +35,7 @@ async function parseServerResponse(res: Response, fallback: string): Promise<any
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const code = body?.code || body?.error || body?.serverMessage;
-    throw new Error(arabicServerError(code, fallback));
+    throw Object.assign(new Error(arabicServerError(code, fallback)), { code: String(code ?? "") });
   }
   return body;
 }
@@ -101,7 +101,29 @@ export function PlatformLinksTopLevel() {
       setPreviewFile(null);
       qc.invalidateQueries({ queryKey: ["agent-platform-imported"] });
     },
-    onError: (err: any) => toast({ title: "خطأ في الاستيراد", description: err.message, variant: "destructive" })
+    onError: async (err: any) => {
+      if (err.code === "invite_already_consumed") {
+        await qc.invalidateQueries({ queryKey: ["agent-platform-imported"], refetchType: "all" });
+        const linkId = previewFile?.payload?.linkId;
+        const importedLinks = qc.getQueryData<any[]>(["agent-platform-imported"]) ?? [];
+        if (linkId && importedLinks.some((link) => link.linkId === linkId)) {
+          toast({
+            title: "الوكيل مستورد بالفعل",
+            description: "تم تحديث قائمة الوكلاء المستوردين؛ لا تستخدم ملف الربط مرة أخرى.",
+          });
+        } else {
+          toast({
+            title: "تعذر إعادة استخدام ملف الربط",
+            description: "تم تحديث القائمة ولم يظهر هذا الوكيل. أغلق النافذة، وأنشئ دعوة جديدة ثم صدّر ملف ربط جديدًا.",
+            variant: "destructive",
+          });
+        }
+        setPreviewData(null);
+        setPreviewFile(null);
+        return;
+      }
+      toast({ title: "خطأ في الاستيراد", description: err.message, variant: "destructive" });
+    },
   });
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -119,6 +141,9 @@ export function PlatformLinksTopLevel() {
     reader.readAsText(file);
     e.target.value = '';
   };
+
+  const previewLink = previewData?.link;
+  const previewAgent = previewLink?.agent;
 
   return (
     <div className="space-y-6">
@@ -191,13 +216,13 @@ export function PlatformLinksTopLevel() {
             {previewData?.link && (
               <div className="grid grid-cols-2 gap-y-3 gap-x-4 border border-slate-100 rounded-lg p-4 bg-white dark:bg-slate-950 text-xs shadow-sm">
                 <div className="text-slate-500 font-medium">اسم الوكيل</div>
-                <div className="font-bold text-slate-900">{previewData.link.name}</div>
+                <div className="font-bold text-slate-900">{previewAgent?.name || "—"}</div>
                 
                 <div className="text-slate-500 font-medium">النطاق</div>
-                <div className="font-bold text-slate-900" dir="ltr">{previewData.link.domain}</div>
+                <div className="font-bold text-slate-900" dir="ltr">{previewAgent?.domain || "—"}</div>
                 
                 <div className="text-slate-500 font-medium">منصة المصدر</div>
-                <div className="font-medium text-slate-700 bg-slate-50 px-1.5 py-0.5 rounded w-fit" dir="ltr">{previewData.link.sourceOrigin}</div>
+                <div className="font-medium text-slate-700 bg-slate-50 px-1.5 py-0.5 rounded w-fit" dir="ltr">{previewLink?.source?.origin || "—"}</div>
               </div>
             )}
           </div>
