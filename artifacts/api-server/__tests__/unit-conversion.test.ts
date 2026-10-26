@@ -90,6 +90,36 @@ test("used legacy items can initialize a compatible unmarked unit graph from an 
   });
 });
 
+test("a legacy first unit link may initialize its reference as base when it covers historical unit labels", () => {
+  const decision = validateBaseUnitAssignment({
+    currentBaseUnitId: null,
+    requestedBaseUnitId: 7,
+    rows: [
+      { unitId: 7, referenceUnitId: null, relationFactor: "1", conversionFactor: "1", isBase: true },
+      { unitId: 8, referenceUnitId: 7, relationFactor: "12", conversionFactor: "12", isBase: false },
+    ],
+    historicalUsage: true,
+    historicalUnitIds: [null, 8],
+  });
+  assert.deepEqual(decision, { allowed: true, clearLegacyConflict: false });
+});
+
+test("legacy first unit initialization still blocks historical units not covered by the proposed link", () => {
+  assert.throws(
+    () => validateBaseUnitAssignment({
+      currentBaseUnitId: null,
+      requestedBaseUnitId: 7,
+      rows: [
+        { unitId: 7, referenceUnitId: null, relationFactor: "1", conversionFactor: "1", isBase: true },
+        { unitId: 8, referenceUnitId: 7, relationFactor: "12", conversionFactor: "12", isBase: false },
+      ],
+      historicalUsage: true,
+      historicalUnitIds: [9],
+    }),
+    (error: unknown) => error instanceof UnitConversionError && error.code === "BASE_CHANGE_BLOCKED",
+  );
+});
+
 test("an explicit first base normalizes flat legacy unit rows from their saved conversion factors", () => {
   const decision = validateBaseUnitAssignment({
     currentBaseUnitId: null,

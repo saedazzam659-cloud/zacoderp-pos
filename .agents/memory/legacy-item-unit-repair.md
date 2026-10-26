@@ -5,6 +5,8 @@ description: Safe first-base repair for old items whose flat unit links predate 
 
 For an item with no configured base, an explicit user-selected base may normalize flat legacy item-unit rows by preserving each saved positive `conversionFactor` as a direct factor to the chosen base. Historical invoices and stock movements remain unchanged. Do not change an already configured base. Reject rows with missing/invalid saved factors, existing relationship edges, or historical unit IDs outside the item graph.
 
-**Why:** The user reported older items whose unit links were created before the graph safeguards; their saved factors are the trusted repair source, but historical movements must not be rewritten.
+For a legacy item with no linked unit rows, the first explicit source-to-reference conversion may establish the reference as base when its user-entered factor creates a valid proposed graph containing every non-null historical unit ID. Validate the proposed graph and update the item base plus first relationship in one transaction. Keep blocking when history names any unit outside that graph; do not infer its factor.
 
-**How to apply:** Use this only during the first base assignment for an item with no base. Keep the entire graph repair and item update in one transaction, and leave ambiguous non-flat or incomplete legacy data blocked.
+**Why:** Legacy items may have document lines with explicit unit IDs but no item-owned conversion graph. Saved factors are trusted only for proven flat legacy links; a user-entered first conversion establishes only the relationship explicitly supplied, without rewriting historical movements.
+
+**How to apply:** Use saved factors only for proven flat legacy graphs; use the submitted relation factor only for the first explicit source-to-reference link. Keep graph validation, base assignment, and relationship insertion atomic. Reject incomplete or ambiguous historical coverage.

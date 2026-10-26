@@ -937,17 +937,30 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
                 <SearchCombobox
                   items={allUnits.map((u: any) => ({ value: String(u.id), code: u.code, label: pickName(u.nameAr, u.nameEn) || u.code }))}
                   value={form.referenceUnitId}
-                  onValueChange={v => setForm((p: any) => ({ ...p, referenceUnitId: v }))}
+                  onValueChange={v => setForm((p: any) => ({
+                    ...p,
+                    referenceUnitId: v,
+                    ...(v ? {} : { initializeReferenceAsBase: false }),
+                  }))}
                   placeholder={t("inventoryMaster.units.select")}
                   className="h-8 text-xs"
                 />
                 <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.units.baseUnitHint", { defaultValue: "Usually the item's base unit. Leave empty to use factor standalone." })}</p>
-                {!editUpId && unitPrices.length === 0 && !form.isBase && (
-                  <label className="flex items-start gap-2 text-xs">
-                    <input type="checkbox" checked={form.initializeReferenceAsBase === true}
-                      onChange={e => setForm((p: any) => ({ ...p, initializeReferenceAsBase: e.target.checked }))} />
-                    {t("inventoryMaster.units.initializeReferenceAsBase")}
-                  </label>
+                {!editUpId && itemUnitId == null && unitPrices.length === 0 && form.referenceUnitId && (
+                  <div className="space-y-2">
+                    <p className="text-[10px] text-muted-foreground">
+                      {t("inventoryMaster.units.legacyFirstLinkHint")}
+                    </p>
+                    <label className="flex items-start gap-2 text-xs">
+                      <input type="checkbox" checked={form.initializeReferenceAsBase === true}
+                        onChange={e => setForm((p: any) => ({
+                          ...p,
+                          initializeReferenceAsBase: e.target.checked,
+                          ...(e.target.checked ? { isBase: false } : {}),
+                        }))} />
+                      {t("inventoryMaster.units.initializeReferenceAsBase")}
+                    </label>
+                  </div>
                 )}
               </div>
 
@@ -997,7 +1010,11 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
               <div className="space-y-1.5">
                 <Label className="text-xs">{t("pages.items.isBaseLabel")}</Label>
                 <div className="flex items-center gap-2 h-8">
-                  <input type="checkbox" id="isbase" checked={form.isBase} onChange={e => setForm((p: any) => ({ ...p, isBase: e.target.checked }))} className="rounded" />
+                  <input type="checkbox" id="isbase" checked={form.isBase} onChange={e => setForm((p: any) => ({
+                    ...p,
+                    isBase: e.target.checked,
+                    ...(e.target.checked ? { initializeReferenceAsBase: false } : {}),
+                  }))} className="rounded" />
                   <label htmlFor="isbase" className="text-xs text-muted-foreground">{t("pages.items.isBaseYes")}</label>
                 </div>
               </div>

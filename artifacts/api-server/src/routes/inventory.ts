@@ -1332,9 +1332,9 @@ async function assertItemUnitGraphTenant(
 
 /**
  * Fill an item's first missing base in the caller's transaction. Existing
- * bases continue to use the historical-use guard; a missing legacy base is
- * only accepted when unlabelled quantities or an already-unambiguous graph
- * prove that the assignment cannot rebase old stock.
+ * bases continue to use the historical-use guard. A legacy item may also
+ * supply its first explicit source-to-reference relation as a proposed graph;
+ * historical unit labels must resolve through that relation before it is saved.
  */
 async function validateAndSyncItemBaseUnit(
   tx: any,
@@ -1342,18 +1342,20 @@ async function validateAndSyncItemBaseUnit(
   itemId: number,
   oldBaseId: number | null,
   newBaseId: number,
+  proposedRows: any[] = [],
 ): Promise<void> {
   await assertCatalogUnit(tx, cid, newBaseId);
   const rows = await tx.select().from(itemUnitPricesTable).where(and(
     eq(itemUnitPricesTable.companyId, cid),
     eq(itemUnitPricesTable.itemId, itemId),
   ));
-  await assertItemUnitGraphTenant(tx, cid, itemId, rows, newBaseId);
+  const validationRows = [...rows, ...proposedRows];
+  await assertItemUnitGraphTenant(tx, cid, itemId, validationRows, newBaseId);
   const history = await inspectItemHistoricalUsage(tx, cid, itemId);
   const decision = validateBaseUnitAssignment({
     currentBaseUnitId: oldBaseId,
     requestedBaseUnitId: newBaseId,
-    rows,
+    rows: validationRows,
     historicalUsage: history.hasUsage,
     historicalUnitIds: history.unitIds,
   });
@@ -1436,14 +1438,15 @@ async function changeItemBaseUnit(
   oldBaseId: number | null,
   newBaseId: number,
   rows: any[],
+  proposedRows: any[] = [],
 ): Promise<void> {
   if (oldBaseId === newBaseId) return;
-  // Filling an unset legacy base is not a re-base.  In particular, old
-  // stock/ledger rows carry no unit label and remain valid after this
-  // assignment.  The central policy still rejects labelled history or an
-  // ambiguous item-unit graph.
+  // Filling an unset legacy base is not a re-base when the existing or
+  // explicitly proposed graph proves the historical unit relationships.
+  // Unlabelled legacy stock remains unchanged; labelled quantities must be
+  // covered by the graph supplied to the central policy.
   if (oldBaseId === null) {
-    await validateAndSyncItemBaseUnit(tx, cid, itemId, null, newBaseId);
+    await validateAndSyncItemBaseUnit(tx, cid, itemId, null, newBaseId, proposedRows);
     await tx.update(itemsTable).set({ unitId: newBaseId })
       .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
     return;
@@ -2469,11 +2472,33 @@ router.post("/items/:id/units", async (req, res) => {
       const values = await unitRowValues(req.body, null, item, unitId);
       // Explicit opt-in only: never infer a stock base from the catalog factor.
       if (req.body.initializeReferenceAsBase === true && !values.isBase) {
+        if (values.referenceUnitId == null) {
+          throw new UnitConversionError("MISSING_REFERENCE_UNIT", "A non-base unit must reference another unit");
+        }
         if (item.unitId != null && item.unitId !== values.referenceUnitId) {
           throw new UnitConversionError("BASE_CHANGE_BLOCKED", "الصنف لديه وحدة أساسية مختلفة؛ لا يمكن استبدالها من علاقة تحويل.");
         }
         if (item.unitId == null) {
-          await changeItemBaseUnit(tx, cid, itemId, null, values.referenceUnitId, rows);
+          await assertCatalogUnit(tx, cid, values.referenceUnitId);
+          const proposedRows = [
+            {
+              unitId: values.referenceUnitId,
+              referenceUnitId: null,
+              relationFactor: "1",
+              conversionFactor: "1",
+              isBase: true,
+              isActive: true,
+            },
+            {
+              unitId,
+              referenceUnitId: values.referenceUnitId,
+              relationFactor: values.relationFactor,
+              conversionFactor: values.relationFactor,
+              isBase: false,
+              isActive: values.isActive,
+            },
+          ];
+          await changeItemBaseUnit(tx, cid, itemId, null, values.referenceUnitId, rows, proposedRows);
           item.unitId = values.referenceUnitId;
         }
       }
