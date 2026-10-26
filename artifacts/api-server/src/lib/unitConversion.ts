@@ -289,6 +289,7 @@ export interface InitialBaseAssignmentInput {
 export interface InitialBaseAssignmentDecision {
   allowed: true;
   clearLegacyConflict: boolean;
+  markBaseUnit?: boolean;
 }
 
 /**
@@ -338,15 +339,43 @@ export function validateBaseUnitAssignment(
     return { allowed: true, clearLegacyConflict: false };
   }
 
-  // This both rejects multiple/no base markers and validates every active
-  // relationship before allowing the item root to be filled in.
-  const graph = resolveUnitGraph({ baseUnitId: null, rows });
-  if (graph.baseUnitId !== requestedBaseUnitId) {
+  // Preserve the deterministic single-row legacy repair: older imports may
+  // have stored a stale factor/conflict marker on the only unit row, but with
+  // no reference edge that row can only be the selected base.
+  if (
+    rows.length === 1
+    && rows[0].unitId === requestedBaseUnitId
+    && rows[0].isActive !== false
+    && rows[0].referenceUnitId === null
+  ) {
+    if (historicalUnitIds.some((unitId) => unitId !== null && unitId !== requestedBaseUnitId)) {
+      throw new UnitConversionError(
+        "BASE_CHANGE_BLOCKED",
+        "Historical quantities reference a different unit",
+      );
+    }
+    return { allowed: true, clearLegacyConflict: true };
+  }
+
+  // An explicit user selection can initialize a legacy graph whose base
+  // marker was never stored, provided every relationship resolves to that
+  // selected root. Historical unit labels must still belong to that graph.
+  const activeRows = rows.filter((row) => row.isActive !== false);
+  const possibleRoots = activeRows.filter((row) => row.referenceUnitId === null);
+  if (possibleRoots.some((row) => row.unitId !== requestedBaseUnitId)) {
+    throw new UnitConversionError("AMBIGUOUS_BASE", "The item does not have exactly one base unit");
+  }
+  const requestedRootRow = rows.find((row) => row.unitId === requestedBaseUnitId);
+  if (requestedRootRow && (
+    requestedRootRow.isActive === false
+    || requestedRootRow.referenceUnitId !== null
+  )) {
     throw new UnitConversionError(
       "BASE_CHANGE_BLOCKED",
-      "The requested base unit conflicts with the item's existing unit relationships",
+      "The selected base unit conflicts with the item's existing unit relationships",
     );
   }
+  const graph = resolveUnitGraph({ baseUnitId: requestedBaseUnitId, rows });
   if (historicalUnitIds.some((unitId) => unitId !== null && !graph.factors.has(unitId))) {
     throw new UnitConversionError(
       "BASE_CHANGE_BLOCKED",
@@ -354,14 +383,11 @@ export function validateBaseUnitAssignment(
     );
   }
 
-  // Only the exact one-row, active, unreferenced shape is a deterministic
-  // legacy repair.  Never clear a conflict marker for a multi-row graph.
-  const clearLegacyConflict =
-    rows.length === 1
-    && rows[0].isActive !== false
-    && rows[0].referenceUnitId === null
-    && rows[0].unitId === requestedBaseUnitId;
-  return { allowed: true, clearLegacyConflict };
+  return {
+    allowed: true,
+    clearLegacyConflict: false,
+    ...(requestedRootRow && !requestedRootRow.isBase ? { markBaseUnit: true } : {}),
+  };
 }
 
 /**

@@ -72,6 +72,24 @@ test("used legacy unitless quantities may receive their first base unit", () => 
   assert.deepEqual(decision, { allowed: true, clearLegacyConflict: false });
 });
 
+test("used legacy items can initialize a compatible unmarked unit graph from an explicit base choice", () => {
+  const decision = validateBaseUnitAssignment({
+    currentBaseUnitId: null,
+    requestedBaseUnitId: 7,
+    rows: [
+      { unitId: 7, referenceUnitId: null, relationFactor: "1", isBase: false },
+      { unitId: 8, referenceUnitId: 7, relationFactor: "12", isBase: false },
+    ],
+    historicalUsage: true,
+    historicalUnitIds: [null, 8],
+  });
+  assert.deepEqual(decision, {
+    allowed: true,
+    clearLegacyConflict: false,
+    markBaseUnit: true,
+  });
+});
+
 test("a different historical unit still blocks an unlinked first base", () => {
   assert.throws(
     () => validateBaseUnitAssignment({

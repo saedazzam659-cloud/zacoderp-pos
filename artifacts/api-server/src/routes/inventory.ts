@@ -1358,19 +1358,20 @@ async function validateAndSyncItemBaseUnit(
     historicalUnitIds: history.unitIds,
   });
 
-  // The only permitted automatic item-unit repair is the exact one-row legacy
-  // shape accepted by the central resolver.  Do not clear a marker merely
-  // because an item editor save happened to touch the item.
-  if (decision.clearLegacyConflict) {
+  // Repair the explicitly selected first base in the same transaction. For
+  // the sole-row legacy shape, also clear its stale conflict marker. Other
+  // graph rows are never rewritten or rebased.
+  if (decision.clearLegacyConflict || decision.markBaseUnit) {
     await tx.update(itemUnitPricesTable).set({
       isBase: true,
       referenceUnitId: null,
       relationFactor: "1",
       conversionFactor: "1",
-      legacyConversionConflict: false,
+      ...(decision.clearLegacyConflict ? { legacyConversionConflict: false } : {}),
     }).where(and(
       eq(itemUnitPricesTable.companyId, cid),
       eq(itemUnitPricesTable.itemId, itemId),
+      eq(itemUnitPricesTable.unitId, newBaseId),
     ));
   }
 }
