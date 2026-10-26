@@ -714,3 +714,17 @@ mtime_ms = 1793033837952
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/321ea47f-a960-4136-9150-2ad60247e3ab/569c33e9-558b-443f-99f4-29b9933e3982"
 storage_version_token = "1793033864530776"
 content_type = "application/pdf"
+
+[[outputs]]
+id = "sDI0s4MZHbY7lK8Cqruqn"
+uri = "file://attached_assets/%D9%81%D8%A7%D8%AA%D9%88%D8%B1%D8%A9_SC-202600018_EUR_%D9%86%D8%B3%D8%AE%D8%A9_%D9%85%D8%A4%D9%82%D8%AA%D8%A9_%D9%85%D8%AD%D8%AF%D8%AB%D8%A9.pdf"
+type = "pdf"
+title = "الفاتورة SC-202600018 — نسخة EUR محدثة"
+description = "النسخة الأخيرة من الملف المرفوع: EUR واضح على الإجماليات، مع الحفاظ على أرقام الفاتورة ومكافئات SAR وسعر الصرف ورمز QR."
+logical_id = "ac3da29e-982d-4d4c-ab75-c630ff2014e5"
+content_hash = "sha256:95188d9817f3a91b4618953a27ddd349c3f1300fac86497fe3fb0993927d8abc"
+size = 301352
+mtime_ms = 1793034547524
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/ac3da29e-982d-4d4c-ab75-c630ff2014e5/5fe92fef-4adc-4fd0-b26c-57e2482b91db"
+storage_version_token = "1793034572153416"
+content_type = "application/pdf"
