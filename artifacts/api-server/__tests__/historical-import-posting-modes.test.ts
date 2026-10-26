@@ -58,6 +58,13 @@ test("historical import review applies batch defaults and lets users jump to and
   assert.match(ui, /target\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(ui, /const itemIssue = issue\.includes\("الصنف:"\)/);
   assert.match(ui, /استبدل كود المصدر بكود صنف مسجل في هذه الشركة/);
+  assert.match(ui, /const partyIssue = issue\.startsWith\("العميل:"\) \|\| issue\.startsWith\("المورد:"\)/);
+  assert.match(ui, /const paymentIssue = issue\.includes\("طريقة السداد"\)/);
+  assert.match(ui, /control\.click\(\)/);
+  assert.match(ui, /كود العميل\/المورد/);
+  assert.match(ui, /اسم العميل\/المورد/);
+  assert.match(ui, /اختر طريقة السداد/);
+  assert.match(ui, /rows\.forEach\(\(row\) => \{ row\[field\] = value; \}\)/);
   assert.match(ui, /editableTextLineFields\.has\(field\)/);
   assert.match(ui, /field === "item_code" \? "كود الصنف" : "اسم الصنف"/);
   assert.match(ui, /editableLineFields\.has\(field\)/);

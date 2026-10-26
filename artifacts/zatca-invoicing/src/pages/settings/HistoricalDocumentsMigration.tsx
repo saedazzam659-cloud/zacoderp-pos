@@ -460,7 +460,9 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [importUnitCode, setImportUnitCode] = useState("");
   const [applyBatchDefaults, setApplyBatchDefaults] = useState(true);
   const [lineEditDrafts, setLineEditDrafts] = useState<Record<string, string>>({});
+  const [documentEditDrafts, setDocumentEditDrafts] = useState<Record<string, string>>({});
   const lineInputRefs = useRef(new Map<string, HTMLInputElement>());
+  const documentFieldRefs = useRef(new Map<string, HTMLElement>());
   const [swapFrom, setSwapFrom] = useState("qty");
   const [swapTo, setSwapTo] = useState("unit_price");
   const [fileNames, setFileNames] = useState<string[]>([]);
@@ -656,6 +658,28 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     setLineEditDrafts((current) => ({ ...current, [lineEditKey(docKey, lineIndex, field)]: value }));
   }
 
+  function documentFieldKey(docKey: string, field: string) {
+    return `${docKey}|document|${field}`;
+  }
+
+  function commitDocumentEdit(docKey: string, field: "party_code" | "party_name" | "payment_type", rawValue: string) {
+    const value = rawValue.trim();
+    setDocs((current) => current.map((doc) => {
+      if (doc.key !== docKey) return doc;
+      const rows = historicalDocRows(doc) as Array<Record<string, any>>;
+      if (!rows.length) return doc;
+      rows.forEach((row) => { row[field] = value; });
+      return reparseEditedDoc(doc, rows);
+    }));
+    setDocumentEditDrafts((current) => {
+      const next = { ...current };
+      delete next[documentFieldKey(docKey, field)];
+      return next;
+    });
+    setPeriodScan(null);
+    setResults([]);
+  }
+
   function commitLineEdit(docKey: string, lineIndex: number, field: string) {
     const key = lineEditKey(docKey, lineIndex, field);
     const draft = lineEditDrafts[key];
@@ -683,10 +707,11 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
 
   function focusFirstInvalidLine(doc: HistoricalDoc) {
     const issue = doc.issues.find((entry) => !(
-      (((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && entry === "كود الفرع مطلوب")
-      || ((postingMode === "archive_only" || saveAsDraftOnly) && entry === "طريقة السداد مطلوبة")
+      ((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && entry === "كود الفرع مطلوب"
     )) ?? "";
     const itemIssue = issue.includes("الصنف:");
+    const partyIssue = issue.startsWith("العميل:") || issue.startsWith("المورد:");
+    const paymentIssue = issue.includes("طريقة السداد");
     const mentionedValue = issue.match(/"([^"]+)"/)?.[1];
     const matchedIssueLine = mentionedValue
       ? doc.lines.findIndex((line) => [line.itemCode, line.itemName, line.unitCode, line.unitName].some(
@@ -696,12 +721,26 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     const lineIndex = doc.lines.findIndex((line) => invalidLineField(line));
     const targetLineIndex = itemIssue && matchedIssueLine >= 0
       ? matchedIssueLine
-      : lineIndex >= 0 ? lineIndex : matchedIssueLine >= 0 ? matchedIssueLine : doc.lines.length ? 0 : -1;
+      : partyIssue || paymentIssue ? -1
+        : lineIndex >= 0 ? lineIndex : matchedIssueLine >= 0 ? matchedIssueLine : doc.lines.length ? 0 : -1;
     const targetField = itemIssue ? "item_code" : lineIndex >= 0 ? invalidLineField(doc.lines[lineIndex]) : null;
+    const documentField = partyIssue ? "party_code" : paymentIssue ? "payment_type" : null;
     if (itemIssue) {
       toast({
         title: "كود الصنف غير مطابق",
         description: "استبدل كود المصدر بكود صنف مسجل في هذه الشركة، أو صحح اسم الصنف في السطر المحدد.",
+        variant: "destructive",
+      });
+    } else if (partyIssue) {
+      toast({
+        title: doc.kind.startsWith("sales") ? "بيانات العميل غير مطابقة" : "بيانات المورد غير مطابقة",
+        description: `أدخل كود ${doc.kind.startsWith("sales") ? "عميل" : "مورد"} موجودًا في هذه الشركة أو الاسم المطابق لسجله؛ يمكنك تعديل الكود والاسم من صف المستند.`,
+        variant: "destructive",
+      });
+    } else if (paymentIssue) {
+      toast({
+        title: "طريقة السداد مطلوبة",
+        description: "اختر آجل أو نقدي أو بنكي من خانة طريقة السداد في صف المستند.",
         variant: "destructive",
       });
     } else if (lineIndex >= 0) {
@@ -716,6 +755,13 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       });
     }
     requestAnimationFrame(() => {
+      if (documentField) {
+        const control = documentFieldRefs.current.get(documentFieldKey(doc.key, documentField));
+        control?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+        control?.focus({ preventScroll: true });
+        if (paymentIssue && control instanceof HTMLButtonElement) control.click();
+        return;
+      }
       if (targetLineIndex >= 0 && targetField) {
         const input = lineInputRefs.current.get(lineEditKey(doc.key, targetLineIndex, targetField));
         if (input) {
@@ -1345,12 +1391,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                 يطبّق التبديل على جميع الصفوف في الدفعة ويعيد فحصها؛ راجع الناتج قبل المتابعة.
               </p>
             </div>
-            <p className="text-xs text-muted-foreground">اضغط «تفاصيل» بجوار الخطأ لعرض اقتراح التصحيح والانتقال إلى الحقل المعني. يمكن تعديل كود الصنف أو اسمه مباشرة في الجدول.</p>
+            <p className="text-xs text-muted-foreground">اضغط «تفاصيل» بجوار الخطأ لعرض اقتراح التصحيح والانتقال إلى الحقل المعني. يمكن تعديل بيانات العميل/المورد والسداد وكود الصنف أو اسمه من الجداول.</p>
             <div className="max-h-56 overflow-auto rounded border">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">فرع هذا المستند</th><th className="p-2">الحالة</th></tr></thead>
+              <table className="min-w-[1500px] text-xs">
+                <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">الحالة</th><th className="p-2">كود العميل/المورد</th><th className="p-2">اسم العميل/المورد</th><th className="p-2">طريقة السداد</th><th className="p-2">فرع هذا المستند</th></tr></thead>
                 <tbody>{docs.map((doc) => {
                   const visibleIssues = doc.issues.filter((issue) => !(((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
+                  const partyCodeKey = documentFieldKey(doc.key, "party_code");
+                  const partyNameKey = documentFieldKey(doc.key, "party_name");
+                  const paymentTypeKey = documentFieldKey(doc.key, "payment_type");
                   return <tr
                     key={doc.key}
                     data-import-document={doc.key}
@@ -1359,6 +1408,72 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                     onDoubleClick={() => focusFirstInvalidLine(doc)}
                   >
                     <td className="p-2">{doc.sourceNumber}</td><td className="p-2" dir="ltr">{doc.date}</td><td className="p-2">{kindLabels[doc.kind]}</td><td className="p-2">{doc.lines.length}</td>
+                    <td className="min-w-64 p-2">{visibleIssues.length ? <div className="flex items-center gap-1 text-red-700">
+                      <button
+                        type="button"
+                        className="shrink-0 text-blue-700 underline underline-offset-2 hover:text-blue-900"
+                        onClick={() => focusFirstInvalidLine(doc)}
+                        aria-label={`تفاصيل الخطأ للمستند ${doc.sourceNumber}`}
+                      >تفاصيل</button>
+                      <span>{visibleIssues[0]}</span>
+                    </div> : <span className="text-emerald-700">جاهز للفحص</span>}</td>
+                    <td className="min-w-48 p-1">
+                      <input
+                        ref={(element) => {
+                          if (element) documentFieldRefs.current.set(partyCodeKey, element);
+                          else documentFieldRefs.current.delete(partyCodeKey);
+                        }}
+                        type="text"
+                        aria-label={`كود ${doc.kind.startsWith("sales") ? "العميل" : "المورد"} للمصدر ${doc.sourceNumber}`}
+                        value={documentEditDrafts[partyCodeKey] ?? doc.partyCode}
+                        onChange={(event) => setDocumentEditDrafts((current) => ({ ...current, [partyCodeKey]: event.target.value }))}
+                        onBlur={(event) => commitDocumentEdit(doc.key, "party_code", event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                        placeholder="أدخل الكود المسجل"
+                        className="w-full rounded border border-input bg-background px-2 py-1 text-right outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </td>
+                    <td className="min-w-56 p-1">
+                      <input
+                        ref={(element) => {
+                          if (element) documentFieldRefs.current.set(partyNameKey, element);
+                          else documentFieldRefs.current.delete(partyNameKey);
+                        }}
+                        type="text"
+                        aria-label={`اسم ${doc.kind.startsWith("sales") ? "العميل" : "المورد"} للمصدر ${doc.sourceNumber}`}
+                        value={documentEditDrafts[partyNameKey] ?? doc.partyName}
+                        onChange={(event) => setDocumentEditDrafts((current) => ({ ...current, [partyNameKey]: event.target.value }))}
+                        onBlur={(event) => commitDocumentEdit(doc.key, "party_name", event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                        placeholder="أدخل الاسم المطابق"
+                        className="w-full rounded border border-input bg-background px-2 py-1 text-right outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </td>
+                    <td className="min-w-40 p-1">
+                      <Select
+                        value={doc.paymentType || "__missing__"}
+                        onValueChange={(value) => commitDocumentEdit(doc.key, "payment_type", value === "__missing__" ? "" : value)}
+                      >
+                        <SelectTrigger
+                          ref={(element) => {
+                            if (element) documentFieldRefs.current.set(paymentTypeKey, element);
+                            else documentFieldRefs.current.delete(paymentTypeKey);
+                          }}
+                          className="h-8"
+                          aria-label={`طريقة السداد للمصدر ${doc.sourceNumber}`}
+                        ><SelectValue placeholder="اختر طريقة السداد" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__missing__">اختر طريقة السداد</SelectItem>
+                          <SelectItem value="credit">آجل</SelectItem>
+                          <SelectItem value="cash">نقدي</SelectItem>
+                          <SelectItem value="bank">بنكي</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </td>
                     <td className="min-w-56 p-2">
                       <Select
                         value={applyBatchDefaults && importBranchCode ? "__batch__" : doc.branchOverrideCode || "__source__"}
@@ -1375,15 +1490,6 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                         </SelectContent>
                       </Select>
                     </td>
-                    <td className="p-2">{visibleIssues.length ? <div className="flex items-center gap-1 text-red-700">
-                      <button
-                        type="button"
-                        className="shrink-0 text-blue-700 underline underline-offset-2 hover:text-blue-900"
-                        onClick={() => focusFirstInvalidLine(doc)}
-                        aria-label={`تفاصيل الخطأ للمستند ${doc.sourceNumber}`}
-                      >تفاصيل</button>
-                      <span>{visibleIssues[0]}</span>
-                    </div> : <span className="text-emerald-700">جاهز للفحص</span>}</td>
                   </tr>;
                 })}</tbody>
               </table>
