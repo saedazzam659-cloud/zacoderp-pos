@@ -94,3 +94,4 @@
 - [Salla customer-store OAuth boundary](salla-customer-store-oauth.md) — the ERP platform owns one developer app; each customer authorizes their own store, with phase one limited to reading orders.
 - [Grid localization coverage](grid-localization-boundary.md) — audit every grid heading and surrounding control in both languages; keep entered business data unchanged.
 - [External invoice import boundary](external-invoice-import-boundary.md) — convert source files into the existing unified invoice rows for review; never infer missing facts or post on extraction alone.
+- [Company-specific invoice import formats](company-invoice-import-formats.md) — isolate each company's source format adapter and normalize into the shared invoice review flow.

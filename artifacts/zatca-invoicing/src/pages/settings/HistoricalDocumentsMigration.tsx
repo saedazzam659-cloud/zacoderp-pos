@@ -189,7 +189,12 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
   return btoa(binary);
 }
 
-async function extractInvoiceRowsFromFile(file: File, kind: Kind, token: string | null) {
+async function extractInvoiceRowsFromFile(
+  file: File,
+  kind: Kind,
+  token: string | null,
+  invoiceFormat: "generic" | "ragmcloud_v1",
+) {
   if (file.size > 13_000_000) throw new Error("حجم الملف يتجاوز 13 ميجابايت؛ قسّمه أو استخدم نسخة أصغر.");
   const extension = file.name.toLowerCase().split(".").pop() ?? "";
   const tabular = ["xlsx", "xls", "xlsm", "ods", "csv"].includes(extension);
@@ -229,7 +234,7 @@ async function extractInvoiceRowsFromFile(file: File, kind: Kind, token: string 
     extractedText = String(result.value ?? "");
   }
 
-  const body: Record<string, unknown> = { filename: file.name, kind };
+  const body: Record<string, unknown> = { filename: file.name, kind, invoiceFormat };
   if (extractedText) {
     body.extractedText = extractedText;
   } else {
@@ -443,7 +448,11 @@ async function requestJson(url: string, token: string | null, method = "GET", bo
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error ?? `فشل الطلب (${response.status})`);
+  if (!response.ok) {
+    const error: any = new Error(data.message ?? data.error ?? `فشل الطلب (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 
@@ -466,7 +475,11 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [swapFrom, setSwapFrom] = useState("qty");
   const [swapTo, setSwapTo] = useState("unit_price");
   const [fileNames, setFileNames] = useState<string[]>([]);
+  const [invoiceFormat, setInvoiceFormat] = useState<"generic" | "ragmcloud_v1">("generic");
+  const [readProgress, setReadProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [failedFiles, setFailedFiles] = useState<Array<{ name: string; error: string }>>([]);
   const [docs, setDocs] = useState<HistoricalDoc[]>([]);
+  const [documentsPage, setDocumentsPage] = useState(1);
   const [masters, setMasters] = useState<Master | null>(null);
   const [masterError, setMasterError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -515,14 +528,18 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     if (!files.length) return;
     setFileNames(files.map((file) => file.name));
     setDocs([]);
+    setDocumentsPage(1);
     setLineEditDrafts({});
     setResults([]);
     setSourceWarnings([]);
     setSaveAsDraftOnly(false);
+    setFailedFiles([]);
+    setReadProgress({ completed: 0, total: files.length });
     setPeriodScan(null);
     setBusy(true);
+    const parsed: HistoricalDoc[] = [];
     try {
-      const parsed: HistoricalDoc[] = [];
+      const parsedByFile = new Map<number, HistoricalDoc[]>();
       const csvFiles = await Promise.all(files.map(async (file, index) => {
         if (!file.name.toLowerCase().endsWith(".csv")) return null;
         return { index, file, text: decodeInvoiceCsv(await file.arrayBuffer()) };
@@ -545,7 +562,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         const converted = sourceKind === "sales_invoice"
           ? convertLinkedSalesInvoiceCsv(sourceHeaderFile.text, invoiceItemsFile.text)
           : convertLinkedPurchaseOrderCsv(sourceHeaderFile.text, invoiceItemsFile.text);
-        parsed.push(...parseDocuments(converted.rows, kind, true, converted.warnings.length > 0).map((doc) => ({
+        parsedByFile.set(sourceHeaderFile.index, parseDocuments(converted.rows, kind, true, converted.warnings.length > 0).map((doc) => ({
           ...doc,
           key: `${doc.key}|source-pair`,
           sourceFileName: `${sourceHeaderFile.file.name} + ${invoiceItemsFile.file.name}`,
@@ -559,22 +576,45 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       } else if (sourceHeaderFile || invoiceItemsFile) {
         throw new Error("هذا التصدير يتكون من ملفين مترابطين. ارفع ملف الرؤوس وملف الأصناف معًا.");
       }
-      for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
-        if (pairedFiles.has(fileIndex)) continue;
-        const file = files[fileIndex];
-        try {
-          const extracted = await extractInvoiceRowsFromFile(file, kind, token);
-          for (const doc of extracted) {
-            parsed.push({
-            ...doc,
-            key: `${doc.key}|file:${fileIndex}`,
-            sourceFileName: file.name,
-            });
+      const pendingFiles = files
+        .map((file, index) => ({ file, index }))
+        .filter(({ index }) => !pairedFiles.has(index));
+      const failures: Array<{ name: string; error: string }> = [];
+      let completed = files.length - pendingFiles.length;
+      setReadProgress({ completed, total: files.length });
+      let nextIndex = 0;
+      let quotaStopReason = "";
+      const worker = async () => {
+        while (nextIndex < pendingFiles.length) {
+          if (quotaStopReason) return;
+          const entry = pendingFiles[nextIndex++];
+          try {
+            const extracted = await extractInvoiceRowsFromFile(entry.file, kind, token, invoiceFormat);
+            parsedByFile.set(entry.index, extracted.map((doc) => ({
+                ...doc,
+                key: `${doc.key}|file:${entry.index}`,
+                sourceFileName: entry.file.name,
+              })));
+          } catch (error: any) {
+            failures.push({ name: entry.file.name, error: error?.message ?? "تعذرت قراءة الملف" });
+            if (error?.status === 429) quotaStopReason = error?.message ?? "تم بلوغ حد استخدام التحويل";
+          } finally {
+            completed += 1;
+            setReadProgress({ completed, total: files.length });
           }
-        } catch (error: any) {
-          throw new Error(`${file.name}: ${error?.message ?? "تعذرت قراءة الملف"}`);
         }
+      };
+      // Keep the queue bounded to avoid sending hundreds of large PDFs to the
+      // browser/API/AI provider at once; failed files do not discard successes.
+      await Promise.all(Array.from({ length: Math.min(2, pendingFiles.length) }, () => worker()));
+      if (quotaStopReason) {
+        failures.push(...pendingFiles.slice(nextIndex).map(({ file }) => ({
+          name: file.name,
+          error: `لم يبدأ تحويل هذا الملف بسبب حد الاستخدام: ${quotaStopReason}`,
+        })));
       }
+      files.forEach((_, index) => parsed.push(...(parsedByFile.get(index) ?? [])));
+      setFailedFiles(failures);
 
       // Do not merge equal invoice numbers from different files: that could
       // silently double their lines. Flag possible duplicates for correction.
@@ -597,16 +637,19 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       }
 
       setDocs(parsed);
-      await loadMasters();
+      if (parsed.length) await loadMasters();
       toast({
         title: `تمت قراءة ${parsed.length} مستندًا من ${files.length} ملف`,
-        description: "ستظهر أخطاء المطابقة والتكرار قبل أي حفظ.",
+        description: failures.length
+          ? `نجح التحويل مع ${failures.length} ملفًا لم يكتمل؛ راجع قائمة الملفات المتعثرة.`
+          : "ستظهر أخطاء المطابقة والتكرار قبل أي حفظ.",
       });
     } catch (error: any) {
-      setDocs([]);
+      setDocs(parsed.length ? parsed : []);
       toast({ title: error?.message ?? "تعذرت قراءة الملف", variant: "destructive" });
     } finally {
       setBusy(false);
+      setReadProgress(null);
     }
   }
 
@@ -1274,17 +1317,39 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
             <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(kindLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
           </Select>
+          {kind.endsWith("_invoice") && (
+            <Select value={invoiceFormat} onValueChange={(value) => setInvoiceFormat(value as "generic" | "ragmcloud_v1")}>
+              <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ragmcloud_v1">قالب الفاتورة المرفق — RAGM Cloud</SelectItem>
+                <SelectItem value="generic">قالب عام / غير محدد</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
            <Button variant="outline" onClick={downloadTemplate}><FileDown className="ml-1 h-4 w-4" />تنزيل النموذج مع شرح وأمثلة</Button>
           <input ref={fileRef} className="hidden" type="file" accept=".xlsx,.xls,.xlsm,.ods,.csv,.pdf,.docx,.jpg,.jpeg,.png,.webp" multiple onChange={(event) => {
             const files = Array.from(event.currentTarget.files ?? []);
             event.currentTarget.value = "";
             if (files.length) void onFiles(files);
           }} />
-          <Button onClick={() => fileRef.current?.click()} disabled={loading || busy}><Upload className="ml-1 h-4 w-4" />{busy ? "قراءة الملفات وتحويلها…" : loading ? "تحميل المطابقات…" : "رفع ملف أو عدة ملفات"}</Button>
-          {fileNames.length > 0 && <span className="text-xs text-muted-foreground">{fileNames.join("، ")}</span>}
+          <Button onClick={() => fileRef.current?.click()} disabled={loading || busy}><Upload className="ml-1 h-4 w-4" />{busy ? "قراءة الملفات وتحويلها…" : loading ? "تحميل المطابقات…" : "رفع دفعة فواتير (500 ملف أو أكثر)"}</Button>
+          {fileNames.length > 0 && <span className="text-xs text-muted-foreground">تم اختيار {fileNames.length} ملفًا</span>}
         </div>
+        {readProgress && (
+          <div className="rounded border bg-muted/30 p-3 text-sm" role="status" aria-live="polite">
+            جارٍ تحويل الملفات: {readProgress.completed} من {readProgress.total}. تتم المعالجة بملفين في الوقت نفسه، وتبقى الملفات الناجحة محفوظة للمراجعة حتى لو تعذرت قراءة ملف آخر.
+          </div>
+        )}
+        {!!failedFiles.length && (
+          <div className="max-h-56 overflow-auto rounded border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+            <div className="mb-2 font-semibold">تعذرت قراءة {failedFiles.length} ملفًا — لم تُحذف نتائج الملفات الناجحة</div>
+            {failedFiles.map((failure, index) => <div key={`${failure.name}-${index}`} className="border-t border-amber-200 py-1">
+              <strong>{failure.name}:</strong> {failure.error}
+            </div>)}
+          </div>
+        )}
         <p className="text-xs text-muted-foreground">
-          الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP. بعد التحويل تقدر تطبق فرعًا ومخزنًا ووحدة على الدفعة كلها، أو تخصصها لكل مستند/سطر.
+          اختر قالب الفاتورة لهذه الدفعة؛ كل شركة يمكنها استخدام القالب المناسب. الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP (حتى 13 ميجابايت للملف). كل ملف PDF يستخدم طلب تحويل AI وقد يتوقف عند بلوغ حد الاستخدام اليومي أو الشهري؛ تبقى النتائج الناجحة للمراجعة، ولا يُحفظ شيء تلقائيًا.
         </p>
         {masterError && <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-800">{masterError}</div>}
         {!!docs.length && (
@@ -1319,6 +1384,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
               <Badge variant={issueCount ? "destructive" : "outline"}>{issueCount} خطأ إدخال</Badge>
               <Badge variant="outline">{validDocs.length} صالح مبدئيًا</Badge>
             </div>
+            {docs.length > 50 && (
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span>عرض {Math.min((documentsPage - 1) * 50 + 1, docs.length)}–{Math.min(documentsPage * 50, docs.length)} من {docs.length} فاتورة</span>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" disabled={documentsPage <= 1} onClick={() => setDocumentsPage((page) => Math.max(1, page - 1))}>السابق</Button>
+                  <Button size="sm" variant="outline" disabled={documentsPage >= Math.ceil(docs.length / 50)} onClick={() => setDocumentsPage((page) => Math.min(Math.ceil(docs.length / 50), page + 1))}>التالي</Button>
+                </div>
+              </div>
+            )}
             {masters && <div className="grid gap-3 rounded border bg-muted/20 p-3 md:grid-cols-2">
               <label className="space-y-1 text-xs">
                 <span className="font-medium">فرع الإدخال داخل النظام</span>
@@ -1398,7 +1472,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
             <div className="max-h-56 overflow-auto rounded border">
               <table className="min-w-[1500px] text-xs">
                 <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">الحالة</th><th className="p-2">كود العميل/المورد</th><th className="p-2">اسم العميل/المورد</th><th className="p-2">طريقة السداد</th><th className="p-2">فرع هذا المستند</th></tr></thead>
-                <tbody>{docs.map((doc) => {
+                <tbody>{docs.slice((documentsPage - 1) * 50, documentsPage * 50).map((doc) => {
                   const visibleIssues = doc.issues.filter((issue) => !(((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
                   const partyCodeKey = documentFieldKey(doc.key, "party_code");
                   const partyNameKey = documentFieldKey(doc.key, "party_name");
