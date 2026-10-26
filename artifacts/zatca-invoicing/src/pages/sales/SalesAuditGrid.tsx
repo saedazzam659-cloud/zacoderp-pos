@@ -1829,6 +1829,7 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
         lines: full.lines ?? [],
         customer: full.customer ?? null,
         company: (user as any)?.company ?? null,
+        currency: full.currency ?? null,
       });
       if (opts?.template) setPrintDefault(opts.template);
       setPrintAuto(!!opts?.autoPrint);

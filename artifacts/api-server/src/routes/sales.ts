@@ -2020,7 +2020,7 @@ router.get("/sales-invoices/:id", requirePermission("sales_invoices", "view"), a
         ...branchScopeSpread(req, salesInvoicesTable.branchId, undefined),
       ));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
-    const [lines, customerRows, lineAttributions] = await Promise.all([
+    const [lines, customerRows, lineAttributions, currencyRows] = await Promise.all([
       db.select().from(salesInvoiceLinesTable)
         .where(eq(salesInvoiceLinesTable.invoiceId, id))
         .orderBy(asc(salesInvoiceLinesTable.id)),
@@ -2038,6 +2038,17 @@ router.get("/sales-invoices/:id", requirePermission("sales_invoices", "view"), a
           eq(salesLineProductionCostAttributionsTable.documentType, "sales_invoice"),
           eq(salesLineProductionCostAttributionsTable.documentId, id),
         )),
+      inv.currencyCode
+        ? db.select({
+            code: currenciesTable.code,
+            nameAr: currenciesTable.nameAr,
+            nameEn: currenciesTable.nameEn,
+            symbol: currenciesTable.symbol,
+          }).from(currenciesTable).where(and(
+            eq(currenciesTable.companyId, cid),
+            eq(currenciesTable.code, inv.currencyCode),
+          )).limit(1)
+        : Promise.resolve([]),
     ]);
     // Surface offer names alongside the FK ids so the form can render the
     // "applied offer" badges immediately on edit, without an extra round-trip.
@@ -2104,6 +2115,7 @@ router.get("/sales-invoices/:id", requirePermission("sales_invoices", "view"), a
       createdByName: inv.createdById != null ? (auditMap.get(inv.createdById) ?? null) : null,
       postedByName:  inv.postedById  != null ? (auditMap.get(inv.postedById)  ?? null) : null,
       customer: customerRows[0] ?? null,
+      currency: currencyRows[0] ?? null,
       lines: linesWithOfferName,
       sourceDocument,
     });

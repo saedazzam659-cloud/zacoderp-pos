@@ -1358,6 +1358,24 @@ async function validateAndSyncItemBaseUnit(
     historicalUnitIds: history.unitIds,
   });
 
+  if (decision.normalizeLegacyRoots) {
+    for (const row of rows) {
+      const isBase = Number(row.unitId) === newBaseId;
+      const savedFactor = String(row.conversionFactor ?? row.relationFactor ?? "1");
+      await tx.update(itemUnitPricesTable).set({
+        isBase,
+        referenceUnitId: isBase ? null : newBaseId,
+        relationFactor: isBase ? "1" : savedFactor,
+        conversionFactor: isBase ? "1" : savedFactor,
+        legacyConversionConflict: false,
+      }).where(and(
+        eq(itemUnitPricesTable.id, row.id),
+        eq(itemUnitPricesTable.companyId, cid),
+        eq(itemUnitPricesTable.itemId, itemId),
+      ));
+    }
+  }
+
   // Repair the explicitly selected first base in the same transaction. For
   // the sole-row legacy shape, also clear its stale conflict marker. Other
   // graph rows are never rewritten or rebased.

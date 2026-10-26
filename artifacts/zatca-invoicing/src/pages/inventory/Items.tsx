@@ -796,7 +796,7 @@ function ItemAnalyticsPanel({ itemId, unitCode }: { itemId: number; unitCode: st
   );
 }
 
-function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
+function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitId?: number | null }) {
   const canCreateUnit = usePermission("items", "create");
   const canEditUnit = usePermission("items", "edit");
   const canDeleteUnit = usePermission("items", "delete");
@@ -907,7 +907,11 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
           {t("pages.items.unitPricesDescription")}
         </p>
         {!showUnitForm && (
-          <Button disabled={!canCreateUnit} size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => { setForm(UNIT_EMPTY); setEditUpId(null); setShowUnitForm(true); }}>
+          <Button disabled={!canCreateUnit || isLoading} size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => {
+            setForm({ ...UNIT_EMPTY, isBase: itemUnitId == null && unitPrices.length === 0 });
+            setEditUpId(null);
+            setShowUnitForm(true);
+          }}>
             <Plus className="h-3.5 w-3.5" />{t("pages.items.addUnit")}
           </Button>
         )}
@@ -2067,7 +2071,7 @@ export default function Items() {
             </TabsContent>
             <TabsContent value="units" className="mt-0">
               {editId ? (
-                <ItemUnitPricesPanel itemId={editId} />
+                <ItemUnitPricesPanel itemId={editId} itemUnitId={form.unitId ? Number(form.unitId) : null} />
               ) : (
                 <div className="text-sm text-muted-foreground p-4 text-center border rounded-lg bg-muted/30">
                   {t("inventoryMaster.units.saveItemFirst", { defaultValue: "Please save the item first to manage units." })}
@@ -2453,7 +2457,7 @@ export default function Items() {
                           )}
 
                           {expandedTab === "units" && (
-                            <ItemUnitPricesPanel itemId={it.id} />
+                            <ItemUnitPricesPanel itemId={it.id} itemUnitId={it.unitId ?? null} />
                           )}
 
                           {expandedTab === "analytics" && (

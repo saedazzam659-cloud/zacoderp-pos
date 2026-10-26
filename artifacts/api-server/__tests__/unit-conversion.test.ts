@@ -90,6 +90,40 @@ test("used legacy items can initialize a compatible unmarked unit graph from an 
   });
 });
 
+test("an explicit first base normalizes flat legacy unit rows from their saved conversion factors", () => {
+  const decision = validateBaseUnitAssignment({
+    currentBaseUnitId: null,
+    requestedBaseUnitId: 7,
+    rows: [
+      { unitId: 7, referenceUnitId: null, relationFactor: "1", conversionFactor: "1", isBase: false },
+      { unitId: 8, referenceUnitId: null, relationFactor: "1", conversionFactor: "12", isBase: false, legacyConversionConflict: true },
+    ],
+    historicalUsage: true,
+    historicalUnitIds: [null, 8],
+  });
+  assert.deepEqual(decision, {
+    allowed: true,
+    clearLegacyConflict: false,
+    normalizeLegacyRoots: true,
+  });
+});
+
+test("flat legacy units cannot be normalized when a historical unit is outside the saved graph", () => {
+  assert.throws(
+    () => validateBaseUnitAssignment({
+      currentBaseUnitId: null,
+      requestedBaseUnitId: 7,
+      rows: [
+        { unitId: 7, referenceUnitId: null, relationFactor: "1", conversionFactor: "1", isBase: false },
+        { unitId: 8, referenceUnitId: null, relationFactor: "1", conversionFactor: "12", isBase: false },
+      ],
+      historicalUsage: true,
+      historicalUnitIds: [99],
+    }),
+    (error: unknown) => error instanceof UnitConversionError && error.code === "AMBIGUOUS_BASE",
+  );
+});
+
 test("a different historical unit still blocks an unlinked first base", () => {
   assert.throws(
     () => validateBaseUnitAssignment({

@@ -290,6 +290,7 @@ export interface InitialBaseAssignmentDecision {
   allowed: true;
   clearLegacyConflict: boolean;
   markBaseUnit?: boolean;
+  normalizeLegacyRoots?: boolean;
 }
 
 /**
@@ -337,6 +338,33 @@ export function validateBaseUnitAssignment(
       );
     }
     return { allowed: true, clearLegacyConflict: false };
+  }
+
+  // Some pre-graph items stored each conversion directly against the base in
+  // conversionFactor, but had no referenceUnitId or base marker. When the
+  // owner explicitly chooses the missing base, preserve those saved factors
+  // and connect the flat legacy rows to that root; never rewrite document
+  // quantities or guess when a historical unit is absent from this graph.
+  const historicalUnitsFit = historicalUnitIds.every((unitId) =>
+    unitId === null || unitId === requestedBaseUnitId || rows.some((row) => row.unitId === unitId),
+  );
+  const flatLegacyGraph = rows.length > 1
+    && rows.every((row) => row.referenceUnitId === null)
+    && historicalUnitsFit
+    && rows.every((row) => {
+      try {
+        if (row.conversionFactor == null) return false;
+        return parseExactDecimal(row.conversionFactor ?? row.relationFactor).numerator > 0n;
+      } catch {
+        return false;
+      }
+    });
+  if (flatLegacyGraph) {
+    return {
+      allowed: true,
+      clearLegacyConflict: false,
+      normalizeLegacyRoots: true,
+    };
   }
 
   // Preserve the deterministic single-row legacy repair: older imports may
