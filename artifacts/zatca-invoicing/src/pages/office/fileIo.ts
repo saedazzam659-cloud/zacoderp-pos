@@ -151,6 +151,14 @@ export interface PdfPage {
   lines: PdfLine[];
 }
 
+export interface PdfTextItem {
+  page: number;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+}
+
 let pdfWorkerReady = false;
 async function loadPdf(file: File): Promise<any> {
   const pdfjs: any = await import("pdfjs-dist");
@@ -234,6 +242,26 @@ export async function extractPdf(file: File): Promise<PdfPage[]> {
     pages.push({ lines: itemsToLines(content.items) });
   }
   return pages;
+}
+
+export async function extractPdfTextItems(file: File): Promise<PdfTextItem[]> {
+  const pdf = await loadPdf(file);
+  const result: PdfTextItem[] = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    for (const item of content.items) {
+      if (typeof item?.str !== "string" || !item.str.trim()) continue;
+      result.push({
+        page: pageNumber,
+        text: item.str,
+        x: item.transform?.[4] ?? 0,
+        y: item.transform?.[5] ?? 0,
+        width: item.width ?? 0,
+      });
+    }
+  }
+  return result;
 }
 
 // ── Aligned tabular extraction ───────────────────────────────────────────────

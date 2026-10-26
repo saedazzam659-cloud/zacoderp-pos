@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { exportData, ensureFiscalYears, scanHistorical } from "@/lib/dataIoApi";
 import { processInvoiceBatchQueue } from "@/lib/invoiceBatchQueue";
+import { parseRagmCloudSalesInvoicePdf } from "@/lib/historicalRagmPdfParser";
 import {
   convertLinkedSalesInvoiceCsv,
   convertLinkedPurchaseOrderCsv,
@@ -15,6 +16,7 @@ import {
   isInvoiceItemsCsv,
   isPurchaseOrderHeaderCsv,
 } from "@/lib/historicalInvoiceCsvAdapter";
+import { extractPdfTextItems } from "@/pages/office/fileIo";
 
 type Kind = "sales_invoice" | "purchase_invoice" | "sales_return" | "purchase_return" | "purchase_order";
 type HistoricalImportMode = "financial_inventory" | "financial_only" | "inventory_only" | "archive_only";
@@ -206,6 +208,17 @@ async function extractInvoiceRowsFromFile(
   const supported = [...(tabular ? ["xlsx", "xls", "xlsm", "ods", "csv"] : []), "pdf", "docx", "jpg", "jpeg", "png", "webp"];
   if (!supported.includes(extension)) {
     throw new Error(`صيغة .${extension || "?"} غير مدعومة. ارفع PDF أو Excel/CSV أو Word أو صورة.`);
+  }
+
+  if (extension === "pdf" && invoiceFormat === "ragmcloud_v1") {
+    if (kind !== "sales_invoice") {
+      throw new Error("القراءة المحلية لقالب RAGM Cloud متاحة حاليًا لفواتير المبيعات فقط.");
+    }
+    const items = await extractPdfTextItems(file);
+    if (items.length < 20 || items.reduce((sum, item) => sum + item.text.length, 0) < 100) {
+      throw new Error("هذا الـPDF لا يحتوي طبقة نص كافية؛ يبدو ممسوحًا كصورة. لم يُرسل إلى AI.");
+    }
+    return parseDocuments(parseRagmCloudSalesInvoicePdf(items), kind, true, true);
   }
 
   let extractedText = "";
@@ -667,6 +680,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       batch.successes.forEach((documents, index) => parsedByFile.set(index, documents));
       const failures = batch.failures.map(({ entry, error }) => ({ name: entry.file.name, error }));
       files.forEach((_, index) => parsed.push(...(parsedByFile.get(index) ?? [])));
+      if (invoiceFormat === "ragmcloud_v1"
+        && files.some((file) => file.name.toLowerCase().endsWith(".pdf"))
+        && parsed.length) {
+        setSaveAsDraftOnly(true);
+        setSourceWarnings((current) => [
+          ...current,
+          "استُخرجت فواتير RAGM Cloud محليًا من النص المضمّن في PDF؛ ستبقى الدفعة مسودات حتى تراجعها.",
+        ]);
+      }
       setFailedFiles(failures);
 
       setDocs(markDuplicateDocuments(parsed));
