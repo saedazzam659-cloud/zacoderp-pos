@@ -2092,6 +2092,52 @@ export default function GeneralSettings() {
           </span>
         </label>
         <label
+          data-testid="sales-barcode-entry-toggle"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.salesBarcodeEntryEnabled === true
+              ? "border-primary bg-primary/5 shadow-sm"
+              : "border-border hover:border-primary/40 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 accent-primary cursor-pointer"
+            checked={user?.company?.salesBarcodeEntryEnabled === true}
+            disabled={postingSaving}
+            onChange={e => togglePostingMode({ salesBarcodeEntryEnabled: e.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">تفعيل إدخال الأصناف بالباركود في فواتير المبيعات</span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              عند التفعيل، يؤدي مسح باركود مطابق أو إدخال رمز الصنف ثم Enter إلى إضافته مباشرة. تكرار المسح يزيد كمية السطر الموجود ولا ينشئ سطرًا جديدًا.
+            </span>
+          </span>
+        </label>
+        <label
+          data-testid="allow-duplicate-invoice-items-toggle"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.allowDuplicateInvoiceItems === true
+              ? "border-primary bg-primary/5 shadow-sm"
+              : "border-border hover:border-primary/40 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 accent-primary cursor-pointer"
+            checked={user?.company?.allowDuplicateInvoiceItems === true}
+            disabled={postingSaving}
+            onChange={e => togglePostingMode({ allowDuplicateInvoiceItems: e.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">تكرار الأصناف داخل الفواتير</span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              عند التفعيل يمكن حفظ الفاتورة حتى عند وجود أكثر من سطر للصنف نفسه. تظل إدخالات الباركود تجمع الكمية في السطر الموجود.
+            </span>
+          </span>
+        </label>
+        <label
           data-testid="show-free-quantity-toggle"
           className={cn(
             "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",

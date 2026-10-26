@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 export interface ComboboxItem {
   value: string;
   code?: string;
+  barcode?: string;
   label: string;
   labelEn?: string;
   description?: string;
@@ -45,6 +46,8 @@ interface SearchComboboxProps {
   openOnFocus?: boolean;
   grouped?: boolean;
   autoFocus?: boolean;
+  advanceOnEnter?: boolean;
+  onSearchEnter?: (search: string) => boolean | Promise<boolean>;
   testId?: string;
   renderSelected?: (item: ComboboxItem) => React.ReactNode;
   renderItem?: (item: ComboboxItem, selected: boolean) => React.ReactNode;
@@ -68,6 +71,8 @@ export function SearchCombobox({
   openOnFocus = true,
   grouped,
   autoFocus,
+  advanceOnEnter = true,
+  onSearchEnter,
   testId,
   renderSelected: _renderSelected,
   renderItem,
@@ -189,6 +194,21 @@ export function SearchCombobox({
       e.preventDefault();
       moveHighlight(-1);
     } else if (e.key === "Enter") {
+      if (open && search.trim() && onSearchEnter) {
+        e.preventDefault();
+        e.stopPropagation();
+        const currentSearch = search;
+        void Promise.resolve(onSearchEnter(currentSearch))
+          .then(handled => {
+            if (!handled && flatList[highlight]) {
+              handleSelect(flatList[highlight].value, advanceOnEnter);
+            }
+          })
+          .catch(() => {
+            if (flatList[highlight]) handleSelect(flatList[highlight].value, advanceOnEnter);
+          });
+        return;
+      }
       // Enter when the popover is open: pick the currently highlighted row
       // (defaults to the first enabled item, so opening + Enter immediately
       // selects the first option) and then advance to the next form field.
@@ -197,7 +217,7 @@ export function SearchCombobox({
       if (open && flatList[highlight]) {
         e.preventDefault();
         e.stopPropagation();
-        handleSelect(flatList[highlight].value, /*advance*/ true);
+        handleSelect(flatList[highlight].value, advanceOnEnter);
       } else if (open) {
         // Open with no items — just close and let the global handler run.
         setOpen(false);

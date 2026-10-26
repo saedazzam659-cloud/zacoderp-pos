@@ -73,6 +73,10 @@ export const companiesTable = pgTable("companies", {
   // items grid grow taller. Purely presentational — items are still added via
   // the in-grid "إضافة صنف" button.
   hideQuickAddBar: boolean("hide_quick_add_bar").notNull().default(false),
+  // Sales-invoice quick entry preferences. Barcode entry and duplicate item
+  // lines are opt-in so existing companies keep their current behavior.
+  salesBarcodeEntryEnabled: boolean("sales_barcode_entry_enabled").notNull().default(false),
+  allowDuplicateInvoiceItems: boolean("allow_duplicate_invoice_items").notNull().default(false),
   // Master safety switch for negative-stock sales. When off, neither a
   // warehouse policy nor an invoice-level override may post stock below zero.
   allowNegativeSales: boolean("allow_negative_sales").notNull().default(false),

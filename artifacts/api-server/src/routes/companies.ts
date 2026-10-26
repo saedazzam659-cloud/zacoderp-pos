@@ -439,6 +439,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
     decimalPlaces, showZeros, hideQuickAddBar, showFreeQuantity, showSalesBranchStock, allowNegativeSales, purchaseBatchExpiryEnabled, autoPostingEnabled,
+    salesBarcodeEntryEnabled, allowDuplicateInvoiceItems,
     documentFieldControlsEnabled,
     showCustomerDebitNotes, showSupplierCreditNotes,
     allowUnbalancedOpeningBalances, openingBalanceReminderMessage,
@@ -500,6 +501,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
     decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
+    salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean;
     documentFieldControlsEnabled?: boolean;
     showCustomerDebitNotes?: boolean; showSupplierCreditNotes?: boolean;
     allowUnbalancedOpeningBalances?: boolean;
@@ -614,6 +616,17 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   if (showZeros !== undefined) updates.showZeros = !!showZeros;
   // UX-only toggle: hide the quick add-item bar on document item tabs.
   if (hideQuickAddBar !== undefined) updates.hideQuickAddBar = !!hideQuickAddBar;
+  for (const [key, value] of [
+    ["salesBarcodeEntryEnabled", salesBarcodeEntryEnabled],
+    ["allowDuplicateInvoiceItems", allowDuplicateInvoiceItems],
+  ] as const) {
+    if (value === undefined) continue;
+    if (typeof value !== "boolean") {
+      res.status(400).json({ error: `${key} يجب أن تكون قيمة منطقية` });
+      return;
+    }
+    updates[key] = value;
+  }
   if (showFreeQuantity !== undefined) {
     if (typeof showFreeQuantity !== "boolean") {
       res.status(400).json({ error: "showFreeQuantity يجب أن تكون قيمة منطقية" });

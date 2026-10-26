@@ -2862,6 +2862,24 @@ router.post("/sales-invoices", async (req, res) => {
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
+    const duplicateItemId = (Array.isArray(lines) ? lines : []).reduce((duplicate: number | null, line: any, index: number, rows: any[]) => {
+      if (duplicate !== null || line?.itemId == null || line.itemId === "") return duplicate;
+      const itemId = Number(line.itemId);
+      return rows.slice(0, index).some((prior: any) => Number(prior?.itemId) === itemId) ? itemId : null;
+    }, null);
+    if (duplicateItemId !== null) {
+      const [companySettings] = await db.select({ allowDuplicateInvoiceItems: companiesTable.allowDuplicateInvoiceItems })
+        .from(companiesTable)
+        .where(eq(companiesTable.id, cid));
+      if (companySettings?.allowDuplicateInvoiceItems !== true) {
+        res.status(400).json({
+          error: `الصنف #${duplicateItemId} مكرر. فعّل خيار تكرار الأصناف داخل الفواتير للسماح بذلك.`,
+          code: "DUPLICATE_INVOICE_ITEM",
+          itemId: duplicateItemId,
+        });
+        return;
+      }
+    }
     await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة المبيعات");
     const usageIds = Array.from(new Set<number>(
       (lines ?? [])
@@ -3418,6 +3436,24 @@ router.put("/sales-invoices/:id", async (req, res) => {
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             documentOfferId, costCenter, taxId } = req.body;
+    const duplicateItemId = (Array.isArray(lines) ? lines : []).reduce((duplicate: number | null, line: any, index: number, rows: any[]) => {
+      if (duplicate !== null || line?.itemId == null || line.itemId === "") return duplicate;
+      const itemId = Number(line.itemId);
+      return rows.slice(0, index).some((prior: any) => Number(prior?.itemId) === itemId) ? itemId : null;
+    }, null);
+    if (duplicateItemId !== null) {
+      const [companySettings] = await db.select({ allowDuplicateInvoiceItems: companiesTable.allowDuplicateInvoiceItems })
+        .from(companiesTable)
+        .where(eq(companiesTable.id, cid));
+      if (companySettings?.allowDuplicateInvoiceItems !== true) {
+        res.status(400).json({
+          error: `الصنف #${duplicateItemId} مكرر. فعّل خيار تكرار الأصناف داخل الفواتير للسماح بذلك.`,
+          code: "DUPLICATE_INVOICE_ITEM",
+          itemId: duplicateItemId,
+        });
+        return;
+      }
+    }
     await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة المبيعات");
     // Same required-fields gate as the POST path so a direct PUT (e.g.
     // from a script or a stale draft that pre-dates the policy) cannot

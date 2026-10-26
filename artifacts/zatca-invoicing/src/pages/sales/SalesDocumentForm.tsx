@@ -693,8 +693,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // Ref to the quick-add bar so we can loop focus back to its first field
   // (the item picker) after committing a line — Enter-driven rapid entry.
   const quickAddRef = useRef<HTMLDivElement>(null);
+  const barcodeSearchRef = useRef("");
   const focusQuickAddStart = () => {
-    quickAddRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+    const input = quickAddRef.current?.querySelector<HTMLInputElement>('input[role="combobox"]');
+    input?.focus();
+    input?.select();
   };
   useEnterNavContainer({ onAppend: () => addLine() });
   const { containerRef: enterNavRef, onKeyDown: enterNavKey } = useEnterNavigation(() => handleSave());
@@ -1766,6 +1769,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setQaItemId(""); setQaQty("1"); setQaFreeQty("0"); setQaPrice(""); setQaDiscount("0");
   }
 
+  async function addScannedSalesItem(item: any) {
+    const itemId = String(item.id);
+    const existingLine = lines.find(line => line.itemId === itemId);
+    if (existingLine) {
+      updateLine(existingLine._id, "qty", String((Number(existingLine.qty) || 0) + 1));
+      setFocusLineId(existingLine._id);
+    } else {
+      const line = newLine();
+      const taxRate = percentRateOf(headerTaxId);
+      if (taxRate !== null) line.vatRate = String(taxRate);
+      line.warehouseId = headerWarehouseId || "";
+      setLines(previous => [...previous, line]);
+      await selectItem(line._id, itemId, item);
+      setFocusLineId(line._id);
+    }
+    setQaItemId("");
+    setQaQty("1");
+    window.setTimeout(focusQuickAddStart, 0);
+  }
+
   function changeLineUnit(lineId: string, newUnitId: string) {
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
@@ -2290,6 +2313,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // Per-line gate: item name + unit + qty + sale price must be filled
     // on every populated row. Skips completely empty rows. Mirrors the
     // server-side gate so the user sees the failure instantly.
+    const duplicateItemIds = [...new Set(lines
+      .map(line => line.itemId)
+      .filter(Boolean)
+      .filter((itemId, index, itemIds) => itemIds.indexOf(itemId) !== index))];
+    if (isInvoice && duplicateItemIds.length && user?.company?.allowDuplicateInvoiceItems !== true) {
+      toast({
+        title: isRtl ? "لا يمكن حفظ المستند مع تكرار الأصناف" : "Duplicate items cannot be saved",
+        description: isRtl
+          ? "فعّل خيار «تكرار الأصناف داخل الفواتير» من الإعدادات العامة للسماح بتكرار الصنف في أكثر من سطر."
+          : "Enable “تكرار الأصناف داخل الفواتير” in General Settings to save the same item on multiple lines.",
+        variant: "destructive",
+      });
+      return;
+    }
     const lineCheck = validateInvoiceLines(lines, { requireRealItem: isInvoice });
     if (!lineCheck.ok) {
       toast({ title: lineCheck.title, description: lineCheck.description, variant: "destructive" });
@@ -2424,6 +2461,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
       code: i.code ?? undefined,
+      barcode: i.barcode ?? undefined,
       label: localizedName(i.nameAr, i.nameEn, "ar") || `#${i.id}`,
       labelEn: i.nameEn || undefined,
     })),
@@ -2685,11 +2723,56 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             items={itemComboItems}
             value={qaItemId}
             warehouseId={qaWarehouseId || headerWarehouseId}
-            onValueChange={setQaItemId}
-            onSearchChange={setItemSearch}
+            onValueChange={value => {
+              const item = (inventoryItems as any[]).find(candidate => String(candidate.id) === value);
+              const query = barcodeSearchRef.current.trim().toLowerCase();
+              const exactBarcode = !!item && query.length > 0 && [
+                item.barcode,
+                item.code,
+              ].some(candidate => String(candidate ?? "").trim().toLowerCase() === query);
+              if (isInvoice && user?.company?.salesBarcodeEntryEnabled === true && exactBarcode) {
+                void addScannedSalesItem(item);
+              } else {
+                setQaItemId(value);
+              }
+            }}
+            onSearchChange={value => {
+              barcodeSearchRef.current = value;
+              setItemSearch(value);
+            }}
+            onSearchEnter={isInvoice && user?.company?.salesBarcodeEntryEnabled === true
+              ? async query => {
+                  const code = query.trim();
+                  if (!code) return false;
+                  const params = new URLSearchParams({
+                    q: code,
+                    limit: "5",
+                    includeHidden: "1",
+                  });
+                  if (cid) params.set("companyId", String(cid));
+                  try {
+                    const response = await fetch(`${API}/api/inventory/items/search?${params}`, { headers: authH });
+                    if (!response.ok) return false;
+                    const candidates = await response.json() as any[];
+                    const exactItems = [...new Map(candidates
+                      .filter(item => [item.barcode, item.code].some(value =>
+                        String(value ?? "").trim().toLowerCase() === code.toLowerCase()))
+                      .map(item => [Number(item.id), item])).values()];
+                    if (exactItems.length !== 1) return false;
+                    await addScannedSalesItem(exactItems[0]);
+                    return true;
+                  } catch {
+                    return false;
+                  }
+                }
+              : undefined}
             loading={isSearchingItems}
             placeholder={t("salesDocForm.itemPlaceholder")}
             searchPlaceholder={t("salesDocForm.searchItemPlaceholder")}
+            autoFocus={isInvoice && isNew}
+            advanceOnEnter={!(isInvoice && user?.company?.salesBarcodeEntryEnabled === true)}
+            className="rounded-lg border-primary/40 bg-white text-base shadow-sm ring-offset-background focus-visible:ring-2"
+            testId="sales-item-quick-search"
             companyId={cid ?? ""}
             userId={user?.id ?? ""}
             branchId={branchId}
