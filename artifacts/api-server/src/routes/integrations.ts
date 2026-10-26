@@ -328,6 +328,182 @@ router.post("/zid/oauth/cancel", async (req, res) => {
   res.type("html").send(renderZidConfirmationResult("تم إلغاء الربط، ولم يتم تفعيل المتجر.", false));
 });
 
+function renderSallaStoreConfirmation(connectionId: number, confirmationToken: string, storeName: string, storeId: string, companyName: string): string {
+  const fields = `<input type="hidden" name="connectionId" value="${connectionId}">
+    <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationToken)}">`;
+  return `<!doctype html><html lang="ar"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>تأكيد متجر سلة</title><body style="font-family:system-ui,sans-serif;max-width:560px;margin:10vh auto;padding:24px;color:#172033" dir="rtl">
+    <h1>تأكيد المتجر والشركة قبل إتمام الربط</h1><p>لن يتفعّل الربط حتى تتأكد أن المتجر يتبع شركة ERP المحددة.</p>
+    <p><b>شركة ERP:</b> ${escapeHtml(companyName)}</p><p><b>متجر سلة:</b> ${escapeHtml(storeName || "متجر سلة")} (${escapeHtml(storeId)})</p>
+    <form action="/api/integrations/salla/oauth/confirm" method="post">${fields}<button>نعم، اربط هذا المتجر</button></form>
+    <form action="/api/integrations/salla/oauth/cancel" method="post">${fields}<button>إلغاء</button></form></body></html>`;
+}
+
+function renderSallaConfirmationResult(message: string, success: boolean): string {
+  const color = success ? "#047857" : "#b91c1c";
+  return `<!doctype html><html lang="ar"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>حالة ربط سلة</title><body style="font-family:system-ui,sans-serif;max-width:560px;margin:10vh auto;padding:24px;color:#172033" dir="rtl">
+    <h1 style="font-size:22px;color:${color}">${escapeHtml(message)}</h1><p>يمكنك إغلاق هذه الصفحة والعودة إلى النظام.</p></body></html>`;
+}
+
+router.post("/salla/oauth/start", async (req, res) => {
+  const user = (req as any).user;
+  const companyId = Number(user?.companyId);
+  if (!Number.isInteger(companyId) || companyId < 1) { res.status(401).json({ error: "غير مخوّل" }); return; }
+  if (user?.role !== "admin") { res.status(403).json({ error: "ربط سلة متاح لمدير الشركة فقط" }); return; }
+  const clientId = process.env.SALLA_CLIENT_ID;
+  const redirectUri = process.env.SALLA_REDIRECT_URI;
+  if (!clientId || !process.env.SALLA_CLIENT_SECRET || !redirectUri) {
+    res.status(503).json({ error: "إعداد تطبيق سلة المركزي غير مكتمل على الخادم" }); return;
+  }
+  const [company] = await db.select({ menuPermissions: companiesTable.menuPermissions })
+    .from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+  let permissions: Record<string, unknown> = {};
+  try { permissions = JSON.parse(company?.menuPermissions ?? "{}"); } catch { /* fail closed */ }
+  if (!company || permissions.salla_integration !== true) {
+    res.status(403).json({ error: "وحدة تكامل سلة غير مفعّلة لهذه الشركة" }); return;
+  }
+  const state = randomBytes(32).toString("hex");
+  await db.insert(integrationConnectionsTable).values({
+    companyId, provider: "salla", displayName: "سلة", status: "pending", pullEnabled: false, credentialsEnc: null,
+    config: { oauthStateHash: createHash("sha256").update(state).digest("hex"), oauthExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString() },
+    createdBy: Number.isInteger(user?.id) ? user.id : null,
+  });
+  const authorize = new URL("https://accounts.salla.sa/oauth2/auth");
+  authorize.searchParams.set("client_id", clientId);
+  authorize.searchParams.set("redirect_uri", redirectUri);
+  authorize.searchParams.set("response_type", "code");
+  authorize.searchParams.set("scope", "offline_access orders.read");
+  authorize.searchParams.set("state", state);
+  res.json({ authorizationUrl: authorize.toString() });
+});
+
+router.get("/salla/oauth/callback", async (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  if (!code || !state || state.length > 256) { res.status(400).send("رابط تفويض سلة غير مكتمل. أعد بدء الربط من النظام."); return; }
+  const clientId = process.env.SALLA_CLIENT_ID;
+  const clientSecret = process.env.SALLA_CLIENT_SECRET;
+  const redirectUri = process.env.SALLA_REDIRECT_URI;
+  if (!clientId || !clientSecret || !redirectUri) { res.status(503).send("إعداد تطبيق سلة المركزي غير مكتمل على الخادم."); return; }
+  const stateHash = createHash("sha256").update(state).digest("hex");
+  const [connection] = await db.select().from(integrationConnectionsTable).where(and(
+    eq(integrationConnectionsTable.provider, "salla"), eq(integrationConnectionsTable.status, "pending"),
+    sql`${integrationConnectionsTable.config}->>'oauthStateHash' = ${stateHash}`,
+  )).limit(1);
+  const config = connection?.config ?? {};
+  const expiresAt = Date.parse(String(config.oauthExpiresAt ?? ""));
+  if (!connection || !Number.isFinite(expiresAt) || expiresAt < Date.now()) { res.status(400).send("انتهت صلاحية طلب ربط سلة. أعد المحاولة."); return; }
+  const [claimed] = await db.update(integrationConnectionsTable).set({ status: "exchanging", config: {}, updatedAt: new Date() })
+    .where(and(eq(integrationConnectionsTable.id, connection.id), eq(integrationConnectionsTable.status, "pending"))).returning({ id: integrationConnectionsTable.id });
+  if (!claimed) { res.status(409).send("تم استخدام طلب الربط بالفعل. ابدأ محاولة جديدة."); return; }
+  try {
+    const tokenResponse = await fetch("https://accounts.salla.sa/oauth2/token", {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({ grant_type: "authorization_code", client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri, code }),
+      redirect: "error", signal: AbortSignal.timeout(15_000),
+    });
+    const tokenBody = await tokenResponse.json() as Record<string, any>;
+    const tokens = tokenBody.data ?? tokenBody;
+    const expiresIn = Number(tokens.expires_in);
+    if (!tokenResponse.ok || typeof tokens.access_token !== "string" || typeof tokens.refresh_token !== "string" || !Number.isFinite(expiresIn) || expiresIn <= 0) throw new Error("تعذر إكمال تفويض سلة");
+    const profileResponse = await fetch("https://accounts.salla.sa/oauth2/user/info", {
+      headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: "application/json" },
+      redirect: "error", signal: AbortSignal.timeout(15_000),
+    });
+    if (!profileResponse.ok) throw new Error("تعذر التحقق من المتجر المفوض لدى سلة");
+    const profileBody = await profileResponse.json() as Record<string, any>;
+    const profile = profileBody.data ?? profileBody;
+    const store = profile.store ?? profile.merchant ?? profile;
+    const storeId = String(store.id ?? store.store_id ?? profile.merchant_id ?? "").trim();
+    if (!storeId) throw new Error("لم تُرجع سلة معرّفًا صالحًا للمتجر");
+    const confirmationToken = randomBytes(32).toString("hex");
+    const storeName = String(store.name ?? store.title ?? profile.name ?? "متجر سلة").slice(0, 160);
+    await db.update(integrationConnectionsTable).set({
+      status: "awaiting_confirmation",
+      credentialsEnc: encryptSecret(JSON.stringify({
+        accessToken: tokens.access_token, refreshToken: tokens.refresh_token,
+        expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      })),
+      config: {
+        storeId: storeId.slice(0, 120), storeName,
+        confirmationTokenHash: createHash("sha256").update(confirmationToken).digest("hex"),
+        confirmationExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      },
+      updatedAt: new Date(),
+    }).where(eq(integrationConnectionsTable.id, connection.id));
+    const [company] = await db.select({ nameAr: companiesTable.nameAr, nameEn: companiesTable.nameEn })
+      .from(companiesTable).where(eq(companiesTable.id, connection.companyId)).limit(1);
+    res.type("html").send(renderSallaStoreConfirmation(connection.id, confirmationToken, storeName, storeId,
+      String(company?.nameAr ?? company?.nameEn ?? `شركة ERP ${connection.companyId}`)));
+  } catch (error) {
+    req.log?.error?.({ error, connectionId: connection.id }, "Salla OAuth callback failed");
+    await db.update(integrationConnectionsTable).set({ status: "error", lastSyncError: "OAuth authorization failed", updatedAt: new Date() })
+      .where(eq(integrationConnectionsTable.id, connection.id));
+    res.status(502).send("لم يكتمل ربط سلة. أعد بدء التفويض من النظام.");
+  }
+});
+
+router.post("/salla/oauth/confirm", async (req, res) => {
+  const connectionId = Number(req.body?.connectionId);
+  const token = typeof req.body?.confirmationToken === "string" ? req.body.confirmationToken : "";
+  if (!Number.isInteger(connectionId) || connectionId < 1 || !/^[a-f0-9]{64}$/.test(token)) { res.status(400).send("بيانات تأكيد متجر سلة غير صالحة"); return; }
+  const result = await db.transaction(async tx => {
+    const [connection] = await tx.select().from(integrationConnectionsTable).where(and(
+      eq(integrationConnectionsTable.id, connectionId), eq(integrationConnectionsTable.provider, "salla"),
+      eq(integrationConnectionsTable.status, "awaiting_confirmation"),
+    )).limit(1);
+    const config = connection?.config ?? {};
+    const expected = String(config.confirmationTokenHash ?? "");
+    const provided = createHash("sha256").update(token).digest("hex");
+    if (!connection || !/^[a-f0-9]{64}$/.test(expected) || !timingSafeEqual(Buffer.from(expected), Buffer.from(provided)) ||
+        !Number.isFinite(Date.parse(String(config.confirmationExpiresAt ?? ""))) || Date.parse(String(config.confirmationExpiresAt)) < Date.now()) {
+      return { ok: false as const, status: 410, error: "انتهت صلاحية تأكيد المتجر. أعد بدء الربط." };
+    }
+    const storeId = String(config.storeId ?? "");
+    const storeName = String(config.storeName ?? "");
+    const [company] = await tx.select({ nameAr: companiesTable.nameAr, menuPermissions: companiesTable.menuPermissions })
+      .from(companiesTable).where(eq(companiesTable.id, connection.companyId)).limit(1);
+    let permissions: Record<string, unknown> = {};
+    try { permissions = JSON.parse(company?.menuPermissions ?? "{}"); } catch { /* fail closed */ }
+    if (!company || permissions.salla_integration !== true) return { ok: false as const, status: 409, error: "وحدة تكامل سلة غير مفعّلة لهذه الشركة." };
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${"salla-store:" + storeId}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${"salla-company:" + connection.companyId}))`);
+    const [claimedStore] = await tx.select({ id: integrationConnectionsTable.id }).from(integrationConnectionsTable).where(and(
+      eq(integrationConnectionsTable.provider, "salla"), eq(integrationConnectionsTable.status, "connected"),
+      ne(integrationConnectionsTable.companyId, connection.companyId), sql`${integrationConnectionsTable.config}->>'storeId' = ${storeId}`,
+    )).limit(1);
+    const [otherStore] = await tx.select({ id: integrationConnectionsTable.id }).from(integrationConnectionsTable).where(and(
+      eq(integrationConnectionsTable.provider, "salla"), eq(integrationConnectionsTable.status, "connected"),
+      eq(integrationConnectionsTable.companyId, connection.companyId), ne(integrationConnectionsTable.id, connection.id),
+    )).limit(1);
+    if (claimedStore || otherStore) return { ok: false as const, status: 409, error: claimedStore ? "هذا المتجر مرتبط بشركة ERP أخرى." : "افصل متجر سلة الحالي قبل ربط متجر آخر." };
+    await tx.update(integrationConnectionsTable).set({
+      status: "connected", displayName: storeName, config: { storeId, storeName, connectedAt: new Date().toISOString() }, updatedAt: new Date(),
+    }).where(eq(integrationConnectionsTable.id, connection.id));
+    return { ok: true as const, storeName, companyName: String(company.nameAr ?? `شركة ERP ${connection.companyId}`) };
+  });
+  res.status(result.ok ? 200 : result.status).type("html").send(renderSallaConfirmationResult(
+    result.ok ? `تم ربط متجر ${result.storeName} بشركة ERP ${result.companyName}.` : result.error, result.ok));
+});
+
+router.post("/salla/oauth/cancel", async (req, res) => {
+  const id = Number(req.body?.connectionId);
+  const token = typeof req.body?.confirmationToken === "string" ? req.body.confirmationToken : "";
+  const [connection] = await db.select().from(integrationConnectionsTable).where(and(
+    eq(integrationConnectionsTable.id, id), eq(integrationConnectionsTable.provider, "salla"),
+    eq(integrationConnectionsTable.status, "awaiting_confirmation"),
+  )).limit(1);
+  const expected = String(connection?.config?.confirmationTokenHash ?? "");
+  const provided = createHash("sha256").update(token).digest("hex");
+  if (!connection || !/^[a-f0-9]{64}$/.test(token) || !/^[a-f0-9]{64}$/.test(expected) ||
+      !timingSafeEqual(Buffer.from(expected), Buffer.from(provided))) {
+    res.status(410).send("انتهت صلاحية تأكيد متجر سلة."); return;
+  }
+  await db.delete(integrationConnectionsTable).where(eq(integrationConnectionsTable.id, id));
+  res.type("html").send(renderSallaConfirmationResult("تم إلغاء الربط، ولم يتم تفعيل المتجر.", false));
+});
+
 // ─── Catalog (no auth needed beyond the global authMiddleware) ──────────
 router.get("/providers", (_req, res) => {
   res.json({
@@ -365,9 +541,97 @@ router.get("/connections", async (req, res) => {
     .orderBy(desc(integrationConnectionsTable.createdAt));
   res.json({ connections: rows.map(({ config, ...row }) => ({
     ...row,
-    storeName: row.provider === "zid" && row.status === "connected" ? String(config.storeName ?? "") || null : null,
-    storeId: row.provider === "zid" && row.status === "connected" ? String(config.storeId ?? "") || null : null,
+    storeName: ["zid", "salla"].includes(row.provider) && row.status === "connected" ? String(config.storeName ?? "") || null : null,
+    storeId: ["zid", "salla"].includes(row.provider) && row.status === "connected" ? String(config.storeId ?? "") || null : null,
   })) });
+});
+
+router.get("/salla/orders", async (req, res) => {
+  const user = (req as any).user;
+  const companyId = Number(user?.companyId);
+  if (!Number.isInteger(companyId) || companyId < 1) { res.status(401).json({ error: "غير مخوّل" }); return; }
+  if (user?.role !== "admin") { res.status(403).json({ error: "عرض طلبات سلة متاح لمدير الشركة فقط" }); return; }
+  const [company] = await db.select({ menuPermissions: companiesTable.menuPermissions }).from(companiesTable)
+    .where(eq(companiesTable.id, companyId)).limit(1);
+  let permissions: Record<string, unknown> = {};
+  try { permissions = JSON.parse(company?.menuPermissions ?? "{}"); } catch { /* fail closed */ }
+  if (!company || permissions.salla_integration !== true) { res.status(403).json({ error: "وحدة تكامل سلة غير مفعّلة لهذه الشركة" }); return; }
+  const [connection] = await db.select().from(integrationConnectionsTable).where(and(
+    eq(integrationConnectionsTable.companyId, companyId), eq(integrationConnectionsTable.provider, "salla"),
+    eq(integrationConnectionsTable.status, "connected"),
+  )).orderBy(desc(integrationConnectionsTable.updatedAt)).limit(1);
+  if (!connection?.credentialsEnc) { res.status(409).json({ error: "اربط متجر سلة أولاً" }); return; }
+  const credentials = safeParse(decryptSecret(connection.credentialsEnc) ?? "{}");
+  let accessToken = String(credentials.accessToken ?? "");
+  const expiresAt = Date.parse(String(credentials.expiresAt ?? ""));
+  if (!accessToken || !credentials.refreshToken || !Number.isFinite(expiresAt)) {
+    res.status(409).json({ error: "بيانات تفويض سلة غير مكتملة. أعد ربط المتجر." }); return;
+  }
+  if (expiresAt <= Date.now() + 5 * 60_000) {
+    try {
+      const refreshResponse = await fetch("https://accounts.salla.sa/oauth2/token", {
+        method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token", client_id: process.env.SALLA_CLIENT_ID ?? "",
+          client_secret: process.env.SALLA_CLIENT_SECRET ?? "", refresh_token: String(credentials.refreshToken),
+        }),
+        redirect: "error", signal: AbortSignal.timeout(15_000),
+      });
+      const raw = await refreshResponse.json() as Record<string, any>;
+      const fresh = raw.data ?? raw;
+      const seconds = Number(fresh.expires_in);
+      if (!refreshResponse.ok || typeof fresh.access_token !== "string" || !Number.isFinite(seconds) || seconds <= 0) throw new Error("Invalid Salla refresh response");
+      accessToken = fresh.access_token;
+      await db.update(integrationConnectionsTable).set({
+        credentialsEnc: encryptSecret(JSON.stringify({
+          accessToken, refreshToken: fresh.refresh_token ?? credentials.refreshToken,
+          expiresAt: new Date(Date.now() + seconds * 1000).toISOString(),
+        })),
+        updatedAt: new Date(),
+      }).where(eq(integrationConnectionsTable.id, connection.id));
+    } catch (error) {
+      req.log?.error?.({ error, connectionId: connection.id }, "Salla token refresh failed");
+      res.status(409).json({ error: "تعذر تجديد تفويض سلة. أعد ربط المتجر." }); return;
+    }
+  }
+  const page = Math.max(1, Math.min(10_000, Number.parseInt(String(req.query.page ?? "1"), 10) || 1));
+  const perPage = Math.max(1, Math.min(50, Number.parseInt(String(req.query.per_page ?? "20"), 10) || 20));
+  try {
+    const url = new URL("https://api.salla.dev/admin/v2/orders");
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", String(perPage));
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      redirect: "error", signal: AbortSignal.timeout(20_000),
+    });
+    const body = await response.json().catch(() => null) as Record<string, any> | null;
+    if (!response.ok) {
+      res.status(response.status === 401 || response.status === 403 ? 409 : 502).json({ error: "تعذر جلب طلبات سلة. تحقق من صلاحية orders.read ثم أعد ربط المتجر." });
+      return;
+    }
+    const rawOrders = Array.isArray(body?.data) ? body.data : Array.isArray(body?.data?.data) ? body.data.data : [];
+    const orders = rawOrders.map((order: Record<string, any>) => {
+      const total = order.amounts?.total ?? order.total ?? {};
+      const status = order.status?.name ?? order.status ?? order.order_status?.name ?? order.order_status ?? "";
+      return {
+        id: String(order.id ?? ""),
+        reference_id: String(order.reference_id ?? order.id ?? ""),
+        created_at: String(order.created_at ?? ""),
+        status: { name: String(status) },
+        amounts: {
+          total: {
+            amount: String(typeof total === "object" ? total.amount ?? "" : total),
+            currency: String(typeof total === "object" ? total.currency ?? order.currency ?? "" : order.currency ?? ""),
+          },
+        },
+        customer: { name: String(order.customer?.name ?? "") },
+      };
+    });
+    res.json({ orders, pagination: body?.pagination ?? body?.data?.pagination ?? null, page, perPage });
+  } catch (error) {
+    req.log?.error?.({ error, connectionId: connection.id }, "Salla order pull failed");
+    res.status(502).json({ error: "تعذر الاتصال بخدمة طلبات سلة" });
+  }
 });
 
 router.get("/zid/orders", async (req, res) => {
@@ -505,8 +769,8 @@ router.post("/connections", async (req, res) => {
   if (!companyId) { res.status(401).json({ error: "غير مخوّل" }); return; }
 
   const provider = String(req.body?.provider ?? "");
-  if (provider === "zid") {
-    res.status(400).json({ error: "اربط Zid عبر تفويض OAuth الرسمي، وليس من نموذج الاتصال العام" }); return;
+  if (provider === "zid" || provider === "salla") {
+    res.status(400).json({ error: `اربط ${provider === "zid" ? "Zid" : "سلة"} عبر تفويض OAuth الرسمي، وليس من نموذج الاتصال العام` }); return;
   }
   const info = findProvider(provider);
   if (!info)                       { res.status(400).json({ error: "مزوّد غير معروف" }); return; }
@@ -564,8 +828,8 @@ router.get("/connections/:id", async (req, res) => {
 router.patch("/connections/:id", async (req, res) => {
   const conn = await loadConn(req, res);
   if (!conn) return;
-  if (conn.provider === "zid") {
-    res.status(400).json({ error: "تغييرات ربط Zid تتم عبر التفويض الرسمي فقط" }); return;
+  if (conn.provider === "zid" || conn.provider === "salla") {
+    res.status(400).json({ error: `تغييرات ربط ${conn.provider === "zid" ? "Zid" : "سلة"} تتم عبر التفويض الرسمي فقط` }); return;
   }
   const upd: Record<string, unknown> = { updatedAt: new Date() };
   if (typeof req.body?.displayName === "string") upd.displayName = req.body.displayName.trim().slice(0, 120);
@@ -594,8 +858,8 @@ router.delete("/connections/:id", async (req, res) => {
 router.post("/connections/:id/test", async (req, res) => {
   const conn = await loadConn(req, res);
   if (!conn) return;
-  if (conn.provider === "zid") {
-    res.status(400).json({ error: "يتم اختبار ربط Zid من خلال تفويض OAuth الرسمي" }); return;
+  if (conn.provider === "zid" || conn.provider === "salla") {
+    res.status(400).json({ error: `يتم اختبار ربط ${conn.provider === "zid" ? "Zid" : "سلة"} من خلال تفويض OAuth الرسمي` }); return;
   }
   const adapter = getAdapter(conn.provider);
   if (!adapter) { res.status(400).json({ error: "لا يوجد محوّل لهذا المزوّد" }); return; }
@@ -618,8 +882,8 @@ router.post("/connections/:id/test", async (req, res) => {
 router.post("/connections/:id/sync", async (req, res) => {
   const conn = await loadConn(req, res);
   if (!conn) return;
-  if (conn.provider === "zid") {
-    res.status(400).json({ error: "مزامنة Zid تستخدم مسارات الطلبات المخصصة" }); return;
+  if (conn.provider === "zid" || conn.provider === "salla") {
+    res.status(400).json({ error: `مزامنة ${conn.provider === "zid" ? "Zid" : "سلة"} تستخدم مسارات الطلبات المخصصة` }); return;
   }
   const result = await runSync(conn, "manual");
   res.status(result.status === "failed" ? 502 : 200).json(result);
@@ -644,6 +908,9 @@ export const inboundRouter = Router();
 inboundRouter.post("/:provider/:token", async (req, res) => {
   const provider = String(req.params.provider);
   const token    = String(req.params.token);
+  if (provider === "salla" || provider === "zid") {
+    res.status(400).json({ error: `مزود ${provider === "salla" ? "سلة" : "Zid"} لا يستقبل الفواتير عبر Push` }); return;
+  }
   if (!/^[a-f0-9]{48}$/.test(token)) { res.status(400).json({ error: "token غير صالح" }); return; }
   const tokenHash = createHash("sha256").update(token).digest("hex");
   const [conn] = await db

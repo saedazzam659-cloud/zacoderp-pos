@@ -39,6 +39,11 @@ export default function IntegrationsMarketplace() {
   const [category, setCategory] = useState<string>("all");
   const [connectingTo, setConnectingTo] = useState<Provider | null>(null);
   const [connectingZid, setConnectingZid] = useState(false);
+  const [connectingSalla, setConnectingSalla] = useState(false);
+  const [sallaOrdersOpen, setSallaOrdersOpen] = useState(false);
+  const [sallaOrdersLoading, setSallaOrdersLoading] = useState(false);
+  const [sallaOrdersError, setSallaOrdersError] = useState("");
+  const [sallaOrders, setSallaOrders] = useState<any[]>([]);
   const [zidOrdersOpen, setZidOrdersOpen] = useState(false);
   const [zidOrdersLoading, setZidOrdersLoading] = useState(false);
   const [zidOrdersError, setZidOrdersError] = useState("");
@@ -60,7 +65,40 @@ export default function IntegrationsMarketplace() {
   const connections = connData?.connections ?? [];
   const connByProvider = new Map(connections.map(c => [c.provider, c]));
   const zidConnection = connByProvider.get("zid");
+  const sallaConnection = connByProvider.get("salla");
   const zidEnabled = companyAllowsModule(user, "zid_integration");
+  const sallaEnabled = companyAllowsModule(user, "salla_integration");
+
+  const connectSalla = async () => {
+    setConnectingSalla(true);
+    try {
+      const response = await fetch("/api/integrations/salla/oauth/start", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "تعذر بدء ربط سلة");
+      if (typeof data.authorizationUrl !== "string") throw new Error("استجابة ربط سلة غير صالحة");
+      window.location.assign(data.authorizationUrl);
+    } catch (error) {
+      toast({ title: error instanceof Error ? error.message : "تعذر بدء ربط سلة", variant: "destructive" });
+      setConnectingSalla(false);
+    }
+  };
+
+  const loadSallaOrders = async () => {
+    setSallaOrdersOpen(true);
+    setSallaOrdersLoading(true);
+    setSallaOrdersError("");
+    try {
+      const response = await fetch("/api/integrations/salla/orders?page=1&per_page=20");
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "تعذر تحميل طلبات سلة");
+      setSallaOrders(Array.isArray(data.orders) ? data.orders : []);
+    } catch (error) {
+      setSallaOrdersError(error instanceof Error ? error.message : "تعذر تحميل طلبات سلة");
+      setSallaOrders([]);
+    } finally {
+      setSallaOrdersLoading(false);
+    }
+  };
 
   const connectZid = async () => {
     setConnectingZid(true);
@@ -170,7 +208,7 @@ export default function IntegrationsMarketplace() {
   };
 
   const filtered = providers.filter(p => {
-    if (p.id === "zid") return false;
+    if (p.id === "zid" || p.id === "salla") return false;
     if (category !== "all" && p.category !== category) return false;
     if (search && !p.nameAr.includes(search) && !p.nameEn.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
@@ -213,6 +251,29 @@ export default function IntegrationsMarketplace() {
           </Button>
         </Card>
       )}
+      {sallaEnabled && (
+        <Card className="p-5 flex flex-wrap items-center justify-between gap-4 border-emerald-200 bg-emerald-50/50">
+          <div>
+            <h2 className="font-semibold">ربط متجر سلة</h2>
+            <p className="text-sm text-slate-600 mt-1">
+              يربط كل متجر بشركة ERP الخاصة به عبر تفويض سلة الرسمي. لا تُدخل كلمة مرور أو رمز وصول هنا.
+            </p>
+            {sallaConnection?.status === "connected" && (
+              <Badge className="mt-2 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                <CheckCircle2 className="w-3 h-3 ml-1" />
+                متصل — متجر {sallaConnection.storeName || sallaConnection.displayName}
+                {sallaConnection.storeId ? ` (المعرّف: ${sallaConnection.storeId})` : ""}
+              </Badge>
+            )}
+          </div>
+          <div className="flex gap-2">
+            {sallaConnection?.status === "connected" && <Button variant="outline" onClick={loadSallaOrders}>عرض الطلبات</Button>}
+            <Button onClick={connectSalla} disabled={connectingSalla}>
+              {connectingSalla ? "جارٍ التحويل إلى سلة..." : sallaConnection?.status === "connected" ? "إعادة الربط" : "ربط متجر سلة"}
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-64">
@@ -250,6 +311,21 @@ export default function IntegrationsMarketplace() {
                       </div>
                     </div>
                     <Button variant="outline" size="sm" onClick={loadZidOrders}>عرض الطلبات</Button>
+                  </Card>
+                );
+              }
+              if (c.provider === "salla") {
+                return (
+                  <Card key={c.id} className="p-4 flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-lg bg-emerald-50 flex items-center justify-center text-lg font-bold text-emerald-700">S</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold truncate">{c.storeName || c.displayName}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {c.status === "connected" ? "متصل" : c.status === "awaiting_confirmation" ? "بانتظار تأكيد المتجر" : "بانتظار التفويض"}
+                        {c.status === "connected" && c.storeId ? ` · معرّف المتجر: ${c.storeId}` : ""}
+                      </div>
+                    </div>
+                    {c.status === "connected" && <Button variant="outline" size="sm" onClick={loadSallaOrders}>عرض الطلبات</Button>}
                   </Card>
                 );
               }
@@ -401,6 +477,46 @@ export default function IntegrationsMarketplace() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setZidOrdersOpen(false)}>إغلاق</Button>
             <Button onClick={loadZidOrders} disabled={zidOrdersLoading}>تحديث القائمة</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={sallaOrdersOpen} onOpenChange={setSallaOrdersOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>طلبات متجر سلة</DialogTitle>
+            <DialogDescription>عرض للقراءة فقط من المتجر المرتبط بهذه الشركة. لا تُنشأ فواتير ERP تلقائيًا.</DialogDescription>
+          </DialogHeader>
+          {sallaOrdersLoading ? (
+            <p className="py-8 text-center text-sm text-slate-500">جارٍ تحميل الطلبات...</p>
+          ) : sallaOrdersError ? (
+            <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{sallaOrdersError}</div>
+          ) : sallaOrders.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-500">لا توجد طلبات في هذه الصفحة.</p>
+          ) : (
+            <div className="space-y-3">
+              {sallaOrders.map((order, index) => {
+                const orderId = String(order.reference_id ?? order.id ?? index);
+                const total = order.amounts?.total ?? order.total ?? {};
+                const amount = typeof total === "object" ? total.amount ?? total.amount_formatted : total;
+                const currency = typeof total === "object" ? total.currency ?? "" : order.currency ?? "";
+                return (
+                  <div key={orderId} className="rounded-lg border p-3 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold">{order.reference_id ?? order.id ?? "—"}</div>
+                      <div className="text-xs text-slate-500 mt-1">{order.customer?.name ?? "عميل سلة"} · {order.created_at ?? "—"}</div>
+                    </div>
+                    <div className="text-sm text-left">
+                      <div>{amount ?? "—"} {currency}</div>
+                      <Badge variant="outline" className="mt-1">{String(order.status?.name ?? order.status ?? "—")}</Badge>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSallaOrdersOpen(false)}>إغلاق</Button>
+            <Button onClick={loadSallaOrders} disabled={sallaOrdersLoading}>تحديث القائمة</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

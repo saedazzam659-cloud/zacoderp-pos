@@ -54,14 +54,12 @@ const odoo: ProviderInfo = {
 const salla: ProviderInfo = {
   id: "salla", nameAr: "سلة", nameEn: "Salla",
   category: "ecommerce", taglineAr: "منصة المتاجر الإلكترونية الأولى في السعودية",
-  status: "stable", capabilities: { pull: true, push: true },
+  status: "beta", capabilities: { pull: false, push: false },
   accent: "10b981",
   logoSvg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="M12 24h40l-6 28H18z" fill="#10b981"/><circle cx="22" cy="56" r="3" fill="#065f46"/><circle cx="42" cy="56" r="3" fill="#065f46"/></svg>`,
-  credentialFields: [
-    { key: "accessToken", labelAr: "Access Token", type: "password", required: true,
-      helperAr: "من لوحة تاجر سلة: التطبيقات → التطبيقات الخاصة → إنشاء تطبيق" },
-    { key: "storeId", labelAr: "معرّف المتجر (Store ID)", type: "text", required: false, placeholder: "اختياري" },
-  ],
+  // Salla is connected through the dedicated OAuth flow; merchant tokens are
+  // never pasted into the generic connection form.
+  credentialFields: [],
 };
 
 const genericRest: ProviderInfo = {
