@@ -145,7 +145,6 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   training_room: "training_room",
   multi_link: "multi_link",
   zid_integration: "zid_integration",
-  salla_integration: "salla_integration",
   // متابعة الديمو للشركات — موديول مستقل اختياري، مغلق افتراضيًا.
   demo_analytics: "demo_analytics",
   // الرقابة الداخلية — every granular key rolls up to ONE default-OFF gate.
@@ -168,7 +167,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
   "extensions_platform", "office", "demo_analytics", "module_dashboards", "simple_manufacturing",
-  "zid_integration", "salla_integration",
+  "zid_integration",
   "internal_control", "egypt_tax", "jordan_tax", "school", "clothing", "additional_accounting_reports",
   "additional_sales_reports", "additional_purchase_reports",
   "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",

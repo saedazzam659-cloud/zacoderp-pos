@@ -113,7 +113,6 @@ export const MENU_ITEMS: MenuItem[] = [
   // sidebar group + the per-company MenuPermissions toggle.
   { key: "multi_link",         label: "ربط متعدد",                  section: "ربط متعدد" },
   { key: "zid_integration",    label: "تكامل Zid",                  section: "التكاملات" },
-  { key: "salla_integration",  label: "تكامل سلة",                  section: "التكاملات" },
 
   // ── أوفيس زاكود ────────────────────────────────────────────────
   // In-browser Word + Excel editor (open/read/save external DOCX, XLSX,
