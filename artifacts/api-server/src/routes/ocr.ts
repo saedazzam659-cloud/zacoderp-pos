@@ -130,7 +130,7 @@ router.post("/extract", async (req, res) => {
 const INVOICE_MIMES = new Set(["application/pdf", "image/png", "image/jpeg", "image/jpg", "image/webp"]);
 const INVOICE_KINDS = new Set(["sales_invoice", "purchase_invoice", "sales_return", "purchase_return"]);
 const INVOICE_FIELDS = [
-  "source_doc_number", "document_date", "source_invoice_number", "party_code", "party_name",
+  "source_doc_number", "document_date", "source_datetime", "source_invoice_number", "party_code", "party_name",
   "branch_code", "item_code", "item_name", "unit_code", "unit_name", "warehouse_code", "qty", "free_qty", "unit_price",
   "discount_percent", "line_discount_amount", "vat_rate", "line_total", "subtotal", "vat_amount",
   "discount_amount", "total_amount", "payment_type", "currency_code", "exchange_rate",
@@ -183,6 +183,7 @@ router.post("/extract-invoices", requireAiFeature("data_import_ai"), async (req,
   const formatInstructions = invoiceFormat === "ragmcloud_v1" ? [
     "Source format profile: RAGM Cloud bilingual Arabic/English tax invoice, matching the supplied Al-Buraiki Trading sample.",
     "Map printed labels as follows: Invoice No / رقم الفاتورة => source_doc_number; Date / التاريخ => document_date; Account No / رقم الحساب => party_code; Customer / العميل => party_name; VAT Number is not a party code.",
+    "Use the Date / التاريخ field in the invoice header for document_date and source_datetime. Ignore the separate print timestamp/footer. Return document_date as YYYY-MM-DD and source_datetime with the header date and time; preserve local time and do not add a timezone.",
     "For each printed item row map Item Code / رمز الصنف => item_code; ITEM DESCRIPTION / وصف الصنف => item_name; Unit / الوحدة => unit_name; Unit Price / سعر الوحدة => unit_price; QUANTITY / الكمية => qty; discount => line_discount_amount or discount_percent only when its meaning is explicit; Bonus / بونص => free_qty; Vat => vat_rate; Vat Amount / مبلغ الضريبة => line VAT amount; TOTAL / الإجمالي => line_total.",
     "Map document subtotal from الإجمالي قبل الخصم or Net VAT Excluded only when the label and arithmetic agree; VAT Amount / ضريبة القيمة المضافة is document VAT; Included VAT Net / الصافي شامل الضريبة is total_amount. Do not confuse line TOTAL with document total.",
     "Payment Kind / طريقة الدفع values نقدي map to cash, أجل/اجل map to credit, and تحويل بنكي map to bank. If the invoice states Saudi Riyals / ريال سعودي / SAR, use SAR and exchange_rate 1; otherwise leave currency fields empty.",
@@ -194,7 +195,7 @@ router.post("/extract-invoices", requireAiFeature("data_import_ai"), async (req,
     `The user selected document kind: ${String(kind)}. Do not change it.`,
     `Return JSON only: {"rows":[{${INVOICE_FIELDS.map((field) => `"${field}":"string"`).join(",")}}]}.`,
     "Each row is exactly one invoice line. Repeat all header fields on every line. If a value is unreadable or absent, return an empty string; never infer or invent a party, item, code, price, quantity, date, tax, or total.",
-    "Preserve printed codes and Arabic names. Normalize dates to YYYY-MM-DD only when unambiguous; otherwise empty.",
+    "Preserve printed codes and Arabic names. Normalize document_date to YYYY-MM-DD only when unambiguous; otherwise empty. Also return source_datetime as the exact printed date and time (ISO local date-time without timezone only when unambiguous); leave it empty when no time is printed.",
     "Keep printed amount and tax values as written, without recomputing them. Use source_doc_number for the external invoice/return number. For returns, source_invoice_number is the original invoice number only when printed.",
     "Map line item code/name, printed unit-of-measure code/name, quantity, free quantity, unit price, discount percent or amount, VAT rate, line total, and notes when visible. Only use known template fields.",
     "For missing payment/currency/branch/warehouse values leave empty. Do not assume defaults.",

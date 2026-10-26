@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { AlertTriangle, CheckCircle2, FileDown, Loader2, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,7 @@ type HistoricalDoc = {
   kind: Kind;
   sourceNumber: string;
   date: string;
+  sourceDateTime?: string;
   sourceInvoiceNumber: string;
   partyName: string;
   branchOverrideCode?: string;
@@ -266,6 +267,7 @@ function parseDocuments(
     if (!doc) {
       doc = {
         key, kind, sourceNumber, date,
+        sourceDateTime: String(row.source_datetime ?? "").trim() || undefined,
         sourceInvoiceNumber: String(row.source_invoice_number ?? "").trim(),
         partyName: String(row.party_name ?? "").trim(),
         paymentType: preserveMissingValues
@@ -393,6 +395,7 @@ function historicalDocRows(doc: HistoricalDoc) {
   return doc.lines.map((line: any) => ({
     source_doc_number: doc.sourceNumber,
     document_date: doc.date,
+    source_datetime: doc.sourceDateTime ?? "",
     source_invoice_number: doc.sourceInvoiceNumber,
     party_code: doc.partyCode,
     party_name: doc.partyName,
@@ -431,6 +434,7 @@ function reparseEditedDoc(doc: HistoricalDoc, rows: any[]) {
     ...parsed,
     key: doc.key,
     sourceFileName: doc.sourceFileName,
+    sourceDateTime: parsed.sourceDateTime ?? doc.sourceDateTime,
     branchOverrideCode: doc.branchOverrideCode,
     issues: [...parsed.issues, ...doc.issues.filter((issue) => issue.startsWith("تكرار محتمل"))],
     lines: parsed.lines.map((line: any, index: number) => ({
@@ -439,6 +443,38 @@ function reparseEditedDoc(doc: HistoricalDoc, rows: any[]) {
       unitOverrideCode: doc.lines[index]?.unitOverrideCode,
     })),
   };
+}
+
+function markDuplicateDocuments(documents: HistoricalDoc[]) {
+  const groups = new Map<string, number[]>();
+  documents.forEach((doc, index) => {
+    if (!norm(doc.sourceNumber)) return;
+    const duplicateKey = [
+      doc.kind,
+      norm(doc.sourceNumber),
+      norm(doc.sourceDateTime || doc.date),
+      norm(doc.partyCode || doc.partyName),
+    ].join("|");
+    const indexes = groups.get(duplicateKey) ?? [];
+    indexes.push(index);
+    groups.set(duplicateKey, indexes);
+  });
+  const duplicatesByIndex = new Map<number, number[]>();
+  for (const indexes of groups.values()) {
+    if (indexes.length < 2) continue;
+    for (const index of indexes) duplicatesByIndex.set(index, indexes);
+  }
+  return documents.map((doc, index) => {
+    const duplicates = duplicatesByIndex.get(index);
+    const issues = doc.issues.filter((issue) => !issue.startsWith("تكرار محتمل لنفس رقم المستند"));
+    if (duplicates) {
+      const otherFiles = duplicates
+        .filter((otherIndex) => otherIndex !== index)
+        .map((otherIndex) => documents[otherIndex].sourceFileName ?? "ملف آخر");
+      issues.push(`تكرار محتمل لنفس رقم المستند والجهة والتاريخ/الوقت: ${otherFiles.join("، ")}`);
+    }
+    return { ...doc, issues };
+  });
 }
 
 async function requestJson(url: string, token: string | null, method = "GET", body?: unknown) {
@@ -481,6 +517,9 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [docs, setDocs] = useState<HistoricalDoc[]>([]);
   const [documentsPage, setDocumentsPage] = useState(1);
   const [masters, setMasters] = useState<Master | null>(null);
+  const [fiscalYears, setFiscalYears] = useState<any[]>([]);
+  const [referenceFiscalYearId, setReferenceFiscalYearId] = useState("");
+  const [fiscalYearsError, setFiscalYearsError] = useState("");
   const [masterError, setMasterError] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -490,6 +529,31 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
   const [sourceInvoiceIds, setSourceInvoiceIds] = useState<Record<string, number>>({});
   const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
   const [saveAsDraftOnly, setSaveAsDraftOnly] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setFiscalYears([]);
+    setReferenceFiscalYearId("");
+    if (!token || !cid) return () => { active = false; };
+    void (async () => {
+      const years = await requestJson(`/api/fiscal-years/years?companyId=${cid}`, token) as any[];
+      const details = await Promise.all(years.map((year) =>
+        requestJson(`/api/fiscal-years/years/${year.id}?companyId=${cid}`, token) as Promise<any>,
+      ));
+      if (active) {
+        setFiscalYears(details.map((detail) => ({ ...detail.year, periods: detail.periods ?? [] })));
+        setFiscalYearsError("");
+      }
+    })().catch((error: any) => {
+      if (active) setFiscalYearsError(error?.message ?? "تعذر تحميل الفترات المالية");
+    });
+    return () => { active = false; };
+  }, [token, cid]);
+
+  const referenceFiscalYear = fiscalYears.find((year) => String(year.id) === referenceFiscalYearId);
+  const outsideReferenceCount = referenceFiscalYear
+    ? docs.filter((doc) => doc.date && (doc.date < referenceFiscalYear.startDate || doc.date > referenceFiscalYear.endDate)).length
+    : 0;
 
   const issueCount = useMemo(() => docs.reduce((sum, doc) => sum + doc.issues.filter(
     (issue) => !(((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && issue === "كود الفرع مطلوب")
@@ -616,27 +680,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       files.forEach((_, index) => parsed.push(...(parsedByFile.get(index) ?? [])));
       setFailedFiles(failures);
 
-      // Do not merge equal invoice numbers from different files: that could
-      // silently double their lines. Flag possible duplicates for correction.
-      const duplicateGroups = new Map<string, number[]>();
-      parsed.forEach((doc, index) => {
-        const duplicateKey = [doc.kind, norm(doc.sourceNumber), doc.date, norm(doc.partyCode || doc.partyName)].join("|");
-        if (!norm(doc.sourceNumber)) return;
-        const indexes = duplicateGroups.get(duplicateKey) ?? [];
-        indexes.push(index);
-        duplicateGroups.set(duplicateKey, indexes);
-      });
-      for (const indexes of duplicateGroups.values()) {
-        if (indexes.length < 2) continue;
-        for (const index of indexes) {
-          const otherFiles = indexes
-            .filter((otherIndex) => otherIndex !== index)
-            .map((otherIndex) => parsed[otherIndex].sourceFileName ?? "ملف آخر");
-          parsed[index].issues.push(`تكرار محتمل لنفس رقم المستند والجهة والتاريخ في ملفات الدفعة: ${otherFiles.join("، ")}`);
-        }
-      }
-
-      setDocs(parsed);
+      setDocs(markDuplicateDocuments(parsed));
       if (parsed.length) await loadMasters();
       toast({
         title: `تمت قراءة ${parsed.length} مستندًا من ${files.length} ملف`,
@@ -705,20 +749,34 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     return `${docKey}|document|${field}`;
   }
 
-  function commitDocumentEdit(docKey: string, field: "party_code" | "party_name" | "payment_type", rawValue: string) {
+  function commitDocumentEdit(docKey: string, field: "party_code" | "party_name" | "payment_type" | "document_date", rawValue: string) {
     const value = rawValue.trim();
-    setDocs((current) => current.map((doc) => {
+    setDocs((current) => markDuplicateDocuments(current.map((doc) => {
       if (doc.key !== docKey) return doc;
       const rows = historicalDocRows(doc) as Array<Record<string, any>>;
       if (!rows.length) return doc;
-      rows.forEach((row) => { row[field] = value; });
+      rows.forEach((row) => {
+        if (field === "document_date") {
+          const timeSuffix = doc.sourceDateTime?.slice(10) ?? "";
+          row.document_date = value;
+          row.source_datetime = value + timeSuffix;
+        } else {
+          row[field] = value;
+        }
+      });
       return reparseEditedDoc(doc, rows);
-    }));
+    })));
     setDocumentEditDrafts((current) => {
       const next = { ...current };
       delete next[documentFieldKey(docKey, field)];
       return next;
     });
+    setPeriodScan(null);
+    setResults([]);
+  }
+
+  function removeDocument(docKey: string) {
+    setDocs((current) => markDuplicateDocuments(current.filter((doc) => doc.key !== docKey)));
     setPeriodScan(null);
     setResults([]);
   }
@@ -1107,6 +1165,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       doc,
       ...validateAgainstMasters(doc, anticipatedSources, postingMode === "archive_only" || saveAsDraftOnly),
     }));
+    const duplicateDocs = docs.filter((doc) => doc.issues.some((issue) => issue.startsWith("تكرار محتمل لنفس رقم المستند")));
+    if (duplicateDocs.length) {
+      toast({
+        title: `يوجد ${duplicateDocs.length} مستند مكرر محتمل`,
+        description: "احذف النسخ الزائدة أو صحح التاريخ/الوقت ثم أعد الفحص قبل الحفظ.",
+        variant: "destructive",
+      });
+      return;
+    }
     const blocked = refs.filter((entry) => entry.issues.length > 0);
     if (blocked.length) {
       setDocs((current) => current.map((doc) => {
@@ -1317,6 +1384,19 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
             <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(kindLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
           </Select>
+          <Select value={referenceFiscalYearId || "__none__"} onValueChange={(value) => {
+            setReferenceFiscalYearId(value === "__none__" ? "" : value);
+            setPeriodScan(null);
+            setResults([]);
+          }}>
+            <SelectTrigger className="w-64"><SelectValue placeholder="الفترة المرجعية (اختياري)" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">بدون فترة مرجعية</SelectItem>
+              {fiscalYears.map((year) => <SelectItem key={String(year.id)} value={String(year.id)}>
+                {year.name || year.nameAr || year.year || year.startDate} ({year.startDate} — {year.endDate})
+              </SelectItem>)}
+            </SelectContent>
+          </Select>
           {kind.endsWith("_invoice") && (
             <Select value={invoiceFormat} onValueChange={(value) => setInvoiceFormat(value as "generic" | "ragmcloud_v1")}>
               <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
@@ -1335,6 +1415,10 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           <Button onClick={() => fileRef.current?.click()} disabled={loading || busy}><Upload className="ml-1 h-4 w-4" />{busy ? "قراءة الملفات وتحويلها…" : loading ? "تحميل المطابقات…" : "رفع دفعة فواتير (500 ملف أو أكثر)"}</Button>
           {fileNames.length > 0 && <span className="text-xs text-muted-foreground">تم اختيار {fileNames.length} ملفًا</span>}
         </div>
+        {fiscalYearsError && <p className="text-xs text-red-700">{fiscalYearsError}</p>}
+        {referenceFiscalYear && <p className="text-xs text-muted-foreground">
+          الفترة المرجعية للمراجعة فقط: {referenceFiscalYear.name || referenceFiscalYear.year || referenceFiscalYear.startDate} ({referenceFiscalYear.startDate} — {referenceFiscalYear.endDate}). أي فاتورة خارج النطاق ستُعلّم، لكن تُحفظ حسب تاريخها إذا كانت فترتها المالية مفتوحة.
+        </p>}
         {readProgress && (
           <div className="rounded border bg-muted/30 p-3 text-sm" role="status" aria-live="polite">
             جارٍ تحويل الملفات: {readProgress.completed} من {readProgress.total}. تتم المعالجة بملفين في الوقت نفسه، وتبقى الملفات الناجحة محفوظة للمراجعة حتى لو تعذرت قراءة ملف آخر.
@@ -1391,6 +1475,11 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                   <Button size="sm" variant="outline" disabled={documentsPage <= 1} onClick={() => setDocumentsPage((page) => Math.max(1, page - 1))}>السابق</Button>
                   <Button size="sm" variant="outline" disabled={documentsPage >= Math.ceil(docs.length / 50)} onClick={() => setDocumentsPage((page) => Math.min(Math.ceil(docs.length / 50), page + 1))}>التالي</Button>
                 </div>
+              </div>
+            )}
+            {referenceFiscalYear && outsideReferenceCount > 0 && (
+              <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                توجد {outsideReferenceCount} فاتورة خارج الفترة المرجعية المحددة. هذا تنبيه للمراجعة فقط؛ يمكنك تعديل التاريخ أو حذف الفاتورة، وإذا كان تاريخها يتبع فترة أخرى مفتوحة فستُحفظ في فترتها الصحيحة.
               </div>
             )}
             {masters && <div className="grid gap-3 rounded border bg-muted/20 p-3 md:grid-cols-2">
@@ -1471,12 +1560,15 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
             <p className="text-xs text-muted-foreground">اضغط «تفاصيل» بجوار الخطأ لعرض اقتراح التصحيح والانتقال إلى الحقل المعني. يمكن تعديل بيانات العميل/المورد والسداد وكود الصنف أو اسمه من الجداول.</p>
             <div className="max-h-56 overflow-auto rounded border">
               <table className="min-w-[1500px] text-xs">
-                <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">الحالة</th><th className="p-2">كود العميل/المورد</th><th className="p-2">اسم العميل/المورد</th><th className="p-2">طريقة السداد</th><th className="p-2">فرع هذا المستند</th></tr></thead>
+                <thead className="sticky top-0 bg-muted"><tr className="text-right"><th className="p-2">رقم المصدر</th><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">السطور</th><th className="p-2">الحالة</th><th className="p-2">كود العميل/المورد</th><th className="p-2">اسم العميل/المورد</th><th className="p-2">طريقة السداد</th><th className="p-2">فرع هذا المستند</th><th className="p-2">إجراء</th></tr></thead>
                 <tbody>{docs.slice((documentsPage - 1) * 50, documentsPage * 50).map((doc) => {
                   const visibleIssues = doc.issues.filter((issue) => !(((applyBatchDefaults && importBranchCode) || doc.branchOverrideCode) && issue === "كود الفرع مطلوب"));
+                  const isOutsideReference = !!referenceFiscalYear && (doc.date < referenceFiscalYear.startDate || doc.date > referenceFiscalYear.endDate);
+                  const isPossibleDuplicate = doc.issues.some((issue) => issue.startsWith("تكرار محتمل لنفس رقم المستند"));
                   const partyCodeKey = documentFieldKey(doc.key, "party_code");
                   const partyNameKey = documentFieldKey(doc.key, "party_name");
                   const paymentTypeKey = documentFieldKey(doc.key, "payment_type");
+                  const dateKey = documentFieldKey(doc.key, "document_date");
                   return <tr
                     key={doc.key}
                     data-import-document={doc.key}
@@ -1484,7 +1576,16 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                     className={`border-t ${visibleIssues.length ? "cursor-pointer hover:bg-amber-50" : ""}`}
                     onDoubleClick={() => focusFirstInvalidLine(doc)}
                   >
-                    <td className="p-2">{doc.sourceNumber}</td><td className="p-2" dir="ltr">{doc.date}</td><td className="p-2">{kindLabels[doc.kind]}</td><td className="p-2">{doc.lines.length}</td>
+                    <td className="p-2">{doc.sourceNumber}</td>
+                    <td className="min-w-40 p-1" dir="ltr"><input
+                      type="date"
+                      aria-label={`تاريخ فاتورة المصدر ${doc.sourceNumber}`}
+                      value={documentEditDrafts[dateKey] ?? doc.date}
+                      onChange={(event) => setDocumentEditDrafts((current) => ({ ...current, [dateKey]: event.target.value }))}
+                      onBlur={(event) => commitDocumentEdit(doc.key, "document_date", event.currentTarget.value)}
+                      className={`w-full rounded border bg-background px-2 py-1 ${isOutsideReference ? "border-amber-500" : "border-input"}`}
+                    />{isOutsideReference && <span className="block text-center text-[10px] text-amber-800">خارج الفترة المختارة</span>}</td>
+                    <td className="p-2">{kindLabels[doc.kind]}</td><td className="p-2">{doc.lines.length}</td>
                     <td className="min-w-64 p-2">{visibleIssues.length ? <div className="flex items-center gap-1 text-red-700">
                       <button
                         type="button"
@@ -1567,6 +1668,9 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
                         </SelectContent>
                       </Select>
                     </td>
+                    <td className="p-2"><Button type="button" variant="outline" size="sm" onClick={() => removeDocument(doc.key)}>
+                      {isPossibleDuplicate ? "حذف النسخة المكررة" : "حذف من الدفعة"}
+                    </Button></td>
                   </tr>;
                 })}</tbody>
               </table>
