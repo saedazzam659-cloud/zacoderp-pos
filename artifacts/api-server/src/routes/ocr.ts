@@ -15,6 +15,7 @@ import { Router } from "express";
 import { extractAuth } from "../middleware/auth.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import { fetchWithTransientAiRetry } from "../lib/transientAiRetry.js";
+import { INVOICE_FIELDS, parseInvoiceExtractionRows } from "../lib/invoiceExtractionParser.js";
 
 const router = Router();
 
@@ -129,14 +130,6 @@ router.post("/extract", async (req, res) => {
 
 const INVOICE_MIMES = new Set(["application/pdf", "image/png", "image/jpeg", "image/jpg", "image/webp"]);
 const INVOICE_KINDS = new Set(["sales_invoice", "purchase_invoice", "sales_return", "purchase_return"]);
-const INVOICE_FIELDS = [
-  "source_doc_number", "document_date", "source_datetime", "source_invoice_number", "party_code", "party_name",
-  "branch_code", "item_code", "item_name", "unit_code", "unit_name", "warehouse_code", "qty", "free_qty", "unit_price",
-  "discount_percent", "line_discount_amount", "vat_rate", "line_total", "subtotal", "vat_amount",
-  "discount_amount", "total_amount", "payment_type", "currency_code", "exchange_rate",
-  "cash_box_code", "bank_account_code", "price_includes_vat", "total_expenses_loaded", "line_notes",
-];
-
 /**
  * Extract an external invoice into the same row contract used by the
  * historical-invoice workbook. This is extraction only; it never writes docs.
@@ -254,14 +247,14 @@ router.post("/extract-invoices", requireAiFeature("data_import_ai"), async (req,
     const text = (data?.candidates?.[0]?.content?.parts ?? [])
       .map((part: any) => typeof part?.text === "string" ? part.text : "")
       .join("").trim();
-    const parsed = JSON.parse(text);
-    const rawRows = Array.isArray(parsed?.rows) ? parsed.rows : [];
-    const rows = rawRows
-      .filter((row: any) => row && typeof row === "object" && !Array.isArray(row))
-      .map((row: any) => Object.fromEntries(INVOICE_FIELDS.map((field) => [
-        field, row[field] == null ? "" : String(row[field]).trim(),
-      ])))
-      .filter((row: any) => row.source_doc_number || row.item_code || row.item_name);
+    const rows = parseInvoiceExtractionRows(text);
+    if (!rows.length) {
+      await logAiUsage(req, { status: "error", meta: { reason: "no_invoice_rows" } });
+      res.status(422).json({
+        error: "تعذر استخراج رقم الفاتورة أو بيانات الأصناف من الملف؛ تأكد من وضوح الفاتورة والقالب المحدد.",
+      });
+      return;
+    }
     await logAiUsage(req, { status: "allowed", provider: "gemini" });
     res.json({ rows, extractedCount: rows.length });
   } catch (error: any) {

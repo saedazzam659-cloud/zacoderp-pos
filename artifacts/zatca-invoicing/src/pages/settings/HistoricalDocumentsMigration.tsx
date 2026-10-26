@@ -1319,7 +1319,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           if (doc.kind.endsWith("_invoice")) nextSourceIds[`${doc.kind.startsWith("sales") ? "sales" : "purchase"}:${doc.sourceNumber}`] = id;
           const resultStatus = doc.kind === "purchase_order" ? "تم حفظ أمر الشراء"
             : postingMode === "archive_only" ? "تمت الأرشفة"
-            : saveAsDraftOnly ? "تم الحفظ كمسودة" : "تم الترحيل";
+            : saveAsDraftOnly ? "تم الحفظ في النظام كمسودة" : "تم الترحيل";
           nextResults.push({
             sourceNumber: doc.sourceNumber,
             status: resultStatus,
@@ -1335,7 +1335,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       }
       toast({
         title: "انتهى استيراد المستندات",
-        description: `${nextResults.filter((item) => ["تم الترحيل", "تمت الأرشفة", "تم الحفظ كمسودة", "تم حفظ أمر الشراء"].includes(item.status)).length} ناجح من ${nextResults.length}`,
+        description: `${nextResults.filter((item) => ["تم الترحيل", "تمت الأرشفة", "تم الحفظ في النظام كمسودة", "تم حفظ أمر الشراء"].includes(item.status)).length} ناجح من ${nextResults.length}`,
       });
     } finally {
       setBusy(false);
@@ -1422,7 +1422,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           </div>
         )}
         <p className="text-xs text-muted-foreground">
-          اختر قالب الفاتورة لهذه الدفعة؛ كل شركة يمكنها استخدام القالب المناسب. الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP (حتى 13 ميجابايت للملف). كل ملف PDF يستخدم طلب تحويل AI وقد يتوقف عند بلوغ حد الاستخدام اليومي أو الشهري؛ تبقى النتائج الناجحة للمراجعة، ولا يُحفظ شيء تلقائيًا.
+          اختر قالب الفاتورة لهذه الدفعة؛ كل شركة يمكنها استخدام القالب المناسب. يمكنك تحديد عدة ملفات دفعة واحدة من نافذة الاختيار (Ctrl/Shift). ملفات RAGM Cloud بصيغة CSV تتطلب ملفي Invoices.csv وInvoice_items.csv معًا؛ ملف الأصناف وحده لا يحتوي بيانات رأس الفاتورة اللازمة للحفظ. الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP (حتى 13 ميجابايت للملف). كل ملف PDF يستخدم طلب تحويل AI وقد يتوقف عند بلوغ حد الاستخدام اليومي أو الشهري؛ تبقى النتائج الناجحة للمراجعة، ولا يُحفظ شيء تلقائيًا.
         </p>
         {masterError && <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-800">{masterError}</div>}
         {!!docs.length && (
