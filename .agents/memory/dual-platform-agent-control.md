@@ -45,6 +45,12 @@ Optimistic renewal writes must not compare PostgreSQL timestamp columns to JavaS
 
 **How to apply:** Guard renewal with stable link identity, credential, installation, fingerprint, epoch, and active-controller fields, or use an exact database-native version token. Do not use a round-tripped `Date` as the concurrency token.
 
+Only the source-side two-phase handoff workflow may transfer or restore controller leadership. Imported-link screens should show ownership state and only expose management while the local platform is active; they must not offer direct leadership toggles.
+
+**Why:** Legacy direct-toggle routes are intentionally rejected because they bypass source fencing, target compare-and-swap, and the handoff's read-back/compensation behavior.
+
+**How to apply:** Route transfer and rollback through the source agent's handoff workflow. Keep imported-agent views informational for leadership and never call the legacy leadership endpoints from UI controls.
+
 If the link-registry transaction commits but the remote shell sync fails, preserve the committed row and provide an idempotent recovery that re-proves target absence before retrying sync or reissuing the file.
 
 **Why:** Rolling back or blindly rotating credentials after an ambiguous remote write can desynchronize the source registry from the agent shell.

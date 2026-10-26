@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Loader2, Server, Shield, Globe, Play, ShieldAlert, Pencil, UserPlus, Trash2, Building2, GitBranch, Settings2 } from "lucide-react";
+import { Loader2, Server, Shield, ShieldAlert, Globe, Pencil, UserPlus, Trash2, Building2, GitBranch, Settings2 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -305,11 +305,8 @@ function ImportedAgentManagement({ link, token, onClose }: { link: any; token: s
 
 export function ImportedAgentsList() {
   const { token } = useAuth();
-  const { toast } = useToast();
-  const qc = useQueryClient();
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
-  const [confirmSwitch, setConfirmSwitch] = useState<any>(null);
   const [managementLink, setManagementLink] = useState<any>(null);
 
   const { data: importedLinks, isLoading } = useQuery<any[]>({
@@ -319,26 +316,6 @@ export function ImportedAgentsList() {
       if (!res.ok) throw new Error("فشل جلب الروابط المستوردة");
       return res.json();
     }
-  });
-
-  const leadMut = useMutation({
-    mutationFn: async ({ linkId, activeControllerId, epoch }: { linkId: string, activeControllerId: string, epoch: number }) => {
-      const res = await fetch(`${API}/api/admin/agent-instances/platform-links/${linkId}/leadership`, {
-        method: "POST", headers, body: JSON.stringify({ activeControllerId, controllerEpoch: epoch })
-      });
-      if (!res.ok) throw new Error("فشل تبديل القيادة");
-      return res.json();
-    },
-    onSuccess: (data) => {
-      if (data.shellSyncError) {
-        toast({ title: "تم التحديث مع خطأ في السيرفر", description: data.shellSyncError, variant: "destructive" });
-      } else {
-        toast({ title: "تم نقل قيادة التحكم بنجاح" });
-      }
-      qc.invalidateQueries({ queryKey: ["agent-platform-imported"] });
-      setConfirmSwitch(null);
-    },
-    onError: (err: any) => toast({ title: "خطأ", description: err.message, variant: "destructive" })
   });
 
   if (isLoading) return <div className="p-10 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
@@ -372,20 +349,16 @@ export function ImportedAgentsList() {
                 </div>
               </div>
               <div>
-                {!isLocalActive ? (
-                  <Button onClick={() => setConfirmSwitch({ ...link, toLocal: true })} disabled={leadMut.isPending} className="bg-emerald-600 hover:bg-emerald-700 text-white h-9 shadow-sm">
-                    <Play className="h-4 w-4 ms-1" />
-                    استحواذ على التحكم
-                  </Button>
-                ) : (
+                {isLocalActive ? (
                   <div className="flex gap-2">
                     <Button variant="outline" className="text-emerald-700 hover:bg-emerald-50 border-emerald-200 h-9 bg-white" onClick={() => setManagementLink(link)}>
                       <Settings2 className="h-4 w-4 ms-1" /> إدارة الشركات والمستخدمين
                     </Button>
-                    <Button variant="outline" className="text-rose-600 hover:bg-rose-50 border-rose-200 h-9 bg-white" onClick={() => setConfirmSwitch({ ...link, toLocal: false })} disabled={leadMut.isPending}>
-                      إعادة التحكم للمصدر
-                    </Button>
                   </div>
+                ) : (
+                  <p className="max-w-xs text-xs text-muted-foreground">
+                    تغيير القيادة يتم من منصة المصدر عبر أداة «نقل تحكم الوكيل».
+                  </p>
                 )}
               </div>
             </div>
@@ -411,36 +384,6 @@ export function ImportedAgentsList() {
         );
       })}
 
-      <Dialog open={!!confirmSwitch} onOpenChange={(o) => !o && setConfirmSwitch(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-emerald-800">
-              {confirmSwitch?.toLocal ? <Shield className="h-5 w-5 text-emerald-600" /> : <ShieldAlert className="h-5 w-5 text-rose-600" />}
-              تأكيد نقل قيادة التحكم
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 text-sm mt-2 text-slate-600">
-            {confirmSwitch?.toLocal ? (
-              <p>هل أنت متأكد من الاستحواذ على قيادة هذا السيرفر المستورد؟ ستتمكن من إرسال التحديثات والأوامر بدلاً من منصة المصدر.</p>
-            ) : (
-              <p>هل أنت متأكد من التخلي عن إدارة هذا السيرفر وإعادة التحكم إلى منصة المصدر الأساسية؟ لن تعود قادراً على نشر التحديثات إليه.</p>
-            )}
-            <div className="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg border text-xs leading-relaxed">
-              <span className="font-bold text-slate-800 dark:text-slate-200">تنويه آمن:</span> هذا الإجراء يقتصر فقط على سيرفر التطبيق. قاعدة بيانات الوكيل المستقلة لم ولن تتأثر بهذا الإجراء إطلاقاً.
-            </div>
-          </div>
-          <DialogFooter className="gap-2 pt-2 border-t mt-4">
-            <Button variant="ghost" onClick={() => setConfirmSwitch(null)}>إلغاء</Button>
-            <Button onClick={() => {
-              const activeId = confirmSwitch.toLocal ? confirmSwitch.targetPlatformId : confirmSwitch.sourcePlatformId;
-              leadMut.mutate({ linkId: confirmSwitch.linkId, activeControllerId: activeId, epoch: confirmSwitch.controllerEpoch + 1 });
-            }} disabled={leadMut.isPending} className={confirmSwitch?.toLocal ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-rose-600 hover:bg-rose-700 text-white"}>
-              {leadMut.isPending && <Loader2 className="h-4 w-4 ms-2 animate-spin" />}
-              تأكيد الإجراء
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       {managementLink && <ImportedAgentManagement link={managementLink} token={token} onClose={() => setManagementLink(null)} />}
     </div>
   );
