@@ -91,6 +91,7 @@
 - [Language-switch completeness](language-switch-completeness.md) — English mode must translate interface chrome while preserving user-entered business data unless an English name exists.
 - [Artifact environment in workspace builds](artifact-env-in-workspace-builds.md) — Vite build configs must tolerate absent service PORT/BASE_PATH when root builds run recursively.
 - [Zid invoice source boundary](zid-invoice-source-boundary.md) — each company chooses Zid or ERP as its sole ZATCA issuer; use official OAuth and never accept pasted tokens.
+- [ZATCA sales-invoice save validation](zatca-sales-save-validation.md) — Saudi tax invoices with incomplete ZATCA buyer data cannot be saved, even as drafts; never silently downgrade their type.
 - [Salla customer-store OAuth boundary](salla-customer-store-oauth.md) — the ERP platform owns one developer app; each customer authorizes their own store, with phase one limited to reading orders.
 - [Grid localization coverage](grid-localization-boundary.md) — audit every grid heading and surrounding control in both languages; keep entered business data unchanged.
 - [External invoice import boundary](external-invoice-import-boundary.md) — convert source files into the existing unified invoice rows for review; never infer missing facts or post on extraction alone.

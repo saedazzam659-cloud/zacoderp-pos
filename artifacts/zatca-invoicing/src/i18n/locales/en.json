@@ -7331,7 +7331,13 @@
       "rulesSource": "Explanation based on system rules (AI is disabled).",
       "noExplanation": "No explanation available.",
       "close": "Close",
-      "openInvoice": "Open invoice for editing"
+       "openInvoice": "Open invoice for editing",
+       "customerFixLink": "Open customer details to fix",
+       "unpostRejected": "Unpost for correction",
+       "unpostConfirm": "The invoice will return to draft, and its stock and accounting entry will be reversed. Continue?",
+       "unpostFailed": "Could not unpost the invoice",
+       "unpostedToast": "Invoice unposted",
+       "unpostedToastDesc": "The invoice is back in draft and can be edited."
     }
   },
   "salesReports": {

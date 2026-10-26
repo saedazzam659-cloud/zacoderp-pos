@@ -1371,6 +1371,56 @@ export async function reverseSalesReturnStockForUnpost(input: {
 }
 
 const router = Router();
+
+function salesInvoiceZatcaBuyerIssues(customer: any, requireStandard = false, totalAmount = 0): string[] {
+  if (!customer) {
+    return requireStandard || Number(totalAmount) >= 1000
+      ? ["يجب تحديد العميل قبل حفظ هذه الفاتورة الضريبية."]
+      : [];
+  }
+  const vatRaw = String(customer.vatNumber ?? "").trim();
+  if (!vatRaw && !requireStandard) return [];
+  const issues: string[] = [];
+  const vat = vatRaw.replace(/\D/g, "");
+  if (!/^3\d{13}3$/.test(vat)) {
+    issues.push("رقم العميل الضريبي غير صالح؛ يجب أن يتكون من 15 رقماً ويبدأ وينتهي بالرقم 3.");
+  }
+  const building = String(customer.buildingNumber ?? "").trim();
+  const postal = String(customer.postalCode ?? "").trim();
+  if (!String(customer.city ?? "").trim()) issues.push("مدينة العميل مطلوبة للفاتورة الضريبية.");
+  if (!String(customer.street ?? "").trim()) issues.push("شارع العميل مطلوب للفاتورة الضريبية.");
+  if (!/^\d{4}$/.test(building)) issues.push("رقم مبنى العميل يجب أن يتكون من 4 أرقام.");
+  if (!/^\d{5}$/.test(postal)) issues.push("الرمز البريدي للعميل يجب أن يتكون من 5 أرقام.");
+  return issues;
+}
+
+async function loadSalesInvoiceZatcaBuyerIssues(
+  companyId: number,
+  customerId: unknown,
+  requireStandard = false,
+  totalAmount = 0,
+  executor: any = db,
+) {
+  const [company] = await executor.select({ country: companiesTable.country })
+    .from(companiesTable)
+    .where(eq(companiesTable.id, companyId))
+    .limit(1);
+  if (String(company?.country ?? "SA").toUpperCase() !== "SA") return [];
+  if (!customerId) return salesInvoiceZatcaBuyerIssues(null, requireStandard, totalAmount);
+  const [customer] = await executor.select({
+    vatNumber: customersTable.vatNumber,
+    country: customersTable.country,
+    city: customersTable.city,
+    street: customersTable.street,
+    buildingNumber: customersTable.buildingNumber,
+    postalCode: customersTable.postalCode,
+  }).from(customersTable).where(and(
+    eq(customersTable.id, Number(customerId)),
+    eq(customersTable.companyId, companyId),
+  )).limit(1);
+  if (String(customer?.country ?? "SA").toUpperCase() !== "SA") return [];
+  return salesInvoiceZatcaBuyerIssues(customer, requireStandard, totalAmount);
+}
 const HISTORICAL_IMPORT_MODES = new Set(["financial_inventory", "financial_only", "inventory_only", "archive_only"]);
 function normalizeHistoricalImportMode(value: unknown, user: any): string | null {
   if (value == null || value === "") return null;
@@ -2808,6 +2858,20 @@ router.post("/sales-invoices", async (req, res) => {
     ));
     const acceleratedPath = usesAcceleratedAgentInvoicePath(timingStart);
     const pType = paymentType || "credit";
+    const buyerIssues = await loadSalesInvoiceZatcaBuyerIssues(
+      cid,
+      customerId,
+      req.body?.invoiceType === "standard",
+      Number(totalAmount) || 0,
+    );
+    if (buyerIssues.length) {
+      res.status(400).json({
+        error: `لا يمكن حفظ الفاتورة الضريبية قبل استكمال بيانات العميل: ${buyerIssues.join(" ")}`,
+        code: "ZATCA_CUSTOMER_DATA_INCOMPLETE",
+        issues: buyerIssues,
+      });
+      return;
+    }
     const requestedOverdraft = asBool(allowNegativeStock);
     if (requestedOverdraft && !(await salesOverdraftEnabled(cid))) {
       res.status(403).json({ error: "السحب على المكشوف معطّل من الإعدادات العامة للشركة" });
@@ -3347,6 +3411,20 @@ router.put("/sales-invoices/:id", async (req, res) => {
     // from a script or a stale draft that pre-dates the policy) cannot
     // strip the customer/branch off an existing invoice on edit.
     const pType = paymentType || "credit";
+    const buyerIssues = await loadSalesInvoiceZatcaBuyerIssues(
+      cid,
+      customerId,
+      req.body?.invoiceType === "standard",
+      Number(totalAmount) || 0,
+    );
+    if (buyerIssues.length) {
+      res.status(400).json({
+        error: `لا يمكن حفظ الفاتورة الضريبية قبل استكمال بيانات العميل: ${buyerIssues.join(" ")}`,
+        code: "ZATCA_CUSTOMER_DATA_INCOMPLETE",
+        issues: buyerIssues,
+      });
+      return;
+    }
     if (!customerId && pType !== "cash" && pType !== "bank") { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     const acceleratedPath = usesAcceleratedAgentInvoicePath(timingStart);
@@ -3759,6 +3837,19 @@ async function postSalesInvoiceHandler(
           error: lockedInvoice.status === "posted" ? "الفاتورة مُرحَّلة مسبقاً" : "لا يمكن ترحيل فاتورة ملغاة أو غير مسودة",
         });
         return;
+      }
+      const buyerIssues = await loadSalesInvoiceZatcaBuyerIssues(
+        cid,
+        lockedInvoice.customerId,
+        false,
+        Number(lockedInvoice.totalAmount) || 0,
+        tx,
+      );
+      if (buyerIssues.length) {
+        throw Object.assign(
+          new Error(`لا يمكن ترحيل الفاتورة الضريبية قبل استكمال بيانات العميل: ${buyerIssues.join(" ")}`),
+          { status: 400 },
+        );
       }
       const lockedLines = await tx
         .select()
@@ -4506,7 +4597,7 @@ router.patch(
 );
 
 // ─── UNPOST sales invoice (فك الترحيل) ──────────────────────────────────────
-router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), async (req, res) => {
+router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), documentMutationLock("sales_invoice", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     if (!(await requireMobilePerm(req, res, cid, "invoice_unpost", "ليست لديك صلاحية فك ترحيل فواتير المبيعات من تطبيق الموبايل"))) return;
@@ -4546,6 +4637,9 @@ router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), async (r
       const zatcaStatus = String(lockedInv.zatcaStatus || "").toLowerCase();
       if (zatcaStatus === "approved" || zatcaStatus === "cleared" || zatcaStatus === "reported") {
         throw Object.assign(new Error("لا يمكن فك ترحيل فاتورة معتمدة من هيئة الزكاة والضريبة (ZATCA)."), { status: 409 });
+      }
+      if (req.body?.zatcaRejectedCorrection === true && zatcaStatus !== "rejected") {
+        throw Object.assign(new Error("إجراء تصحيح الجسر مخصص للفواتير المرفوضة من ZATCA فقط."), { status: 409 });
       }
 
       // A posted return already restores some/all of this invoice's issue.
@@ -4636,7 +4730,8 @@ router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), async (r
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
-});
+  }),
+);
 
 router.delete("/sales-invoices/:id", async (req, res) => {
   try {

@@ -14,6 +14,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { usePermission } from "@/hooks/usePermission";
 import {
   CheckCircle2, XCircle, Clock, Send, Sparkles, ArrowLeftRight,
   Search, FileText, Loader2, AlertTriangle, ChevronLeft, ChevronRight,
@@ -58,6 +59,12 @@ export default function ZatcaBridge() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const moduleUnpostPermission = usePermission("sales_invoices", "unpost");
+  const canUnpost = user?.role === "admin" || user?.role === "superadmin"
+    ? true
+    : (user as any)?.demoOperationalVerified === true
+      ? moduleUnpostPermission
+      : (user as any)?.postingPermissions?.sales?.unpost !== false;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const authH = { Authorization: `Bearer ${token}` };
 
@@ -99,6 +106,28 @@ export default function ZatcaBridge() {
       } else {
         toast({ title: tr("rejectedToast"), description: tr("rejectedToastDesc", { count: data.errors?.length || 0 }), variant: "destructive" });
       }
+    },
+    onError: (e: any) => toast({ title: tr("errorToast"), description: e.message, variant: "destructive" }),
+  });
+
+  const unpostRejected = useMutation({
+    mutationFn: async (row: BridgeRow) => {
+      const r = await fetch(`${API}/api/sales/sales-invoices/${row.sourceId}/unpost`, {
+        method: "PATCH",
+        headers: { ...authH, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId: cid, zatcaRejectedCorrection: true }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || tr("unpostFailed"));
+      return { row, data };
+    },
+    onSuccess: ({ row }) => {
+      qc.invalidateQueries({ queryKey: ["zatca-bridge", cid] });
+      qc.invalidateQueries({ queryKey: ["sales-invoices", cid] });
+      toast({ title: tr("unpostedToast"), description: tr("unpostedToastDesc") });
+      setDialogRow(null);
+      setAiData(null);
+      navigate(`/sales/invoices/${row.sourceId}`);
     },
     onError: (e: any) => toast({ title: tr("errorToast"), description: e.message, variant: "destructive" }),
   });
@@ -169,6 +198,12 @@ export default function ZatcaBridge() {
     if (!s) return [];
     try { return JSON.parse(s); } catch { return []; }
   };
+
+  const dialogErrors = dialogRow ? parseErrors(dialogRow.zatcaErrorMessages) : [];
+  const customerFixNeeded = dialogErrors.some((error) =>
+    /customer|buyer|address|postal|city|street|building|العميل|المشتري|العنوان|الرمز البريدي|المدينة|الشارع|المبنى/i
+      .test(`${error.code ?? ""} ${error.message ?? ""}`),
+  );
 
   const fmtMoney = (v: any) => Number(v || 0).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -433,6 +468,16 @@ export default function ZatcaBridge() {
                   <div className="text-sm text-muted-foreground p-3">{tr("noExplanation")}</div>
                 )}
               </div>
+              {dialogRow.customerId && customerFixNeeded && (
+                <a
+                  href={`${API}/customers/${dialogRow.customerId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center rounded-md border px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-950"
+                >
+                  {tr("customerFixLink")}
+                </a>
+              )}
             </div>
           )}
 
@@ -440,6 +485,24 @@ export default function ZatcaBridge() {
             <Button variant="outline" onClick={() => { setDialogRow(null); setAiData(null); }}>
               {tr("close")}
             </Button>
+            {dialogRow && (
+              dialogRow.sourceType === "invoice" &&
+              dialogRow.status === "posted" &&
+              dialogRow.zatcaStatus === "rejected" &&
+              canUnpost && (
+                <Button
+                  variant="destructive"
+                  disabled={unpostRejected.isPending}
+                  onClick={() => {
+                    if (!window.confirm(tr("unpostConfirm"))) return;
+                    unpostRejected.mutate(dialogRow);
+                  }}
+                >
+                  {unpostRejected.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {tr("unpostRejected")}
+                </Button>
+              )
+            )}
             {dialogRow && (
               <Button
                 onClick={() => {

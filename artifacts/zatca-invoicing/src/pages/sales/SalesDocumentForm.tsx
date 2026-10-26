@@ -2214,7 +2214,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // (i.e. the `usesOps` modes that actually render the picker).
     if (isInvoice || isOrder) {
       const missing: string[] = [];
-      if (!customerId && (!isInvoice || (paymentType !== "cash" && paymentType !== "bank"))) {
+      if (!customerId && (
+        !isInvoice ||
+        (paymentType !== "cash" && paymentType !== "bank") ||
+        (isInvoice && Number(totalAmount) >= 1000)
+      )) {
         missing.push(t("salesDocForm.customer", { defaultValue: isRtl ? "العميل" : "Customer" }));
       }
       if (!branchId)   missing.push(t("salesDocForm.branch",   { defaultValue: isRtl ? "الفرع" : "Branch" }));
@@ -2228,10 +2232,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       }
       // ── متطلبات زاتكا للفاتورة الضريبية (Standard / B2B) ────────────────
       // المبسطة (Simplified / B2C) لا تحتاج إلى أي بيانات إضافية للعميل.
-      if (isInvoice && invoiceType === "standard" && customerId) {
-        const cust = (customers as any[]).find((c: any) => String(c.id) === String(customerId));
+      const selectedCustomer = customerId
+        ? (customers as any[]).find((c: any) => String(c.id) === String(customerId))
+        : null;
+      const hasSaudiVat = selectedCustomer
+        && String(selectedCustomer.country ?? "SA").toUpperCase() === "SA"
+        && String(selectedCustomer.vatNumber ?? "").trim().length > 0;
+      if (isInvoice && (invoiceType === "standard" || hasSaudiVat)) {
+        const cust = selectedCustomer;
         const reasons: string[] = [];
-        if (!cust) {
+        if (!customerId) {
+          reasons.push(isRtl ? "اختيار العميل مطلوب للفاتورة الضريبية" : "A customer is required for a tax invoice");
+        } else if (!cust) {
           reasons.push(isRtl ? "بيانات العميل غير محمَّلة" : "Customer details are not loaded");
         } else {
           if (!isValidSaudiVat(cust.vatNumber)) {
@@ -2249,8 +2261,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           toast({
             title: isRtl ? "⛔ الفاتورة الضريبية تتطلّب بيانات زاتكا الكاملة" : "⛔ The tax invoice requires complete ZATCA details",
             description: isRtl
-              ? `بيانات العميل الناقصة: ${reasons.join(" — ")}. يمكنك تعديل بيانات العميل من شاشة العملاء، أو تحويل الفاتورة إلى «فاتورة ضريبية مبسّطة» إذا كان البيع للأفراد.`
-              : `Missing customer details: ${reasons.join(" — ")}. Update the customer record or use a simplified tax invoice for consumer sales.`,
+              ? `بيانات العميل الناقصة: ${reasons.join(" — ")}. أكمل بيانات العميل من شاشة العملاء ثم أعد الحفظ.`
+              : `Missing customer details: ${reasons.join(" — ")}. Complete the customer record, then save again.`,
             variant: "destructive",
           });
           return;
