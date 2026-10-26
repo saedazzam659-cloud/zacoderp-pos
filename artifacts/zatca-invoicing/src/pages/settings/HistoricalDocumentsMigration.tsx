@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { exportData, ensureFiscalYears, scanHistorical } from "@/lib/dataIoApi";
 import { processInvoiceBatchQueue } from "@/lib/invoiceBatchQueue";
 import { parseRagmCloudSalesInvoicePdf } from "@/lib/historicalRagmPdfParser";
+import { repairNameSpacingFromMaster } from "@/lib/historicalInvoiceNameSpacing";
 import {
   convertLinkedSalesInvoiceCsv,
   convertLinkedPurchaseOrderCsv,
@@ -214,11 +215,15 @@ async function extractInvoiceRowsFromFile(
     if (kind !== "sales_invoice") {
       throw new Error("القراءة المحلية لقالب RAGM Cloud متاحة حاليًا لفواتير المبيعات فقط.");
     }
-    const items = await extractPdfTextItems(file);
-    if (items.length < 20 || items.reduce((sum, item) => sum + item.text.length, 0) < 100) {
-      throw new Error("هذا الـPDF لا يحتوي طبقة نص كافية؛ يبدو ممسوحًا كصورة. لم يُرسل إلى AI.");
+    try {
+      const items = await extractPdfTextItems(file);
+      if (items.length >= 20 && items.reduce((sum, item) => sum + item.text.length, 0) >= 100) {
+        return parseDocuments(parseRagmCloudSalesInvoicePdf(items), kind, true, true);
+      }
+    } catch {
+      // Scanned/image-only PDFs, and text PDFs whose embedded text is not
+      // positioned reliably, continue to the visual OCR path below.
     }
-    return parseDocuments(parseRagmCloudSalesInvoicePdf(items), kind, true, true);
   }
 
   let extractedText = "";
@@ -686,7 +691,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         setSaveAsDraftOnly(true);
         setSourceWarnings((current) => [
           ...current,
-          "استُخرجت فواتير RAGM Cloud محليًا من النص المضمّن في PDF؛ ستبقى الدفعة مسودات حتى تراجعها.",
+          "قُرئت فواتير RAGM Cloud من النص المضمّن أو من صورة PDF؛ ستبقى الدفعة مسودات حتى تراجع الأسماء والأصناف والبيانات.",
           ...(parsed.some((doc) => !doc.paymentType)
             ? ["لا تعرض بعض ملفات PDF وسيلة السداد؛ راجعها وأكملها قبل أي ترحيل."]
             : []),
@@ -694,8 +699,39 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       }
       setFailedFiles(failures);
 
-      setDocs(markDuplicateDocuments(parsed));
-      if (parsed.length) await loadMasters();
+      let reviewDocs = parsed;
+      if (parsed.length) {
+        const masterData = await loadMasters();
+        let repairedNames = 0;
+        reviewDocs = parsed.map((doc) => {
+          const partyRows = doc.kind.startsWith("sales")
+            ? masterData.customers ?? []
+            : masterData.suppliers ?? [];
+          const partyName = repairNameSpacingFromMaster(
+            doc.partyName, doc.partyCode, partyRows, ["code", "customerCode", "supplierCode"],
+          );
+          if (partyName.repaired) repairedNames++;
+          const lines = doc.lines.map((line: any) => {
+            const itemName = repairNameSpacingFromMaster(
+              line.itemName, line.itemCode, masterData.items ?? [], ["code", "itemCode"],
+            );
+            if (itemName.repaired) repairedNames++;
+            return itemName.repaired ? { ...line, itemName: itemName.name } : line;
+          });
+          return {
+            ...doc,
+            ...(partyName.repaired ? { partyName: partyName.name } : {}),
+            lines,
+          };
+        });
+        if (repairedNames) {
+          setSourceWarnings((current) => [
+            ...current,
+            `تم ضبط المسافات في ${repairedNames} اسمًا فقط بعد تطابق كود العميل/الصنف مع سجل الشركة.`,
+          ]);
+        }
+      }
+      setDocs(markDuplicateDocuments(reviewDocs));
       toast({
         title: `تمت قراءة ${parsed.length} مستندًا من ${files.length} ملف`,
         description: failures.length
