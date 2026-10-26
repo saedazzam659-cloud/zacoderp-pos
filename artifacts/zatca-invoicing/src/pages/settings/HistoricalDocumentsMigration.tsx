@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { exportData, ensureFiscalYears, scanHistorical } from "@/lib/dataIoApi";
+import { processInvoiceBatchQueue } from "@/lib/invoiceBatchQueue";
 import {
   convertLinkedSalesInvoiceCsv,
   convertLinkedPurchaseOrderCsv,
@@ -643,40 +644,28 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
       const pendingFiles = files
         .map((file, index) => ({ file, index }))
         .filter(({ index }) => !pairedFiles.has(index));
-      const failures: Array<{ name: string; error: string }> = [];
-      let completed = files.length - pendingFiles.length;
-      setReadProgress({ completed, total: files.length });
-      let nextIndex = 0;
-      let quotaStopReason = "";
-      const worker = async () => {
-        while (nextIndex < pendingFiles.length) {
-          if (quotaStopReason) return;
-          const entry = pendingFiles[nextIndex++];
-          try {
-            const extracted = await extractInvoiceRowsFromFile(entry.file, kind, token, invoiceFormat);
-            parsedByFile.set(entry.index, extracted.map((doc) => ({
-                ...doc,
-                key: `${doc.key}|file:${entry.index}`,
-                sourceFileName: entry.file.name,
-              })));
-          } catch (error: any) {
-            failures.push({ name: entry.file.name, error: error?.message ?? "تعذرت قراءة الملف" });
-            if (error?.status === 429) quotaStopReason = error?.message ?? "تم بلوغ حد استخدام التحويل";
-          } finally {
-            completed += 1;
-            setReadProgress({ completed, total: files.length });
-          }
-        }
-      };
       // Keep the queue bounded to avoid sending hundreds of large PDFs to the
       // browser/API/AI provider at once; failed files do not discard successes.
-      await Promise.all(Array.from({ length: Math.min(2, pendingFiles.length) }, () => worker()));
-      if (quotaStopReason) {
-        failures.push(...pendingFiles.slice(nextIndex).map(({ file }) => ({
-          name: file.name,
-          error: `لم يبدأ تحويل هذا الملف بسبب حد الاستخدام: ${quotaStopReason}`,
-        })));
-      }
+      const initialCompleted = files.length - pendingFiles.length;
+      setReadProgress({ completed: initialCompleted, total: files.length });
+      const batch = await processInvoiceBatchQueue(
+        pendingFiles.map((entry) => ({ entry, index: entry.index })),
+        ({ file }, index) => extractInvoiceRowsFromFile(file, kind, token, invoiceFormat)
+          .then((documents) => documents.map((doc) => ({
+            ...doc,
+            key: `${doc.key}|file:${index}`,
+            sourceFileName: file.name,
+          }))),
+        {
+          concurrency: 2,
+          onProgress: (completed) => setReadProgress({
+            completed: initialCompleted + completed,
+            total: files.length,
+          }),
+        },
+      );
+      batch.successes.forEach((documents, index) => parsedByFile.set(index, documents));
+      const failures = batch.failures.map(({ entry, error }) => ({ name: entry.file.name, error }));
       files.forEach((_, index) => parsed.push(...(parsedByFile.get(index) ?? [])));
       setFailedFiles(failures);
 
