@@ -79,6 +79,7 @@
 - [Voice assistant rollout](voice-assistant-rollout.md) — all mobile screens are the long-term target; start with sales, deposits, and expenses, gated by user permissions.
 - [Expo Android release builds](expo-source-archive-contract.md) — wrap complete pnpm sources, verify remote version/signing, and account for delayed status and Hermes UTF-16 strings.
 - [External DB routing and schema healing](external-db-storage-routing.md) — keep readiness strict by default; one designated request path may tolerate missing tables without weakening other agents.
+- [Agent database pool reliability](agent-db-pool-reliability.md) — reserve pool capacity for login and fail fast on mutation overload; prevent one agent from starving its own database traffic.
 - [Test runtime boundary](api-server-ensureschema-lock-hang.md) — do not run the slow/full admin suite without explicit approval; use focused checks.
 - [Simple voucher multi-invoice settlements](voucher-multi-invoice-settlement-boundary.md) — same-party, same-currency invoice allocation must preserve one voucher posting and legacy single-invoice behavior.
 - [Company payment labels](company-payment-labels-boundary.md) — payment defaults and display aliases are company-scoped; keep the internal accounting payment keys unchanged.

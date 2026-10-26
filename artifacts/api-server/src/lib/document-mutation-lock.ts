@@ -1,8 +1,35 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
-import { pool } from "@workspace/db";
+import { centralPool, getActiveExternalDb, pool } from "@workspace/db";
 import { resolveCompanyId } from "../middleware/auth.js";
+import { DocumentMutationAdmissionError, DocumentMutationAdmissionGate } from "./document-mutation-admission.js";
 
 const lockTails = new Map<string, Promise<void>>();
+const admissionGates = new WeakMap<object, DocumentMutationAdmissionGate>();
+const MAX_LOCK_CLIENTS_PER_POOL = 4;
+const MUTATION_ADMISSION_WAIT_MS = 2_000;
+const MAX_QUEUED_MUTATIONS_PER_POOL = 100;
+
+function getMutationAdmissionGate(): DocumentMutationAdmissionGate {
+  const databasePool = getActiveExternalDb()?.pool ?? centralPool;
+  const poolKey = databasePool as object;
+  const existing = admissionGates.get(poolKey);
+  if (existing) return existing;
+
+  const poolMax = Number((databasePool as any).options?.max);
+  const safePoolMax = Number.isInteger(poolMax) && poolMax > 0 ? poolMax : 10;
+  // This lock consumes one pool client while the handler issues its own
+  // queries. A one-client pool cannot safely run these handlers at all.
+  const limit = safePoolMax < 2
+    ? 0
+    : Math.max(1, Math.min(MAX_LOCK_CLIENTS_PER_POOL, Math.floor(safePoolMax / 3)));
+  const gate = new DocumentMutationAdmissionGate(
+    limit,
+    MUTATION_ADMISSION_WAIT_MS,
+    MAX_QUEUED_MUTATIONS_PER_POOL,
+  );
+  admissionGates.set(poolKey, gate);
+  return gate;
+}
 
 function advisoryScopeKey(type: string, companyId: number): number {
   let hash = 0x811c9dc5;
@@ -26,9 +53,11 @@ export async function withDocumentMutationLock<T>(
   await previous;
   let operationError: unknown;
   let client: any;
+  let releaseAdmission: (() => void) | undefined;
   let lockAcquired = false;
   let lockAttempted = false;
   try {
+    releaseAdmission = await getMutationAdmissionGate().acquire();
     if (
       !Number.isSafeInteger(companyId) || companyId <= 0 ||
       !Number.isSafeInteger(documentId) || documentId <= 0 || documentId > 2_147_483_647
@@ -67,6 +96,7 @@ export async function withDocumentMutationLock<T>(
     }
     unlock();
     if (lockTails.get(key) === current) lockTails.delete(key);
+    releaseAdmission?.();
     if (unlockError && operationError === undefined) throw unlockError;
   }
 }
@@ -97,6 +127,13 @@ export function documentMutationLock(
         handler(req, res, next),
       );
     } catch (error) {
+      if (error instanceof DocumentMutationAdmissionError) {
+        res.setHeader("Retry-After", String(error.retryAfterSeconds));
+        return res.status(error.status).json({
+          error: error.message,
+          code: "DOCUMENT_MUTATION_CAPACITY",
+        });
+      }
       return next(error);
     }
   };
