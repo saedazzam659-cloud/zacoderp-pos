@@ -60,7 +60,6 @@ import SalesDocumentDetails from "@/pages/sales/SalesDocumentDetails";
 import { SalesBatchAllocationControl, type SalesBatchAllocation } from "./SalesBatchAllocationControl";
 import QuickAddCatalogItemDialog from "./QuotationQuickAddItemDialog";
 import {
-  catalogUnitsWithHistoricalSelection,
   isActiveItemUnit,
   itemUnitsWithHistoricalSelection,
   serializeDocumentLine,
@@ -1566,10 +1565,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       itemCode: item.code ?? "",
     }));
     const itemUnits = await fetchItemUnits(itemId).catch(() => []);
-    // Pick base unit (or first configured, or fallback to item's default unit)
-    const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
+    // Only auto-select a unit when the item master has an explicit base.
+    // A catalog unit or an unmarked legacy link is not sufficient to save a
+    // new invoice line; the item must first be repaired in its master record.
+    const base = item.unitId == null
+      ? undefined
+      : itemUnits.find((u: any) => String(u.unitId) === String(item.unitId) && isActiveItemUnit(u));
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
-    const chosenUnitId = base?.unitId ?? item.unitId ?? null;
+    const chosenUnitId = item.unitId ?? null;
     const chosenUnitName = localizedName(base?.unit?.nameAr ?? fallbackUnit?.nameAr, base?.unit?.nameEn ?? fallbackUnit?.nameEn, isRtl ? "ar" : "en");
     const catalogPrice = resolveSalesItemUnitPrice(item, base);
     let chosenPrice: string = String(catalogPrice);
@@ -2431,6 +2434,42 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       value: String(u.id),
       label: localizedName(u.nameAr, u.nameEn, isRtl ? "ar" : "en") || `#${u.id}`,
     }));
+  function salesLineUnitOptions(itemId: string, selectedUnitId: string) {
+    if (!itemId) return unitItems;
+    const itemUnits = itemUnitsMap[itemId] ?? [];
+    const item = inventoryItems.find((candidate: any) => String(candidate.id) === itemId);
+    const baseUnitId = item?.unitId == null ? "" : String(item.unitId);
+    if (!baseUnitId) {
+      // Existing documents retain their historical unit for display, but a
+      // new document must not choose an arbitrary catalog unit for an item
+      // whose master has no base unit.
+      if (!isNew && selectedUnitId) {
+        const historicalUnit = units.find((unit: any) => String(unit.id) === selectedUnitId);
+        return historicalUnit ? [{
+          value: String(historicalUnit.id),
+          label: localizedName(historicalUnit.nameAr, historicalUnit.nameEn, isRtl ? "ar" : "en") || `#${historicalUnit.id}`,
+          disabled: true,
+        }] : [];
+      }
+      return [];
+    }
+    if (itemUnits.length > 0) {
+      return itemUnitsWithHistoricalSelection(itemUnits, selectedUnitId).map((iu: any) => ({
+        value: String(iu.unitId),
+        label: `${localizedName(iu.unit?.nameAr, iu.unit?.nameEn, isRtl ? "ar" : "en")}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+        disabled: iu.isActive === false || iu.unit?.isActive === false,
+      }));
+    }
+
+    const allowedIds = new Set([baseUnitId, !isNew ? selectedUnitId : ""].filter(Boolean));
+    return units
+      .filter((unit: any) => allowedIds.has(String(unit.id)))
+      .map((unit: any) => ({
+        value: String(unit.id),
+        label: localizedName(unit.nameAr, unit.nameEn, isRtl ? "ar" : "en") || `#${unit.id}`,
+        disabled: unit.isActive === false || (String(unit.id) !== baseUnitId && !isNew),
+      }));
+  }
 
   const Icon  = isInvoice ? ShoppingBag : isOrder ? ClipboardList : FileSignature;
   const title = isNew
@@ -2673,14 +2712,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colUnit")}</label>
           {(() => {
             const iu = (qaItemId && itemUnitsMap[qaItemId]) ? itemUnitsMap[qaItemId] : [];
-            const opts = itemUnitsWithHistoricalSelection(iu, qaUnitId).map((u: any) => ({
-              value: String(u.unitId),
-              label: `${localizedName(u.unit?.nameAr, u.unit?.nameEn, isRtl ? "ar" : "en")}${Number(u.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(u.conversionFactor)})` : ""}`,
-              disabled: u.isActive === false || u.unit?.isActive === false,
-            }));
+            const opts = salesLineUnitOptions(qaItemId, qaUnitId);
             return (
               <Select value={qaUnitId || undefined} onValueChange={setQaUnitId} disabled={opts.length === 0}>
-                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder={t("salesDocForm.colUnit")} /></SelectTrigger>
+                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder={qaItemId && opts.length === 0 ? t("inventoryMaster.units.baseRequired") : t("salesDocForm.colUnit")} /></SelectTrigger>
                 <SelectContent>
                   {opts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                 </SelectContent>
@@ -2776,19 +2811,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 </div>
               ) : filled.map((l, idx) => {
                 const dMode = lineDiscMode[l._id] ?? "pct";
-                const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
-                const unitOpts = itemUnits.length > 0
-                  ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
-                      value: String(iu.unitId),
-                      label: `${localizedName(iu.unit?.nameAr, iu.unit?.nameEn, isRtl ? "ar" : "en")}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
-                      disabled: iu.isActive === false || iu.unit?.isActive === false,
-                    }))
-                  : [
-                      ...unitItems,
-                      ...catalogUnitsWithHistoricalSelection(units, l.unitId)
-                        .filter((u: any) => !unitItems.some((x: any) => x.value === String(u.id)))
-                .map((u: any) => ({ value: String(u.id), label: localizedName(u.nameAr, u.nameEn, isRtl ? "ar" : "en") || `#${u.id}`, disabled: u.isActive === false })),
-                    ];
+                const unitOpts = salesLineUnitOptions(l.itemId, l.unitId);
                 return (
                 <div key={l._id} className="px-3 py-2 text-xs hover:bg-muted/30 transition-colors">
                   <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: gridCols }}>
@@ -2820,8 +2843,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </div>
                     <span className="truncate text-muted-foreground" title={isServiceLine(l) ? "" : whName(l.warehouseId)}>{isServiceLine(l) ? t("salesDocForm.serviceNoWarehouse") : whName(l.warehouseId)}</span>
                     {units.length > 0 ? (
-                      <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
-                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={t("salesDocForm.colUnit")} /></SelectTrigger>
+                      <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)} disabled={!!l.itemId && unitOpts.length === 0}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={l.itemId && unitOpts.length === 0 ? t("inventoryMaster.units.baseRequired") : t("salesDocForm.colUnit")} /></SelectTrigger>
                         <SelectContent>
                           {unitOpts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                         </SelectContent>
@@ -3057,22 +3080,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         <Input className="h-8 text-xs" placeholder="—" readOnly />
                       )}
                       {(() => {
-                        const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
-                    const opts = itemUnits.length > 0
-                          ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
-                              value: String(iu.unitId),
-                              label: `${localizedName(iu.unit?.nameAr, iu.unit?.nameEn, isRtl ? "ar" : "en")}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
-                              disabled: iu.isActive === false || iu.unit?.isActive === false,
-                            }))
-                          : [
-                              ...unitItems,
-                              ...catalogUnitsWithHistoricalSelection(units, l.unitId)
-                                .filter((u: any) => !unitItems.some((x: any) => x.value === String(u.id)))
-                                .map((u: any) => ({ value: String(u.id), label: localizedName(u.nameAr, u.nameEn, isRtl ? "ar" : "en") || `#${u.id}`, disabled: u.isActive === false })),
-                            ];
+                        const opts = salesLineUnitOptions(l.itemId, l.unitId);
                         return units.length > 0 ? (
-                          <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
-                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={t("salesDocForm.colUnit")} /></SelectTrigger>
+                          <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)} disabled={!!l.itemId && opts.length === 0}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={l.itemId && opts.length === 0 ? t("inventoryMaster.units.baseRequired") : t("salesDocForm.colUnit")} /></SelectTrigger>
                             <SelectContent>
                           {opts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                             </SelectContent>
