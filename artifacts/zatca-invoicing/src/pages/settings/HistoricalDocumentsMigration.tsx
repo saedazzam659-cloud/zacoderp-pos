@@ -687,6 +687,9 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
         setSourceWarnings((current) => [
           ...current,
           "استُخرجت فواتير RAGM Cloud محليًا من النص المضمّن في PDF؛ ستبقى الدفعة مسودات حتى تراجعها.",
+          ...(parsed.some((doc) => !doc.paymentType)
+            ? ["لا تعرض بعض ملفات PDF وسيلة السداد؛ راجعها وأكملها قبل أي ترحيل."]
+            : []),
         ]);
       }
       setFailedFiles(failures);
@@ -1444,7 +1447,7 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
           </div>
         )}
         <p className="text-xs text-muted-foreground">
-          اختر قالب الفاتورة لهذه الدفعة؛ كل شركة يمكنها استخدام القالب المناسب. يمكنك تحديد عدة ملفات دفعة واحدة من نافذة الاختيار (Ctrl/Shift). ملفات RAGM Cloud بصيغة CSV تتطلب ملفي Invoices.csv وInvoice_items.csv معًا؛ ملف الأصناف وحده لا يحتوي بيانات رأس الفاتورة اللازمة للحفظ. الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP (حتى 13 ميجابايت للملف). كل ملف PDF يستخدم طلب تحويل AI وقد يتوقف عند بلوغ حد الاستخدام اليومي أو الشهري؛ تبقى النتائج الناجحة للمراجعة، ولا يُحفظ شيء تلقائيًا.
+          اختر قالب الفاتورة لهذه الدفعة؛ كل شركة يمكنها استخدام القالب المناسب. يمكنك تحديد عدة ملفات دفعة واحدة من نافذة الاختيار (Ctrl/Shift). ملفات RAGM Cloud بصيغة CSV تتطلب ملفي Invoices.csv وInvoice_items.csv معًا؛ ملف الأصناف وحده لا يحتوي بيانات رأس الفاتورة اللازمة للحفظ. PDF لهذا القالب يُقرأ محليًا من طبقة النص باستخدام PDF.js، دون إرسال الملف إلى AI؛ يجب أن يكون قابلًا للبحث وبنفس التخطيط، أما الملفات المصورة أو القوالب المختلفة فتُرفض بوضوح. ملفات PDF بالقالب العام ما زالت تستخدم AI وقد تتأثر بحد الاستخدام. الصيغ المدعومة: Excel وCSV وPDF وWord وJPG وPNG وWebP (حتى 13 ميجابايت للملف). لا يُحفظ شيء تلقائيًا؛ راجع النتائج قبل الحفظ.
         </p>
         {masterError && <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-800">{masterError}</div>}
         {!!docs.length && (

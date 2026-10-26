@@ -46,7 +46,7 @@ function textInCell(items: RagmPdfTextItem[], rtl = false): string {
     result += item.text;
     previous = item;
   }
-  return result.replace(/\s+/g, " ").trim();
+  return result.replace(/\s+/g, " ").trim().normalize("NFKC");
 }
 
 function numberInRow(row: TextRow, minX: number, maxX: number): string {
@@ -71,20 +71,19 @@ function labelItem(items: RagmPdfTextItem[], label: string): RagmPdfTextItem | u
 }
 
 function valueNearLabel(rows: TextRow[], label: string, field: string): string {
-  const anchor = rows.flatMap((row) => row.items).find((item) =>
-    item.text.toLocaleLowerCase().includes(label.toLocaleLowerCase()),
+  const anchors = rows.flatMap((row) => row.items).filter((item) =>
+    item.text.toLocaleLowerCase().trim() === label.toLocaleLowerCase().trim(),
   );
-  if (!anchor) throw new Error(`قالب RAGM Cloud: لم أجد خانة ${field}.`);
-  const row = rows.find((candidate) => candidate.page === anchor.page && Math.abs(candidate.y - anchor.y) <= 4);
-  const values = row?.items
-    .filter((item) => item !== anchor && Math.abs(item.x - anchor.x) < 240)
-    .map((item) => ({ item, value: asciiDigits(item.text).replace(/[,\s]/g, "") }))
-    .filter(({ value }) => /^\d+(?:\.\d+)?$/.test(value)) ?? [];
-  values.sort((a, b) =>
-    Math.abs(a.item.x - anchor.x) - Math.abs(b.item.x - anchor.x),
-  );
-  if (!values[0]) throw new Error(`قالب RAGM Cloud: تعذر قراءة ${field}.`);
-  return values[0].value;
+  if (!anchors.length) throw new Error(`قالب RAGM Cloud: لم أجد خانة ${field}.`);
+  const candidates = anchors.flatMap((anchor) => rows
+    .filter((candidate) => candidate.page === anchor.page && Math.abs(candidate.y - anchor.y) <= 5)
+    .flatMap((candidate) => candidate.items)
+    .filter((item) => Math.abs(item.x - anchor.x) < 240)
+    .map((item) => ({ item, value: asciiDigits(item.text).replace(/[,\s]/g, ""), anchor }))
+    .filter(({ item, value }) => item !== anchor && /^\d+(?:\.\d+)?$/.test(value)));
+  candidates.sort((a, b) => Math.abs(a.item.x - a.anchor.x) - Math.abs(b.item.x - b.anchor.x));
+  if (!candidates[0]) throw new Error(`قالب RAGM Cloud: تعذر قراءة ${field}.`);
+  return candidates[0].value;
 }
 
 function dateValue(items: RagmPdfTextItem[], dateLabel: RagmPdfTextItem): { date: string; time: string } {
@@ -104,7 +103,7 @@ function dateValue(items: RagmPdfTextItem[], dateLabel: RagmPdfTextItem): { date
 }
 
 function parsePaymentType(items: RagmPdfTextItem[]): string {
-  const text = items.map((item) => item.text).join(" ").toLocaleLowerCase();
+  const text = items.map((item) => item.text).join(" ").normalize("NFKC").toLocaleLowerCase();
   if (text.includes("نقدي") || /\bcash\b/.test(text)) return "cash";
   if (text.includes("تحويل بنكي") || /\bbank transfer\b/.test(text)) return "bank";
   if (text.includes("آجل") || text.includes("اجل") || /\bcredit\b/.test(text)) return "credit";
@@ -112,8 +111,15 @@ function parsePaymentType(items: RagmPdfTextItem[]): string {
 }
 
 function itemRows(items: RagmPdfTextItem[], rows: TextRow[], headerY: number) {
+  const headerYByPage = new Map<number, number>();
+  for (const item of items) {
+    if (item.text.toLocaleLowerCase().trim() === "item code" && !headerYByPage.has(item.page)) {
+      headerYByPage.set(item.page, item.y);
+    }
+  }
   const codes = items.filter((item) =>
-    item.x >= 35 && item.x <= 85 && item.y < headerY - 4 && /^\s*[\da-z-]+\s*$/i.test(asciiDigits(item.text)),
+    item.x >= 35 && item.x <= 85 && item.y < (headerYByPage.get(item.page) ?? headerY) - 4
+      && /^\s*[\da-z-]+\s*$/i.test(asciiDigits(item.text)),
   );
   const parsed = codes.map((code) => {
     const detailRow = rows
@@ -145,17 +151,18 @@ function itemRows(items: RagmPdfTextItem[], rows: TextRow[], headerY: number) {
       qty: numberValue(quantity, "الكمية"),
       discount_percent: numberValue(discount, "الخصم"),
       free_qty: numberValue(freeQty, "الكمية المجانية"),
-      line_discount_amount: "0",
-      line_total: numberValue(total, "إجمالي السطر"),
+      line_discount_amount: Math.max(
+        0,
+        Number(numberValue(unitPrice, "سعر الوحدة")) * Number(numberValue(quantity, "الكمية"))
+          - Number(numberValue(netLineAmount, "صافي السطر")),
+      ).toFixed(2),
+      line_total: numberValue(netLineAmount, "صافي السطر"),
       vat_rate: numberValue(vatRate, "نسبة الضريبة"),
+      vat_amount: numberValue(vatAmount, "ضريبة السطر"),
+      printed_total: numberValue(total, "إجمالي السطر شامل الضريبة"),
     };
   });
-  const unique = new Map<string, (typeof parsed)[number]>();
-  for (const row of parsed) {
-    const key = `${row.item_code}|${row.qty}|${row.unit_price}|${row.line_total}`;
-    unique.set(key, row);
-  }
-  return [...unique.values()];
+  return parsed;
 }
 
 export function parseRagmCloudSalesInvoicePdf(items: RagmPdfTextItem[]) {
@@ -167,7 +174,7 @@ export function parseRagmCloudSalesInvoicePdf(items: RagmPdfTextItem[]) {
   const invoiceLabel = labelItem(items, "invoice no");
   const accountLabel = labelItem(items, "account no");
   const dateLabel = labelItem(items, "date");
-  const headerItems = items.filter((item) => item.page === (invoiceLabel?.page ?? 1));
+  const headerItems = items;
   const rows = makeRows(headerItems);
   if (!invoiceLabel || !accountLabel || !dateLabel) {
     throw new Error("قالب RAGM Cloud: بيانات رقم الفاتورة أو العميل أو التاريخ غير مكتملة.");
@@ -182,13 +189,17 @@ export function parseRagmCloudSalesInvoicePdf(items: RagmPdfTextItem[]) {
     : "";
   if (!partyName) throw new Error("قالب RAGM Cloud: اسم العميل غير مقروء.");
 
-  const headerY = items.find((item) => item.text.toLocaleLowerCase().includes("item code"))?.y;
+  const headerY = items.find((item) => item.text.toLocaleLowerCase().trim() === "item code")?.y;
   if (headerY == null) throw new Error("قالب RAGM Cloud: لم أجد جدول الأصناف.");
   const lines = itemRows(headerItems, rows, headerY);
   if (!lines.length) throw new Error("قالب RAGM Cloud: لا توجد أسطر أصناف قابلة للقراءة.");
 
-  const currencyText = visibleText;
-  const currencyCode = /\bsar\b/.test(currencyText) || currencyText.includes("ريال سعودي") ? "SAR" : "";
+  const joinedPageText = rows.map((row) => textInCell(row.items, true)).join(" ").normalize("NFKC").toLocaleLowerCase();
+  const compactPageText = joinedPageText.replace(/\s+/g, "");
+  const currencyCode = /\bsar\b/.test(visibleText)
+    || ((compactPageText.includes("سعودي")) && /ريال|ریال|﷼/.test(compactPageText))
+    ? "SAR"
+    : "";
   const exchangeRate = currencyCode === "SAR" ? "1" : "";
   const subtotal = valueNearLabel(rows, "net vat excluded", "الإجمالي قبل الضريبة");
   const vatAmount = valueNearLabel(rows, "vat amount", "قيمة الضريبة");
@@ -228,9 +239,15 @@ export function parseRagmCloudSalesInvoicePdf(items: RagmPdfTextItem[]) {
   const vatValue = Number(vatAmount);
   const totalValue = Number(totalAmount);
   const sumOfLines = lines.reduce((sum, line) => sum + Number(line.line_total), 0);
+  const sumOfLineVat = lines.reduce((sum, line) => sum + Number(line.vat_amount), 0);
+  const lineTotalsReconcile = lines.every((line) =>
+    Math.abs(Number(line.line_total) + Number(line.vat_amount) - Number(line.printed_total)) <= 0.02,
+  );
   if (![subtotalValue, vatValue, totalValue, sumOfLines].every(Number.isFinite)
     || Math.abs(subtotalValue + vatValue - totalValue) > 0.02
-    || Math.abs(sumOfLines - totalValue) > 0.02) {
+    || Math.abs(sumOfLines - subtotalValue) > 0.02
+    || Math.abs(sumOfLineVat - vatValue) > 0.02
+    || !lineTotalsReconcile) {
     throw new Error("قالب RAGM Cloud: إجماليات السطور لا تتطابق مع إجمالي الفاتورة؛ راجع PDF يدويًا.");
   }
   return documentRows;
