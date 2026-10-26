@@ -10,6 +10,12 @@ description: External Postgres routing boundaries and schema-heal constraints fo
 - Migrate = two-pass batched copy (full + delta) with ON CONFLICT (id) DO NOTHING + setval + count-verify before flipping routing. External→external rerouting is rejected (go central first). Routing back to central intentionally leaves data on the external DB (SA-confirmed flow).
 - Company archive POLICY (companies.archive_settings) always reads central; only document_archives rows are routed. Core tables/SA panel never routable by design (user requirement).
 
+Agent-domain database scoping is separate from module storage routing: requests whose host matches an active agent domain with an initialized external database run business queries against that agent database. A production query against Replit's central database therefore cannot prove that an agent-domain invoice exists or is missing.
+
+**Why:** The owner confirmed `alkamilerp.com` uses this deployment, and its registry entry has an initialized external database; the central production replica contained no corresponding sales invoices.
+
+**How to apply:** Before interpreting an empty central production query for an agent domain, check only the registry's non-secret host/status/database-ready fields. Use an authorized, documented path to the agent database for business-row verification; if none is available, state that the central query is not authoritative and do not ask the user to re-import.
+
 Required business tables in externally routed agent databases should have complete, idempotent DDL in the shared pre-validation heal. Generic schema reconciliation adds columns to existing tables; request readiness is strict by default. Cached ensure promises must remain scoped by active database context.
 
 SuperAdmin company reset requests with `?agent=` run core company-data queries against that agent's external PostgreSQL through `runWithAgentScope`; inspecting the central Replit database is not evidence of the external schema. Reset preview and transactional recount/delete must apply the same optional-table policy on the selected external database.
