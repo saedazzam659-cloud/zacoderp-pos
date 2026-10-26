@@ -686,3 +686,17 @@ mtime_ms = 1792327511550
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/07865f4c-af2d-4cb3-bc06-d0c2eceb84ab/b9f130f5-43f7-451a-a82c-1aeb22bd3a71"
 storage_version_token = "1792327675135801"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "eGFLYDCJ5UF0PCUPxhAdF"
+uri = "file://attached_assets/%D9%81%D8%A7%D8%AA%D9%88%D8%B1%D8%A9_%D9%85%D8%A8%D9%8A%D8%B9%D8%A7%D8%AA_%D8%B9%D9%85%D9%84%D8%A9_EUR_%D9%86%D8%B3%D8%AE%D8%A9_%D9%85%D8%A4%D9%82%D8%AA%D8%A9.pdf"
+type = "pdf"
+title = "فاتورة المبيعات — نسخة مؤقتة بعملة EUR"
+description = "نسخة توضيحية من نفس الفاتورة: أُضيف EUR إلى العملة الأساسية والإجماليات، مع الحفاظ على الأرقام الأصلية وصفوف SAR وسعر الصرف ورمز QR."
+logical_id = "9ab70040-799f-45e0-9ff6-cdd973121c59"
+content_hash = "sha256:e1790a44d43fb52a3a7c550cf1e14ed630ef637453db6f5d8c413394a825a15d"
+size = 250441
+mtime_ms = 1793032768403
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/9ab70040-799f-45e0-9ff6-cdd973121c59/8a9eedf4-23b9-4b77-b4bb-13c061114a42"
+storage_version_token = "1793032837514677"
+content_type = "application/pdf"

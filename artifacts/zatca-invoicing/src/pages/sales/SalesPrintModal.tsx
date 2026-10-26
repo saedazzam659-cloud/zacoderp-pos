@@ -2586,6 +2586,7 @@ export function template14(d: PrintData): string {
         <div class="meta-pills">
           <span class="pill no"><b>${docNo}</b></span>
           ${contracting || !isNonPaymentDoc(d.type) ? `<span class="pill pay"><b>${payLabel}</b></span>` : ""}
+          ${totals.isForeign ? `<span class="pill">${tl("العملة", "Currency")}: <b>${escapePrintHtml(totals.currency)}</b></span>` : ""}
           <span class="pill">📅 <b>${dateStr}</b></span>
           ${isQuot && doc.validUntil ? `<span class="pill">${L.validUntil} <b>${doc.validUntil}</b></span>` : ""}
           ${isReturn && doc.invoiceId ? `<span class="pill">${L.reference}: <b>${doc.invoiceId}</b></span>` : ""}
@@ -2751,11 +2752,11 @@ export function template14(d: PrintData): string {
     <div class="__totalsRow"><span>المدفوع</span><span class="mono">${nf(contracting.totals?.paid ?? 0)} ر.س</span></div>
     <div class="__totalsRow"><span>المتبقي للسداد</span><span class="mono">${nf(contracting.totals?.outstanding ?? 0)} ر.س</span></div>`
     : `
-              <div class="__totalsRow"><span>${tl("الإجمالي قبل الخصم", "Subtotal")}</span><span class="mono">${nf(totals.subtotalPreDiscount)}</span></div>
-              <div class="__totalsRow"><span>${tl("مبلغ الخصم", "Discount")}</span><span class="mono" style="color:#b91c1c;">${nf(totals.discountTotal)}</span></div>
-              <div class="__totalsRow"><span>${tl("الصافي بدون الضريبة", "Net")}</span><span class="mono">${nf(totals.netPreVat)}</span></div>
-              <div class="__totalsRow"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono" style="color:#b45309;">${nf(totals.vatAmount)}</span></div>
-              <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}${quotationCurrencyHtml}</span><span class="mono">${nf(totals.grandTotal)}</span></div>
+              <div class="__totalsRow"><span>${tl("الإجمالي قبل الخصم", "Subtotal")}</span><span class="mono">${nf(totals.subtotalPreDiscount)} ${totals.currencySym}</span></div>
+              <div class="__totalsRow"><span>${tl("مبلغ الخصم", "Discount")}</span><span class="mono" style="color:#b91c1c;">${nf(totals.discountTotal)} ${totals.currencySym}</span></div>
+              <div class="__totalsRow"><span>${tl("الصافي بدون الضريبة", "Net")}</span><span class="mono">${nf(totals.netPreVat)} ${totals.currencySym}</span></div>
+              <div class="__totalsRow"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono">${nf(totals.vatAmount)} ${totals.currencySym}</span></div>
+              <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}${quotationCurrencyHtml}</span><span class="mono">${nf(totals.grandTotal)} ${totals.currencySym}</span></div>
               ${sarEqRowsHtml(totals, "__totalsRow", tl, nf)}
               ${(company?.printShowItemsSummary !== false) ? (isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)) : ""}`;
 
