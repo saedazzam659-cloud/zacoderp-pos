@@ -394,7 +394,13 @@ function computeFullTotals(doc: any, lines: any[], printType?: SalesPrintType): 
   return {
     subtotalPreDiscount, discountTotal, netPreVat, vatAmount, grandTotal,
     totalQty, totalFreeQty, itemsCount: (lines ?? []).length, currency,
-    currencySym: currencySymbol(currency), currencyName,
+    currencySym: currencySymbol(
+      currency,
+      printData?.currency?.code
+        ? [{ code: printData.currency.code, symbol: printData.currency.symbol }]
+        : undefined,
+    ),
+    currencyName,
     amountWords: printLang === "en"
       ? numberToEnglishWords(grandTotal, currency)
       : numberToArabicWords(grandTotal),
