@@ -908,7 +908,11 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
         </p>
         {!showUnitForm && (
           <Button disabled={!canCreateUnit || isLoading} size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => {
-            setForm({ ...UNIT_EMPTY, isBase: itemUnitId == null && unitPrices.length === 0 });
+            setForm({
+              ...UNIT_EMPTY,
+              isBase: itemUnitId == null && unitPrices.length === 0,
+              referenceUnitId: itemUnitId == null ? "" : String(itemUnitId),
+            });
             setEditUpId(null);
             setShowUnitForm(true);
           }}>
