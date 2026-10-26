@@ -1079,7 +1079,10 @@ export function HistoricalDocumentsMigration({ cid, token, toast }: {
     try {
       let sequenceProblems: Array<{ sourceNumber: string; status: string; detail: string }>;
       try {
-        sequenceProblems = kind === "purchase_order" || postingMode === "archive_only"
+        // Draft-only imports receive a draft number from the server and do not
+        // consume the official annual sequence, so sequence preflight must not
+        // block saving them.
+        sequenceProblems = kind === "purchase_order" || postingMode === "archive_only" || saveAsDraftOnly
           ? []
           : await preflightAnnualSequences(refs);
       } catch (error: any) {

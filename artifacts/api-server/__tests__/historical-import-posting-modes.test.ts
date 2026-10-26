@@ -44,6 +44,7 @@ test("historical importer preserves staged financial mode and does not post draf
   assert.match(ui, /saveAsDraft: true/);
   assert.match(ui, /paymentType: doc\.paymentType \|\| \(\(postingMode === "archive_only" \|\| saveAsDraftOnly\) \? "credit" : ""\)/);
   assert.match(ui, /postingMode !== "archive_only" && !saveAsDraftOnly && created\.status !== "posted"/);
+  assert.match(ui, /kind === "purchase_order" \|\| postingMode === "archive_only" \|\| saveAsDraftOnly/);
 });
 
 test("historical import review applies batch defaults and lets users jump to and correct invalid line values", async () => {
