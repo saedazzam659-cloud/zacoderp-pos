@@ -83,10 +83,30 @@ export type ExternalDbContext = { db: DrizzleDb; pool: InstanceType<typeof Pool>
 const dbAls = new AsyncLocalStorage<ExternalDbContext>();
 
 /** Create a drizzle instance + pool over an EXTERNAL PostgreSQL URL (agent DB). */
-export function createExternalDb(connectionString: string, opts?: { max?: number }): ExternalDbContext {
+export function withIdleInTransactionTimeout(
+  connectionString: string,
+  timeoutMs: number,
+): string {
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("idle-in-transaction timeout must be a positive integer in milliseconds");
+  }
+  const url = new URL(connectionString);
+  const existingOptions = url.searchParams.get("options")?.trim();
+  const timeoutOption = `-c idle_in_transaction_session_timeout=${timeoutMs}`;
+  url.searchParams.set("options", [existingOptions, timeoutOption].filter(Boolean).join(" "));
+  return url.toString();
+}
+
+export function createExternalDb(
+  connectionString: string,
+  opts?: { max?: number; idleInTransactionTimeoutMs?: number },
+): ExternalDbContext {
   const externalMax = opts?.max ?? toInt(process.env.PG_EXTERNAL_POOL_MAX, 10);
+  const effectiveConnectionString = opts?.idleInTransactionTimeoutMs
+    ? withIdleInTransactionTimeout(connectionString, opts.idleInTransactionTimeoutMs)
+    : connectionString;
   const p = new Pool({
-    connectionString,
+    connectionString: effectiveConnectionString,
     // Agent traffic has its own pool budget. Keep it independently tunable:
     // increasing the central pool does not help requests routed through ALS.
     max: externalMax,

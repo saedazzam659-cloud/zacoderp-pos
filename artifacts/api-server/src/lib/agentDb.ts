@@ -23,6 +23,7 @@ function positiveInt(value: string | undefined, fallback: number): number {
 }
 
 const externalPoolMax = positiveInt(process.env.PG_EXTERNAL_POOL_MAX, 10);
+const idleInTransactionTimeoutMs = 5 * 60 * 1_000;
 // Optional targeted capacity override: "2=20,7=12". Leave unset until each
 // remote database's own max_connections budget has been checked.
 const externalPoolMaxByAgent = parseAgentDbPoolOverrides(process.env.PG_EXTERNAL_POOL_MAX_BY_AGENT);
@@ -55,7 +56,7 @@ export function getAgentDbContext(agentId: number, dbUrlEnc: string): ExternalDb
   if (hit) hit.ctx.pool.end().catch(() => {});
   const url = decryptSecret(dbUrlEnc);
   if (!url) throw new Error("agent db url missing");
-  const ctx = createExternalDb(url, { max });
+  const ctx = createExternalDb(url, { max, idleInTransactionTimeoutMs });
   cache.set(agentId, { key: dbUrlEnc, ctx, max });
   logger.info({ agentId, max }, "Agent database pool created");
   return ctx;
