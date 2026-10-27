@@ -39,9 +39,8 @@ test("excluded customers show the server's notice instead of a zero statement", 
   assert.equal(statementExclusion({ excluded: false }), null);
 });
 
-// The supplier branch still runs the untouched original HTML template.
-// Comparing against it catches accidental changes to the extracted customer
-// markup/CSS while checking that web and native consume identical HTML.
+// Compare normalized markup so web and native continue to consume the same
+// localized shared template for every statement mode.
 const normalize = (html: string) => html
   .replace(/<!--[\s\S]*?-->/g, "")
   .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -92,8 +91,19 @@ test("native and web render the original statement header, lines and footer", as
     assert.match(native, /اسم المستخدم: الموظف/);
     assert.match(native, /table\.page-frame > thead \{ display: table-header-group; \}/);
 
-    // Supplier/general still use the original browser template, so their
-    // output provides an independent reference for unchanged shared markup.
+    const english = renderStatementHtml({
+      ...opts,
+      language: "en",
+      company: { ...opts.company, nameEn: "Acme Ltd." },
+      account: { ...opts.account, partyNameEn: "Customer One" },
+    });
+    assert.match(english, /<html dir="ltr" lang="en">/);
+    assert.match(english, /Acme Ltd\./);
+    assert.match(english, /Customer One/);
+    assert.match(english, /Opening balance/);
+    assert.match(english, /Printed on:/);
+    assert.doesNotMatch(english, /رصيد افتتاحي|تاريخ الطباعة/);
+
     for (const lines of [opts.lines, []]) {
       const supplier = { ...opts, mode: "supplier" as const, lines };
       assert.equal(normalize(renderStatementHtml(supplier)), normalize(await webHtml(supplier)));

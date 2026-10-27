@@ -898,7 +898,7 @@ export async function exportToPDF(
       margin: 8mm 6mm 18mm 6mm;
       size: A4 landscape;
       @bottom-center {
-        content: "صفحة " counter(page) " من " counter(pages);
+        content: ${isEnglish ? '"Page " counter(page) " of " counter(pages)' : '"صفحة " counter(page) " من " counter(pages)'};
         font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
         font-size: 9pt;
         color: #475569;
@@ -915,13 +915,13 @@ export async function exportToPDF(
     ${subtitle ? `<p>${escape(subtitle)}</p>` : ""}
   </div>
   <div class="meta">
-    تاريخ الطباعة: ${today} &nbsp;|&nbsp; عدد السجلات: ${rows.length}
+    ${isEnglish ? "Printed on" : "تاريخ الطباعة"}: ${today} &nbsp;|&nbsp; ${isEnglish ? "Records" : "عدد السجلات"}: ${rows.length}
   </div>
   <div class="content">
     <table>
       <thead><tr>${theadCells}</tr></thead>
       <tbody>
-        ${tbodyRows || `<tr><td colspan="${columns.length}" class="empty">لا توجد بيانات للتصدير</td></tr>`}
+        ${tbodyRows || `<tr><td colspan="${columns.length}" class="empty">${isEnglish ? "No data to export" : "لا توجد بيانات للتصدير"}</td></tr>`}
         ${totalsTbodyRow}
       </tbody>
     </table>
@@ -1406,7 +1406,7 @@ export function printChartOfAccountsExternal(opts: {
   }).join("");
 
   const html = `<!DOCTYPE html>
-<html dir="${isEnglish ? "ltr" : "rtl"}" lang="${isEnglish ? "en" : "ar"}">
+<html dir="rtl" lang="ar">
 <head>
   <meta charset="UTF-8"/>
   <title>${escape(title)}</title>
@@ -1415,7 +1415,7 @@ export function printChartOfAccountsExternal(opts: {
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
-      direction: ${isEnglish ? "ltr" : "rtl"};
+      direction: rtl;
       font-size: 11pt;
       color: #0f172a;
       background: #f8fafc;
@@ -1534,7 +1534,7 @@ export function printChartOfAccountsExternal(opts: {
       margin: 12mm 10mm 18mm 10mm;
       size: A4 portrait;
       @bottom-center {
-        content: ${isEnglish ? '"Page " counter(page) " of " counter(pages)' : '"صفحة " counter(page) " من " counter(pages)'};
+        content: "صفحة " counter(page) " من " counter(pages);
         font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
         font-size: 9pt;
         color: #475569;
@@ -1857,15 +1857,16 @@ export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
     ?? (typeof document !== "undefined" ? document.documentElement.lang : "ar");
   const render = statementTemplate.renderStatementHtml ?? (statementTemplate as any).default.renderStatementHtml;
   const sharedHtml = render({ ...opts, language });
-  const sharedBlob = new Blob([sharedHtml], { type: "text/html;charset=utf-8" });
-  const sharedUrl = URL.createObjectURL(sharedBlob);
-  const sharedWindow = window.open(sharedUrl, "_blank");
-  if (sharedWindow) sharedWindow.addEventListener("afterprint", () => URL.revokeObjectURL(sharedUrl));
-  else URL.revokeObjectURL(sharedUrl);
-  return;
+  if (sharedHtml) {
+    const sharedBlob = new Blob([sharedHtml], { type: "text/html;charset=utf-8" });
+    const sharedUrl = URL.createObjectURL(sharedBlob);
+    const sharedWindow = window.open(sharedUrl, "_blank");
+    if (sharedWindow) sharedWindow.addEventListener("afterprint", () => URL.revokeObjectURL(sharedUrl));
+    else URL.revokeObjectURL(sharedUrl);
+    return;
+  }
 
-  // Legacy renderer retained below for compatibility reference; new statements
-  // all use the shared localized template above.
+  // Keep the legacy renderer as a fallback if the shared template fails.
   const {
     mode, company, account, from, to,
     opening, lines, totals, closing,

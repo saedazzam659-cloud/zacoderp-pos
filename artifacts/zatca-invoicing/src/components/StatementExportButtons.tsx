@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent,
@@ -7,7 +8,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Download, FileSpreadsheet, FileText, ChevronDown, Loader2, Printer } from "lucide-react";
 import {
-  exportToExcel, exportStatementToPDF,
+  exportToExcel, exportStatementToPDF, localizeExportRows,
   type ExportColumn, type StatementPdfCompany, type StatementPdfAccount, type StatementPdfLine,
 } from "@/lib/export";
 import { useFmt } from "@/hooks/use-fmt";
@@ -57,6 +58,8 @@ export default function StatementExportButtons({
   visibleCols = STATEMENT_COL_DEFAULTS, userName,
 }: Props) {
   const [busy, setBusy] = useState(false);
+  const { t, i18n } = useTranslation();
+  const language = i18n.language || "ar";
   const { fmt, dp } = useFmt();
   const gate = useDemoActionGate();
 
@@ -66,14 +69,14 @@ export default function StatementExportButtons({
   const moneyFmt = dp > 0 ? `#,##0.${"0".repeat(dp)}` : "#,##0";
 
   const ALL_EXCEL_COLUMNS: (ExportColumn & { key: StatementColKey })[] = [
-    { key: "date", header: "التاريخ", width: 14 },
-    { key: "docType", header: "نوع الوثيقة", width: 18 },
-    { key: "docNumber", header: "الرقم", width: 16 },
-    { key: "type", header: "رقم القيد", width: 16 },
-    { key: "debit", header: "مدين", width: 14, numFmt: moneyFmt },
-    { key: "credit", header: "دائن", width: 14, numFmt: moneyFmt },
-    { key: "balance", header: "الرصيد", width: 16, numFmt: moneyFmt },
-    { key: "description", header: "الشرح", width: 30 },
+    { key: "date", header: t("accountStatement.colDate"), width: 14 },
+    { key: "docType", header: t("accountStatement.colDocType"), width: 18 },
+    { key: "docNumber", header: t("accountStatement.colDoc"), width: 16 },
+    { key: "type", header: t("accountStatement.colJournalEntryNumber"), width: 16 },
+    { key: "debit", header: t("accountStatement.colDebit"), width: 14, numFmt: moneyFmt },
+    { key: "credit", header: t("accountStatement.colCredit"), width: 14, numFmt: moneyFmt },
+    { key: "balance", header: t("accountStatement.colBalance"), width: 16, numFmt: moneyFmt },
+    { key: "description", header: t("accountStatement.colDescription"), width: 30 },
   ];
   const excelColumns: ExportColumn[] = ALL_EXCEL_COLUMNS.filter(c => visibleCols[c.key]);
 
@@ -82,7 +85,7 @@ export default function StatementExportButtons({
 
   const excelRows: Record<string, unknown>[] = [
     {
-      docType: "رصيد افتتاحي",
+      docType: t("accountStatement.openingRow"),
       date: from, docNumber: "—", type: "—",
       debit:  openingDebit  || "",
       credit: openingCredit || "",
@@ -118,7 +121,7 @@ export default function StatementExportButtons({
     docType: "", date: "", docNumber: "", type: "",
     debit: totals.debit, credit: totals.credit,
     balance: closing, description: "",
-    ...(firstLeading ? { [firstLeading]: "الإجمالي" } : {}),
+    ...(firstLeading ? { [firstLeading]: t("accountStatement.totalLabel") } : {}),
   } : null;
 
   async function handleExport(type: "excel" | "pdf" | "print") {
@@ -126,11 +129,14 @@ export default function StatementExportButtons({
     try {
       if (!(await gate(type === "print" ? "print" : "export"))) return;
       if (type === "excel") {
-        exportToExcel(excelRows, excelColumns, filename, "كشف حساب", totalsRow);
+         exportToExcel(
+           localizeExportRows(excelRows, excelColumns, language),
+           excelColumns, filename, t("accountStatement.title"), totalsRow,
+         );
       } else {
         exportStatementToPDF({
           mode, company, account, from, to, opening, lines, totals, closing,
-          filename, autoPrint: type === "print", fmt, branchName, visibleCols, userName,
+           filename, autoPrint: type === "print", fmt, branchName, visibleCols, userName, language,
         });
       }
     } finally {
