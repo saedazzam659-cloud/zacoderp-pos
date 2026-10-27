@@ -255,6 +255,7 @@ function PurchaseInvoiceFormContent() {
   // sentinel and the badge freezes at the start number while saves advance the
   // real branch counter.
   const [paymentType,  setPaymentType]  = useState("credit");
+  const [employeeCustodyId, setEmployeeCustodyId] = useState("");
   const seqPeek = useNextSequenceNumber("purchase_invoice", isNew, undefined, branchId, paymentType);
   const [cashBoxId,    setCashBoxId]    = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
@@ -542,6 +543,11 @@ function PurchaseInvoiceFormContent() {
     queryFn: () => fetchJsonArray(`${API}/api/bank-accounts/balances?companyId=${cid}`, authH),
     enabled: !!user && !!cid && paymentType === "bank",
   });
+  const { data: employeeCustodies = [] } = useQuery<any[]>({
+    queryKey: ["employee-custodies", cid, "active"],
+    queryFn: () => fetchJsonArray(`${API}/api/employee-custodies?companyId=${cid}&status=active`, authH),
+    enabled: !!user && !!cid && paymentType === "employee_custody" && user?.company?.purchaseDirectExpensesCustodyEnabled === true,
+  });
   useEffect(() => {
     if (!isNew || paymentType !== "cash" || cashBoxId || !cashBoxes.length) return;
     const active = [...cashBoxes].filter((box: any) => box.isActive !== false).sort((a: any, b: any) => a.id - b.id);
@@ -608,6 +614,7 @@ function PurchaseInvoiceFormContent() {
     setManualPrintPartyName(existing.manualPrintPartyName ?? "");
     setBranchId(existing.branchId ? String(existing.branchId) : "");
     setPaymentType(existing.paymentType ?? "credit");
+    setEmployeeCustodyId(existing.employeeCustodyId ? String(existing.employeeCustodyId) : "");
     setCashBoxId(existing.cashBoxId ? String(existing.cashBoxId) : "");
     setBankAccountId(existing.bankAccountId ? String(existing.bankAccountId) : "");
     setCurrencyCode(existing.currencyCode ?? "SAR");
@@ -692,6 +699,7 @@ function PurchaseInvoiceFormContent() {
         setManualPrintPartyName(src.manualPrintPartyName ?? "");
         setBranchId(src.branchId ? String(src.branchId) : "");
         setPaymentType(src.paymentType ?? "credit");
+        setEmployeeCustodyId(src.employeeCustodyId ? String(src.employeeCustodyId) : "");
         setCashBoxId(src.cashBoxId ? String(src.cashBoxId) : "");
         setBankAccountId(src.bankAccountId ? String(src.bankAccountId) : "");
         setCurrencyCode(src.currencyCode ?? "SAR");
@@ -1154,6 +1162,7 @@ function PurchaseInvoiceFormContent() {
         ? manualPrintPartyName.trim() || null
         : null,
       cashBoxId: paymentType === "cash" ? (cashBoxId || null) : null,
+      employeeCustodyId: paymentType === "employee_custody" ? (employeeCustodyId || null) : null,
       bankAccountId: paymentType === "bank" ? (bankAccountId || null) : null,
       currencyCode,
       exchangeRate, lcId: lcId || null, distributionMethod: distMethod,
@@ -1785,9 +1794,13 @@ function PurchaseInvoiceFormContent() {
                         if (preferred ?? active[0]) setBankAccountId(String((preferred ?? active[0]).id));
                       }
                       setCashBoxId("");
+                    } else if (v === "employee_custody") {
+                      setCashBoxId("");
+                      setBankAccountId("");
                     } else {
                       setCashBoxId("");
                       setBankAccountId("");
+                      setEmployeeCustodyId("");
                     }
                   }}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
@@ -1801,8 +1814,24 @@ function PurchaseInvoiceFormContent() {
                       <SelectItem value="bank">
                         <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />{tr("payment.bank")}</span>
                       </SelectItem>
+                      {user?.company?.purchaseDirectExpensesCustodyEnabled === true && (
+                        <SelectItem value="employee_custody">
+                          <span className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" />الدفع من عهدة موظف</span>
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
+                  {paymentType === "employee_custody" && (
+                    <Select value={employeeCustodyId} onValueChange={setEmployeeCustodyId}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر العهدة" /></SelectTrigger>
+                      <SelectContent>
+                        {employeeCustodies.filter((c: any) => Number(c.amount) - Number(c.settledAmount) - Number(c.returnedAmount) > 0.005)
+                          .map((c: any) => <SelectItem key={c.id} value={String(c.id)}>
+                            {c.employeeName ?? `عهدة #${c.id}`} — متاح {fmt(Number(c.amount) - Number(c.settledAmount) - Number(c.returnedAmount))}
+                          </SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
 
                 <div hidden={!fieldPolicy.isVisible("currency")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("currency") && "pointer-events-none opacity-70")}>

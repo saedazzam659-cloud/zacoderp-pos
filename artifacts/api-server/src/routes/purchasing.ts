@@ -28,6 +28,7 @@ import {
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
   costCentersTable,
   accountsTable,
+  employeeCustodiesTable, employeeCustodySettlementsTable,
   unitsTable,
   taxesTable,
   goodsReceiptsTable, goodsReceiptLinesTable,
@@ -420,6 +421,23 @@ async function assertPurchaseInvoiceLines(cid: number, lines: any, executor: any
     await assertInvoiceHasRealItemLine(cid, itemLines, executor, "فاتورة الشراء");
   } else if (!direct.length) {
     await assertInvoiceHasRealItemLine(cid, rows, executor, "فاتورة الشراء");
+  }
+}
+
+async function assertPurchaseCustody(cid: number, paymentType: string, custodyId: unknown, executor: any = db): Promise<void> {
+  if (paymentType !== "employee_custody") return;
+  const [company] = await executor.select({
+    enabled: (companiesTable as any).purchaseDirectExpensesCustodyEnabled,
+  }).from(companiesTable).where(eq(companiesTable.id, cid));
+  if (company?.enabled !== true) throw Object.assign(new Error("الدفع من العهدة غير مفعّل لهذه الشركة"), { status: 403 });
+  const id = Number(custodyId);
+  if (!Number.isInteger(id) || id <= 0) throw Object.assign(new Error("اختر العهدة المستخدمة في السداد"), { status: 400 });
+  const [custody] = await executor.select().from(employeeCustodiesTable).where(and(
+    eq(employeeCustodiesTable.id, id),
+    eq(employeeCustodiesTable.companyId, cid),
+  ));
+  if (!custody || !custody.disbursementJournalId || custody.status === "cancelled") {
+    throw Object.assign(new Error("العهدة غير موجودة أو غير مصروفة أو ملغاة"), { status: 400 });
   }
 }
 
@@ -1734,13 +1752,14 @@ router.post("/purchase-invoices", async (req, res) => {
         }
       }
     }
-    const { docNumber, supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { docNumber, supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, employeeCustodyId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     await assertPurchaseInvoiceLines(cid, lines, db);
+    await assertPurchaseCustody(cid, pType, employeeCustodyId, db);
     await assertPurchaseWriteReferences(cid, {
       supplierId, branchId, cashBoxId, bankAccountId, lcId, taxId,
       headerCostCenter: costCenter,
@@ -1817,6 +1836,7 @@ router.post("/purchase-invoices", async (req, res) => {
       supplierId: supplierId ? Number(supplierId) : null,
       manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!supplierId),
       paymentType: pType,
+      employeeCustodyId: pType === "employee_custody" && employeeCustodyId ? Number(employeeCustodyId) : null,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
       currencyCode: currencyCode || "SAR",
@@ -1919,12 +1939,13 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       return;
     }
     // docNumber is intentionally not destructured — immutable on edit.
-    const { supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { supplierInvoiceNumber, supplierInvoiceDate, invoiceDate, supplierId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, employeeCustodyId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
     const pType = paymentType || "credit";
     await assertPurchaseInvoiceLines(cid, lines, db);
+    await assertPurchaseCustody(cid, pType, employeeCustodyId, db);
     // Credit invoices require a supplier ledger. Cash/bank purchases may use
     // a print-only manual name without creating a supplier master record.
     if (!supplierId && (pType !== "cash" && pType !== "bank" || !!lcId)) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ الفاتورة", field: "supplierId" }); return; }
@@ -1967,6 +1988,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       supplierId: supplierId ? Number(supplierId) : null,
       manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!supplierId),
       paymentType: pType,
+      employeeCustodyId: pType === "employee_custody" && employeeCustodyId ? Number(employeeCustodyId) : null,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
       currencyCode: currencyCode || "SAR",
@@ -2456,13 +2478,28 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
         .where(eq(lcExpensesTable.lcId, inv.lcId));
     }
 
+    const [invoiceCustody] = inv.paymentType === "employee_custody" && inv.employeeCustodyId
+      ? await db.select().from(employeeCustodiesTable).where(and(
+          eq(employeeCustodiesTable.id, inv.employeeCustodyId),
+          eq(employeeCustodiesTable.companyId, cid),
+        ))
+      : [];
     const counterpartyAccountId = inv.lcId
       ? (lcRow?.settlementAccountId ?? null)
+      : inv.paymentType === "employee_custody" ? (invoiceCustody?.custodyAccountId ?? null)
       : inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
       : inv.paymentType === "bank" ? await getBankAccountAccountId(cid, (inv as any).bankAccountId)
       : await getSupplierAccountId(cid, inv.supplierId);
 
     const missing: string[] = [];
+    if (inv.paymentType === "employee_custody") {
+      if (!invoiceCustody || !invoiceCustody.disbursementJournalId || invoiceCustody.status === "cancelled") {
+        missing.push("عهدة موظف مصروفة وسارية");
+      } else {
+        const available = Number(invoiceCustody.amount) - Number(invoiceCustody.settledAmount) - Number(invoiceCustody.returnedAmount);
+        if (Number(inv.totalAmount) > available + 0.005) missing.push(`رصيد العهدة المتاح (${available.toFixed(2)})`);
+      }
+    }
     if (vatAmount > 0 && !taxAccId) missing.push("حساب الضرائب (مدخلات)");
     if (discountAmount > 0 && !discountAccId) missing.push("حساب الخصم المكتسب");
     if (!counterpartyAccountId) missing.push(
@@ -2719,7 +2756,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
         creditLines.push(...expCredits);
       }
       creditLines.push({ accountId: discountAccId, credit: discountAmount, description: "خصم مكتسب" });
-    } else if (inv.paymentType === "cash" || inv.paymentType === "bank") {
+    } else if (inv.paymentType === "cash" || inv.paymentType === "bank" || inv.paymentType === "employee_custody") {
       // CASH/BANK invoices pass through the supplier's AP account so كشف حساب
       // المورد shows BOTH legs (الاستحقاق ثم السداد) instead of nothing:
       //   Cr supplier AP  (استحقاق الفاتورة)
@@ -2786,6 +2823,36 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
         ))
         .returning();
       if (!updated) throw Object.assign(new Error("تعذر حفظ ترحيل فاتورة المشتريات."), { status: 409 });
+      if (inv.paymentType === "employee_custody" && invoiceCustody) {
+        const [lockedCustody] = await tx.select().from(employeeCustodiesTable)
+          .where(and(
+            eq(employeeCustodiesTable.id, invoiceCustody.id),
+            eq(employeeCustodiesTable.companyId, cid),
+          )).for("update");
+        if (!lockedCustody) throw Object.assign(new Error("العهدة غير موجودة"), { status: 409 });
+        const available = Number(lockedCustody.amount) - Number(lockedCustody.settledAmount) - Number(lockedCustody.returnedAmount);
+        if (Number(inv.totalAmount) > available + 0.005) throw Object.assign(new Error("رصيد العهدة لا يكفي لقيمة الفاتورة"), { status: 409 });
+        const [existingSettlement] = await tx.select({ id: employeeCustodySettlementsTable.id })
+          .from(employeeCustodySettlementsTable)
+          .where(and(
+            eq(employeeCustodySettlementsTable.companyId, cid),
+            eq(employeeCustodySettlementsTable.purchaseInvoiceId, id),
+          ));
+        if (!existingSettlement) {
+          await (tx.insert(employeeCustodySettlementsTable as any) as any).values({
+            companyId: cid, custodyId: lockedCustody.id, settleDate: inv.invoiceDate, kind: "expense",
+            expenseAccountId: null, amount: String(inv.totalAmount),
+            description: `فاتورة مشتريات ${inv.docNumber ?? id}`,
+            invoiceNumber: inv.docNumber, journalId, purchaseInvoiceId: id,
+          });
+          const newSettled = Number(lockedCustody.settledAmount) + Number(inv.totalAmount);
+          await tx.update(employeeCustodiesTable).set({
+            settledAmount: String(newSettled),
+            status: Number(lockedCustody.amount) - newSettled - Number(lockedCustody.returnedAmount) <= 0.005 ? "settled" : "active",
+            updatedAt: new Date(),
+          }).where(eq(employeeCustodiesTable.id, lockedCustody.id));
+        }
+      }
       return updated;
     });
 
@@ -3111,6 +3178,28 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
           eq(purchaseInvoicesTable.companyId, cid),
         ))
         .returning();
+      if (inv.paymentType === "employee_custody") {
+        const settlementTable: any = employeeCustodySettlementsTable;
+        const [settlement] = await tx.select().from(employeeCustodySettlementsTable)
+          .where(and(
+            eq(employeeCustodySettlementsTable.companyId, cid),
+            eq(settlementTable.purchaseInvoiceId, id),
+          )).for("update");
+        if (settlement) {
+          const [custody] = await tx.select().from(employeeCustodiesTable)
+            .where(and(eq(employeeCustodiesTable.id, settlement.custodyId), eq(employeeCustodiesTable.companyId, cid)))
+            .for("update");
+          if (custody) {
+            const next = Math.max(0, Number(custody.settledAmount) - Number(settlement.amount));
+            await tx.update(employeeCustodiesTable).set({
+              settledAmount: String(next),
+              status: Number(custody.amount) - next - Number(custody.returnedAmount) <= 0.005 ? "settled" : "active",
+              updatedAt: new Date(),
+            }).where(eq(employeeCustodiesTable.id, custody.id));
+          }
+          await tx.delete(employeeCustodySettlementsTable).where(eq(employeeCustodySettlementsTable.id, settlement.id));
+        }
+      }
       return draft;
     });
 
@@ -4722,8 +4811,22 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
     const discountAccId = pickAccount((ret as any).discountAccountId, mapPr("purchase_return", "discount"));
     const varianceAccId = mapPr("purchase_return", "variance");
 
+    const [custodySourceInvoice] = ret.invoiceId ? await db.select({
+      paymentType: purchaseInvoicesTable.paymentType,
+      employeeCustodyId: (purchaseInvoicesTable as any).employeeCustodyId,
+      totalAmount: purchaseInvoicesTable.totalAmount,
+    }).from(purchaseInvoicesTable).where(and(
+      eq(purchaseInvoicesTable.id, ret.invoiceId), eq(purchaseInvoicesTable.companyId, cid),
+    )) : [];
+    const [returnCustody] = custodySourceInvoice?.paymentType === "employee_custody" && custodySourceInvoice.employeeCustodyId
+      ? await db.select().from(employeeCustodiesTable).where(and(
+          eq(employeeCustodiesTable.id, custodySourceInvoice.employeeCustodyId),
+          eq(employeeCustodiesTable.companyId, cid),
+        ))
+      : [];
     const counterpartyAccountId =
-      ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
+      returnCustody ? returnCustody.custodyAccountId
+      : ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
       : ret.paymentType === "bank" ? await getBankAccountAccountId(cid, (ret as any).bankAccountId)
       : await getSupplierAccountId(cid, ret.supplierId);
     // Supplier AP account for the cash/bank pass-through legs (may be null).

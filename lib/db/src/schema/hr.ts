@@ -306,6 +306,8 @@ export const employeeCustodySettlementsTable = pgTable("employee_custody_settlem
   description:    text("description"),
   invoiceNumber:  text("invoice_number"),
   journalId:      integer("journal_id"),
+  purchaseInvoiceId: integer("purchase_invoice_id"),
+  purchaseReturnId: integer("purchase_return_id"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
 });
 
