@@ -77,6 +77,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 interface ReturnLine {
   _id: string;
+  lineType: "item" | "direct_expense";
+  accountId: string;
   /** Persisted database line id; absent on a newly created return. */
   id?: number;
   /** Actual source invoice line id; never the UI row key. */
@@ -103,7 +105,7 @@ interface ReturnLine {
 
 function newLine(): ReturnLine {
   return {
-    _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
+    _id: crypto.randomUUID(), lineType: "item", accountId: "", itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
     qty: "1", freeQty: "0", unitPrice: "0", discount: "0", vatRate: "15", lineTotal: "0",
     notes: "", costCenter: "", industrialCost: null,
@@ -516,8 +518,12 @@ export default function PurchaseReturns() {
       setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
         freeQty:     String(l.freeQty ?? "0"),
         _id:         crypto.randomUUID(),
+        lineType:    l.lineType === "direct_expense" ? "direct_expense" : "item",
+        accountId:   l.accountId ? String(l.accountId) : "",
         id:          Number.isInteger(Number(l.id)) ? Number(l.id) : undefined,
-        sourceLineId: sourceLineIdForLine(l, sourceLines, usedSourceIds),
+        sourceLineId: Number.isInteger(Number(l.sourceInvoiceLineId))
+          ? Number(l.sourceInvoiceLineId)
+          : sourceLineIdForLine(l, sourceLines, usedSourceIds),
         itemId:      l.itemId      ? String(l.itemId)      : "",
         itemName:    l.itemName    ?? "",
         itemCode:    l.itemCode    ?? "",
@@ -624,7 +630,11 @@ export default function PurchaseReturns() {
       setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
         freeQty:     String(l.freeQty ?? "0"),
         _id:         crypto.randomUUID(),
-        sourceLineId: sourceLineIdForLine(l, sourceLines, usedSourceIds),
+        lineType:    l.lineType === "direct_expense" ? "direct_expense" : "item",
+        accountId:   l.accountId ? String(l.accountId) : "",
+        sourceLineId: Number.isInteger(Number(l.sourceInvoiceLineId))
+          ? Number(l.sourceInvoiceLineId)
+          : sourceLineIdForLine(l, sourceLines, usedSourceIds),
         itemId:      l.itemId      ? String(l.itemId)      : "",
         itemName:    l.itemName    ?? "",
         itemCode:    l.itemCode    ?? "",
@@ -742,6 +752,8 @@ export default function PurchaseReturns() {
       if (inv.lines?.length) {
         setLines(inv.lines.map((l: any) => ({
           _id:         crypto.randomUUID(),
+          lineType:    l.lineType === "direct_expense" ? "direct_expense" : "item",
+          accountId:   l.accountId ? String(l.accountId) : "",
           sourceLineId: Number.isInteger(Number(l.id)) ? Number(l.id) : undefined,
           itemId:      l.itemId      ? String(l.itemId)      : "",
           itemName:    l.itemName    ?? "",
@@ -1032,7 +1044,12 @@ export default function PurchaseReturns() {
       discountAmount: docDiscountAmt.toFixed(2),
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
-      lines: lines.filter(l => l.itemName).map(l => serializeDocumentLine(l)),
+      lines: lines.filter(l => l.itemName).map(l => ({
+        ...serializeDocumentLine(l),
+        lineType: l.lineType,
+        accountId: l.lineType === "direct_expense" ? Number(l.accountId) : null,
+        sourceLineId: l.sourceLineId ?? null,
+      })),
     });
   }
 
@@ -2173,7 +2190,9 @@ ${sections}
                     <span className="text-xs text-muted-foreground tabular-nums">{idx + 1}</span>
                     <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                       onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                    {user ? (
+                    {l.lineType === "direct_expense" ? (
+                      <Input className="h-8 text-xs bg-muted/30" readOnly value={l.itemName} />
+                    ) : user ? (
                       <SearchCombobox
                         items={itemComboItems}
                         value={l.itemId}
@@ -2187,7 +2206,11 @@ ${sections}
                       <Input className="h-8 text-xs" placeholder={tr("itemNamePh")} value={l.itemName}
                         onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                     )}
-                    {warehouses.length > 0 ? (
+                    {l.lineType === "direct_expense" ? (
+                      <div className="h-8 flex items-center rounded-md border bg-muted/30 px-2 text-[11px] text-muted-foreground">
+                        مصروف مباشر · حساب #{l.accountId || "—"}
+                      </div>
+                    ) : warehouses.length > 0 ? (
                       <div className={cn("rounded-md", l.itemId && !l.warehouseId && "ring-1 ring-amber-400")}>
                         <SearchCombobox
                           items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr, labelEn: w.nameEn }))}

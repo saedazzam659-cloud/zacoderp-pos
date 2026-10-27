@@ -1827,7 +1827,7 @@ function PurchaseInvoiceFormContent() {
                       <SelectContent>
                         {employeeCustodies.filter((c: any) => Number(c.amount) - Number(c.settledAmount) - Number(c.returnedAmount) > 0.005)
                           .map((c: any) => <SelectItem key={c.id} value={String(c.id)}>
-                            {c.employeeName ?? `عهدة #${c.id}`} — متاح {fmt(Number(c.amount) - Number(c.settledAmount) - Number(c.returnedAmount))}
+                            {c.empNameAr || c.empNameEn || `عهدة #${c.id}`} — متاح {fmt(Number(c.amount) - Number(c.settledAmount) - Number(c.returnedAmount))}
                           </SelectItem>)}
                       </SelectContent>
                     </Select>

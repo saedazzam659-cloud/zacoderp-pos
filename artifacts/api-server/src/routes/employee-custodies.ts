@@ -500,6 +500,9 @@ router.delete("/:id/settlements/:sid", async (req, res) => {
                    eq(employeeCustodySettlementsTable.companyId, cid)))
         .for("update");
       if (!stl) throw Object.assign(new Error("سطر التسوية غير موجود"), { status: 404 });
+      if ((stl as any).purchaseInvoiceId || (stl as any).purchaseReturnId) {
+        throw Object.assign(new Error("هذه التسوية مرتبطة بفاتورة أو مرتجع مشتريات؛ استخدم فك ترحيل المستند لعكسها بأمان."), { status: 409 });
+      }
       if (stl.journalId) {
         const [linkedEntry] = await tx.select({ isSequenceProtected: journalEntriesTable.isSequenceProtected })
           .from(journalEntriesTable)

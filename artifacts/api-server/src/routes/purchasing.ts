@@ -1965,7 +1965,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       return;
     }
     // docNumber is intentionally omitted — once assigned, it is immutable.
-    const [inv] = await db.update(purchaseInvoicesTable).set({
+    const [inv] = await (db.update(purchaseInvoicesTable) as any).set({
       branchId: branchId ? Number(branchId) : null,
       projectId: await (async () => {
         const selected = await resolveProjectLink(cid, req.body.projectId === undefined ? existing.projectId : req.body.projectId, branchId, req.authUser);
@@ -2478,9 +2478,9 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
         .where(eq(lcExpensesTable.lcId, inv.lcId));
     }
 
-    const [invoiceCustody] = inv.paymentType === "employee_custody" && inv.employeeCustodyId
+    const [invoiceCustody] = inv.paymentType === "employee_custody" && (inv as any).employeeCustodyId
       ? await db.select().from(employeeCustodiesTable).where(and(
-          eq(employeeCustodiesTable.id, inv.employeeCustodyId),
+          eq(employeeCustodiesTable.id, (inv as any).employeeCustodyId),
           eq(employeeCustodiesTable.companyId, cid),
         ))
       : [];
@@ -2836,7 +2836,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
           .from(employeeCustodySettlementsTable)
           .where(and(
             eq(employeeCustodySettlementsTable.companyId, cid),
-            eq(employeeCustodySettlementsTable.purchaseInvoiceId, id),
+            eq((employeeCustodySettlementsTable as any).purchaseInvoiceId, id),
           ));
         if (!existingSettlement) {
           await (tx.insert(employeeCustodySettlementsTable as any) as any).values({
@@ -4274,6 +4274,9 @@ router.post("/purchase-returns", async (req, res) => {
           cid,
           lines.map((l: any) => ({
             returnId: created.id, companyId: cid,
+            lineType: l.lineType === "direct_expense" ? "direct_expense" : "item",
+            accountId: l.lineType === "direct_expense" && l.accountId ? Number(l.accountId) : null,
+            sourceInvoiceLineId: l.sourceLineId ? Number(l.sourceLineId) : null,
             itemId: l.itemId ? Number(l.itemId) : null,
             itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
             unitId: l.unitId ? Number(l.unitId) : null,
@@ -4399,6 +4402,9 @@ router.put("/purchase-returns/:id", async (req, res) => {
           cid,
           lines.map((l: any) => ({
             returnId: id, companyId: cid,
+            lineType: l.lineType === "direct_expense" ? "direct_expense" : "item",
+            accountId: l.lineType === "direct_expense" && l.accountId ? Number(l.accountId) : null,
+            sourceInvoiceLineId: l.sourceLineId ? Number(l.sourceLineId) : null,
             itemId: l.itemId ? Number(l.itemId) : null,
             itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
             unitId: l.unitId ? Number(l.unitId) : null,
@@ -4608,16 +4614,75 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
     // Same keys, but at DOCUMENT line value (net of discount, excl VAT) —
     // used for the conventional no-variance JE (the default).
     const docNetByWarehouse: Record<string, number> = {};
+    const directExpenseCreditByAccount: Record<string, number> = {};
+    let directExpenseReturnTotal = 0;
     // Cross-line bucket consumption — duplicate (item, warehouse) lines in
     // the same return must share a batch's returnable headroom. Without
     // this, both lines would see the same `alreadyByBucket` snapshot and
     // collectively over-deduct the same source batch.
     // Key: `${itemId}|${warehouseId}|${batch||__null__}|${expiry||""}`
     const consumedThisDoc = new Map<string, number>();
+    const [custodySourceInvoice] = ret.invoiceId ? await db.select({
+      paymentType: purchaseInvoicesTable.paymentType,
+      employeeCustodyId: (purchaseInvoicesTable as any).employeeCustodyId,
+      totalAmount: purchaseInvoicesTable.totalAmount,
+      priceIncludesVat: purchaseInvoicesTable.priceIncludesVat,
+    }).from(purchaseInvoicesTable).where(and(
+      eq(purchaseInvoicesTable.id, ret.invoiceId), eq(purchaseInvoicesTable.companyId, cid),
+    )) : [];
     if (sourceHasInternalLandedCosts) await lockStockBalances(lines.filter(l => l.itemId && l.warehouseId).map(l => ({
       companyId: cid, itemId: l.itemId!, warehouseId: l.warehouseId!,
     })), db);
     for (const line of lines) {
+      if ((line as any).lineType === "direct_expense") {
+        const sourceLineId = Number((line as any).sourceInvoiceLineId);
+        if (!ret.invoiceId || !Number.isInteger(sourceLineId) || sourceLineId <= 0) {
+          throw Object.assign(new Error("سطر المصروف المرتجع يجب أن يرتبط بسطر مصروف في فاتورة الشراء المصدر"), { status: 409 });
+        }
+        const [sourceLine] = await db.select().from(purchaseInvoiceLinesTable).where(and(
+          eq(purchaseInvoiceLinesTable.id, sourceLineId),
+          eq(purchaseInvoiceLinesTable.invoiceId, ret.invoiceId),
+          eq(purchaseInvoiceLinesTable.companyId, cid),
+        ));
+        if (!sourceLine || (sourceLine as any).lineType !== "direct_expense" ||
+            Number((line as any).accountId) !== Number(sourceLine.accountId)) {
+          throw Object.assign(new Error("حساب المصروف المرتجع لا يطابق سطر الفاتورة الأصلية"), { status: 409 });
+        }
+        const qty = Number(line.qty || 0);
+        if (!(qty > 0) || qty > Number(sourceLine.qty) + 0.0001) {
+          throw Object.assign(new Error("كمية سطر المصروف المرتجع غير صالحة"), { status: 409 });
+        }
+        if (Math.abs(Number(line.unitPrice) - Number(sourceLine.unitPrice)) > 0.0001
+          || Math.abs(Number(line.discount) - Number(sourceLine.discount || 0)) > 0.0001
+          || Math.abs(Number(line.vatRate) - Number(sourceLine.vatRate || 0)) > 0.0001) {
+          throw Object.assign(new Error("سعر وخصم وضريبة المصروف المرتجع يجب أن تطابق الفاتورة الأصلية"), { status: 409 });
+        }
+        const returnLineTable: any = purchaseReturnLinesTable;
+        const previousReturns = await db.select({ line: purchaseReturnLinesTable, status: purchaseReturnsTable.status })
+          .from(purchaseReturnLinesTable)
+          .innerJoin(purchaseReturnsTable, eq(purchaseReturnLinesTable.returnId, purchaseReturnsTable.id))
+          .where(and(
+            eq(purchaseReturnsTable.companyId, cid),
+            eq(purchaseReturnsTable.invoiceId, ret.invoiceId),
+            eq(purchaseReturnsTable.status, "posted"),
+            eq(returnLineTable.sourceInvoiceLineId, sourceLineId),
+            ne(purchaseReturnsTable.id, id),
+          ));
+        const alreadyReturned = previousReturns.reduce((sum, row) => sum + Number(row.line.qty || 0), 0);
+        if (alreadyReturned + qty > Number(sourceLine.qty) + 0.0001) {
+          throw Object.assign(new Error("كمية المصروف المرتجع تتجاوز الكمية المتبقية من السطر الأصلي"), { status: 409 });
+        }
+        const sourceQty = Number(sourceLine.qty) || 1;
+        const sourceDiscount = Math.max(0, Math.min(100, Number(sourceLine.discount) || 0)) / 100;
+        const sourceGross = Math.max(0, Number(sourceLine.unitPrice) * sourceQty * (1 - sourceDiscount) - Number(sourceLine.discountAmount || 0));
+        const taxRate = Math.max(0, Number(sourceLine.vatRate) || 0) / 100;
+        const sourceNet = (custodySourceInvoice?.priceIncludesVat && taxRate > 0 ? sourceGross / (1 + taxRate) : sourceGross);
+        const net = sourceNet * (qty / sourceQty);
+        const key = `${sourceLine.accountId}|${String((line as any).costCenter ?? "").trim()}`;
+        directExpenseCreditByAccount[key] = (directExpenseCreditByAccount[key] ?? 0) + net;
+        directExpenseReturnTotal += net;
+        continue;
+      }
       if (!line.itemId || !line.warehouseId || isSvcLine(line)) continue;
       const factor   = String(line.conversionFactor || "1");
       // Inventory credit covers BOTH paid and free units leaving the warehouse.
@@ -4811,13 +4876,6 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
     const discountAccId = pickAccount((ret as any).discountAccountId, mapPr("purchase_return", "discount"));
     const varianceAccId = mapPr("purchase_return", "variance");
 
-    const [custodySourceInvoice] = ret.invoiceId ? await db.select({
-      paymentType: purchaseInvoicesTable.paymentType,
-      employeeCustodyId: (purchaseInvoicesTable as any).employeeCustodyId,
-      totalAmount: purchaseInvoicesTable.totalAmount,
-    }).from(purchaseInvoicesTable).where(and(
-      eq(purchaseInvoicesTable.id, ret.invoiceId), eq(purchaseInvoicesTable.companyId, cid),
-    )) : [];
     const [returnCustody] = custodySourceInvoice?.paymentType === "employee_custody" && custodySourceInvoice.employeeCustodyId
       ? await db.select().from(employeeCustodiesTable).where(and(
           eq(employeeCustodiesTable.id, custodySourceInvoice.employeeCustodyId),
@@ -4831,7 +4889,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
       : await getSupplierAccountId(cid, ret.supplierId);
     // Supplier AP account for the cash/bank pass-through legs (may be null).
     const returnSupplierApAccId =
-      (ret.paymentType === "cash" || ret.paymentType === "bank")
+      (ret.paymentType === "cash" || ret.paymentType === "bank" || returnCustody)
         ? await getSupplierAccountId(cid, ret.supplierId)
         : null;
 
@@ -4911,11 +4969,12 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
       // Scale ALL buckets proportionally so their sum equals the document
       // subtotal (net of VAT) — never dump the difference into one bucket.
       const rawTotal = Object.values(docNetByWarehouse).reduce((s, v) => s + v, 0) + svcRawTotal;
-      if (rawTotal <= 0 && subtotal > 0.01) {
+      const goodsSubtotal = Math.max(0, subtotal - directExpenseReturnTotal);
+      if (rawTotal <= 0 && goodsSubtotal > 0.01) {
         throw new Error("لا يمكن ترحيل المرتجع بقيمة المستند: لا توجد بنود (صنف + مستودع، أو صنف خدمي) تحمل قيمة. حدّد الصنف والمستودع على البنود أو فعّل قيد فروق الأسعار.");
       }
-      if (rawTotal > 0 && Math.abs(rawTotal - subtotal) > 0.005) {
-        const scale = subtotal / rawTotal;
+      if (rawTotal > 0 && Math.abs(rawTotal - goodsSubtotal) > 0.005) {
+        const scale = goodsSubtotal / rawTotal;
         creditBaseByWh = Object.fromEntries(
           Object.entries(docNetByWarehouse).map(([k, v]) => [k, Math.round(v * scale * 100) / 100]),
         );
@@ -4925,7 +4984,8 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
       }
     }
     const goodsCostTotal = Object.values(creditBaseByWh).reduce((s, v) => s + v, 0)
-      + Object.values(svcCreditByKey).reduce((s, v) => s + v, 0);
+      + Object.values(svcCreditByKey).reduce((s, v) => s + v, 0)
+      + directExpenseReturnTotal;
     const varianceDelta  = subtotal - goodsCostTotal; // >0 → CR variance (refund > cost = gain); <0 → DR variance (refund < cost = loss)
     const VARIANCE_NUDGE_THRESHOLD = 0.01;
     const needsVarianceLine = useVariance && Math.abs(varianceDelta) > VARIANCE_NUDGE_THRESHOLD;
@@ -5039,11 +5099,11 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
         // the cash/bank purchase-invoice pass-through. The two AP legs net to
         // zero, so supplier balances are unaffected. If the supplier has no
         // ledger account, fall back to the old direct debit.
-        ...(((ret.paymentType === "cash" || ret.paymentType === "bank") && returnSupplierApAccId)
+        ...(((ret.paymentType === "cash" || ret.paymentType === "bank" || returnCustody) && returnSupplierApAccId)
           ? [
               { accountId: returnSupplierApAccId, debit:  totalAmount, description: apLineDesc },
-              { accountId: returnSupplierApAccId, credit: totalAmount, description: ret.paymentType === "cash" ? "استرداد نقدي من المورد" : "استرداد بنكي من المورد" },
-              { accountId: counterpartyAccountId, debit:  totalAmount, description: ret.paymentType === "cash" ? "استرداد نقدي" : "استرداد بنكي" },
+              { accountId: returnSupplierApAccId, credit: totalAmount, description: returnCustody ? "استرداد من المورد إلى العهدة" : ret.paymentType === "cash" ? "استرداد نقدي من المورد" : "استرداد بنكي من المورد" },
+              { accountId: counterpartyAccountId, debit:  totalAmount, description: returnCustody ? "إعادة المبلغ إلى العهدة" : ret.paymentType === "cash" ? "استرداد نقدي" : "استرداد بنكي" },
             ]
           : [
               { accountId: counterpartyAccountId, debit:  totalAmount, description: ret.paymentType === "cash" ? "استرداد نقدي" : ret.paymentType === "bank" ? "استرداد بنكي" : apLineDesc },
@@ -5078,6 +5138,17 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
               ...(cc ? { costCenter: cc } : {}),
             };
           }),
+        ...Object.entries(directExpenseCreditByAccount)
+          .filter(([, amount]) => amount > 0)
+          .map(([key, amount]) => {
+            const [accountId, cc] = key.split("|");
+            return {
+              accountId: Number(accountId),
+              credit: amount,
+              description: "عكس المصروف المباشر من فاتورة الشراء",
+              ...(cc ? { costCenter: cc } : {}),
+            };
+          }),
         { accountId: taxAccId,                        credit: vatAmount,      description: "إلغاء ضريبة القيمة المضافة", costCenter: null },
         // Variance: balances the JE when refund value ≠ actual stock cost.
         // delta > 0 → CR variance (refund exceeds cost = gain for buyer).
@@ -5103,6 +5174,38 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
         ))
         .returning();
       if (!updated) throw Object.assign(new Error("تعذر حفظ ترحيل مرتجع المشتريات."), { status: 409 });
+      if (returnCustody && historicalImportMode !== "inventory_only") {
+        const [locked] = await tx.select().from(employeeCustodiesTable).where(and(
+          eq(employeeCustodiesTable.id, returnCustody.id),
+          eq(employeeCustodiesTable.companyId, cid),
+        )).for("update");
+        if (!locked) throw Object.assign(new Error("العهدة المرتبطة بالمصدر غير موجودة"), { status: 409 });
+        const postedSourceReturns = await tx.select({
+          id: purchaseReturnsTable.id,
+          totalAmount: purchaseReturnsTable.totalAmount,
+        }).from(purchaseReturnsTable).where(and(
+          eq(purchaseReturnsTable.companyId, cid),
+          eq(purchaseReturnsTable.invoiceId, ret.invoiceId!),
+          eq(purchaseReturnsTable.status, "posted"),
+          ne(purchaseReturnsTable.id, id),
+        ));
+        const previouslyReturned = postedSourceReturns.reduce((sum, row) => sum + Number(row.totalAmount || 0), 0);
+        if (previouslyReturned + totalAmount > Number(custodySourceInvoice?.totalAmount || 0) + 0.005) {
+          throw Object.assign(new Error("قيمة المرتجع تتجاوز المبلغ المدفوع من العهدة في الفاتورة المصدر"), { status: 409 });
+        }
+        await (tx.insert(employeeCustodySettlementsTable as any) as any).values({
+          companyId: cid, custodyId: locked.id, settleDate: ret.returnDate, kind: "expense",
+          expenseAccountId: null, amount: String(-totalAmount),
+          description: `إعادة قيمة مرتجع مشتريات ${ret.docNumber ?? id} إلى العهدة`,
+          invoiceNumber: ret.docNumber, journalId, purchaseReturnId: id,
+        });
+        const nextSettled = Math.max(0, Number(locked.settledAmount) - totalAmount);
+        await tx.update(employeeCustodiesTable).set({
+          settledAmount: String(nextSettled),
+          status: Number(locked.amount) - nextSettled - Number(locked.returnedAmount) <= 0.005 ? "settled" : "active",
+          updatedAt: new Date(),
+        }).where(eq(employeeCustodiesTable.id, locked.id));
+      }
       return updated;
     });
 
@@ -5206,6 +5309,30 @@ router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), asy
           await tx.delete(journalEntriesTable)
             .where(and(eq(journalEntriesTable.id, ret.journalEntryId), eq(journalEntriesTable.companyId, cid)));
         }
+      }
+
+      const settlementTable: any = employeeCustodySettlementsTable;
+      const [custodyReturnSettlement] = await tx.select().from(employeeCustodySettlementsTable)
+        .where(and(
+          eq(employeeCustodySettlementsTable.companyId, cid),
+          eq(settlementTable.purchaseReturnId, id),
+        )).for("update");
+      if (custodyReturnSettlement) {
+        const [custody] = await tx.select().from(employeeCustodiesTable)
+          .where(and(
+            eq(employeeCustodiesTable.id, custodyReturnSettlement.custodyId),
+            eq(employeeCustodiesTable.companyId, cid),
+          )).for("update");
+        if (custody) {
+          const nextSettled = Math.max(0, Number(custody.settledAmount) - Number(custodyReturnSettlement.amount));
+          await tx.update(employeeCustodiesTable).set({
+            settledAmount: String(nextSettled),
+            status: Number(custody.amount) - nextSettled - Number(custody.returnedAmount) <= 0.005 ? "settled" : "active",
+            updatedAt: new Date(),
+          }).where(eq(employeeCustodiesTable.id, custody.id));
+        }
+        await tx.delete(employeeCustodySettlementsTable)
+          .where(eq(employeeCustodySettlementsTable.id, custodyReturnSettlement.id));
       }
 
       const [draft] = await tx.update(purchaseReturnsTable)
