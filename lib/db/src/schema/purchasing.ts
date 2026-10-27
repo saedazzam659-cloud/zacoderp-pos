@@ -128,6 +128,7 @@ export const purchaseInvoiceLinesTable = pgTable("purchase_invoice_lines", {
   id:              serial("id").primaryKey(),
   invoiceId:       integer("invoice_id").notNull().references(() => purchaseInvoicesTable.id, { onDelete: "cascade" }),
   companyId:       integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  lineType:        text("line_type").notNull().default("item"),
   itemId:          integer("item_id"),
   itemName:        text("item_name").notNull(),
   itemCode:        text("item_code"),

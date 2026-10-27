@@ -371,6 +371,8 @@ const SUPPLIER_METADATA_COMPATIBILITY_DDL = [
   `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS cash_expense_receipt_path TEXT`,
   `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS cash_expense_cancelled_by_user_id INTEGER`,
   `ALTER TABLE IF EXISTS payment_vouchers ADD COLUMN IF NOT EXISTS cash_expense_cancelled_at TIMESTAMP`,
+  `ALTER TABLE IF EXISTS companies ADD COLUMN IF NOT EXISTS purchase_direct_expenses_custody_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE IF EXISTS purchase_invoice_lines ADD COLUMN IF NOT EXISTS line_type TEXT NOT NULL DEFAULT 'item'`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_name TEXT`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_tax_number TEXT`,
   `ALTER TABLE IF EXISTS journal_entry_lines ADD COLUMN IF NOT EXISTS supplier_vat_number TEXT`,

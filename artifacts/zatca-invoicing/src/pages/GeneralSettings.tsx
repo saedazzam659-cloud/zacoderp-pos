@@ -2115,6 +2115,29 @@ export default function GeneralSettings() {
           </span>
         </label>
         <label
+          data-testid="purchase-direct-expenses-custody-toggle"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.purchaseDirectExpensesCustodyEnabled === true
+              ? "border-primary bg-primary/5 shadow-sm"
+              : "border-border hover:border-primary/40 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 accent-primary cursor-pointer"
+            checked={user?.company?.purchaseDirectExpensesCustodyEnabled === true}
+            disabled={postingSaving}
+            onChange={e => togglePostingMode({ purchaseDirectExpensesCustodyEnabled: e.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">إدارة العُهد والمصروفات المباشرة بالمشتريات</span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              عند التفعيل تظهر خيارات المصروف المباشر وتسوية العهدة في المشتريات والمرتجعات. التعطيل يخفيها دون حذف السجلات أو القيود السابقة.
+            </span>
+          </span>
+        </label>
+        <label
           data-testid="allow-duplicate-invoice-items-toggle"
           className={cn(
             "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",

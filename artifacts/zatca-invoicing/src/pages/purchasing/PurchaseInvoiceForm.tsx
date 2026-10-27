@@ -71,8 +71,10 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 interface InvoiceLine {
   _id: string;
+  lineType: "item" | "direct_expense";
   /** Persisted database line id; absent on newly added/duplicated lines. */
   id?: number;
+  accountId: string;
   itemId: string;
   itemName: string;
   itemCode: string;
@@ -108,7 +110,7 @@ interface InvoiceLine {
 
 function newLine(): InvoiceLine {
   return {
-    _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
+    _id: crypto.randomUUID(), lineType: "item", accountId: "", itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
     qty: "1", freeQty: "0", weight: "0", unitPrice: "0", discount: "0", vatRate: "15",
     lineTotal: "0", expenseShare: "0", finalCost: "0", batchNumber: "", expiryDate: "", notes: "",
@@ -173,6 +175,15 @@ function PurchaseInvoiceFormContent() {
     queryKey: contractingOptionsKey(user?.id, cid, actingCompanyId ?? undefined, token),
     queryFn: () => fetchContractingProjectOptions(token, actingCompanyId ?? undefined),
     enabled: contractingModuleEnabled && !!token,
+  });
+  const { data: directExpenseAccounts = [] } = useQuery<any[]>({
+    queryKey: ["purchase-direct-expense-accounts", cid],
+    enabled: user?.company?.purchaseDirectExpensesCustodyEnabled === true && !!token,
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/accounts?companyId=${cid}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw new Error("تعذر تحميل حسابات المصروفات");
+      return response.json();
+    },
   });
   const usageModes = useScreenItemModes("purchase_invoices");
   const authH   = { Authorization: `Bearer ${token}` };
@@ -616,6 +627,8 @@ function PurchaseInvoiceFormContent() {
       freeQty:     String(l.freeQty ?? "0"),
       _id: crypto.randomUUID(),
       id: Number.isInteger(Number(l.id)) ? Number(l.id) : undefined,
+      lineType: l.lineType === "direct_expense" ? "direct_expense" : "item",
+      accountId: l.accountId ? String(l.accountId) : "",
       itemId:      l.itemId      ? String(l.itemId)      : "",
       itemName:    l.itemName    ?? "",
       itemCode:    l.itemCode    ?? "",
@@ -1124,8 +1137,12 @@ function PurchaseInvoiceFormContent() {
       return;
     }
     // Per-line gate: item name + unit + qty + price required on every row.
-    const lineCheck = validateInvoiceLines(lines, { requireRealItem: true });
-    if (!lineCheck.ok) {
+    const itemLines = lines.filter(l => l.lineType !== "direct_expense" && (l.itemId || l.itemName.trim()));
+    const directLines = lines.filter(l => l.lineType === "direct_expense");
+    const lineCheck = validateInvoiceLines(itemLines, { requireRealItem: true });
+    const incompleteDirectLine = directLines.some(l => !l.itemName.trim() || !l.accountId || !(Number(l.unitPrice) > 0));
+    if ((!lineCheck.ok && itemLines.length > 0) || incompleteDirectLine ||
+        (!itemLines.some(l => l.itemId) && directLines.length === 0)) {
       toast({ title: lineCheck.title, description: lineCheck.description, variant: "destructive" });
       return;
     }
@@ -1156,6 +1173,8 @@ function PurchaseInvoiceFormContent() {
       projectId: projectId ? Number(projectId) : null,
       lines: lines.filter(l => l.itemName).map(l => ({
         ...serializeDocumentLine(l),
+        lineType: l.lineType,
+        accountId: l.lineType === "direct_expense" ? Number(l.accountId) : null,
         // خطة توزيع المصروف — تُرسل فقط لو السطر مؤجّل ومكتمل التواريخ
         deferredStartDate:   isDeferredLine(l) && l.deferredStartDate ? l.deferredStartDate : null,
         deferredEndDate:     isDeferredLine(l) && l.deferredEndDate   ? l.deferredEndDate   : null,
@@ -2118,8 +2137,25 @@ function PurchaseInvoiceFormContent() {
                   setLines(p => [...p, nl]);
                   setFocusLineId(nl._id);
                 };
+                const addDirectExpenseLine = () => {
+                  const nl = newLine();
+                  nl.lineType = "direct_expense";
+                  nl.qty = "1";
+                  nl.freeQty = "0";
+                  const r = percentRateOf(headerTaxId);
+                  if (r !== null) nl.vatRate = String(r);
+                  setLines(p => [...p, nl]);
+                  setFocusLineId(nl._id);
+                };
                 return (
               <div data-enter-nav-container="lines" className="mb-3 rounded-xl border bg-card overflow-hidden">
+                {user?.company?.purchaseDirectExpensesCustodyEnabled === true && (
+                  <div className="flex justify-end border-b px-3 py-2">
+                    <Button type="button" variant="outline" size="sm" className="h-8" onClick={addDirectExpenseLine}>
+                      إضافة مصروف مباشر
+                    </Button>
+                  </div>
+                )}
                 <div className={cn("overflow-auto min-h-[200px]", (useTabbedLayout && hideQuickAdd) ? "max-h-[calc(100vh-260px)]" : "max-h-[calc(100vh-360px)]")}>
                 <div className="min-w-max">
                 <div
@@ -2152,7 +2188,10 @@ function PurchaseInvoiceFormContent() {
                       <span className="text-xs text-muted-foreground tabular-nums">{idx + 1}</span>
                       <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={tr("auto")} value={l.itemCode}
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                      {user ? (
+                      {l.lineType === "direct_expense" ? (
+                        <Input className="h-8 text-xs" placeholder="بيان المصروف" value={l.itemName}
+                          onChange={e => updateLine(l._id, "itemName", e.target.value)} />
+                      ) : user ? (
                         <SearchCombobox
                           items={itemComboItems}
                           value={l.itemId}
@@ -2166,7 +2205,15 @@ function PurchaseInvoiceFormContent() {
                         <Input className="h-8 text-xs" placeholder={tr("itemNamePh")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                       )}
-                      {isServiceLine(l) ? (
+                      {l.lineType === "direct_expense" ? (
+                        <select className="h-8 rounded-md border bg-background px-2 text-xs"
+                          value={l.accountId} onChange={e => updateLine(l._id, "accountId", e.target.value)}>
+                          <option value="">اختر حساب المصروف</option>
+                          {directExpenseAccounts
+                            .filter((a: any) => a.isActive !== false && a.isPosting !== false && a.accountType === "expense")
+                            .map((a: any) => <option key={a.id} value={a.id}>{a.code} — {a.nameAr ?? a.nameEn}</option>)}
+                        </select>
+                      ) : isServiceLine(l) ? (
                         <div className="h-8 flex items-center justify-center rounded-md bg-muted/40 text-[11px] text-muted-foreground" title={t("inventoryMaster.items.serviceNoStockHint") as string}>
                           {t("salesDocForm.serviceNoWarehouse")}
                         </div>

@@ -77,6 +77,7 @@ export const companiesTable = pgTable("companies", {
   // lines are opt-in so existing companies keep their current behavior.
   salesBarcodeEntryEnabled: boolean("sales_barcode_entry_enabled").notNull().default(false),
   allowDuplicateInvoiceItems: boolean("allow_duplicate_invoice_items").notNull().default(false),
+  purchaseDirectExpensesCustodyEnabled: boolean("purchase_direct_expenses_custody_enabled").notNull().default(false),
   // Master safety switch for negative-stock sales. When off, neither a
   // warehouse policy nor an invoice-level override may post stock below zero.
   allowNegativeSales: boolean("allow_negative_sales").notNull().default(false),

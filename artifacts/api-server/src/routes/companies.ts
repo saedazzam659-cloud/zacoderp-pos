@@ -439,7 +439,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
     decimalPlaces, showZeros, hideQuickAddBar, showFreeQuantity, showSalesBranchStock, allowNegativeSales, purchaseBatchExpiryEnabled, autoPostingEnabled,
-    salesBarcodeEntryEnabled, allowDuplicateInvoiceItems,
+    salesBarcodeEntryEnabled, allowDuplicateInvoiceItems, purchaseDirectExpensesCustodyEnabled,
     documentFieldControlsEnabled,
     showCustomerDebitNotes, showSupplierCreditNotes,
     allowUnbalancedOpeningBalances, openingBalanceReminderMessage,
@@ -501,7 +501,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
     decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
-    salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean;
+    salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean; purchaseDirectExpensesCustodyEnabled?: boolean;
     documentFieldControlsEnabled?: boolean;
     showCustomerDebitNotes?: boolean; showSupplierCreditNotes?: boolean;
     allowUnbalancedOpeningBalances?: boolean;
@@ -619,6 +619,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   for (const [key, value] of [
     ["salesBarcodeEntryEnabled", salesBarcodeEntryEnabled],
     ["allowDuplicateInvoiceItems", allowDuplicateInvoiceItems],
+    ["purchaseDirectExpensesCustodyEnabled", purchaseDirectExpensesCustodyEnabled],
   ] as const) {
     if (value === undefined) continue;
     if (typeof value !== "boolean") {

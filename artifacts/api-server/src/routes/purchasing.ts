@@ -12,6 +12,7 @@ import { fullAuditFor } from "../lib/journalAudit.js";
 import { ownDocumentFilter } from "../lib/documentVisibility.js";
 import {
   supplierGroupsTable, lettersOfCreditTable, lcExpensesTable,
+  companiesTable,
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
   purchaseOrdersTable, purchaseOrderLinesTable,
   purchaseReturnsTable, purchaseReturnLinesTable,
@@ -386,6 +387,40 @@ async function assertPurchaseWriteReferences(
   // Industrial actual costs are optional, but when a source line is tagged its
   // plant and cost-center must be active masters of this same tenant.
   await assertIndustrialCostTagsOwned(executor, cid, lines);
+}
+
+async function assertPurchaseInvoiceLines(cid: number, lines: any, executor: any = db): Promise<void> {
+  const rows = Array.isArray(lines) ? lines : [];
+  const direct = rows.filter((line: any) => line?.lineType === "direct_expense");
+  if (direct.length) {
+    const [company] = await executor.select({
+      enabled: (companiesTable as any).purchaseDirectExpensesCustodyEnabled,
+    }).from(companiesTable).where(eq(companiesTable.id, cid));
+    if (company?.enabled !== true) throw Object.assign(new Error("المصروفات المباشرة غير مفعلة لهذه الشركة"), { status: 403 });
+    for (const line of direct) {
+      const accountId = Number(line.accountId);
+      if (line.itemId || !String(line.itemName ?? "").trim() || !Number.isInteger(accountId) || accountId <= 0 ||
+          !(Number(line.unitPrice) > 0)) {
+        throw Object.assign(new Error("كل سطر مصروف مباشر يحتاج بياناً وحساب مصروف ومبلغاً أكبر من صفر"), { status: 400 });
+      }
+      const [account] = await executor.select({
+        id: accountsTable.id,
+      }).from(accountsTable).where(and(
+        eq(accountsTable.id, accountId),
+        eq(accountsTable.companyId, cid),
+        eq(accountsTable.accountType, "expense"),
+        eq(accountsTable.isActive, true),
+        eq(accountsTable.isPosting, true),
+      ));
+      if (!account) throw Object.assign(new Error("يجب اختيار حساب مصروف تفصيلي تابع للشركة"), { status: 400 });
+    }
+  }
+  const itemLines = rows.filter((line: any) => line?.lineType !== "direct_expense");
+  if (itemLines.some((line: any) => line?.itemId)) {
+    await assertInvoiceHasRealItemLine(cid, itemLines, executor, "فاتورة الشراء");
+  } else if (!direct.length) {
+    await assertInvoiceHasRealItemLine(cid, rows, executor, "فاتورة الشراء");
+  }
 }
 
 // ─── Journal entry helper ────────────────────────────────────────────────────
@@ -1705,7 +1740,7 @@ router.post("/purchase-invoices", async (req, res) => {
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
-    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة الشراء");
+    await assertPurchaseInvoiceLines(cid, lines, db);
     await assertPurchaseWriteReferences(cid, {
       supplierId, branchId, cashBoxId, bankAccountId, lcId, taxId,
       headerCostCenter: costCenter,
@@ -1810,6 +1845,7 @@ router.post("/purchase-invoices", async (req, res) => {
           cid,
           lines.map((l: any) => ({
             invoiceId: inv.id, companyId: cid,
+            lineType: l.lineType === "direct_expense" ? "direct_expense" : "item",
             itemId: l.itemId ? Number(l.itemId) : null,
             itemName: l.itemName, itemCode: l.itemCode || null,
             unit: l.unit || null, unitId: l.unitId ? Number(l.unitId) : null,
@@ -1888,7 +1924,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId, costCenter, taxId } = req.body;
     const pType = paymentType || "credit";
-    await assertInvoiceHasRealItemLine(cid, lines, db, "فاتورة الشراء");
+    await assertPurchaseInvoiceLines(cid, lines, db);
     // Credit invoices require a supplier ledger. Cash/bank purchases may use
     // a print-only manual name without creating a supplier master record.
     if (!supplierId && (pType !== "cash" && pType !== "bank" || !!lcId)) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ الفاتورة", field: "supplierId" }); return; }
@@ -1971,6 +2007,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
           cid,
           lines.map((l: any) => ({
             invoiceId: id, companyId: cid,
+            lineType: l.lineType === "direct_expense" ? "direct_expense" : "item",
             itemId: l.itemId ? Number(l.itemId) : null,
             itemName: l.itemName, itemCode: l.itemCode || null,
             unit: l.unit || null, unitId: l.unitId ? Number(l.unitId) : null,
@@ -2288,6 +2325,19 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
     const costRefreshItemIds = new Set<number>();
     const directExpenseShares = await capitalizedExpenseShares(db, cid, inv);
     for (const line of lines) {
+      if ((line as any).lineType === "direct_expense") {
+        const rate = Math.max(0, Number(line.vatRate) || 0) / 100;
+        const discount = Math.max(0, Math.min(100, Number(line.discount) || 0)) / 100;
+        const gross = Math.max(0, Number(line.unitPrice) * Number(line.qty || 1) * (1 - discount));
+        const cost = inv.priceIncludesVat && rate > 0 ? gross / (1 + rate) : gross;
+        const key = accCcKey(Number(line.accountId), line);
+        if (cost > 0) {
+          groupNoStockByAccount[key] = (groupNoStockByAccount[key] ?? 0) + cost;
+          (groupNoStockItemNamesByAccount[key] ??= []).push(line.itemName || "مصروف مباشر");
+          groupNoStockTotal += cost;
+        }
+        continue;
+      }
       if (!line.itemId) continue;
       // فئة أصل ثابت / مصروف: debit the category account, NO stock movement.
       // Checked BEFORE service typing — category routing takes precedence.
