@@ -37,3 +37,17 @@ test("tab accents are absent when disabled and distinguish the available tabs wh
   assert.ok(accents.every(classes => classes.includes("data-[state=active]:bg-")));
   assert.equal(new Set(accents).size, accents.length);
 });
+
+test("new sales invoices require a customer before items and focus barcode entry when enabled", () => {
+  assert.match(salesForm, /if \(!customerId\) \{\s*missing\.push\(isRtl \? "العميل" : "Customer"\);\s*\}/);
+  assert.match(
+    salesForm,
+    /activeTab !== "items"[\s\S]*barcodeEntryInputRef\.current\?\.focus\(\)/,
+  );
+  assert.match(salesForm, /data-testid="sales-barcode-entry"/);
+  assert.match(salesForm, /async function scanSalesItemByCode\(rawCode: string\)/);
+  assert.match(
+    salesForm,
+    /updateLine\(existingLine\._id, "qty", String\(\(Number\(existingLine\.qty\) \|\| 0\) \+ 1\)\)/,
+  );
+});

@@ -694,10 +694,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // (the item picker) after committing a line — Enter-driven rapid entry.
   const quickAddRef = useRef<HTMLDivElement>(null);
   const barcodeSearchRef = useRef("");
+  const barcodeEntryInputRef = useRef<HTMLInputElement>(null);
+  const [barcodeEntryValue, setBarcodeEntryValue] = useState("");
   const focusQuickAddStart = () => {
     const input = quickAddRef.current?.querySelector<HTMLInputElement>('input[role="combobox"]');
     input?.focus();
     input?.select();
+  };
+  const focusSalesItemEntry = () => {
+    if (isInvoice && user?.company?.salesBarcodeEntryEnabled === true && barcodeEntryInputRef.current) {
+      barcodeEntryInputRef.current.focus();
+      barcodeEntryInputRef.current.select();
+      return;
+    }
+    focusQuickAddStart();
   };
   useEnterNavContainer({ onAppend: () => addLine() });
   const { containerRef: enterNavRef, onKeyDown: enterNavKey } = useEnterNavigation(() => handleSave());
@@ -1786,7 +1796,28 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     }
     setQaItemId("");
     setQaQty("1");
-    window.setTimeout(focusQuickAddStart, 0);
+    window.setTimeout(focusSalesItemEntry, 0);
+  }
+
+  async function scanSalesItemByCode(rawCode: string): Promise<boolean> {
+    const code = rawCode.trim();
+    if (!code) return false;
+    const params = new URLSearchParams({ q: code, limit: "5", includeHidden: "1" });
+    if (cid) params.set("companyId", String(cid));
+    try {
+      const response = await fetch(`${API}/api/inventory/items/search?${params}`, { headers: authH });
+      if (!response.ok) return false;
+      const candidates = await response.json() as any[];
+      const exactItems = [...new Map(candidates
+        .filter(item => [item.barcode, item.code].some(value =>
+          String(value ?? "").trim().toLowerCase() === code.toLowerCase()))
+        .map(item => [Number(item.id), item])).values()];
+      if (exactItems.length !== 1) return false;
+      await addScannedSalesItem(exactItems[0]);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function changeLineUnit(lineId: string, newUnitId: string) {
@@ -2741,35 +2772,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               setItemSearch(value);
             }}
             onSearchEnter={isInvoice && user?.company?.salesBarcodeEntryEnabled === true
-              ? async query => {
-                  const code = query.trim();
-                  if (!code) return false;
-                  const params = new URLSearchParams({
-                    q: code,
-                    limit: "5",
-                    includeHidden: "1",
-                  });
-                  if (cid) params.set("companyId", String(cid));
-                  try {
-                    const response = await fetch(`${API}/api/inventory/items/search?${params}`, { headers: authH });
-                    if (!response.ok) return false;
-                    const candidates = await response.json() as any[];
-                    const exactItems = [...new Map(candidates
-                      .filter(item => [item.barcode, item.code].some(value =>
-                        String(value ?? "").trim().toLowerCase() === code.toLowerCase()))
-                      .map(item => [Number(item.id), item])).values()];
-                    if (exactItems.length !== 1) return false;
-                    await addScannedSalesItem(exactItems[0]);
-                    return true;
-                  } catch {
-                    return false;
-                  }
-                }
+              ? scanSalesItemByCode
               : undefined}
             loading={isSearchingItems}
             placeholder={t("salesDocForm.itemPlaceholder")}
             searchPlaceholder={t("salesDocForm.searchItemPlaceholder")}
-            autoFocus={isInvoice && isNew}
+            autoFocus={isInvoice && isNew && user?.company?.salesBarcodeEntryEnabled !== true}
             advanceOnEnter={!(isInvoice && user?.company?.salesBarcodeEntryEnabled === true)}
             className="rounded-lg border-primary/40 bg-white text-base shadow-sm ring-offset-background focus-visible:ring-2"
             testId="sales-item-quick-search"
@@ -3767,7 +3775,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (!isNew) return [] as string[];
     const missing: string[] = [];
     if (isInvoice || isOrder) {
-      if (!customerId && (!isInvoice || (paymentType !== "cash" && paymentType !== "bank"))) {
+      if (!customerId) {
         missing.push(isRtl ? "العميل" : "Customer");
       }
       if (usesBranch && !branchId) missing.push(isRtl ? "الفرع" : "Branch");
@@ -3793,6 +3801,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (v === "items" && !basicFieldsValid) { explainMissingBasics(); return; }
     setActiveTab(v);
   };
+  useEffect(() => {
+    if (
+      !isInvoice
+      || user?.company?.salesBarcodeEntryEnabled !== true
+      || !useTabbedLayout
+      || activeTab !== "items"
+    ) return;
+    const timer = window.setTimeout(() => {
+      barcodeEntryInputRef.current?.focus();
+      barcodeEntryInputRef.current?.select();
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [isInvoice, user?.company?.salesBarcodeEntryEnabled, useTabbedLayout, activeTab]);
 
   const isPostedLock = isInvoice && !isNew && (existing as any)?.status === "posted";
   // Any read-only context: a posted invoice OR an explicit view-only open.
@@ -3817,10 +3838,43 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     navigate(basePath);
   };
 
+  const barcodeEntryEnabled = isInvoice && user?.company?.salesBarcodeEntryEnabled === true;
   const linesHeaderBlock = (
-    <div className="border-t pt-4 mt-2 flex items-center gap-2 text-sm font-semibold text-foreground/80">
-      <ListOrdered className="h-4 w-4" />
-      <span>{t("salesDocForm.tabLines", { count: lines.filter(l => l.itemName).length })}</span>
+    <div className="border-t pt-4 mt-2 flex items-center justify-between gap-3 text-sm font-semibold text-foreground/80">
+      <div className="flex min-w-0 items-center gap-2">
+        <ListOrdered className="h-4 w-4 shrink-0" />
+        <span>{t("salesDocForm.tabLines", { count: lines.filter(l => l.itemName).length })}</span>
+      </div>
+      {barcodeEntryEnabled && (
+        <Input
+          ref={barcodeEntryInputRef}
+          value={barcodeEntryValue}
+          onChange={e => setBarcodeEntryValue(e.target.value)}
+          onKeyDown={e => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            e.stopPropagation();
+            const code = barcodeEntryValue.trim();
+            setBarcodeEntryValue("");
+            if (!code) return;
+            void scanSalesItemByCode(code).then(added => {
+              if (!added) {
+                toast({
+                  title: isRtl ? "لم يتم العثور على الصنف" : "Item not found",
+                  description: isRtl ? "تحقق من الباركود أو رمز الصنف ثم حاول مرة أخرى." : "Check the barcode or item code and try again.",
+                  variant: "destructive",
+                });
+              }
+              window.setTimeout(() => barcodeEntryInputRef.current?.focus(), 0);
+            });
+          }}
+          data-testid="sales-barcode-entry"
+          aria-label={isRtl ? "إدخال باركود الصنف" : "Item barcode entry"}
+          placeholder={isRtl ? "امسح الباركود أو أدخل رمز الصنف" : "Scan barcode or enter item code"}
+          autoComplete="off"
+          className="h-9 w-44 shrink-0 border-emerald-500 focus-visible:ring-emerald-500"
+        />
+      )}
     </div>
   );
 
