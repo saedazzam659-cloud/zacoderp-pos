@@ -119,7 +119,7 @@ export default function AccountStatementView({
 }: AccountStatementViewProps) {
   const { fmt } = useFmt();
   const { t, i18n } = useTranslation();
-  const isRtl = i18n.language === "ar";
+  const isRtl = i18n.language.toLowerCase().startsWith("ar");
   const { user, actingCompanyId } = useAuth() as {
     user?: { role?: string; company?: { id?: number } } | null;
     actingCompanyId?: number | null;
@@ -134,6 +134,12 @@ export default function AccountStatementView({
     const v = t(`accountStatement.${k}`) as string;
     return v && v !== `accountStatement.${k}` ? v : dflt;
   };
+  const companyName = isRtl
+    ? company?.nameAr || company?.nameEn || "—"
+    : company?.nameEn || company?.nameAr || "—";
+  const accountName = isRtl
+    ? account.nameAr || account.nameEn || "—"
+    : account.nameEn || account.nameAr || "—";
 
   const addressLine = [
     company?.buildingNumber, company?.street,
@@ -151,7 +157,7 @@ export default function AccountStatementView({
           {/* Right: Arabic */}
           <div className="text-right text-[12px] leading-relaxed text-slate-700 space-y-1 min-w-0">
             <div className="font-bold text-base text-slate-900 truncate">
-              {company?.nameAr || "—"}
+              {companyName}
             </div>
             {company?.crNumber && (
               <div><span className="text-slate-500">{tr("crNoAr", "س.ت")}</span> : <span className="font-mono">{company.crNumber}</span></div>
@@ -196,7 +202,7 @@ export default function AccountStatementView({
               </span>
               <span className="text-slate-500">:</span>
               <span className="font-bold text-base text-slate-900 truncate">
-                {account.nameAr || account.nameEn || "—"}
+                {accountName}
               </span>
             </div>
             <div>

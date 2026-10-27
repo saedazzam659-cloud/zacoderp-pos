@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent,
@@ -6,7 +7,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Download, FileSpreadsheet, FileText, ChevronDown, Loader2, Printer } from "lucide-react";
-import { exportToExcelBranded, exportToPDF, type ExportColumn, type ExportExtraSection, type ExportCompanyInfo } from "@/lib/export";
+import { exportToExcelBranded, exportToPDF, localizeExportRows, type ExportColumn, type ExportExtraSection, type ExportCompanyInfo } from "@/lib/export";
 import { exportToWordBranded } from "@/lib/exportWord";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
@@ -51,6 +52,8 @@ export default function ExportButtons({
   rows, loadRows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter, extraSections, label, pdfFitOneLine, showPrintButton = false, showWordButton = false,
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
+  const { i18n } = useTranslation();
+  const language = i18n.language || "ar";
   const gate = useDemoActionGate();
   // The company brand (logo + name + CR/VAT/phone/address) is stored on the
   // user's `company` object. We forward the whole record to every Excel and
@@ -81,7 +84,18 @@ export default function ExportButtons({
     setBusy(true);
     try {
       if (!(await gate(type === "print" ? "print" : "export"))) return;
-      const resolvedRows = loadRows ? await loadRows() : rows;
+      const sourceRows = loadRows ? await loadRows() : rows;
+      const resolvedRows = localizeExportRows(sourceRows, columns, language);
+      const resolvedTotalsRow = totalsRow
+        ? localizeExportRows([totalsRow], columns, language)[0]
+        : totalsRow;
+      const resolvedSections = extraSections?.map(section => ({
+        ...section,
+        rows: localizeExportRows(section.rows, section.columns, language),
+        totalsRow: section.totalsRow
+          ? localizeExportRows([section.totalsRow], section.columns, language)[0]
+          : section.totalsRow,
+      }));
       if (type === "excel") {
         // Excel can't render the summary cards — instead append the
         // same numbers as extra rows so they're not lost from the file.
@@ -109,7 +123,7 @@ export default function ExportButtons({
         // so the sheet stays a single rectangular table — sections
         // simply re-use the leading columns.
         const sectionRows: Record<string, unknown>[] = [];
-        (extraSections ?? []).filter(s => s.rows.length > 0).forEach(s => {
+        (resolvedSections ?? []).filter(s => s.rows.length > 0).forEach(s => {
           const firstKey = columns[0]?.key ?? "label";
           sectionRows.push({});                                              // blank separator
           sectionRows.push({ [firstKey]: `── ${s.title} ──` });              // section title
@@ -129,17 +143,18 @@ export default function ExportButtons({
         });
         await exportToExcelBranded([...resolvedRows, ...extra, ...sectionRows], columns, filename, {
           sheetName: "Sheet1",
-          totalsRow,
+          totalsRow: resolvedTotalsRow,
           company,
           title,
           subtitle,
+          language,
         });
       } else if (type === "pdf") {
         // Real .pdf download — html2pdf.js renders the same HTML report
         // offscreen, rasterises it (so Arabic/RTL renders correctly) and
         // saves as `${filename}.pdf`. Must await so the busy spinner
         // stays visible until the file dialog appears.
-        await exportToPDF(resolvedRows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo, extraSections, company, { fitOneLine: pdfFitOneLine });
+        await exportToPDF(resolvedRows, columns, filename, title, subtitle, false, resolvedTotalsRow, summaryFooter, companyLogo, resolvedSections, company, { fitOneLine: pdfFitOneLine, language });
       } else if (type === "word") {
         await exportToWordBranded(resolvedRows, columns, filename, {
           company,
@@ -151,7 +166,7 @@ export default function ExportButtons({
         });
       } else {
         // Print: open the formatted HTML and trigger window.print() automatically
-        await exportToPDF(resolvedRows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo, extraSections, company, { fitOneLine: pdfFitOneLine });
+        await exportToPDF(resolvedRows, columns, filename, title, subtitle, true, resolvedTotalsRow, summaryFooter, companyLogo, resolvedSections, company, { fitOneLine: pdfFitOneLine, language });
       }
     } finally {
       setBusy(false);

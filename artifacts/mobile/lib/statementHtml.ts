@@ -40,6 +40,7 @@ export interface StatementHtmlOpts {
   from: string; to: string; opening: number; lines: StatementLine[];
   totals: { debit: number; credit: number }; closing: number;
   filename: string; autoPrint?: boolean;
+  language?: string;
   fmt?: (n: number) => string;
   branchName?: string | null; visibleCols?: StatementVisibleCols;
   userName?: string | null;
@@ -61,12 +62,35 @@ function safeImage(value: unknown): string | null {
 export function renderStatementHtml(opts: StatementHtmlOpts): string {
   const { company, account, mode, lines, from, to, opening, totals, closing } = opts;
   const e = escapeStatementHtml;
+  const isEnglish = opts.language?.toLowerCase().startsWith('en') ?? false;
+  const direction = isEnglish ? 'ltr' : 'rtl';
+  const labels = isEnglish ? {
+    date: 'Date', docType: 'Document type', number: 'Number', debit: 'Debit',
+    credit: 'Credit', balance: 'Balance', description: 'Description',
+    opening: 'Opening balance', total: 'Total', cr: 'C.R. No.',
+    vat: 'VAT number', phone: 'Phone', address: 'Address',
+    customer: 'Customer name', supplier: 'Supplier name', account: 'Account',
+    accountTitle: 'Account Statement', supplierTitle: 'Supplier Statement',
+    accountCode: 'Account code', accountLevel: 'Account level', branch: 'Branch',
+    from: 'From date', to: 'To date', noRows: 'No movements in the selected period',
+    printedAt: 'Printed on', user: 'User',
+  } : {
+    date: 'التاريخ', docType: 'نوع الوثيقة', number: 'الرقم', debit: 'مدين',
+    credit: 'دائن', balance: 'الرصيد', description: 'الشرح',
+    opening: 'رصيد افتتاحي', total: 'الإجمالي', cr: 'س.ت',
+    vat: 'الرقم الضريبي', phone: 'الجوال', address: 'العنوان',
+    customer: 'اسم العميل', supplier: 'اسم المورد', account: 'الحساب',
+    accountTitle: 'كشف حساب', supplierTitle: 'كشف حساب مورد',
+    accountCode: 'رمز الحساب', accountLevel: 'مستوى الحساب', branch: 'الفرع',
+    from: 'من تاريخ', to: 'إلى تاريخ', noRows: 'لا توجد حركات في الفترة المحددة',
+    printedAt: 'تاريخ الطباعة', user: 'اسم المستخدم',
+  };
   const fmt = opts.fmt ?? ((n: number) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
   const show = (key: keyof StatementVisibleCols) => key !== 'type' && opts.visibleCols?.[key] !== false;
   const keys = (['date', 'docType', 'docNumber', 'debit', 'credit', 'balance', 'description'] as const).filter(show);
   const headings: Record<(typeof keys)[number], string> = {
-    date: 'التاريخ', docType: 'نوع الوثيقة', docNumber: 'الرقم',
-    debit: 'مدين', credit: 'دائن', balance: 'الرصيد', description: 'الشرح',
+    date: labels.date, docType: labels.docType, docNumber: labels.number,
+    debit: labels.debit, credit: labels.credit, balance: labels.balance, description: labels.description,
   };
   const cell = (key: (typeof keys)[number], l: StatementLine): string => {
     switch (key) {
@@ -81,27 +105,30 @@ export function renderStatementHtml(opts: StatementHtmlOpts): string {
   };
   const logo = safeImage(company?.logo);
   const brand = safeImage(company?.brandLogo);
-  const name = company?.nameAr || company?.nameEn || '—';
+  const name = (isEnglish ? company?.nameEn || company?.nameAr : company?.nameAr || company?.nameEn) || '—';
+  const accountName = (isEnglish
+    ? account.partyNameEn || account.nameEn || account.partyNameAr || account.nameAr
+    : account.partyNameAr || account.nameAr || account.partyNameEn || account.nameEn) || '—';
   const address = [company?.buildingNumber, company?.street, company?.district, company?.city, company?.postalCode].filter(Boolean).join(' - ');
   const openingDebit = mode === 'supplier' ? Math.max(0, -opening) : Math.max(0, opening);
   const openingCredit = mode === 'supplier' ? Math.max(0, opening) : Math.max(0, -opening);
   const openingCells: Partial<Record<(typeof keys)[number], string>> = {
-    date: e(from), docType: 'رصيد افتتاحي', docNumber: '—',
+    date: e(from), docType: labels.opening, docNumber: '—',
     debit: openingDebit ? e(fmt(openingDebit)) : '0.00',
     credit: openingCredit ? e(fmt(openingCredit)) : '0.00',
     balance: e(fmt(opening)), description: '—',
   };
   const first = keys.filter(k => ['date', 'docType', 'docNumber'].includes(k)).length;
-  const totalCells = `${first ? `<td colspan="${first}">الإجمالي</td>` : ''}${keys.filter(k => !['date', 'docType', 'docNumber'].includes(k)).map(k =>
+  const totalCells = `${first ? `<td colspan="${first}">${labels.total}</td>` : ''}${keys.filter(k => !['date', 'docType', 'docNumber'].includes(k)).map(k =>
     k === 'description' ? '<td>—</td>' :
     `<td class="mono num ${k === 'balance' ? 'strong' : k}">${k === 'debit' ? e(fmt(totals.debit)) : k === 'credit' ? e(fmt(totals.credit)) : e(fmt(closing))}</td>`).join('')}`;
-  return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"/><title>${e(opts.filename)}</title>
+  return `<!DOCTYPE html><html dir="${direction}" lang="${isEnglish ? 'en' : 'ar'}"><head><meta charset="UTF-8"/><title>${e(opts.filename)}</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
-      direction: rtl;
+      direction: ${direction};
       font-size: 10pt;
       color: #0f172a;
       background: #fff;
@@ -291,11 +318,11 @@ export function renderStatementHtml(opts: StatementHtmlOpts): string {
         <div class="page-header">
           <div class="co-row">
             <div class="co-side right">
-              <div class="name">${e(company?.nameAr || '—')}</div>
-              ${company?.crNumber ? `<div class="row"><span class="lbl">س.ت</span> : ${e(company.crNumber)}</div>` : ''}
-              ${company?.vatNumber ? `<div class="row"><span class="lbl">الرقم الضريبي</span> : ${e(company.vatNumber)}</div>` : ''}
-              ${company?.phone ? `<div class="row"><span class="lbl">الجوال</span> : ${e(company.phone)}</div>` : ''}
-              ${address ? `<div class="row"><span class="lbl">العنوان</span> : ${e(address)}</div>` : ''}
+              <div class="name">${e(name)}</div>
+              ${company?.crNumber ? `<div class="row"><span class="lbl">${labels.cr}</span> : ${e(company.crNumber)}</div>` : ''}
+              ${company?.vatNumber ? `<div class="row"><span class="lbl">${labels.vat}</span> : ${e(company.vatNumber)}</div>` : ''}
+              ${company?.phone ? `<div class="row"><span class="lbl">${labels.phone}</span> : ${e(company.phone)}</div>` : ''}
+              ${address ? `<div class="row"><span class="lbl">${labels.address}</span> : ${e(address)}</div>` : ''}
             </div>
             <div class="co-center">
               <div class="co-logo">${logo ? `<img src="${logo}" alt="${e(name).replace(/"/g, '&quot;').replace(/'/g, '&#39;')}" />` : `<div class="logo-fallback">${e(name.trim().slice(0, 2))}</div>`}</div>
@@ -303,30 +330,30 @@ export function renderStatementHtml(opts: StatementHtmlOpts): string {
             <div class="co-brand">${brand ? `<img src="${brand}" alt="" />` : ''}</div>
           </div>
           <div class="title-bar">
-            <div class="doc-title">${mode === 'supplier' ? 'كشف حساب مورد' : 'كشف حساب'}</div>
+            <div class="doc-title">${mode === 'supplier' ? labels.supplierTitle : labels.accountTitle}</div>
             <div class="period-range">
-              <span class="seg"><span class="lbl">من تاريخ:</span> <span class="val">${e(from)}</span></span>
-              <span class="seg"><span class="lbl">إلى تاريخ:</span> <span class="val">${e(to)}</span></span>
+              <span class="seg"><span class="lbl">${labels.from}:</span> <span class="val">${e(from)}</span></span>
+              <span class="seg"><span class="lbl">${labels.to}:</span> <span class="val">${e(to)}</span></span>
             </div>
           </div>
           <hr class="black-rule" />
           <div class="party-strip">
             <div class="party-row">
-              <span class="lbl">${mode === 'supplier' ? 'اسم المورد' : mode === 'general' ? 'الحساب' : 'اسم العميل'}:</span>
-              <span class="party-name">${e(account.partyNameAr || account.nameAr || account.nameEn || '—')}</span>
+              <span class="lbl">${mode === 'supplier' ? labels.supplier : mode === 'general' ? labels.account : labels.customer}:</span>
+              <span class="party-name">${e(accountName)}</span>
               ${account.partyNameEn ? `<span class="party-name-latin" dir="ltr">(${e(account.partyNameEn)})</span>` : ''}
             </div>
             <div class="party-row">
-              <span class="lbl">رمز الحساب:</span>
+              <span class="lbl">${labels.accountCode}:</span>
               <span class="mono">${e(account.code || '—')}</span>
             </div>
             <div class="party-row">
-              <span class="lbl">مستوى الحساب:</span>
+              <span class="lbl">${labels.accountLevel}:</span>
               ${e(account.level != null ? String(account.level) : '—')}
             </div>
             ${opts.branchName ? `
             <div class="party-row">
-              <span class="lbl">الفرع:</span> ${e(opts.branchName)}
+              <span class="lbl">${labels.branch}:</span> ${e(opts.branchName)}
             </div>` : ''}
           </div>
         </div>
@@ -344,7 +371,7 @@ export function renderStatementHtml(opts: StatementHtmlOpts): string {
               ${keys.map(k => `<td${k === 'date' ? ' class="mono"' : k === 'docType' ? ' class="lbl"' : k === 'debit' || k === 'credit' ? ' class="mono num"' : k === 'balance' ? ' class="mono num strong"' : ''}>${openingCells[k]}</td>`).join('')}
             </tr>
             ${lines.length ? lines.map((l, i) => l.detail ? `<tr class="${i % 2 === 0 ? 'even' : 'odd'}"><td colspan="${Math.max(1, keys.length)}" class="desc">${e(l.description)}</td></tr>` :
-              `<tr class="${i % 2 === 0 ? 'even' : 'odd'}">${keys.map(k => `<td${k === 'date' || k === 'docNumber' ? ' class="mono"' : k === 'debit' || k === 'credit' ? ` class="mono num ${Number(l[k]) ? k : 'muted'}"` : k === 'balance' ? ' class="mono num strong"' : k === 'description' ? ' class="desc"' : ''}>${cell(k, l)}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${Math.max(1, keys.length)}" class="empty">لا توجد حركات في الفترة المحددة</td></tr>`}
+              `<tr class="${i % 2 === 0 ? 'even' : 'odd'}">${keys.map(k => `<td${k === 'date' || k === 'docNumber' ? ' class="mono"' : k === 'debit' || k === 'credit' ? ` class="mono num ${Number(l[k]) ? k : 'muted'}"` : k === 'balance' ? ' class="mono num strong"' : k === 'description' ? ' class="desc"' : ''}>${cell(k, l)}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${Math.max(1, keys.length)}" class="empty">${labels.noRows}</td></tr>`}
             ${lines.length ? `<tr class="totals">${totalCells}</tr>` : ''}
           </tbody>
         </table>
@@ -352,8 +379,8 @@ export function renderStatementHtml(opts: StatementHtmlOpts): string {
     </tbody>
   </table>
   <div class="page-footer-fixed">
-    <div class="ftr-date">تاريخ الطباعة: ${(opts.printedAt ?? new Date()).toLocaleDateString('ar-SA-u-nu-latn', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
-    ${opts.userName ? `<div class="ftr-user">اسم المستخدم: ${e(opts.userName)}</div>` : `<div></div>`}
+    <div class="ftr-date">${labels.printedAt}: ${(opts.printedAt ?? new Date()).toLocaleDateString(isEnglish ? 'en-US' : 'ar-SA-u-nu-latn', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+    ${opts.userName ? `<div class="ftr-user">${labels.user}: ${e(opts.userName)}</div>` : `<div></div>`}
   </div>
   <script>
     ${opts.autoPrint !== false ? `window.onload = function(){ setTimeout(function(){ window.print(); }, 600); };` : ''}

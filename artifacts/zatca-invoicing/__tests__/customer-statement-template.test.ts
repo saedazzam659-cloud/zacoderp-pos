@@ -1,10 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { exportStatementToPDF, type ExportStatementPdfOpts } from "../src/lib/export";
+import { exportStatementToPDF, localizeExportRows, type ExportStatementPdfOpts } from "../src/lib/export";
 import * as statementTemplate from "../../mobile/lib/statementHtml";
 import * as statementLedger from "../../mobile/lib/statementLedger";
 const renderStatementHtml = statementTemplate.renderStatementHtml ?? (statementTemplate as any).default.renderStatementHtml;
 const { statementBalances, statementExclusion } = statementLedger.statementBalances ? statementLedger : (statementLedger as any).default;
+
+test("English exports select paired English master data without translating free text", () => {
+  const columns = [
+    { key: "nameAr", header: "Name" },
+    { key: "description", header: "Description" },
+  ];
+  const rows = [{
+    nameAr: "اسم الحساب",
+    nameEn: "Account name",
+    description: "ملاحظة المستخدم",
+  }];
+  assert.deepEqual(localizeExportRows(rows, columns, "en"), [{
+    ...rows[0], nameAr: "Account name",
+  }]);
+  assert.equal(localizeExportRows(rows, columns, "ar")[0].nameAr, "اسم الحساب");
+});
 
 test("running balances follow row order even when invoice and receipt share ID/date", () => {
   const rows = [

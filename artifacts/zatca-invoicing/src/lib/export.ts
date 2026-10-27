@@ -14,6 +14,38 @@ export interface ExportColumn {
 }
 
 /**
+ * Prefer paired English master-data fields when an export column currently
+ * points at its Arabic field. User-entered notes and other unpaired values
+ * are deliberately left untouched.
+ */
+export function localizeExportRows(
+  rows: Record<string, unknown>[],
+  columns: ExportColumn[],
+  language?: string,
+): Record<string, unknown>[] {
+  if (!language?.toLowerCase().startsWith("en")) return rows;
+  return rows.map(source => {
+    let row: Record<string, unknown> | null = null;
+    for (const column of columns) {
+      const key = column.key;
+      const candidates = [
+        key.replace(/Ar$/, "En"),
+        key.replace(/_ar$/i, "_en"),
+        `${key}En`,
+      ].filter(candidate => candidate !== key);
+      const englishKey = candidates.find(candidate =>
+        typeof source[candidate] === "string" && String(source[candidate]).trim(),
+      );
+      if (englishKey) {
+        row ??= { ...source };
+        row[key] = source[englishKey];
+      }
+    }
+    return row ?? source;
+  });
+}
+
+/**
  * Keep user-controlled text as literal text in spreadsheet exports.
  *
  * Excel treats cells beginning with =, +, - or @ as formulas when a workbook
@@ -141,10 +173,13 @@ export async function exportToExcelBranded(
     company?: ExportCompanyInfo | null;
     title?: string;
     subtitle?: string;
+    language?: string;
     extraSheets?: BrandedExtraSheet[];
   } = {},
 ): Promise<void> {
-  const { sheetName = "Sheet1", totalsRow, company, title, subtitle, extraSheets = [] } = opts;
+  const { sheetName = "Sheet1", totalsRow, company, title, subtitle, extraSheets = [], language } = opts;
+  const isEnglish = language?.toLowerCase().startsWith("en") ?? false;
+  rows = localizeExportRows(rows, columns, language);
   try {
     const ExcelJS = (await import("exceljs")).default;
     const norm = (val: unknown): string | number => {
@@ -154,7 +189,7 @@ export async function exportToExcelBranded(
     };
 
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet(sheetName, { views: [{ rightToLeft: true }] });
+    const ws = wb.addWorksheet(sheetName, { views: [{ rightToLeft: !isEnglish }] });
     const nCols = columns.length;
 
     // Green palette matching the on-screen / PDF brand.
@@ -167,17 +202,17 @@ export async function exportToExcelBranded(
 
     let r = 1;
     // Company name (Arabic) — headline.
-    const nameAr = company?.nameAr || company?.nameEn || "";
-    if (nameAr) {
+    const companyName = (isEnglish ? company?.nameEn || company?.nameAr : company?.nameAr || company?.nameEn) || "";
+    if (companyName) {
       const row = ws.getRow(r);
-      row.getCell(1).value = nameAr;
+      row.getCell(1).value = companyName;
       row.getCell(1).font = { bold: true, size: 16, color: { argb: GREEN } };
       row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
       mergeAcross(r);
       row.height = 24;
       r++;
     }
-    if (company?.nameEn && company.nameEn !== company.nameAr) {
+    if (!isEnglish && company?.nameEn && company.nameEn !== company.nameAr) {
       const row = ws.getRow(r);
       row.getCell(1).value = company.nameEn;
       row.getCell(1).font = { size: 11, color: { argb: "FF475569" } };
@@ -186,9 +221,9 @@ export async function exportToExcelBranded(
       r++;
     }
     const metaParts = [
-      company?.crNumber ? `س.ت: ${company.crNumber}` : "",
-      company?.vatNumber ? `الرقم الضريبي: ${company.vatNumber}` : "",
-      company?.phone ? `جوال: ${company.phone}` : "",
+      company?.crNumber ? `${isEnglish ? "C.R. No." : "س.ت"}: ${company.crNumber}` : "",
+      company?.vatNumber ? `${isEnglish ? "VAT number" : "الرقم الضريبي"}: ${company.vatNumber}` : "",
+      company?.phone ? `${isEnglish ? "Phone" : "جوال"}: ${company.phone}` : "",
     ].filter(Boolean);
     if (metaParts.length) {
       const row = ws.getRow(r);
@@ -314,7 +349,7 @@ export async function exportToExcelBranded(
     // Related grids (for example owner contracts and subcontracts) stay in
     // the same real XLSX workbook rather than causing multiple downloads.
     for (const extra of extraSheets) {
-      const extraWs = wb.addWorksheet(extra.sheetName, { views: [{ rightToLeft: true }] });
+      const extraWs = wb.addWorksheet(extra.sheetName, { views: [{ rightToLeft: !isEnglish }] });
       const extraHeader = extraWs.getRow(1);
       extra.columns.forEach((column, index) => {
         const cell = extraHeader.getCell(index + 1);
@@ -362,7 +397,7 @@ export async function exportToExcelBranded(
         ];
         extraWs.getColumn(columnIndex + 1).width = column.width ?? Math.min(Math.max(...lengths, 10), 50);
       });
-      extraWs.views = [{ rightToLeft: true, state: "frozen", ySplit: 1 }];
+      extraWs.views = [{ rightToLeft: !isEnglish, state: "frozen", ySplit: 1 }];
     }
 
     const buffer = await wb.xlsx.writeBuffer();
@@ -530,8 +565,12 @@ export async function exportToPDF(
   // SINGLE line (white-space: nowrap) and auto-shrinks the table font and
   // cell padding based on the column count, so wide reports (e.g. the
   // fixed-assets movement schedule with 15 columns) never wrap mid-cell.
-  opts?: { fitOneLine?: boolean } | null,
+  opts?: { fitOneLine?: boolean; language?: string } | null,
 ) {
+  const language = opts?.language
+    ?? (typeof document !== "undefined" ? document.documentElement.lang : "ar");
+  const isEnglish = language.toLowerCase().startsWith("en");
+  rows = localizeExportRows(rows, columns, language);
   const escape = (s: unknown) =>
     String(s ?? "")
       .replace(/&/g, "&amp;")
@@ -597,16 +636,16 @@ export async function exportToPDF(
   // Branded company block (name + CR/VAT/phone + address) shown in the green
   // header beneath the logo. Each value is escaped before interpolation.
   const companyMetaLine = [
-    company?.crNumber ? `س.ت: ${escape(company.crNumber)}` : "",
-    company?.vatNumber ? `الرقم الضريبي: ${escape(company.vatNumber)}` : "",
-    company?.phone ? `جوال: ${escape(company.phone)}` : "",
+    company?.crNumber ? `${isEnglish ? "C.R. No." : "س.ت"}: ${escape(company.crNumber)}` : "",
+    company?.vatNumber ? `${isEnglish ? "VAT number" : "الرقم الضريبي"}: ${escape(company.vatNumber)}` : "",
+    company?.phone ? `${isEnglish ? "Phone" : "جوال"}: ${escape(company.phone)}` : "",
   ]
     .filter(Boolean)
     .join("&nbsp;&nbsp;|&nbsp;&nbsp;");
   const companyAddressLine = buildCompanyAddressLine(company);
   const companyHtml = company
-    ? `${company.nameAr ? `<div class="company-name">${escape(company.nameAr)}</div>` : ""}
-       ${company.nameEn && company.nameEn !== company.nameAr ? `<div class="company-name-en">${escape(company.nameEn)}</div>` : ""}
+     ? `${(isEnglish ? company.nameEn || company.nameAr : company.nameAr || company.nameEn) ? `<div class="company-name">${escape((isEnglish ? company.nameEn || company.nameAr : company.nameAr || company.nameEn)!)}</div>` : ""}
+       ${!isEnglish && company.nameEn && company.nameEn !== company.nameAr ? `<div class="company-name-en">${escape(company.nameEn)}</div>` : ""}
        ${companyMetaLine ? `<div class="company-meta">${companyMetaLine}</div>` : ""}
        ${companyAddressLine ? `<div class="company-meta">${escape(companyAddressLine)}</div>` : ""}
        <div class="title-sep"></div>`
@@ -669,14 +708,14 @@ export async function exportToPDF(
         .join("")}</tr>`
     : "";
 
-  const today = new Date().toLocaleDateString("ar-SA-u-nu-latn", {
+  const today = new Date().toLocaleDateString(isEnglish ? "en-US" : "ar-SA-u-nu-latn", {
     year: "numeric",
     month: "long",
     day: "numeric",
   });
 
   const html = `<!DOCTYPE html>
-<html dir="rtl" lang="ar">
+<html dir="${isEnglish ? "ltr" : "rtl"}" lang="${isEnglish ? "en" : "ar"}">
 <head>
   <meta charset="UTF-8"/>
   <title>${escape(filename)}</title>
@@ -685,7 +724,7 @@ export async function exportToPDF(
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
-      direction: rtl;
+      direction: ${isEnglish ? "ltr" : "rtl"};
       font-size: 11pt;
       color: #1a1a1a;
       background: #fff;
@@ -1367,7 +1406,7 @@ export function printChartOfAccountsExternal(opts: {
   }).join("");
 
   const html = `<!DOCTYPE html>
-<html dir="rtl" lang="ar">
+<html dir="${isEnglish ? "ltr" : "rtl"}" lang="${isEnglish ? "en" : "ar"}">
 <head>
   <meta charset="UTF-8"/>
   <title>${escape(title)}</title>
@@ -1376,7 +1415,7 @@ export function printChartOfAccountsExternal(opts: {
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
-      direction: rtl;
+      direction: ${isEnglish ? "ltr" : "rtl"};
       font-size: 11pt;
       color: #0f172a;
       background: #f8fafc;
@@ -1495,7 +1534,7 @@ export function printChartOfAccountsExternal(opts: {
       margin: 12mm 10mm 18mm 10mm;
       size: A4 portrait;
       @bottom-center {
-        content: "صفحة " counter(page) " من " counter(pages);
+        content: ${isEnglish ? '"Page " counter(page) " of " counter(pages)' : '"صفحة " counter(page) " من " counter(pages)'};
         font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
         font-size: 9pt;
         color: #475569;
@@ -1787,6 +1826,7 @@ export interface StatementPdfVisibleCols {
 
 export interface ExportStatementPdfOpts {
   mode: "customer" | "supplier" | "general";
+  language?: string;
   company?: StatementPdfCompany | null;
   account: StatementPdfAccount;
   from: string;
@@ -1812,16 +1852,20 @@ export interface ExportStatementPdfOpts {
 }
 
 export function exportStatementToPDF(opts: ExportStatementPdfOpts) {
-  // The same browser-free template is used by the native PDF/share sheet.
-  if (opts.mode === "customer") {
-    const sharedHtml = (statementTemplate.renderStatementHtml ?? (statementTemplate as any).default.renderStatementHtml)(opts);
-    const sharedBlob = new Blob([sharedHtml], { type: "text/html;charset=utf-8" });
-    const sharedUrl = URL.createObjectURL(sharedBlob);
-    const sharedWindow = window.open(sharedUrl, "_blank");
-    if (sharedWindow) sharedWindow.addEventListener("afterprint", () => URL.revokeObjectURL(sharedUrl));
-    else URL.revokeObjectURL(sharedUrl);
-    return;
-  }
+  // The same browser-free template is used by web and native statement prints.
+  const language = opts.language
+    ?? (typeof document !== "undefined" ? document.documentElement.lang : "ar");
+  const render = statementTemplate.renderStatementHtml ?? (statementTemplate as any).default.renderStatementHtml;
+  const sharedHtml = render({ ...opts, language });
+  const sharedBlob = new Blob([sharedHtml], { type: "text/html;charset=utf-8" });
+  const sharedUrl = URL.createObjectURL(sharedBlob);
+  const sharedWindow = window.open(sharedUrl, "_blank");
+  if (sharedWindow) sharedWindow.addEventListener("afterprint", () => URL.revokeObjectURL(sharedUrl));
+  else URL.revokeObjectURL(sharedUrl);
+  return;
+
+  // Legacy renderer retained below for compatibility reference; new statements
+  // all use the shared localized template above.
   const {
     mode, company, account, from, to,
     opening, lines, totals, closing,
