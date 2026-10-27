@@ -17,6 +17,7 @@ import { Plus, Trash2, Pencil, Loader2, Package, Undo2, Printer, FileSpreadsheet
 import { fmt2 } from "@/lib/format";
 import { exportToExcel, type ExportColumn } from "@/lib/export";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { localizePrintHtml } from "@/lib/localizedUiText";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -303,17 +304,17 @@ export function CustodyReportTab({ employees, pickName, isRtl }: Common) {
 
   const rows = useMemo(() => {
     const fin = financial.map((c: any) => ({
-      kind: "مالية", employeeId: c.employeeId, employee: pickName(c.empNameAr, c.empNameEn), empCode: c.empCode,
-      item: c.purpose || "عهدة مالية", code: "", date: c.custodyDate,
+      kind: isRtl ? "مالية" : "Financial", employeeId: c.employeeId, employee: pickName(c.empNameAr, c.empNameEn), empCode: c.empCode,
+      item: c.purpose || (isRtl ? "عهدة مالية" : "Financial custody"), code: "", date: c.custodyDate,
       value: num(c.amount), remaining: remainingOf(c),
-      status: c.status === "active" ? "قائمة" : c.status === "settled" ? "مصفّاة" : "ملغاة",
+      status: c.status === "active" ? (isRtl ? "قائمة" : "Open") : c.status === "settled" ? (isRtl ? "مصفّاة" : "Settled") : (isRtl ? "ملغاة" : "Cancelled"),
       open: c.status === "active",
     }));
     const ast = assetRows.map((c: any) => ({
-      kind: "عينية", employeeId: c.employeeId, employee: pickName(c.empNameAr, c.empNameEn), empCode: c.empCode,
-      item: c.assetNameAr, code: c.assetCode, date: c.deliveryDate,
+      kind: isRtl ? "عينية" : "Physical", employeeId: c.employeeId, employee: pickName(c.empNameAr, c.empNameEn), empCode: c.empCode,
+      item: isRtl ? (c.assetNameAr ?? c.assetNameEn) : (c.assetNameEn ?? c.assetNameAr), code: c.assetCode, date: c.deliveryDate,
       value: num(c.assetValue), remaining: c.status === "delivered" ? num(c.assetValue) : 0,
-      status: c.status === "delivered" ? "بعهدة الموظف" : "مسترجعة",
+      status: c.status === "delivered" ? (isRtl ? "بعهدة الموظف" : "Assigned") : (isRtl ? "مسترجعة" : "Returned"),
       open: c.status === "delivered",
     }));
     return [...fin, ...ast]
@@ -321,7 +322,7 @@ export function CustodyReportTab({ employees, pickName, isRtl }: Common) {
       .filter((r) => statusFilter === "all" ? true : statusFilter === "open" ? r.open : !r.open)
       .filter((r) => (!from || r.date >= from) && (!to || r.date <= to))
       .sort((a, b) => (a.employee || "").localeCompare(b.employee || "") || (a.date < b.date ? 1 : -1));
-  }, [financial, assetRows, empFilter, statusFilter, from, to, pickName]);
+  }, [financial, assetRows, empFilter, statusFilter, from, to, pickName, isRtl]);
 
   const totals = useMemo(() => ({
     count: rows.length,
@@ -334,29 +335,32 @@ export function CustodyReportTab({ employees, pickName, isRtl }: Common) {
       if (!(await gate('export'))) return;
     const fmt = "#,##0.00";
     const cols: ExportColumn[] = [
-      { key: "employee", header: "الموظف" },
-      { key: "empCode", header: "كود الموظف" },
-      { key: "kind", header: "نوع العهدة" },
-      { key: "item", header: "البيان / الأصل" },
-      { key: "code", header: "كود الأصل" },
-      { key: "date", header: "التاريخ" },
-      { key: "value", header: "القيمة", numFmt: fmt },
-      { key: "remaining", header: "المتبقي بالعهدة", numFmt: fmt },
-      { key: "status", header: "الحالة" },
+      { key: "employee", header: isRtl ? "الموظف" : "Employee" },
+      { key: "empCode", header: isRtl ? "كود الموظف" : "Employee code" },
+      { key: "kind", header: isRtl ? "نوع العهدة" : "Custody type" },
+      { key: "item", header: isRtl ? "البيان / الأصل" : "Description / asset" },
+      { key: "code", header: isRtl ? "كود الأصل" : "Asset code" },
+      { key: "date", header: isRtl ? "التاريخ" : "Date" },
+      { key: "value", header: isRtl ? "القيمة" : "Value", numFmt: fmt },
+      { key: "remaining", header: isRtl ? "المتبقي بالعهدة" : "Remaining custody", numFmt: fmt },
+      { key: "status", header: isRtl ? "الحالة" : "Status" },
     ];
-    exportToExcel(rows.map((r) => ({ ...r, date: fmtDmy(r.date) })), cols, "تقرير العهد", "تقرير العهد");
+    const reportName = isRtl ? "تقرير العهد" : "Custody report";
+    exportToExcel(rows.map((r) => ({ ...r, date: fmtDmy(r.date) })), cols, reportName, reportName);
   }
 
   function buildReportHtml(forPrint: boolean, empName?: string): string {
     const data = empName ? rows.filter((r) => r.employee === empName) : rows;
-    const title = empName ? `كشف عهد الموظف: ${empName}` : "تقرير العهد";
+    const title = empName
+      ? (isRtl ? `كشف عهد الموظف: ${empName}` : `Employee custody: ${empName}`)
+      : (isRtl ? "تقرير العهد" : "Custody report");
     const body = data.map((r) => `
       <tr>
         <td>${r.employee}</td><td>${r.kind}</td><td>${r.item}${r.code ? ` (${r.code})` : ""}</td>
         <td>${fmtDmy(r.date)}</td><td class="num">${fmt2(r.value)}</td><td class="num">${fmt2(r.remaining)}</td><td>${r.status}</td>
       </tr>`).join("");
     const tot = data.reduce((s, r) => s + r.remaining, 0);
-    return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${title}</title>
+    const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${title}</title>
       <style>
         body{font-family:Tahoma,Arial,sans-serif;font-size:12px;color:#111;margin:24px}
         h1{font-size:16px;margin:0 0 4px} .sub{color:#555;font-size:11px;margin-bottom:12px}
@@ -367,13 +371,14 @@ export function CustodyReportTab({ employees, pickName, isRtl }: Common) {
         .sig div{width:40%;border-top:1px solid #333;padding-top:6px;text-align:center}
       </style></head><body>
       <h1>${title}</h1>
-      <div class="sub">${company?.nameAr || ""} — تاريخ الطباعة: ${fmtDmy(today())}</div>
+      <div class="sub">${(isRtl ? company?.nameAr : company?.nameEn) || company?.nameAr || ""} — تاريخ الطباعة: ${fmtDmy(today())}</div>
       <table><thead><tr><th>الموظف</th><th>النوع</th><th>البيان / الأصل</th><th>التاريخ</th><th class="num">القيمة</th><th class="num">المتبقي</th><th>الحالة</th></tr></thead>
       <tbody>${body || `<tr><td colspan="7" style="text-align:center;color:#777">لا توجد بيانات</td></tr>`}</tbody>
       <tfoot><tr><td colspan="5">إجمالي المتبقي بالعهدة</td><td class="num">${fmt2(tot)}</td><td></td></tr></tfoot></table>
       ${empName ? `<div class="sig"><div>توقيع الموظف</div><div>توقيع مسؤول العهد</div></div>` : ""}
       ${forPrint ? `<script>window.onload=()=>{window.print();}</script>` : ""}
       </body></html>`;
+    return isRtl ? html : localizePrintHtml(html, "en", { employees, financial, assetRows, company });
   }
 
   function printReport(empName?: string) {

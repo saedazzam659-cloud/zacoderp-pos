@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { fmt2 } from "@/lib/format";
 import { employeesApi } from "@/lib/employeesApi";
+import { localizePrintHtml } from "@/lib/localizedUiText";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -78,19 +79,27 @@ export default function FaReports() {
   const printByEmployee = () => {
     const w = window.open("", "_blank");
     if (!w) return;
+    const language = document.documentElement.lang || "ar";
+    const isEnglish = language.toLowerCase().startsWith("en");
+    const statusLabelsEn: Record<string, string> = {
+      active: "Active", in_maintenance: "In maintenance", transferred: "Transferred",
+      sold: "Sold", scrapped: "Scrapped", fully_depreciated: "Fully depreciated",
+    };
     const rows = byEmployee.list.map(({ emp, eid, assets: as_ }) => {
-      const title = emp ? `${esc(emp.code)} — ${esc(emp.nameAr ?? emp.nameEn)}` : `موظف #${esc(eid)} (محذوف)`;
+      const employeeName = emp ? (isEnglish ? (emp.nameEn ?? emp.nameAr) : (emp.nameAr ?? emp.nameEn)) : "";
+      const title = emp ? `${esc(emp.code)} — ${esc(employeeName)}` : `موظف #${esc(eid)} (محذوف)`;
       const lines = as_.map((a) =>
-        `<tr><td>${esc(a.code)}</td><td>${esc(a.nameAr)}</td><td>${esc(STATUS_LABELS[a.status] ?? a.status)}</td><td class="num">${fmt2(Number(a.bookValue ?? a.purchaseCost ?? 0))}</td></tr>`).join("");
+        `<tr><td>${esc(a.code)}</td><td>${esc(isEnglish ? (a.nameEn ?? a.nameAr) : (a.nameAr ?? a.nameEn))}</td><td>${esc(isEnglish ? (statusLabelsEn[a.status] ?? a.status) : (STATUS_LABELS[a.status] ?? a.status))}</td><td class="num">${fmt2(Number(a.bookValue ?? a.purchaseCost ?? 0))}</td></tr>`).join("");
       return `<h3>${title} <small>(${as_.length})</small></h3>
         <table><thead><tr><th>الكود</th><th>اسم الأصل</th><th>الحالة</th><th>القيمة الدفترية</th></tr></thead><tbody>${lines}</tbody></table>`;
     }).join("");
-    w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>الأصول المرتبطة بالموظفين</title>
+    const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>الأصول المرتبطة بالموظفين</title>
       <style>body{font-family:Tahoma,Arial,sans-serif;padding:20px}h2{margin:0 0 4px}h3{margin:18px 0 6px;font-size:14px}
       table{width:100%;border-collapse:collapse;font-size:12px}table th,table td{border:1px solid #cbd5e1;padding:4px 8px;text-align:right}
       table th{background:#f1f5f9}td.num{text-align:left;font-family:monospace}small{color:#64748b}</style></head>
       <body><h2>تقرير الأصول المرتبطة بالموظفين</h2><small>${new Date().toLocaleDateString("en-GB")}</small>${rows || "<p>لا توجد أصول مرتبطة بموظفين</p>"}
-      <script>window.onload=function(){window.print()}</script></body></html>`);
+      <script>window.onload=function(){window.print()}</script></body></html>`;
+    w.document.write(isEnglish ? localizePrintHtml(html, language, { employees, assets }) : html);
     w.document.close();
   };
 

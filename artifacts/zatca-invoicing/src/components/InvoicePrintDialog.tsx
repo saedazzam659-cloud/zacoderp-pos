@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useLocation } from "wouter";
 import QRCode from "qrcode";
 import {
@@ -11,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ensurePrinterReady } from "@/lib/printerGuard";
 import { currencySymbol } from "@/lib/format";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { localizePrintHtml } from "@/lib/localizedUiText";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface PrintInvoice {
@@ -697,6 +699,7 @@ interface Props {
 
 export default function InvoicePrintDialog({ open, onClose, invoice }: Props) {
   const gate = useDemoActionGate();
+  const { i18n } = useTranslation();
   const [selected, setSelected] = useState("professional");
   const [printing, setPrinting] = useState(false);
   const { toast } = useToast();
@@ -707,7 +710,10 @@ export default function InvoicePrintDialog({ open, onClose, invoice }: Props) {
     setPrinting(true);
     try {
       if (!(await gate("print"))) return;
-      const html = await generateHtml(selected, invoice);
+      const rawHtml = await generateHtml(selected, invoice);
+      const html = i18n.language?.toLowerCase().startsWith("en")
+        ? localizePrintHtml(rawHtml, i18n.language, invoice)
+        : rawHtml;
       const win = window.open("", "_blank", "width=900,height=700");
       if (!win) { alert("يرجى السماح بالنوافذ المنبثقة"); return; }
       win.document.open();

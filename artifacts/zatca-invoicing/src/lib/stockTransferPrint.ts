@@ -1,3 +1,5 @@
+import { localizePrintHtml } from "./localizedUiText";
+
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -32,7 +34,7 @@ export function printPersistedStockTransfer(doc: any, options: {
   if (!popup) throw new Error("تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم أعد المحاولة.");
   popup.opener = null;
   popup.document.open();
-  popup.document.write(`<!doctype html>
+  const rawHtml = `<!doctype html>
 <html dir="${isRtl ? "rtl" : "ltr"}"><head><meta charset="utf-8">
 <title>${escapeHtml(doc.transferNumber)}</title>
 <style>
@@ -58,7 +60,8 @@ ${companyName ? `<div class="company">${escapeHtml(companyName)}</div>` : ""}
 <div class="transport"><b>تكلفة النقل الداخلي:</b> ${escapeHtml(transport.toFixed(2))}</div>
 ${doc.notes ? `<div class="notes"><b>ملاحظات:</b><br>${escapeHtml(doc.notes)}</div>` : ""}
 <div class="signatures"><div class="line">أمين المستودع</div><div class="line">المستلم</div><div class="line">الاعتماد</div></div>
-</body></html>`);
+</body></html>`;
+  popup.document.write(isRtl ? rawHtml : localizePrintHtml(rawHtml, "en", { doc, companyName }));
   popup.document.close();
   popup.focus();
 }

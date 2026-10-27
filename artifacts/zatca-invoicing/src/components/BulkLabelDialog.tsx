@@ -39,7 +39,8 @@ interface Props {
 type Mode = "qr" | "barcode";
 
 export default function BulkLabelDialog({ open, onOpenChange, items }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isEnglish = i18n.language?.toLowerCase().startsWith("en") ?? false;
   const { fmt } = useFmt();
   const [mode, setMode] = useState<Mode>("barcode");
   const [copies, setCopies] = useState("1");
@@ -189,7 +190,7 @@ export default function BulkLabelDialog({ open, onOpenChange, items }: Props) {
                 >
                   {showName && (
                     <div className="name" style={{ fontSize: "7pt", fontWeight: 600, textAlign: "center", lineHeight: 1.1, maxHeight: 18, overflow: "hidden" }}>
-                      {item.nameAr}
+                      {isEnglish ? (item.nameEn || item.nameAr) : item.nameAr}
                     </div>
                   )}
                   {mode === "qr" ? (

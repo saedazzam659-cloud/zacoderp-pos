@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/printLetterhead";
 import { fmt2 } from "@/lib/format";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { localizePrintHtml } from "@/lib/localizedUiText";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Shared bulk-print toolkit used by every list screen that supports
@@ -359,7 +361,9 @@ export interface BulkPrintMenuProps<T> {
 }
 
 export function BulkPrintMenu<T>(props: BulkPrintMenuProps<T>) {
-    const gate = useDemoActionGate();
+  const gate = useDemoActionGate();
+  const { i18n } = useTranslation();
+  const language = i18n.language || "ar";
   const {
     selectedIds, filteredDocs, getId = (d: any) => d.id,
     adapter, company,
@@ -413,6 +417,9 @@ export function BulkPrintMenu<T>(props: BulkPrintMenuProps<T>) {
         case "detailed":     html = await buildDetailed(source); break;
         case "professional": html = buildProfessionalDocsHtml(source, adapter, company); break;
         case "compact":      html = buildCompactDocsHtml(source, adapter, company); break;
+      }
+      if (language.toLowerCase().startsWith("en")) {
+        html = localizePrintHtml(html, language, { records: source, company });
       }
       html = injectOneEntryPerPage(html, oneEntryPerPage);
       const ok = openPrintWindow(html, onPopupBlocked);

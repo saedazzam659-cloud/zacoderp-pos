@@ -15,6 +15,7 @@
 // other print builders. Shared by ReceiptVoucherForm.tsx and
 // PaymentVoucherForm.tsx so سند القبض and سند الصرف stay in lock-step.
 import { safeLogoSrc } from "@/lib/export";
+import { localizePrintHtml } from "@/lib/localizedUiText";
 
 export type CashVoucherKind = "receipt" | "payment";
 
@@ -116,6 +117,7 @@ export interface CashVoucherLine {
 
 export interface CashVoucherArgs {
   kind: CashVoucherKind;
+  language?: string;
   doc: CashVoucherDoc;
   /** Cash box / bank account (رمز النقدية / اسم النقدية). */
   treasury: { code?: string | null; name?: string | null } | null;
@@ -139,17 +141,22 @@ function companyAddress(c?: CashVoucherCompany | null): string {
 
 export function buildCashVoucherHtml(args: CashVoucherArgs): string {
   const { kind, doc, treasury, account, lines, company, preparedBy } = args;
+  const isEnglish = args.language?.toLowerCase().startsWith("en") ?? false;
   const isReceipt = kind === "receipt";
   const hasLines = Array.isArray(lines) && lines.length > 0;
   const isMulti = Array.isArray(lines) && lines.length > 1;
-  const title = isReceipt ? "سند قبض نقدي" : "سند صرف نقدي";
+  const title = isEnglish
+    ? (isReceipt ? "Cash Receipt Voucher" : "Cash Payment Voucher")
+    : (isReceipt ? "سند قبض نقدي" : "سند صرف نقدي");
   const accentBar = isReceipt ? "#15803d" : "#b45309";
   const amount = Number(doc.amount || 0);
   const code = doc.code || "—";
   const date = doc.date || "—";
   const desc = doc.description || "";
   const invoiceNumber = doc.invoiceNumber || "";
-  const tafqeet = numberToArabicWords(amount);
+  const tafqeet = isEnglish
+    ? `Amount: ${fmtMoney(amount, company?.decimalPlaces)} ${doc.currency || "SAR"}`
+    : numberToArabicWords(amount);
   // Table rows: one per allocation line when present, else the legacy single
   // account row. المبلغ = net, الإجمالي = net + per-line VAT (payments only).
   // Receipts have no VAT, so المبلغ (net) always equals الإجمالي (total) — the
@@ -215,12 +222,13 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
     safeLogo ? `<img src="${safeLogo}" alt="" />` : ""
   }</div>`;
 
-  return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"/>
+  const html = `<!doctype html><html dir="${isEnglish ? "ltr" : "rtl"}" lang="${isEnglish ? "en" : "ar"}"><head><meta charset="utf-8"/>
 <title>${esc(title)} — ${esc(code)}</title>
 <style>
 @page { size: A4; margin: 12mm 12mm 16mm 12mm; }
 * { box-sizing: border-box; }
-body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; font-size:12px; padding-bottom:18mm; }
+body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; font-size:12px; padding-bottom:18mm; direction:${isEnglish ? "ltr" : "rtl"}; }
+.co-block.ar { display:${isEnglish ? "none" : "block"}; }
 .header { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; border:1px solid #cbd5e1; padding:10px 12px; }
 .co-block { flex:1; }
 .co-block.en { text-align:left; }
@@ -298,6 +306,7 @@ ${bodyRows}
 </div>
 <script>setTimeout(function(){window.print()},300);</script>
 </body></html>`;
+  return isEnglish ? localizePrintHtml(html, "en", args) : html;
 }
 
 /** Opens a blank print window synchronously (popup-blocker safe) with a small

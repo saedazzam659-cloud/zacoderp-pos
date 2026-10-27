@@ -989,6 +989,7 @@ export default function PaymentVoucherForm() {
     });
     printCashVoucher({
       kind: "payment",
+      language: isRtl ? "ar" : "en",
       doc: {
         code: existing.code,
         date: existing.date,

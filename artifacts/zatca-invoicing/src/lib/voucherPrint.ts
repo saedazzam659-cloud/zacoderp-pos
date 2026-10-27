@@ -12,6 +12,7 @@
 import { safeLogoSrc } from "./export";
 import { currencySymbol } from "./format";
 import { buildLetterheadHtml, letterheadCss, wrapWithLetterhead } from "./printLetterhead";
+import { localizePrintHtml } from "./localizedUiText";
 
 export type VoucherKind = "receipt" | "payment";
 export type VoucherTemplate = "a4" | "thermal";
@@ -282,7 +283,11 @@ ${doc.notes ? `<div class="notes"><span class="bold">ملاحظات: </span>${es
 /** Public entry point: returns a complete HTML document ready for
  *  `popup.document.write()`. */
 export function buildVoucherPrintHtml(args: BuildVoucherArgs): string {
-  return args.template === "thermal" ? buildThermal(args) : buildA4(args);
+  const html = args.template === "thermal" ? buildThermal(args) : buildA4(args);
+  const language = typeof document === "undefined" ? "ar" : document.documentElement.lang;
+  return language.toLowerCase().startsWith("en")
+    ? localizePrintHtml(html, language, args)
+    : html;
 }
 
 /** Convenience helper: opens a new window and writes the HTML into it.

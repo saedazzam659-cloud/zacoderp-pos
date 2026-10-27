@@ -462,12 +462,15 @@ export function buildContractingModel14Html(snapshot: ContractingBillPrintSnapsh
     code: project?.code || bill.projectCode || "",
     address: project?.location || "",
   };
+  const language = typeof document === "undefined" ? "ar" : document.documentElement.lang;
+  const printLanguage = language.toLowerCase().startsWith("en") ? "en" : "ar";
   return template14({
     type: "invoice",
     doc: syntheticDoc,
     lines,
     customer,
-    company,
+    company: { ...company, _printLanguage: printLanguage },
+    _lang: printLanguage,
     _contracting: contractingData,
   } as any);
 }

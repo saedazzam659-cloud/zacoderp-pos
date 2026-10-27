@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
+import { localizePrintHtml } from "@/lib/localizedUiText";
 import { currencySymbol } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
@@ -1580,10 +1582,55 @@ interface Props {
 
 export default function PurchasePrintModal({ open, onClose, data }: Props) {
     const gate = useDemoActionGate();
-  const { user } = useAuth() as any;
+  const { user, token } = useAuth() as any;
+  const { i18n } = useTranslation();
+  const printLang: PrintLang = i18n.language?.toLowerCase().startsWith("en") ? "en" : "ar";
   const [selected, setSelected] = useState(1);
   const { toast } = useToast();
   const [, navigate] = useLocation();
+  const itemsCompanyId = (data as any)?.company?.id ?? user?.company?.id;
+  const printItemIds = useMemo(
+    () => [...new Set((Array.isArray(data?.lines) ? data.lines : [])
+      .map((line: any) => Number(line.itemId))
+      .filter((id: number) => Number.isInteger(id) && id > 0))],
+    [data?.lines],
+  );
+  const enItemsQuery = useQuery({
+    queryKey: ["purchase-print-en-items", itemsCompanyId, printItemIds],
+    enabled: !!open && printLang === "en" && !!itemsCompanyId && !!token && printItemIds.length > 0,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const batches = Array.from(
+        { length: Math.ceil(printItemIds.length / 500) },
+        (_, index) => printItemIds.slice(index * 500, (index + 1) * 500),
+      );
+      const results = await Promise.all(batches.map(async ids => {
+        const response = await fetch(
+          `${API}/api/inventory/items/lookup?companyId=${itemsCompanyId}&ids=${encodeURIComponent(ids.join(","))}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (!response.ok) return [];
+        const payload = await response.json();
+        return Array.isArray(payload) ? payload : (payload.items ?? payload.data ?? []);
+      }));
+      return results.flat();
+    },
+  });
+  const enNamesMap = useMemo(() => buildEnNamesMap(enItemsQuery.data ?? []), [enItemsQuery.data]);
+  const enUnitsQuery = useQuery({
+    queryKey: ["purchase-print-en-units", itemsCompanyId],
+    enabled: !!open && printLang === "en" && !!itemsCompanyId && !!token,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/inventory/units?companyId=${itemsCompanyId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [] as any[];
+      const payload = await response.json();
+      return Array.isArray(payload) ? payload : (payload.items ?? payload.data ?? []);
+    },
+  });
+  const enUnitsMap = useMemo(() => buildEnUnitsMap(enUnitsQuery.data ?? []), [enUnitsQuery.data]);
 
   async function handlePrint() {
     if (!data) return;
@@ -1607,17 +1654,48 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
     const visiblePrintData: PrintData = user?.company?.showFreeQuantity === false
       ? { ...printData, lines: (printData.lines ?? []).map((line: any) => ({ ...line, freeQty: 0 })) }
       : printData;
+    let namesForPrint = enNamesMap;
+    let unitsForPrint = enUnitsMap;
+    if (printLang === "en" && itemsCompanyId && printItemIds.length > 0 && namesForPrint.size === 0) {
+      try {
+        const result = await enItemsQuery.refetch();
+        namesForPrint = buildEnNamesMap((result.data as any[]) ?? []);
+      } catch { /* retain the saved Arabic item label if lookup is unavailable */ }
+    }
+    if (printLang === "en" && itemsCompanyId && enUnitsQuery.data == null) {
+      try {
+        const result = await enUnitsQuery.refetch();
+        unitsForPrint = buildEnUnitsMap((result.data as any[]) ?? []);
+      } catch { /* retain the saved unit label if lookup is unavailable */ }
+    }
+    const localizedPrintData: PrintData = {
+      ...visiblePrintData,
+      _lang: printLang,
+      _enNames: namesForPrint,
+      _enUnits: unitsForPrint,
+      company: { ...visiblePrintData.company, _printLanguage: printLang },
+      lines: (visiblePrintData.lines ?? []).map((line: any) => ({
+        ...line,
+        itemName: namesForPrint.get(String(line.itemName ?? "").trim().toLowerCase()) ?? line.itemName,
+        unit: unitsForPrint.get(String(line.unit ?? "").trim().toLowerCase())
+          ?? unitsForPrint.get(String(line.unit ?? "").trim().toUpperCase())
+          ?? line.unit,
+      })),
+    } as PrintData;
     const renderedHtml = withCompanyPrintPrecision(
-      { decimalPlaces: visiblePrintData.company?.decimalPlaces ?? user?.company?.decimalPlaces },
+      { decimalPlaces: localizedPrintData.company?.decimalPlaces ?? user?.company?.decimalPlaces },
       () =>
-      tmpl.fn(visiblePrintData)
+      tmpl.fn(localizedPrintData)
     );
-    const html = user?.company?.showFreeQuantity === false
+    const rawHtml = user?.company?.showFreeQuantity === false
       ? renderedHtml
           .replaceAll("إجمالي كميات الفاتورة (شاملة المجانية)", "إجمالي كميات الفاتورة")
           .replaceAll("إجمالي الكميات (مع المجاني):", "إجمالي الكميات:")
           .replaceAll("Total quantity (including free):", "Total quantity:")
       : renderedHtml;
+    const html = printLang === "en"
+      ? localizePrintHtml(rawHtml, printLang, localizedPrintData)
+      : rawHtml;
     const win = window.open("", "_blank", "width=900,height=700");
     if (!win) return;
     win.document.open();

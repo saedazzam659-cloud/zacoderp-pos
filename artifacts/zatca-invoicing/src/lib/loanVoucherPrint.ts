@@ -16,6 +16,7 @@ import {
   letterheadCss,
   wrapWithLetterhead,
 } from "@/lib/printLetterhead";
+import { localizePrintHtml } from "@/lib/localizedUiText";
 
 function esc(s: any): string {
   return String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -109,10 +110,12 @@ export interface LoanVoucherArgs {
 
 export function buildLoanVoucherHtml(args: LoanVoucherArgs): string {
   const { doc, company } = args;
+  const language = typeof document === "undefined" ? "ar" : document.documentElement.lang;
+  const isEnglish = language.toLowerCase().startsWith("en");
   const amount = Number(doc.amount || 0);
   const paid = Number(doc.paidAmount || 0);
   const remaining = +(amount - paid).toFixed(2);
-  const tafqeet = numberToArabicWords(amount);
+  const tafqeet = isEnglish ? `Amount: ${fmtMoney(amount)} SAR` : numberToArabicWords(amount);
   const letterhead = buildLetterheadHtml(
     { ...company, nameAr: company?.nameAr || company?.nameEn || "اسم الشركة" },
     { accent: "green", size: "lg" },
@@ -144,7 +147,7 @@ export function buildLoanVoucherHtml(args: LoanVoucherArgs): string {
     .map(([k, v]) => `<tr><td class="k">${k}</td><td class="v">${v}</td></tr>`)
     .join("");
 
-  return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"/>
+  const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"/>
 <title>سند سلفة — ${esc(doc.employeeName)}</title>
 <style>
 @page { size: A4; margin: 14mm 14mm 16mm 14mm; }
@@ -210,6 +213,8 @@ ${wrapWithLetterhead(letterhead, `<div class="sheet">
 </div>`)}
 <script>setTimeout(function(){window.print()},300);</script>
 </body></html>`;
+  const localeDoc = { ...doc, typeLabel: undefined, statusLabel: undefined };
+  return isEnglish ? localizePrintHtml(html, language, { ...args, doc: localeDoc }) : html;
 }
 
 /** Opens a print window (synchronously, popup-blocker safe) and writes the

@@ -13,6 +13,7 @@
 import QRCode from "qrcode";
 import { safeLogoSrc } from "@/lib/export";
 import { currencySymbol } from "@/lib/format";
+import { localizePrintHtml } from "@/lib/localizedUiText";
 import type { AccountNote, AccountNoteType } from "@/lib/accountNotesApi";
 
 // Number formatter mirroring SalesPrintModal: Arabic-Indic digits with all
@@ -164,6 +165,8 @@ export interface PrintAccountNoteOpts {
 // safe) and filled once the async QR is ready.
 export async function printAccountNote(opts: PrintAccountNoteOpts): Promise<void> {
   const { note, party, company, partyLabel, preparedBy, onError } = opts;
+  const isEnglish = document.documentElement.lang?.toLowerCase().startsWith("en")
+    || document.documentElement.dir?.toLowerCase() === "ltr";
 
   const win = window.open("", "_blank", "width=900,height=1000");
   if (!win) {
@@ -177,8 +180,12 @@ export async function printAccountNote(opts: PrintAccountNoteOpts): Promise<void
   const vat    = note.vatEnabled ? Number(note.vatAmount || 0) : 0;
   const total  = Number(note.totalAmount || 0);
   const sym    = currencySymbol("SAR");
-  const title  = noteTitle(note.noteType);
-  const statusLabel = note.status === "posted" ? "مُرحَّل" : note.status === "cancelled" ? "ملغي" : "مسودة";
+  const title  = isEnglish
+    ? (note.noteType === "credit" ? "Tax Credit Note" : "Tax Debit Note")
+    : noteTitle(note.noteType);
+  const statusLabel = isEnglish
+    ? (note.status === "posted" ? "Posted" : note.status === "cancelled" ? "Cancelled" : "Draft")
+    : note.status === "posted" ? "مُرحَّل" : note.status === "cancelled" ? "ملغي" : "مسودة";
   const safeLogo = safeLogoSrc(company?.logo);
 
   const qrUrl = await buildZatcaQrDataUrl(company, note, total, vat);
@@ -187,9 +194,9 @@ export async function printAccountNote(opts: PrintAccountNoteOpts): Promise<void
     : `<div style="width:110px;height:110px;border:1.5px dashed #999;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#999;font-size:10px;text-align:center;background:#fafafa;">QR<br/>ZATCA</div>`;
 
   const totalsRows = `
-    <div class="trow"><span style="color:#666">المبلغ قبل الضريبة — Amount</span><span class="mono">${fmt(amount, company?.decimalPlaces)} ${sym}</span></div>
-    ${note.vatEnabled ? `<div class="trow"><span style="color:#666">ضريبة القيمة المضافة (${fmt(note.vatRate)}%) — VAT</span><span class="mono" style="color:#b45309;">${fmt(vat, company?.decimalPlaces)} ${sym}</span></div>` : ""}
-    <div class="trow grand"><span>الإجمالي شامل الضريبة — Total</span><span class="mono">${fmt(total, company?.decimalPlaces)} ${sym}</span></div>`;
+    <div class="trow"><span style="color:#666">${isEnglish ? "Amount before tax" : "المبلغ قبل الضريبة — Amount"}</span><span class="mono">${fmt(amount, company?.decimalPlaces)} ${sym}</span></div>
+    ${note.vatEnabled ? `<div class="trow"><span style="color:#666">${isEnglish ? `VAT (${fmt(note.vatRate)}%)` : `ضريبة القيمة المضافة (${fmt(note.vatRate)}%) — VAT`}</span><span class="mono" style="color:#b45309;">${fmt(vat, company?.decimalPlaces)} ${sym}</span></div>` : ""}
+    <div class="trow grand"><span>${isEnglish ? "Total including tax" : "الإجمالي شامل الضريبة — Total"}</span><span class="mono">${fmt(total, company?.decimalPlaces)} ${sym}</span></div>`;
 
   const docMetaRows = `
     <div class="row"><span class="k">رقم الإشعار</span><span class="v">${esc(note.noteNumber ?? String(note.id))}</span></div>
@@ -203,18 +210,18 @@ export async function printAccountNote(opts: PrintAccountNoteOpts): Promise<void
   const statementText = esc(note.description ?? note.notes ?? "");
   const extraNotes = (note.description && note.notes) ? esc(note.notes) : "";
 
-  const html = `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${esc(title)} ${esc(note.noteNumber ?? "")}</title>
+  const html = `<!DOCTYPE html><html dir="${isEnglish ? "ltr" : "rtl"}" lang="${isEnglish ? "en" : "ar"}"><head><meta charset="UTF-8"><title>${esc(title)} ${esc(note.noteNumber ?? "")}</title>
   <style>
     @page { size: A4; margin: 12mm 14mm; }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Arial, sans-serif; }
-    body { direction: rtl; background: #fff; color: #1a1a1a; font-size: 11px; }
+    body { direction: ${isEnglish ? "ltr" : "rtl"}; background: #fff; color: #1a1a1a; font-size: 11px; }
     .mono { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
     /* ── Top bar (ABOVE blue line): company data + enlarged logo ── */
     .topbar { display: flex; justify-content: space-between; align-items: center; gap: 18px;
               border-bottom: 2px solid #2563eb; padding-bottom: 12px; margin-bottom: 14px; }
     .topbar .co { line-height: 1.7; font-size: 11px; color: #374151; }
     .topbar .co .nm { font-size: 17px; font-weight: 800; color: #111827; }
-    .topbar .co .en { font-size: 10px; opacity: .7; }
+    .topbar .co .en { font-size: 10px; opacity: .7; display:${isEnglish ? "none" : "block"}; }
     .topbar .logo { flex-shrink: 0; }
     .topbar .logo img { max-height: 100px; max-width: 230px; object-fit: contain; display: block; }
     /* ── Centered title (BELOW blue line) ── */
@@ -275,7 +282,7 @@ export async function printAccountNote(opts: PrintAccountNoteOpts): Promise<void
       </div>
       <div class="totals-card">
         ${totalsRows}
-        <div class="words">${esc(numberToArabicWords(total))}</div>
+        <div class="words">${esc(isEnglish ? `Amount: ${fmt(total, company?.decimalPlaces)} SAR` : numberToArabicWords(total))}</div>
       </div>
     </div>
     <div class="signs">
@@ -290,7 +297,10 @@ export async function printAccountNote(opts: PrintAccountNoteOpts): Promise<void
     <script>window.onload=function(){setTimeout(function(){window.print()},250)}<\/script>
   </body></html>`;
 
+  const outputHtml = isEnglish
+    ? localizePrintHtml(html, "en", { note, party, company, preparedBy })
+    : html;
   win.document.open();
-  win.document.write(html);
+  win.document.write(outputHtml);
   win.document.close();
 }

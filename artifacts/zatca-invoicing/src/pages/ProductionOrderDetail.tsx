@@ -2745,8 +2745,10 @@ function BatchQrBanner({
   const print = () => {
     const w = window.open("", "_blank", "width=420,height=560");
     if (!w) return;
+    const isEnglish = document.documentElement.lang?.toLowerCase().startsWith("en") ?? false;
+    const labelTitle = isEnglish ? `Batch label ${batchNumber}` : `ملصق التشغيلة ${batchNumber}`;
     w.document.write(`
-      <html dir="rtl" lang="ar"><head><title>ملصق التشغيلة ${batchNumber}</title>
+      <html dir="${isEnglish ? "ltr" : "rtl"}" lang="${isEnglish ? "en" : "ar"}"><head><title>${labelTitle}</title>
       <style>
         body{font-family:Arial,sans-serif;text-align:center;padding:14px;}
         h2{margin:6px 0;font-size:18px}
@@ -2757,7 +2759,7 @@ function BatchQrBanner({
         <h2>${productTitle}</h2>
         <div class="num">${orderNumber} — ${batchNumber}</div>
         ${document.getElementById(`qr-${batchNumber}`)?.outerHTML ?? ""}
-        ${fgExpiryDate ? `<div class="exp">انتهاء الصلاحية: ${fgExpiryDate}</div>` : ""}
+        ${fgExpiryDate ? `<div class="exp">${isEnglish ? "Expiry date:" : "انتهاء الصلاحية:"} ${fgExpiryDate}</div>` : ""}
         <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),400)}<\/script>
       </body></html>`);
     w.document.close();

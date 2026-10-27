@@ -9,6 +9,7 @@
 // flex/overflow ancestors can never clip page 2.
 
 import { safeLogoSrc } from "./export";
+import { localizePrintHtml } from "./localizedUiText";
 
 export interface DRPrintCompany {
   nameAr?: string | null;
@@ -78,9 +79,15 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export function buildDeliveryReceiptPrintHtml(doc: DRPrintDoc, company: DRPrintCompany | null): string {
+  const language = typeof document === "undefined" ? "ar" : document.documentElement.lang;
+  const isEnglish = language.toLowerCase().startsWith("en");
   const isReceipt = doc.kind === "receipt";
-  const title = isReceipt ? "سند استلام بضاعة" : "سند تسليم بضاعة";
-  const partyLabel = isReceipt ? "المورد / الجهة المسلِّمة" : "العميل / الجهة المستلِمة";
+  const title = isEnglish
+    ? (isReceipt ? "Goods Receipt" : "Goods Delivery")
+    : (isReceipt ? "سند استلام بضاعة" : "سند تسليم بضاعة");
+  const partyLabel = isEnglish
+    ? (isReceipt ? "Supplier / Delivering party" : "Customer / Receiving party")
+    : (isReceipt ? "المورد / الجهة المسلِّمة" : "العميل / الجهة المستلِمة");
   const accent = isReceipt ? "#0f766e" : "#1d4ed8";
   const logo = safeLogoSrc(company?.logo ?? null);
 
@@ -103,7 +110,7 @@ export function buildDeliveryReceiptPrintHtml(doc: DRPrintDoc, company: DRPrintC
     ? `<img src="${esc(doc.signatureUrl)}" class="sig-img" alt="التوقيع" />`
     : `<div class="sig-empty"></div>`;
 
-  return `<!doctype html>
+  const html = `<!doctype html>
 <html dir="rtl" lang="ar">
 <head>
 <meta charset="utf-8" />
@@ -218,6 +225,7 @@ export function buildDeliveryReceiptPrintHtml(doc: DRPrintDoc, company: DRPrintC
   </script>
 </body>
 </html>`;
+  return isEnglish ? localizePrintHtml(html, language, { doc, company }) : html;
 }
 
 // Render the print HTML into a real A4 PDF Blob (for email/download). Mirrors

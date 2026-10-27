@@ -789,6 +789,7 @@ export default function ReceiptVoucherFormMulti() {
     });
     printCashVoucher({
       kind: "receipt",
+      language: isRtl ? "ar" : "en",
       doc: {
         code: existing.code,
         date: existing.date,
