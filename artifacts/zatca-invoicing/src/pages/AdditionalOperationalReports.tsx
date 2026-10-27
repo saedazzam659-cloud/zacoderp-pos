@@ -44,6 +44,7 @@ const purchaseReports: Report[] = ADDITIONAL_PURCHASE_REPORTS.map(report => ({
     payment_methods: ["branchId", "supplierId", "paymentType"],
     item_movement: ["branchId", "supplierId", "itemId", "itemGroupId", "warehouseId"],
     returns_detail: ["branchId", "supplierId", "itemId", "warehouseId"],
+    direct_expense_purchases: ["branchId", "supplierId", "accountId", "paymentType"],
   } as Record<string, string[]>)[report.id] ?? [],
 }));
 
@@ -53,6 +54,7 @@ const filterLabels: Record<string, string> = {
   supplierId: "معرّف المورد",
   itemId: "معرّف الصنف",
   itemGroupId: "معرّف مجموعة الأصناف",
+  accountId: "معرّف حساب المصروف",
   salesRepId: "معرّف مندوب المبيعات",
   warehouseId: "معرّف المستودع",
   status: "حالة المستند",
@@ -94,6 +96,8 @@ const fieldLabels: Record<string, string> = {
   operations: "عدد الحركات", grossQuantity: "إجمالي الكمية الداخلة",
   netQuantity: "صافي الكمية", grossValue: "قيمة المشتريات",
   netValue: "صافي القيمة بعد المرتجعات", headerTotal: "إجمالي المستند",
+  accountId: "معرّف حساب المصروف", accountCode: "كود حساب المصروف",
+  accountName: "حساب المصروف", lineType: "نوع السطر",
 };
 
 const api = apiClient as any;
@@ -163,7 +167,7 @@ export default function AdditionalOperationalReportsPage({ domain }: { domain: D
   const rows = (query.data?.rows ?? []) as Record<string, unknown>[];
 
   const buildParams = (): ReportParams => {
-    const numericKeys = ["branchId", "customerId", "supplierId", "itemId", "itemGroupId", "salesRepId", "warehouseId"];
+    const numericKeys = ["branchId", "customerId", "supplierId", "itemId", "itemGroupId", "salesRepId", "warehouseId", "accountId"];
     const result: ReportParams = {
       companyId: typeof companyId === "number" ? companyId : undefined,
       fromDate: fromDate || undefined,

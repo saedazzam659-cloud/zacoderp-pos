@@ -214,6 +214,7 @@ export const ADDITIONAL_PURCHASE_REPORTS = [
   { id: "payment_methods", label: "طرق دفع المشتريات" },
   { id: "item_movement", label: "حركة شراء الأصناف" },
   { id: "returns_detail", label: "تفاصيل مرتجعات المشتريات" },
+  { id: "direct_expense_purchases", label: "مصروفات فواتير الشراء المباشرة" },
 ] as const;
 
 export type AdditionalPurchaseReportId =

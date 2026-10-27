@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { and, asc, eq, gte, lte } from "drizzle-orm";
 import { db, purchaseInvoicesTable, purchaseInvoiceLinesTable, purchaseReturnsTable,
-  purchaseReturnLinesTable, suppliersTable, itemsTable } from "@workspace/db";
+  purchaseReturnLinesTable, suppliersTable, itemsTable, accountsTable } from "@workspace/db";
 import { extractAuth, pushBranchScope, resolveCompanyId } from "../middleware/auth.js";
 import { requireAdditionalOperationalReport } from "../middleware/permissions.js";
 import { ownDocumentFilter } from "../lib/documentVisibility.js";
@@ -9,7 +9,7 @@ import { ownDocumentFilter } from "../lib/documentVisibility.js";
 const IDS = new Set([
   "purchase_analysis", "purchase_cost_summary", "purchase_price_history",
   "purchase_discounts", "inactive_suppliers", "purchases_by_location",
-  "invoice_status", "payment_methods", "item_movement", "returns_detail",
+  "invoice_status", "payment_methods", "item_movement", "returns_detail", "direct_expense_purchases",
 ]);
 const router = Router();
 router.use(extractAuth);
@@ -47,7 +47,9 @@ async function invoiceRows(req: Request, cid: number, postedOnly: boolean) {
     currencyCode: purchaseInvoicesTable.currencyCode, exchangeRate: purchaseInvoicesTable.exchangeRate,
     headerDiscount: purchaseInvoicesTable.discountAmount, headerVat: purchaseInvoicesTable.vatAmount,
     totalAmount: purchaseInvoicesTable.totalAmount,
-    notes: purchaseInvoicesTable.notes, itemId: purchaseInvoiceLinesTable.itemId,
+     notes: purchaseInvoicesTable.notes, lineType: (purchaseInvoiceLinesTable as any).lineType,
+     accountId: purchaseInvoiceLinesTable.accountId, accountCode: accountsTable.code, accountName: accountsTable.nameAr,
+     itemId: purchaseInvoiceLinesTable.itemId,
     itemName: purchaseInvoiceLinesTable.itemName, itemCode: purchaseInvoiceLinesTable.itemCode,
     itemGroupId: itemsTable.groupId, warehouseId: purchaseInvoiceLinesTable.warehouseId,
     qty: purchaseInvoiceLinesTable.qty, freeQty: purchaseInvoiceLinesTable.freeQty,
@@ -58,6 +60,7 @@ async function invoiceRows(req: Request, cid: number, postedOnly: boolean) {
   }).from(purchaseInvoiceLinesTable)
     .innerJoin(purchaseInvoicesTable, eq(purchaseInvoiceLinesTable.invoiceId, purchaseInvoicesTable.id))
     .leftJoin(suppliersTable, eq(purchaseInvoicesTable.supplierId, suppliersTable.id))
+     .leftJoin(accountsTable, and(eq(purchaseInvoiceLinesTable.accountId, accountsTable.id), eq(accountsTable.companyId, cid)))
     .leftJoin(itemsTable, eq(purchaseInvoiceLinesTable.itemId, itemsTable.id))
     .where(and(...conditions))
     .orderBy(asc(purchaseInvoicesTable.invoiceDate), asc(purchaseInvoicesTable.id));
@@ -78,7 +81,10 @@ async function returnRows(req: Request, cid: number) {
     returnId: purchaseReturnsTable.id, date: purchaseReturnsTable.returnDate, docNumber: purchaseReturnsTable.docNumber,
     headerTotal: purchaseReturnsTable.totalAmount, currencyCode: purchaseReturnsTable.currencyCode,
     invoiceId: purchaseReturnsTable.invoiceId, branchId: purchaseReturnsTable.branchId, supplierId: purchaseReturnsTable.supplierId,
-    supplierName: suppliersTable.nameAr, notes: purchaseReturnsTable.notes, itemId: purchaseReturnLinesTable.itemId,
+     supplierName: suppliersTable.nameAr, notes: purchaseReturnsTable.notes,
+     lineType: (purchaseReturnLinesTable as any).lineType, accountId: (purchaseReturnLinesTable as any).accountId,
+     sourceInvoiceLineId: (purchaseReturnLinesTable as any).sourceInvoiceLineId,
+     accountCode: accountsTable.code, accountName: accountsTable.nameAr, itemId: purchaseReturnLinesTable.itemId,
     itemName: purchaseReturnLinesTable.itemName, itemCode: purchaseReturnLinesTable.itemCode,
     warehouseId: purchaseReturnLinesTable.warehouseId, qty: purchaseReturnLinesTable.qty,
     unitPrice: purchaseReturnLinesTable.unitPrice, discount: purchaseReturnLinesTable.discount,
@@ -86,6 +92,7 @@ async function returnRows(req: Request, cid: number) {
     lineNotes: purchaseReturnLinesTable.notes,
   }).from(purchaseReturnLinesTable).innerJoin(purchaseReturnsTable, eq(purchaseReturnLinesTable.returnId, purchaseReturnsTable.id))
     .leftJoin(suppliersTable, eq(purchaseReturnsTable.supplierId, suppliersTable.id))
+     .leftJoin(accountsTable, and(eq((purchaseReturnLinesTable as any).accountId, accountsTable.id), eq(accountsTable.companyId, cid)))
     .leftJoin(itemsTable, eq(purchaseReturnLinesTable.itemId, itemsTable.id)).where(and(...conditions))
     .orderBy(asc(purchaseReturnsTable.returnDate), asc(purchaseReturnsTable.id));
 }
@@ -100,6 +107,48 @@ router.get("/:reportId", guard, (req, res, next) => requireAdditionalOperational
   const id = req.params.reportId, q: any = req.query;
   const limitations: string[] = [];
   try {
+    if (id === "direct_expense_purchases") {
+      const conditions: any[] = [
+        eq(purchaseInvoicesTable.companyId, cid),
+        eq(purchaseInvoiceLinesTable.companyId, cid),
+        eq((purchaseInvoiceLinesTable as any).lineType, "direct_expense"),
+        eq(purchaseInvoicesTable.status, "posted"),
+      ];
+      conditions.push(...ownDocumentFilter(req, "purchaseReportsOwn", purchaseInvoicesTable.createdById));
+      if (str(q.fromDate)) conditions.push(gte(purchaseInvoicesTable.invoiceDate, str(q.fromDate)!));
+      if (str(q.toDate)) conditions.push(lte(purchaseInvoicesTable.invoiceDate, str(q.toDate)!));
+      if (num(q.supplierId)) conditions.push(eq(purchaseInvoicesTable.supplierId, num(q.supplierId)!));
+      if (num(q.accountId)) conditions.push(eq(purchaseInvoiceLinesTable.accountId, num(q.accountId)!));
+      if (str(q.paymentType)) conditions.push(eq(purchaseInvoicesTable.paymentType, str(q.paymentType)!));
+      pushBranchScope(req, conditions, purchaseInvoicesTable.branchId, q.branchId);
+      const rows = await db.select({
+        invoiceId: purchaseInvoicesTable.id,
+        date: purchaseInvoicesTable.invoiceDate,
+        docNumber: purchaseInvoicesTable.docNumber,
+        supplierId: purchaseInvoicesTable.supplierId,
+        supplierName: suppliersTable.nameAr,
+        branchId: purchaseInvoicesTable.branchId,
+        paymentType: purchaseInvoicesTable.paymentType,
+        currencyCode: purchaseInvoicesTable.currencyCode,
+        accountId: purchaseInvoiceLinesTable.accountId,
+        accountCode: accountsTable.code,
+        accountName: accountsTable.nameAr,
+        description: purchaseInvoiceLinesTable.itemName,
+        quantity: purchaseInvoiceLinesTable.qty,
+        unitPrice: purchaseInvoiceLinesTable.unitPrice,
+        discountPercent: purchaseInvoiceLinesTable.discount,
+        discountAmount: purchaseInvoiceLinesTable.discountAmount,
+        vatRate: purchaseInvoiceLinesTable.vatRate,
+        lineTotal: purchaseInvoiceLinesTable.lineTotal,
+        notes: purchaseInvoiceLinesTable.notes,
+      }).from(purchaseInvoiceLinesTable)
+        .innerJoin(purchaseInvoicesTable, eq(purchaseInvoiceLinesTable.invoiceId, purchaseInvoicesTable.id))
+        .leftJoin(suppliersTable, and(eq(purchaseInvoicesTable.supplierId, suppliersTable.id), eq(suppliersTable.companyId, cid)))
+        .leftJoin(accountsTable, and(eq(purchaseInvoiceLinesTable.accountId, accountsTable.id), eq(accountsTable.companyId, cid)))
+        .where(and(...conditions))
+        .orderBy(asc(purchaseInvoicesTable.invoiceDate), asc(purchaseInvoicesTable.id), asc(purchaseInvoiceLinesTable.id));
+      return res.json({ reportId: id, rows });
+    }
     if (id === "invoice_status") {
       const rows = await invoiceRows(req, cid, false);
       const seen = new Map<number, any>();
@@ -122,11 +171,11 @@ router.get("/:reportId", guard, (req, res, next) => requireAdditionalOperational
        }) });
     }
     const rows = await invoiceRows(req, cid, true);
-      if (id === "purchase_price_history") return res.json({ reportId: id, rows: rows.map(r => ({ invoiceId: r.invoiceId, date: r.date, docNumber: r.docNumber, itemId: r.itemId, itemName: r.itemName, supplierId: r.supplierId, supplierName: r.supplierName, unitPrice: n(r.unitPrice), quantity: n(r.qty), currencyCode: r.currencyCode })) , limitations });
+       if (id === "purchase_price_history") return res.json({ reportId: id, rows: rows.filter(r => r.lineType !== "direct_expense").map(r => ({ invoiceId: r.invoiceId, date: r.date, docNumber: r.docNumber, itemId: r.itemId, itemName: r.itemName, supplierId: r.supplierId, supplierName: r.supplierName, unitPrice: n(r.unitPrice), quantity: n(r.qty), currencyCode: r.currencyCode })) , limitations });
     if (id === "purchase_discounts") {
       const seen = new Set<number>();
       const discountRows: any[] = [];
-      for (const r of rows) {
+      for (const r of rows.filter(r => r.lineType !== "direct_expense")) {
         if (!seen.has(r.invoiceId)) {
           seen.add(r.invoiceId);
           discountRows.push({ recordType: "خصم على مستوى الفاتورة", invoiceId: r.invoiceId, date: r.date, docNumber: r.docNumber, currencyCode: r.currencyCode, headerDiscount: n(r.headerDiscount), itemId: null, lineDiscountPercent: null, lineDiscountAmount: 0 });
@@ -193,7 +242,7 @@ router.get("/:reportId", guard, (req, res, next) => requireAdditionalOperational
         netInvoiceTotal: x.invoiceTotal - (x.postedReturnTotal || 0), _ids: undefined,
       })) });
     }
-    if (id === "purchases_by_location") { const m = new Map<string, any>(); for (const r of rows) { const currencyCode = r.currencyCode || "غير محددة"; const k = `${r.branchId ?? "unattributed"}:${r.warehouseId ?? "unattributed"}:${currencyCode}`, x = m.get(k) || { branchId: r.branchId, warehouseId: r.warehouseId, currencyCode, quantity: 0, value: 0 }; x.quantity += n(r.qty); x.value += n(r.lineTotal); m.set(k, x); } return res.json({ reportId: id, rows: [...m.values()] }); }
+    if (id === "purchases_by_location") { const m = new Map<string, any>(); for (const r of rows.filter(r => r.lineType !== "direct_expense")) { const currencyCode = r.currencyCode || "غير محددة"; const k = `${r.branchId ?? "unattributed"}:${r.warehouseId ?? "unattributed"}:${currencyCode}`, x = m.get(k) || { branchId: r.branchId, warehouseId: r.warehouseId, currencyCode, quantity: 0, value: 0 }; x.quantity += n(r.qty); x.value += n(r.lineTotal); m.set(k, x); } return res.json({ reportId: id, rows: [...m.values()] }); }
     if (id === "payment_methods") {
       const m = new Map<string, any>(), seen = new Set<number>();
       for (const r of rows) {
@@ -210,7 +259,7 @@ router.get("/:reportId", guard, (req, res, next) => requireAdditionalOperational
       limitations.push("المبالغ تمثل إجمالي قيمة الفواتير حسب طريقة الدفع المسجلة، وليست مبالغ مسددة؛ لا توجد مطابقة تسويات هنا.");
       return res.json({ reportId: id, rows: [...m.values()], limitations });
     }
-    if (id === "item_movement") { const ret = await returnRows(req, cid), m = new Map<string, any>(); for (const r of rows) { const currencyCode = r.currencyCode || "غير محددة", key = `${r.itemId}|${currencyCode}`; const x=m.get(key)||{itemId:r.itemId,itemName:r.itemName,currencyCode,operations:0,grossQuantity:0,netQuantity:0,grossValue:0,netValue:0}; x.operations++; x.grossQuantity+=n(r.qty); x.netQuantity+=n(r.qty); x.grossValue+=n(r.lineTotal); x.netValue+=n(r.lineTotal); m.set(key,x); } for(const r of ret){const currencyCode = r.currencyCode || "غير محددة", key = `${r.itemId}|${currencyCode}`; const x=m.get(key)||{itemId:r.itemId,itemName:r.itemName,currencyCode,operations:0,grossQuantity:0,netQuantity:0,grossValue:0,netValue:0}; x.operations++;x.netQuantity-=n(r.qty);x.netValue-=n(r.lineTotal);m.set(key,x);} return res.json({reportId:id,rows:[...m.values()]}); }
+    if (id === "item_movement") { const ret = await returnRows(req, cid), m = new Map<string, any>(); for (const r of rows.filter(r => r.lineType !== "direct_expense")) { const currencyCode = r.currencyCode || "غير محددة", key = `${r.itemId}|${currencyCode}`; const x=m.get(key)||{itemId:r.itemId,itemName:r.itemName,currencyCode,operations:0,grossQuantity:0,netQuantity:0,grossValue:0,netValue:0}; x.operations++; x.grossQuantity+=n(r.qty); x.netQuantity+=n(r.qty); x.grossValue+=n(r.lineTotal); x.netValue+=n(r.lineTotal); m.set(key,x); } for(const r of ret.filter(r => r.lineType !== "direct_expense")){const currencyCode = r.currencyCode || "غير محددة", key = `${r.itemId}|${currencyCode}`; const x=m.get(key)||{itemId:r.itemId,itemName:r.itemName,currencyCode,operations:0,grossQuantity:0,netQuantity:0,grossValue:0,netValue:0}; x.operations++;x.netQuantity-=n(r.qty);x.netValue-=n(r.lineTotal);m.set(key,x);} return res.json({reportId:id,rows:[...m.values()]}); }
     if (id === "returns_detail") {
       const seen = new Set<number>();
       const detailRows = (await returnRows(req, cid)).map(r => {
