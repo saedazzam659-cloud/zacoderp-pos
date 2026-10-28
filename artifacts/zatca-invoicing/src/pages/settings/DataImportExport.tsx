@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HistoricalMigration } from "./HistoricalMigration";
 import { HistoricalDocumentsMigration } from "./HistoricalDocumentsMigration";
 import { HistoricalCashNotesMigration } from "./HistoricalCashNotesMigration";
+import { RagmBackupCollector } from "./RagmBackupCollector";
 import {
   Database, Upload, Download, FileSpreadsheet, FileJson, Sparkles, AlertTriangle,
   CheckCircle2, X, Eye, ArrowLeft, ArrowRight, Loader2, FileDown, Copy, Printer,
@@ -462,15 +463,20 @@ export default function DataImportExport() {
 
         <TabsContent value="historical" className="mt-4">
           <Tabs value={historicalTab} onValueChange={setHistoricalTab} dir={isAr ? "rtl" : "ltr"}>
-            <TabsList className="grid w-full max-w-4xl grid-cols-4">
+            <TabsList className="grid w-full max-w-5xl grid-cols-2 md:grid-cols-5">
+              <TabsTrigger value="collection" data-testid="tab-ragm-file-collection">{isAr ? "جمع ملفات RAGM" : "Collect RAGM files"}</TabsTrigger>
               <TabsTrigger value="overview" data-testid="tab-legacy-migration-plan">{isAr ? "خطة الترحيل" : "Migration plan"}</TabsTrigger>
               <TabsTrigger value="documents" data-testid="tab-historical-documents">{isAr ? "المستندات التاريخية" : "Historical documents"}</TabsTrigger>
               <TabsTrigger value="journal" data-testid="tab-historical-journals">{isAr ? "قيود اليومية" : "Journal entries"}</TabsTrigger>
               <TabsTrigger value="cash-notes" data-testid="tab-historical-cash-notes">{isAr ? "السندات والإشعارات" : "Vouchers and notes"}</TabsTrigger>
             </TabsList>
+            <TabsContent value="collection" className="mt-4">
+              <RagmBackupCollector isAr={!!isAr} />
+            </TabsContent>
             <TabsContent value="overview" className="mt-4">
               <LegacyMigrationOverview
                 isAr={isAr}
+                onOpenCollector={() => setHistoricalTab("collection")}
                 onOpenDocuments={() => setHistoricalTab("documents")}
                 onOpenJournal={() => setHistoricalTab("journal")}
                 onOpenCashNotes={() => setHistoricalTab("cash-notes")}
@@ -506,8 +512,9 @@ export default function DataImportExport() {
   );
 }
 
-function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal, onOpenCashNotes }: {
+function LegacyMigrationOverview({ isAr, onOpenCollector, onOpenDocuments, onOpenJournal, onOpenCashNotes }: {
   isAr: boolean;
+  onOpenCollector: () => void;
   onOpenDocuments: () => void;
   onOpenJournal: () => void;
   onOpenCashNotes: () => void;
@@ -532,6 +539,9 @@ function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal, onOpenC
     notesText: "يدعم استيراد أنواع الإشعارات الأربعة من ملف Excel أو CSV، مع مطابقة الطرف والحسابات والضريبة ومراجعة السجلات قبل الإنشاء.",
     warningTitle: "مهم قبل إيقاف النظام القديم",
     warning: "الاستيراد هنا يعتمد على الملفات والمراجعة اليدوية، ولا يسحب كل السجلات تلقائيًا من RAGM Cloud. احتفظ بإمكانية الرجوع للمصدر حتى تتطابق الأعداد والإجماليات والروابط وكشوف العملاء والموردين وميزان المراجعة.",
+    collectionTitle: "تجميع ملفات الشركة",
+    collectionText: "نزّل التقارير والملفات من داخل حساب RAGM بنفسك، ثم اجمعها في حزمة ZIP مع بيان للفئات والملفات.",
+    openCollection: "فتح أداة تجميع الملفات",
     openDocs: "فتح ترحيل المستندات",
     openJournals: "فتح ترحيل القيود",
     openCashNotes: "فتح استيراد السندات والإشعارات",
@@ -555,6 +565,9 @@ function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal, onOpenC
     notesText: "All four note types can be imported from Excel or CSV, with party, account, and VAT matching checked before creation.",
     warningTitle: "Before closing the old system",
     warning: "These flows rely on manually prepared files and review; they do not fetch every RAGM Cloud record automatically. Keep source access until counts, totals, links, customer/supplier statements, and the trial balance reconcile.",
+    collectionTitle: "Collect company files",
+    collectionText: "Download reports and files from your RAGM account yourself, then collect them into a ZIP with a category and file manifest.",
+    openCollection: "Open file collection",
     openDocs: "Open document migration",
     openJournals: "Open journal migration",
     openCashNotes: "Open voucher and note import",
@@ -591,6 +604,16 @@ function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal, onOpenC
             <p className="mt-1 text-sm leading-6 text-muted-foreground">{content.sourceText}</p>
           </div>
         </div>
+      </Card>
+
+      <Card className="flex flex-wrap items-center justify-between gap-3 border-blue-200 p-4">
+        <div>
+          <h3 className="font-semibold">{content.collectionTitle}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{content.collectionText}</p>
+        </div>
+        <Button size="sm" variant="outline" className="gap-2" onClick={onOpenCollector} data-testid="button-open-ragm-collection">
+          <FileDown className="h-4 w-4" />{content.openCollection}
+        </Button>
       </Card>
 
       <div className="grid gap-3 md:grid-cols-2">
