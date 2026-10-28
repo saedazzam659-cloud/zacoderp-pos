@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HistoricalMigration } from "./HistoricalMigration";
 import { HistoricalDocumentsMigration } from "./HistoricalDocumentsMigration";
+import { HistoricalCashNotesMigration } from "./HistoricalCashNotesMigration";
 import {
   Database, Upload, Download, FileSpreadsheet, FileJson, Sparkles, AlertTriangle,
   CheckCircle2, X, Eye, ArrowLeft, ArrowRight, Loader2, FileDown, Copy, Printer,
@@ -461,16 +462,18 @@ export default function DataImportExport() {
 
         <TabsContent value="historical" className="mt-4">
           <Tabs value={historicalTab} onValueChange={setHistoricalTab} dir={isAr ? "rtl" : "ltr"}>
-            <TabsList className="grid w-full max-w-3xl grid-cols-3">
+            <TabsList className="grid w-full max-w-4xl grid-cols-4">
               <TabsTrigger value="overview" data-testid="tab-legacy-migration-plan">{isAr ? "خطة الترحيل" : "Migration plan"}</TabsTrigger>
               <TabsTrigger value="documents" data-testid="tab-historical-documents">{isAr ? "المستندات التاريخية" : "Historical documents"}</TabsTrigger>
               <TabsTrigger value="journal" data-testid="tab-historical-journals">{isAr ? "قيود اليومية" : "Journal entries"}</TabsTrigger>
+              <TabsTrigger value="cash-notes" data-testid="tab-historical-cash-notes">{isAr ? "السندات والإشعارات" : "Vouchers and notes"}</TabsTrigger>
             </TabsList>
             <TabsContent value="overview" className="mt-4">
               <LegacyMigrationOverview
                 isAr={isAr}
                 onOpenDocuments={() => setHistoricalTab("documents")}
                 onOpenJournal={() => setHistoricalTab("journal")}
+                onOpenCashNotes={() => setHistoricalTab("cash-notes")}
               />
             </TabsContent>
             <TabsContent value="documents" className="mt-4">
@@ -480,6 +483,11 @@ export default function DataImportExport() {
             </TabsContent>
             <TabsContent value="journal" className="mt-4">
               <HistoricalMigration entities={entities} cid={cid} token={token} toast={toast} />
+            </TabsContent>
+            <TabsContent value="cash-notes" className="mt-4">
+              {cid
+                ? <HistoricalCashNotesMigration cid={cid} token={token} toast={toast} />
+                : <Card className="p-4 text-sm text-muted-foreground">{isAr ? "اختر شركة قبل استيراد السندات والإشعارات." : "Select a company before importing vouchers and notes."}</Card>}
             </TabsContent>
           </Tabs>
         </TabsContent>
@@ -498,10 +506,11 @@ export default function DataImportExport() {
   );
 }
 
-function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal }: {
+function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal, onOpenCashNotes }: {
   isAr: boolean;
   onOpenDocuments: () => void;
   onOpenJournal: () => void;
+  onOpenCashNotes: () => void;
 }) {
   const content = isAr ? {
     title: "ترحيل تاريخ الشركة من RAGM Cloud",
@@ -518,13 +527,14 @@ function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal }: {
     journalsText: "ارفع ملف القيود، وسيُفحص توازنها وتواريخها والفترات المالية قبل الحفظ.",
     missing: "يتطلب مسارًا مخصصًا",
     vouchers: "سندات القبض والصرف",
-    vouchersText: "هذا المسار لا يستوردها بعد. لا تعتمد اكتمال النقل قبل إضافة معالجة تربط السندات بحساباتها وفواتيرها دون تكرار الأثر.",
+    vouchersText: "يمكن تجهيز ملفات Excel أو CSV لهذه السندات واستيرادها كمسودات أو ترحيلها عبر دورة النظام بعد المراجعة. ربط السندات بالفواتير القديمة يحتاج مراجعة مستقلة.",
     notes: "الإشعارات المدينة والدائنة",
-    notesText: "هذا المسار لا يستوردها بعد. يلزم مسار يحافظ على نوع الإشعار ومرجعه وتفاصيله وأثره المحاسبي.",
+    notesText: "يدعم استيراد أنواع الإشعارات الأربعة من ملف Excel أو CSV، مع مطابقة الطرف والحسابات والضريبة ومراجعة السجلات قبل الإنشاء.",
     warningTitle: "مهم قبل إيقاف النظام القديم",
     warning: "هذه الشاشة تجمع مسارات الترحيل الموجودة حاليًا ولا تعني أن كل أنواع الحركات أصبحت مدعومة. احتفظ بإمكانية الرجوع للمصدر حتى تُستورد الأنواع الناقصة وتُطابق كشوف العملاء والموردين وميزان المراجعة.",
     openDocs: "فتح ترحيل المستندات",
     openJournals: "فتح ترحيل القيود",
+    openCashNotes: "فتح استيراد السندات والإشعارات",
   } : {
     title: "Migrate company history from RAGM Cloud",
     intro: "Bring the historical record into the new company in stages and review it before saving. Do not enter legacy login credentials here; upload company files and reports you are authorized to use.",
@@ -540,13 +550,14 @@ function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal }: {
     journalsText: "Upload journal entries; balance, dates, and fiscal periods are checked before saving.",
     missing: "Dedicated flow required",
     vouchers: "Receipt and payment vouchers",
-    vouchersText: "This flow does not import vouchers yet. Do not consider the migration complete until vouchers are linked to accounts and invoices without duplicating their accounting effect.",
+    vouchersText: "Prepare Excel or CSV rows and import them as drafts or post them through the existing lifecycle after review. Linking old vouchers to invoices still needs separate verification.",
     notes: "Debit and credit notes",
-    notesText: "This flow does not import notes yet. A dedicated path must preserve note type, source reference, details, and accounting effect.",
+    notesText: "All four note types can be imported from Excel or CSV, with party, account, and VAT matching checked before creation.",
     warningTitle: "Before closing the old system",
     warning: "This page brings together the migration flows currently available; it does not mean every transaction type is supported. Keep access to the source until the missing types are imported and customer/supplier statements and the trial balance are reconciled.",
     openDocs: "Open document migration",
     openJournals: "Open journal migration",
+    openCashNotes: "Open voucher and note import",
   };
 
   const steps: Array<{
@@ -560,8 +571,8 @@ function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal }: {
     { status: "done", title: content.importedMasters, description: content.importedMastersText, icon: CheckCircle2 },
     { status: "ready", title: content.docs, description: content.docsText, icon: FileSpreadsheet, action: onOpenDocuments, actionLabel: content.openDocs },
     { status: "ready", title: content.journals, description: content.journalsText, icon: Database, action: onOpenJournal, actionLabel: content.openJournals },
-    { status: "missing", title: content.vouchers, description: content.vouchersText, icon: AlertTriangle },
-    { status: "missing", title: content.notes, description: content.notesText, icon: AlertTriangle },
+    { status: "ready", title: content.vouchers, description: content.vouchersText, icon: FileSpreadsheet, action: onOpenCashNotes, actionLabel: content.openCashNotes },
+    { status: "ready", title: content.notes, description: content.notesText, icon: FileSpreadsheet, action: onOpenCashNotes, actionLabel: content.openCashNotes },
   ];
 
   return (

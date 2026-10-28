@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-test("legacy migration overview states supported RAGM flows and incomplete transaction types", async () => {
+test("legacy migration overview links the supported RAGM transaction import flows", async () => {
   const source = await readFile(new URL("../src/pages/settings/DataImportExport.tsx", import.meta.url), "utf8");
 
   assert.match(source, /value="overview" data-testid="tab-legacy-migration-plan"/);
@@ -10,8 +10,22 @@ test("legacy migration overview states supported RAGM flows and incomplete trans
   assert.match(source, /ترحيل تاريخ الشركة من RAGM Cloud/);
   assert.match(source, /سندات القبض والصرف/);
   assert.match(source, /الإشعارات المدينة والدائنة/);
-  assert.match(source, /This flow does not import vouchers yet/);
-  assert.match(source, /هذا المسار لا يستوردها بعد/);
+  assert.match(source, /Prepare Excel or CSV rows and import them/);
+  assert.match(source, /يمكن تجهيز ملفات Excel أو CSV لهذه السندات/);
   assert.match(source, /onOpenDocuments/);
   assert.match(source, /onOpenJournal/);
+  assert.match(source, /onOpenCashNotes/);
+  assert.match(source, /value="cash-notes" data-testid="tab-historical-cash-notes"/);
+});
+
+test("historical voucher and note imports use existing post routes and annual sequence preflight", async () => {
+  const source = await readFile(new URL("../src/pages/settings/HistoricalCashNotesMigration.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /\/api\/receipt-vouchers/);
+  assert.match(source, /\/api\/payment-vouchers/);
+  assert.match(source, /\/api\/account-notes/);
+  assert.match(source, /preflightPostedSequences/);
+  assert.match(source, /checkbox-post-historical-financial/);
+  assert.match(source, /legacy_ragmcloud/);
+  assert.match(source, /RAGM:\$\{sourceNumber\}/);
 });

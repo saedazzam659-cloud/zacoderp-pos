@@ -24,6 +24,8 @@ export const SEQUENCE_TX_TYPES = [
   "receipt_voucher",
   "payment_voucher",
   "account_note_customer_credit",
+  "account_note_customer_debit",
+  "account_note_supplier_credit",
   "account_note_supplier_debit",
   // Per-payment-method numbering sub-types (opt-in). When a company configures
   // a sequence bound to one of these, documents of that payment type draw from
