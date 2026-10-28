@@ -343,6 +343,11 @@ fn parked_carts_clear_session(pos_session_id: i64) -> Result<(), String> {
 }
 
 fn main() {
+    // A detached copy of the executable performs the MSI install after the
+    // main app exits, then relaunches the installed app when setup completes.
+    if updater::run_update_helper() {
+        return;
+    }
     env_logger::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -352,6 +357,7 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|_app| {
             db::initialize().expect("DB init failed");
+            updater::cleanup_stale_helpers();
             // Task #207: if this device is configured as the LAN host, start
             // its shared-database HTTP server now. No-op for single/client.
             lan::maybe_start_host_server(
