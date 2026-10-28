@@ -2452,7 +2452,10 @@ router.get("/daily-detailed-report", async (req: any, res) => {
     };
     const itemMap = new Map<string, ItemAgg>();
     for (const ln of lineRows) {
-      const key = String(ln.itemId ?? `_n_${ln.itemName}`);
+      // Keep price categories as separate report rows. The selected category
+      // is stored in the invoice-line name snapshot, so grouping by itemId
+      // alone would merge (for example) "Item — Right" and "Item — Left".
+      const key = `${ln.itemId ?? `_n_${ln.itemName}`}|${ln.itemName}|${ln.unit ?? ""}`;
       const e = itemMap.get(key) ?? {
         itemId: ln.itemId, itemCode: ln.itemCode, itemName: ln.itemName, unit: ln.unit,
         qty: 0, totalSales: 0, invoiceSet: new Set<number>(),
