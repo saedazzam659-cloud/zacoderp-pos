@@ -1372,9 +1372,9 @@ export async function reverseSalesReturnStockForUnpost(input: {
 
 const router = Router();
 
-function salesInvoiceZatcaBuyerIssues(customer: any, requireStandard = false, totalAmount = 0): string[] {
+function salesInvoiceZatcaBuyerIssues(customer: any, requireStandard = false): string[] {
   if (!customer) {
-    return requireStandard || Number(totalAmount) >= 1000
+    return requireStandard
       ? ["يجب تحديد العميل قبل حفظ هذه الفاتورة الضريبية."]
       : [];
   }
@@ -1398,7 +1398,6 @@ async function loadSalesInvoiceZatcaBuyerIssues(
   companyId: number,
   customerId: unknown,
   requireStandard = false,
-  totalAmount = 0,
   executor: any = db,
 ) {
   const [company] = await executor.select({ country: companiesTable.country })
@@ -1406,7 +1405,7 @@ async function loadSalesInvoiceZatcaBuyerIssues(
     .where(eq(companiesTable.id, companyId))
     .limit(1);
   if (String(company?.country ?? "SA").toUpperCase() !== "SA") return [];
-  if (!customerId) return salesInvoiceZatcaBuyerIssues(null, requireStandard, totalAmount);
+  if (!customerId) return salesInvoiceZatcaBuyerIssues(null, requireStandard);
   const [customer] = await executor.select({
     vatNumber: customersTable.vatNumber,
     country: customersTable.country,
@@ -1419,7 +1418,7 @@ async function loadSalesInvoiceZatcaBuyerIssues(
     eq(customersTable.companyId, companyId),
   )).limit(1);
   if (String(customer?.country ?? "SA").toUpperCase() !== "SA") return [];
-  return salesInvoiceZatcaBuyerIssues(customer, requireStandard, totalAmount);
+  return salesInvoiceZatcaBuyerIssues(customer, requireStandard);
 }
 const HISTORICAL_IMPORT_MODES = new Set(["financial_inventory", "financial_only", "inventory_only", "archive_only"]);
 function normalizeHistoricalImportMode(value: unknown, user: any): string | null {
@@ -2892,7 +2891,6 @@ router.post("/sales-invoices", async (req, res) => {
       cid,
       customerId,
       req.body?.invoiceType === "standard",
-      Number(totalAmount) || 0,
     );
     if (buyerIssues.length) {
       res.status(400).json({
@@ -3463,7 +3461,6 @@ router.put("/sales-invoices/:id", async (req, res) => {
       cid,
       customerId,
       req.body?.invoiceType === "standard",
-      Number(totalAmount) || 0,
     );
     if (buyerIssues.length) {
       res.status(400).json({
@@ -3890,7 +3887,6 @@ async function postSalesInvoiceHandler(
         cid,
         lockedInvoice.customerId,
         false,
-        Number(lockedInvoice.totalAmount) || 0,
         tx,
       );
       if (buyerIssues.length) {
@@ -7372,9 +7368,11 @@ async function submitSalesInvoiceToZatcaUnlocked(req: any, res: any) {
       });
     }
 
-    // Customer rules — if total > 1000 SAR a customer is required for B2B clearance flow
-    if (Number(inv.totalAmount || 0) >= 1000 && !customer) {
-      errors.push({ code: "BR-KSA-CUSTOMER", message: "الفواتير التي يبلغ إجماليها 1000 ريال أو أكثر تتطلب تحديد العميل (فاتورة ضريبية)." });
+    // Cash/bank invoices may omit the buyer at any amount. Credit sales still
+    // require a customer; standard invoices are blocked at creation/update
+    // unless their buyer details are supplied.
+    if (!customer && inv.paymentType !== "cash" && inv.paymentType !== "bank") {
+      errors.push({ code: "BR-KSA-CUSTOMER", message: "البيع الآجل يتطلب تحديد العميل." });
     }
     // If customer exists and has VAT (B2B), require valid 15-digit VAT and address
     if (customer?.vatNumber) {

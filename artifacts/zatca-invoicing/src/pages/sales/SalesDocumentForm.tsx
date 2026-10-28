@@ -2260,8 +2260,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
   const canSaveSimplifiedCashSaleWithoutCustomer = isInvoice
     && invoiceType === "simplified"
-    && (paymentType === "cash" || paymentType === "bank")
-    && Number(totalAmount) < 1000;
+    && (paymentType === "cash" || paymentType === "bank");
 
   function handleSave(saveAsDraft = false) {
     if (isInvoice && draftOnly && !saveAsDraft) return;
