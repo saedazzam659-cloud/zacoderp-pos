@@ -388,7 +388,7 @@ export default function StockImport({ onDone }: { onDone?: () => void }) {
 }
 
 const S = {
-  wrap: { padding: 24, maxWidth: 1280, margin: "0 auto", display: "flex", flexDirection: "column" as const, gap: 16 } as const,
+  wrap: { padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const, display: "flex", flexDirection: "column" as const, gap: 16 } as const,
   header: { display: "flex", justifyContent: "space-between", alignItems: "flex-end" } as const,
   h2: { fontSize: 22, fontWeight: 700, color: "#0f172a", margin: 0 } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,

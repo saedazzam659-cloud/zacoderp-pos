@@ -1400,7 +1400,7 @@ type DashboardProps = {
 
 function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, heartbeatErr, onPull, onPush, pushSummary, onDeactivate }: DashboardProps) {
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+    <div style={{ width: "100%", maxWidth: "none", minWidth: 0 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 16 }}>
         <Tile icon="🪪" label="معرّف الجهاز" value={String(deviceId || "—")} />
         <Tile icon="🟢" label="الحالة" value={status?.status ?? "..."} accent={status?.status === "active" ? "#16a34a" : undefined} />
@@ -1469,7 +1469,7 @@ function StandaloneDashboardView({
     await onWipe();
   }
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+    <div style={{ width: "100%", maxWidth: "none", minWidth: 0 }}>
       <section style={S.card}>
         <h2 style={S.h2}>الإعدادات السريعة</h2>
         <div style={S.btnRow}>
@@ -1699,7 +1699,7 @@ function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 
 const S = {
   // Full-viewport row: nav on the right (RTL), main column on the left.
-  shell: { display: "flex", height: "100vh", width: "100vw", fontFamily: "'Segoe UI', system-ui, sans-serif", background: "#eef2f7", overflow: "hidden" } as const,
+  shell: { display: "flex", height: "100dvh", minHeight: 0, width: "100%", minWidth: 0, fontFamily: "'Segoe UI', system-ui, sans-serif", background: "#eef2f7", overflow: "hidden" } as const,
 
   // Vertical nav rail
   nav: {
@@ -1935,8 +1935,8 @@ const S = {
   tabChipActive: { display: "flex", alignItems: "center", gap: 6, padding: "7px 10px 7px 12px", background: "#fff", color: "#1d4ed8", border: "1px solid #cbd5e1", borderBottom: "1px solid #fff", borderRadius: "8px 8px 0 0", cursor: "pointer", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" as const, maxWidth: 220, position: "relative" as const, top: 1 } as const,
   tabChipLabel: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const } as const,
   tabChipClose: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 4, border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 0 } as const,
-  content: { flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,
-  pagePad: { padding: 24, overflowY: "auto" as const, flex: 1 } as const,
+  content: { flex: 1, minWidth: 0, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,
+  pagePad: { padding: "clamp(12px, 1.4vw, 24px)", overflowY: "auto" as const, overflowX: "hidden" as const, flex: 1, width: "100%", minWidth: 0, boxSizing: "border-box" as const } as const,
 
   // Dashboard internals
   card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,.04)" } as const,

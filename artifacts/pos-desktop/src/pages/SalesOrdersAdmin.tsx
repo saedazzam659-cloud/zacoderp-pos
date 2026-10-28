@@ -123,7 +123,7 @@ export default function SalesOrdersAdmin() {
     >
       <ErrorMsg text={err} />
       {formOpen && deps && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc}
               onCancel={() => { setCreating(false); setEditDoc(null); }}

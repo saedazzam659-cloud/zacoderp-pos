@@ -64,7 +64,7 @@ export default function StandaloneUsersAdmin({ session, maxUsers }: { session: L
   }
 
   return (
-    <div dir="rtl" style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
+    <div dir="rtl" style={{ padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
           <h2 style={{ margin: 0 }}>المستخدمون المحليون</h2>

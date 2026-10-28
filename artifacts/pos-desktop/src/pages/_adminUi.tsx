@@ -13,8 +13,8 @@ export function Page({ title, subtitle, right, children }: {
   title: string; subtitle?: string; right?: ReactNode; children: ReactNode;
 }) {
   return (
-    <div dir="rtl" style={{ padding: 24, maxWidth: 1280, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+    <div dir="rtl" style={{ padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16, minWidth: 0 }}>
         <div>
           <h2 style={{ margin: 0 }}>{title}</h2>
           {subtitle && <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>{subtitle}</div>}
@@ -31,7 +31,21 @@ export function Card({ children, style }: { children: ReactNode; style?: CSSProp
 }
 
 export function Table({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  return <table style={{ width: "100%", borderCollapse: "collapse", ...style }}>{children}</table>;
+  return (
+    <>
+      <style>{`
+        table.z-admin-table { border-collapse: collapse; color: #233044; }
+        table.z-admin-table thead th { border-bottom: 1px solid #d9e0e8 !important; border-inline-start: 1px solid #e3e8ee; color: #44536a !important; background: #f2f5f8 !important; }
+        table.z-admin-table tbody td { border-top: 0 !important; border-bottom: 1px solid #e7ebf0; border-inline-start: 1px solid #edf0f3; }
+        table.z-admin-table tbody tr:nth-child(even) { background: #f8fafc; }
+        table.z-admin-table tbody tr:hover > td { background-color: #eef4f8; }
+        @media (max-width: 900px) {
+          table.z-admin-table thead th, table.z-admin-table tbody td { padding: 7px 9px !important; font-size: 12px !important; }
+        }
+      `}</style>
+      <table className="z-admin-table" style={{ width: "100%", borderCollapse: "collapse", ...style }}>{children}</table>
+    </>
+  );
 }
 export function Th({ children, style, colSpan, rowSpan }: { children?: ReactNode; style?: CSSProperties; colSpan?: number; rowSpan?: number }) {
   return <th colSpan={colSpan} rowSpan={rowSpan} style={{ textAlign: "right", padding: "10px 14px", fontSize: 12, color: "#64748b", fontWeight: 600, background: "#f8fafc", ...style }}>{children}</th>;

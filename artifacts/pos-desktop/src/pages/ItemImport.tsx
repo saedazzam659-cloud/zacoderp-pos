@@ -606,7 +606,7 @@ const STAT_TONE: Record<string, React.CSSProperties> = {
 };
 
 const S = {
-  wrap: { maxWidth: 1000, margin: "0 auto", width: "100%" } as React.CSSProperties,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" } as React.CSSProperties,
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 16 } as React.CSSProperties,
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as React.CSSProperties,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4, maxWidth: 620, lineHeight: 1.6 } as React.CSSProperties,

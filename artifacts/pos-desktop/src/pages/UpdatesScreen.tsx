@@ -401,7 +401,7 @@ export default function UpdatesScreen({ baseUrl }: Props) {
 
 const S = {
   wrap: {
-    padding: 24, maxWidth: 1000, margin: "0 auto",
+    padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const,
     fontFamily: "'Segoe UI', 'Cairo', system-ui, sans-serif",
   } as React.CSSProperties,
   header: {

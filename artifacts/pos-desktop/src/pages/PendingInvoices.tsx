@@ -187,7 +187,7 @@ export default function PendingInvoices({
 }
 
 const S = {
-  wrap: { maxWidth: 920, margin: "0 auto", width: "100%" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const } as const,
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } as const,
   h2: { margin: 0, fontSize: 18, color: "#0f172a" } as const,
   refresh: { padding: "6px 12px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 13 } as const,

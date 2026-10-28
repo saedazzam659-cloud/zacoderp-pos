@@ -31,7 +31,7 @@ export default function StockAdjustmentsAdmin() {
       }
     >
       {showForm && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <AdjustmentForm onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); void refresh(); }} />
           </div>

@@ -43,7 +43,7 @@ export default function StocktakesAdmin() {
       }
     >
       {showForm && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <StocktakeForm onCancel={() => setShowForm(false)} onDone={() => { setShowForm(false); void refresh(); }} />
           </div>

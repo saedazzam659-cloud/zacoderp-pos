@@ -21,6 +21,7 @@
 - [Drizzle JSONB column defaults](ensure-schema-jsonb-defaults.md) — avoid startup DDL; tolerate legacy nullable JSONB and use the supported schema flow.
 
 - [POS Desktop index](pos-desktop-index.md) — POS Desktop shell, local data, fiscal, inventory, printing, licensing, and offline/ZATCA implementation notes.
+- [POS Desktop full-width UI](pos-desktop-full-width-ui.md) — back-office views should use available width, neutral form edges, and readable spreadsheet-like grids without changing workflows.
 - [Web POS parked carts](web-pos-parked-carts.md) — held drafts stay device-local and scoped by company, cashier, branch, and terminal; checkout alone creates a cloud invoice.
 - [POS display-group boundary](pos-display-group-boundary.md) — cashier tabs use a dedicated display group; preserve the existing accounting item category unchanged.
 - [Cashier company-login boundary](cashier-main-login-boundary.md) — allow station-linked cashiers through company login only to enter POS; use the station branch without duplicate user-branch links.

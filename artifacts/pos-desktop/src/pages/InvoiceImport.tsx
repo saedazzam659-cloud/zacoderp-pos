@@ -357,7 +357,7 @@ function InvoiceCard({
 }
 
 const S = {
-  wrap: { padding: 24, maxWidth: 1320, margin: "0 auto", display: "flex", flexDirection: "column" as const, gap: 14 } as const,
+  wrap: { padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const, display: "flex", flexDirection: "column" as const, gap: 14 } as const,
   header: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12 } as const,
   h2: { fontSize: 22, fontWeight: 700, color: "#0f172a", margin: 0 } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4, maxWidth: 760, lineHeight: 1.6 } as const,

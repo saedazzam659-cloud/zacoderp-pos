@@ -64,7 +64,7 @@ export default function SupplierSettlementAdmin() {
       }
     >
       {edit && deps && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <SettlementForm
               deps={deps}

@@ -249,7 +249,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
       }
     >
       {creating && deps && form && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <CreateForm deps={deps} seed={form} onCancel={() => setForm(null)} onDone={() => { setForm(null); void refresh(); }} />
           </div>

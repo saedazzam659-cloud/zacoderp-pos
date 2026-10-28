@@ -538,7 +538,17 @@ export default function ItemsAdmin() {
       : processed.length === 0 ? <div style={S.empty}>لا توجد نتائج مطابقة — جرّب تعديل الفلاتر أو «🧹 مسح الكل»</div>
       : (
         <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff" }}>
-          <table style={S.tableFixed}>
+          <style>{`
+            .z-items-grid { border-collapse: collapse; color: #233044; }
+            .z-items-grid thead th { border-bottom: 1px solid #d9e0e8 !important; border-inline-start: 1px solid #e3e8ee; background: #f2f5f8 !important; color: #44536a !important; }
+            .z-items-grid tbody td { border-bottom: 1px solid #e7ebf0; border-inline-start: 1px solid #edf0f3; }
+            .z-items-grid tbody tr:nth-child(even) { background: #f8fafc; }
+            .z-items-grid tbody tr:hover { background: #eef4f8; }
+            @media (max-width: 900px) {
+              .z-items-grid thead th, .z-items-grid tbody td { padding: 7px 9px !important; font-size: 12px !important; }
+            }
+          `}</style>
+          <table className="z-items-grid" style={S.tableFixed}>
             <colgroup>
               {ITEM_COLS.map((c) => <col key={c.key} style={{ width: colWidths[c.key] }} />)}
               <col style={{ width: colWidths.actions }} />
@@ -1204,7 +1214,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   }
 
   return (
-    <div style={{ background: "#fff", border: `2px solid ${initial ? "#2563eb" : "#16a34a"}`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
+    <div style={{ background: "#fff", border: "1px solid #d9e0e8", borderRadius: 10, padding: 20, marginBottom: 16 }}>
       <h3 style={{ ...S.modalTitle, color: initial ? "#1e40af" : "#15803d" }}>{initial ? "✏️ تعديل صنف" : "➕ صنف جديد"}</h3>
 
         {/* Core data — 4 fields per row for a denser, tidier layout. */}
@@ -1467,7 +1477,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const S = {
-  wrap: { maxWidth: 1100, margin: "0 auto", width: "100%" } as const,
+  wrap: { width: "100%", minWidth: 0, margin: 0, boxSizing: "border-box" as const } as const,
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 16 } as const,
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,
@@ -1475,9 +1485,9 @@ const S = {
   empty: { padding: 40, textAlign: "center" as const, color: "#94a3b8", background: "#fff", border: "1px dashed #e2e8f0", borderRadius: 8 } as const,
   table: { width: "100%", borderCollapse: "collapse" as const, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" } as const,
   th: { textAlign: "right" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600 } as const,
-  thRight: { textAlign: "left" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600 } as const,
-  tr: { borderBottom: "1px solid #f1f5f9" } as const,
-  td: { padding: "12px 14px", fontSize: 14, color: "#0f172a" } as const,
+  thRight: { textAlign: "left" as const, padding: "9px 11px", background: "#f2f5f8", borderBottom: "1px solid #d9e0e8", fontSize: 12, color: "#44536a", fontWeight: 700 } as const,
+  tr: { borderBottom: "1px solid #e7ebf0" } as const,
+  td: { padding: "8px 11px", fontSize: 13, color: "#233044" } as const,
   tdMono: { padding: "12px 14px", fontSize: 13, color: "#0f172a", fontFamily: "ui-monospace, monospace" } as const,
   tdRight: { padding: "12px 14px", textAlign: "left" as const } as const,
   muted: { fontSize: 12, color: "#94a3b8", marginTop: 2 } as const,
@@ -1516,11 +1526,11 @@ const S = {
   condDel: { padding: "7px 11px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontSize: 14 } as const,
   btnAddCond: { marginTop: 4, padding: "8px 14px", background: "#fff", color: "#1d4ed8", border: "1px dashed #93c5fd", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 } as const,
   tableFixed: { borderCollapse: "collapse" as const, tableLayout: "fixed" as const, width: "max-content", minWidth: "100%" } as const,
-  thSort: { position: "relative" as const, textAlign: "right" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600, cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const } as const,
+  thSort: { position: "relative" as const, textAlign: "right" as const, padding: "9px 11px", background: "#f2f5f8", borderBottom: "1px solid #d9e0e8", fontSize: 12, color: "#44536a", fontWeight: 700, cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const } as const,
   sortArrow: { fontSize: 10, color: "#94a3b8" } as const,
   resizeHandle: { position: "absolute" as const, insetInlineStart: 0, top: 0, bottom: 0, width: 7, cursor: "col-resize", userSelect: "none" as const } as const,
   thFilter: { padding: "6px 8px", background: "#f1f5f9", borderBottom: "1px solid #e2e8f0" } as const,
   filterInput: { width: "100%", padding: "5px 8px", fontSize: 12, border: "1px solid #cbd5e1", borderRadius: 5, fontFamily: "inherit", boxSizing: "border-box" as const, background: "#fff" } as const,
-  tdClip: { padding: "12px 14px", fontSize: 14, color: "#0f172a", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
-  tdMonoClip: { padding: "12px 14px", fontSize: 13, color: "#0f172a", fontFamily: "ui-monospace, monospace", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
+  tdClip: { padding: "8px 11px", fontSize: 13, color: "#233044", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
+  tdMonoClip: { padding: "8px 11px", fontSize: 12, color: "#233044", fontFamily: "ui-monospace, monospace", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
 };

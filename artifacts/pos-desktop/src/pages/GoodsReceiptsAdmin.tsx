@@ -113,7 +113,7 @@ export default function GoodsReceiptsAdmin({ onNavigate }: { onNavigate?: (v: Wi
       }
     >
       {creating && deps && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <CreateForm deps={deps} onCancel={() => setCreating(false)} onDone={() => { setCreating(false); void refresh(); }} />
           </div>

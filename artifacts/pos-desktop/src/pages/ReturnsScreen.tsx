@@ -434,7 +434,7 @@ function Row({ k, v, big }: { k: string; v: string; big?: boolean }) {
 }
 
 const S = {
-  wrap: { maxWidth: 1100, margin: "0 auto", width: "100%", padding: "8px 4px 24px" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, padding: 0, boxSizing: "border-box" as const } as const,
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, gap: 16 } as const,
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,
