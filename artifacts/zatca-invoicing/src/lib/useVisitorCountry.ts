@@ -22,6 +22,12 @@ import { DEFAULT_COUNTRY_CODE } from "./countries";
 const COOKIE_NAME = "visitor_country";
 const EVENT_NAME  = "visitor-country-change";
 const VALID = /^([A-Z]{2}|GLOBAL)$/;
+const MAHMOUD_SAUDI_VAT_HOST = "main.tafrah.com.sa";
+
+export function isMahmoudSaudiVatHost(hostname?: string): boolean {
+  const host = hostname ?? (typeof window !== "undefined" ? window.location.hostname : "");
+  return host.trim().toLowerCase().replace(/\.$/, "") === MAHMOUD_SAUDI_VAT_HOST;
+}
 
 function readCookie(): string | null {
   if (typeof document === "undefined") return null;
@@ -43,6 +49,9 @@ function readQueryParam(): string | null {
 }
 
 function readInitial(): { code: string; explicit: boolean } {
+  // Mahmoud's Tafrah portal is Saudi-only regardless of visitor location or
+  // any country preference left in the browser.
+  if (isMahmoudSaudiVatHost()) return { code: "SA", explicit: true };
   const q = readQueryParam();
   if (q) return { code: q, explicit: true };
   const c = readCookie();
@@ -117,6 +126,7 @@ export function useVisitorCountry(): [string, (next: string) => void, boolean] {
   const setCountry = useCallback((nextRaw: string) => {
     const next = String(nextRaw || "").toUpperCase();
     if (!VALID.test(next)) return;
+    if (isMahmoudSaudiVatHost() && next !== "SA") return;
     // Persist for one year (matches the API cookie lifetime); SameSite
     // lax is fine since the cookie is non-sensitive UI preference.
     if (typeof document !== "undefined") {

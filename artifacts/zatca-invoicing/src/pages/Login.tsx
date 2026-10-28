@@ -25,7 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useVisitorCountry } from "@/lib/useVisitorCountry";
+import { isMahmoudSaudiVatHost, useVisitorCountry } from "@/lib/useVisitorCountry";
 import { getCountryByCode } from "@/lib/countries";
 import { normalizeAgentUiSettings, type AgentUiSettings } from "@/lib/agentUiSettings";
 
@@ -98,7 +98,8 @@ interface DeviceApprovalPayload {
 const TURNSTILE_SITE_KEY = (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined) ?? "";
 
 export default function Login() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isEnglish = i18n.language?.startsWith("en");
   const [, setLocation] = useLocation();
   const { login, setSession } = useAuth();
   const { toast } = useToast();
@@ -134,6 +135,7 @@ export default function Login() {
     return () => { alive = false; };
   }, []);
   const isAgentDomain = !!agentBrand?.isAgentDomain;
+  const isMahmoudSaudiPortal = isMahmoudSaudiVatHost();
   const loginPageSettings = isAgentDomain ? agentBrand?.agentUiSettings?.loginPage : undefined;
   const loginAccentHsl = loginPageSettings?.accentColor ? hexToHsl(loginPageSettings.accentColor) : null;
   const loginPageStyle = {
@@ -893,15 +895,27 @@ export default function Login() {
                 existing "ZATCA compliant" pill; for other countries we
                 substitute the local compliance summary from countries.ts. */}
             <div className="text-center lg:text-start">
-              <img
-                src={loginLogo}
-                onError={fallbackLogo}
-                alt={isAgentDomain ? (agentBrand?.brandName ?? "") : "زاكود Zacode"}
-                className={isAgentDomain && agentBrand?.brandLogoUrl
-                  ? "inline-block w-full max-w-[240px] h-28 sm:h-36 rounded-2xl mb-3 shadow-lg object-contain bg-white p-2"
-                  : "inline-block h-14 w-14 rounded-2xl mb-3 shadow-lg object-contain bg-white"}
-                data-testid="login-brand-mark"
-              />
+              {isMahmoudSaudiPortal ? (
+                <div
+                  className="mx-auto mb-3 flex min-h-28 w-full max-w-[240px] flex-col items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-600 px-4 py-3 text-center text-white shadow-lg"
+                  data-testid="mahmoud-saudi-tax-banner"
+                >
+                  <ShieldCheck className="h-8 w-8" />
+                  <span className="text-sm font-bold leading-relaxed">
+                    {isEnglish ? "Saudi Value Added Tax" : "ضريبة القيمة المضافة السعودية"}
+                  </span>
+                </div>
+              ) : (
+                <img
+                  src={loginLogo}
+                  onError={fallbackLogo}
+                  alt={isAgentDomain ? (agentBrand?.brandName ?? "") : "زاكود Zacode"}
+                  className={isAgentDomain && agentBrand?.brandLogoUrl
+                    ? "inline-block w-full max-w-[240px] h-28 sm:h-36 rounded-2xl mb-3 shadow-lg object-contain bg-white p-2"
+                    : "inline-block h-14 w-14 rounded-2xl mb-3 shadow-lg object-contain bg-white"}
+                  data-testid="login-brand-mark"
+                />
+              )}
               <h1 className="text-2xl lg:text-3xl font-bold text-foreground">
                 {brandingResolved ? (isAgentDomain && agentBrand?.brandName ? agentBrand.brandName : t("auth.appName")) : "\u00A0"}
               </h1>
@@ -1012,12 +1026,14 @@ export default function Login() {
               <div className="absolute -bottom-12 -start-10 h-36 w-36 rounded-full bg-white/10 blur-2xl" />
               <div className="relative flex items-center gap-3">
                 <div className={`${isAgentDomain && agentBrand?.brandLogoUrl ? "h-20 w-20 sm:h-24 sm:w-24" : "h-14 w-14"} rounded-2xl bg-white/95 p-2 shadow-lg ring-1 ring-white/40 shrink-0`}>
-                  <img
-                    src={loginLogo}
-                    onError={fallbackLogo}
-                    alt={isAgentDomain ? (agentBrand?.brandName ?? "") : "زاكود"}
-                    className="h-full w-full object-contain"
-                  />
+                  {isMahmoudSaudiPortal
+                    ? <ShieldCheck className="h-full w-full p-2 text-emerald-700" />
+                    : <img
+                        src={loginLogo}
+                        onError={fallbackLogo}
+                        alt={isAgentDomain ? (agentBrand?.brandName ?? "") : "زاكود"}
+                        className="h-full w-full object-contain"
+                      />}
                 </div>
                 <div className="min-w-0">
                   <p className="text-[11px] font-bold tracking-widest text-white/80 uppercase">{brandingResolved ? (isAgentDomain ? (agentBrand?.brandName ?? "") : "ZacodERP") : "\u00A0"}</p>
@@ -1028,7 +1044,9 @@ export default function Login() {
               <div className="relative mt-4 flex flex-wrap gap-1.5">
                 <span className="inline-flex items-center gap-1 rounded-full bg-white/20 backdrop-blur px-2.5 py-1 text-[11px] font-semibold">
                   <ShieldCheck className="h-3 w-3" />
-                  {visitorCountry === "SA" ? "متوافق مع زاتكا" : countryInfo.policyAr}
+                  {isMahmoudSaudiPortal
+                    ? (isEnglish ? "Saudi VAT" : "ضريبة القيمة المضافة السعودية")
+                    : visitorCountry === "SA" ? "متوافق مع زاتكا" : countryInfo.policyAr}
                 </span>
                 <span className="inline-flex items-center gap-1 rounded-full bg-white/20 backdrop-blur px-2.5 py-1 text-[11px] font-semibold">
                   <Sparkles className="h-3 w-3" />
