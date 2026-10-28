@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Check, ChevronsUpDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverAnchor,
@@ -25,6 +26,8 @@ export interface ComboboxItem {
   /** Show a clear button when a value is selected. */
   clearable?: boolean;
   disabledReason?: string;
+  /** Original row data retained by multi-select when remote search changes. */
+  rawItem?: unknown;
 }
 
 interface SearchComboboxProps {
@@ -55,6 +58,8 @@ interface SearchComboboxProps {
   loading?: boolean;
   /** Optional compact action rendered inside the existing trailing icon gutter. */
   endAdornment?: React.ReactNode;
+  /** Turn the result rows into checkboxes and add all checked values together. */
+  onAddSelected?: (values: string[], items: ComboboxItem[]) => void | Promise<void>;
 }
 
 export function SearchCombobox({
@@ -79,6 +84,7 @@ export function SearchCombobox({
   onSearchChange,
   loading = false,
   endAdornment,
+  onAddSelected,
 }: SearchComboboxProps) {
   const { i18n } = useTranslation();
   const isEnglish = i18n.language?.toLowerCase().startsWith("en") ?? false;
@@ -87,13 +93,19 @@ export function SearchCombobox({
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [highlight, setHighlight] = React.useState(0);
+  const [multiSelectedValues, setMultiSelectedValues] = React.useState<string[]>([]);
+  const [multiSelectedItems, setMultiSelectedItems] = React.useState<Record<string, ComboboxItem>>({});
   const inputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
-    if (!nextOpen && search) {
-      setSearch("");
-      onSearchChange?.("");
+    if (!nextOpen) {
+      if (search) {
+        setSearch("");
+        onSearchChange?.("");
+      }
+      setMultiSelectedValues([]);
+      setMultiSelectedItems({});
     }
   };
 
@@ -163,6 +175,18 @@ export function SearchCombobox({
   const handleSelect = (val: string, advance: boolean = false) => {
     const it = items.find(i => i.value === val);
     if (it?.disabled) return;
+    if (onAddSelected) {
+      setMultiSelectedValues(current => current.includes(val)
+        ? current.filter(value => value !== val)
+        : [...current, val]);
+      setMultiSelectedItems(current => {
+        const next = { ...current };
+        if (next[val]) delete next[val];
+        else if (it) next[val] = it;
+        return next;
+      });
+      return;
+    }
     onValueChange(val);
     setOpen(false);
     setSearch("");
@@ -174,6 +198,57 @@ export function SearchCombobox({
       const el = inputRef.current;
       setTimeout(() => advanceFocusFrom(el), 0);
     }
+  };
+
+  const renderOption = (item: ComboboxItem, idx: number) => {
+    const isHi = idx === highlight;
+    const dis = !!item.disabled;
+    const selected = onAddSelected
+      ? multiSelectedValues.includes(item.value)
+      : item.value === value;
+    return (
+      <div
+        key={item.value}
+        data-idx={idx}
+        title={dis ? (item.disabledReason ?? (isEnglish ? "Not selectable" : "غير قابل للاختيار")) : undefined}
+        onMouseDown={e => {
+          if (dis) {
+            e.preventDefault();
+            return;
+          }
+          if (onAddSelected && (e.target as HTMLElement).closest('input[type="checkbox"]')) return;
+          e.preventDefault();
+          handleSelect(item.value);
+        }}
+        onMouseEnter={() => { if (!dis) setHighlight(idx); }}
+        aria-disabled={dis}
+        aria-selected={selected}
+        role="option"
+        className={cn(
+          "px-2 py-2 text-sm rounded-sm mx-1",
+          onAddSelected && "flex items-start gap-2",
+          dis
+            ? "opacity-50 cursor-not-allowed select-none"
+            : "cursor-pointer " + (isHi ? "bg-accent text-accent-foreground" : "hover:bg-muted/60")
+        )}
+      >
+        {onAddSelected && (
+          <input
+            type="checkbox"
+            checked={selected}
+            disabled={dis}
+            aria-label={isEnglish ? `Select ${item.label}` : `اختيار ${item.label}`}
+            data-testid={testId ? `${testId}-multi-${item.value}` : `search-combobox-multi-${item.value}`}
+            className="h-4 w-4 shrink-0 align-middle accent-primary"
+            onMouseDown={event => event.stopPropagation()}
+            onChange={() => handleSelect(item.value)}
+          />
+        )}
+        {renderItem
+          ? renderItem(item, selected)
+          : <DefaultItemRender item={item} sel={selected} />}
+      </div>
+    );
   };
 
   const moveHighlight = (dir: 1 | -1) => {
@@ -339,7 +414,7 @@ export function SearchCombobox({
         onOpenAutoFocus={e => e.preventDefault()}
         onCloseAutoFocus={e => e.preventDefault()}
       >
-        <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
+        <div ref={listRef} role="listbox" aria-multiselectable={!!onAddSelected} className="max-h-72 overflow-y-auto py-1">
           {loading ? (
             <div className="py-6 text-center text-sm text-muted-foreground">{isEnglish ? "Searching..." : "جارٍ البحث عن الأصناف..."}</div>
           ) : flatList.length === 0 ? (
@@ -351,60 +426,44 @@ export function SearchCombobox({
                 {groupName && (
                   <div className="px-3 py-1 text-[10px] font-semibold text-muted-foreground uppercase">{groupName}</div>
                 )}
-                {groupItems.map(item => {
-                  const idx = renderedIdx++;
-                  const isHi = idx === highlight;
-                  const dis = !!item.disabled;
-                  return (
-                    <div
-                      key={item.value}
-                      data-idx={idx}
-                      title={dis ? (item.disabledReason ?? (isEnglish ? "Not selectable" : "غير قابل للاختيار")) : undefined}
-                      onMouseDown={e => { e.preventDefault(); if (!dis) handleSelect(item.value); }}
-                      onMouseEnter={() => { if (!dis) setHighlight(idx); }}
-                      aria-disabled={dis}
-                      className={cn(
-                        "px-2 py-2 text-sm rounded-sm mx-1",
-                        dis
-                          ? "opacity-50 cursor-not-allowed select-none"
-                          : "cursor-pointer " + (isHi ? "bg-accent text-accent-foreground" : "hover:bg-muted/60")
-                      )}
-                    >
-                      {renderItem
-                        ? renderItem(item, item.value === value)
-                        : <DefaultItemRender item={item} sel={item.value === value} />}
-                    </div>
-                  );
-                })}
+                {groupItems.map(item => renderOption(item, renderedIdx++))}
               </div>
             ))
           ) : (
-            flatList.map((item, idx) => {
-              const isHi = idx === highlight;
-              const dis = !!item.disabled;
-              return (
-                <div
-                  key={item.value}
-                  data-idx={idx}
-                  title={dis ? (item.disabledReason ?? (isEnglish ? "Not selectable" : "غير قابل للاختيار")) : undefined}
-                  onMouseDown={e => { e.preventDefault(); if (!dis) handleSelect(item.value); }}
-                  onMouseEnter={() => { if (!dis) setHighlight(idx); }}
-                  aria-disabled={dis}
-                  className={cn(
-                    "px-2 py-2 text-sm rounded-sm mx-1",
-                    dis
-                      ? "opacity-50 cursor-not-allowed select-none"
-                      : "cursor-pointer " + (isHi ? "bg-accent text-accent-foreground" : "hover:bg-muted/60")
-                  )}
-                >
-                  {renderItem
-                    ? renderItem(item, item.value === value)
-                    : <DefaultItemRender item={item} sel={item.value === value} />}
-                </div>
-              );
-            })
+            flatList.map((item, idx) => renderOption(item, idx))
           )}
         </div>
+        {onAddSelected && (
+          <div className="flex items-center justify-between gap-2 border-t p-2">
+            <span className="text-xs text-muted-foreground" aria-live="polite">
+              {isEnglish
+                ? `${multiSelectedValues.length} selected`
+                : `${multiSelectedValues.length} صنف محدد`}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              className="h-8"
+              disabled={multiSelectedValues.length === 0 || loading}
+              data-testid="button-add-selected-items"
+              onClick={() => {
+                const selected = [...multiSelectedValues];
+                const selectedItems = selected.map(value => multiSelectedItems[value]).filter(Boolean);
+                void Promise.resolve(onAddSelected(selected, selectedItems)).then(() => {
+                  setMultiSelectedValues([]);
+                  setMultiSelectedItems({});
+                  setOpen(false);
+                  setSearch("");
+                  onSearchChange?.("");
+                }).catch(error => {
+                  console.error("[SearchCombobox] could not add selected items", error);
+                });
+              }}
+            >
+              {isEnglish ? "Add selected" : "إضافة المحدد"}
+            </Button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   );

@@ -166,7 +166,7 @@ type SalesItemPickerWithStockProps = ComponentProps<typeof SearchCombobox> & {
   stockEnabled: boolean;
 };
 
-function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockEnabled, warehouseId, value, items, ...pickerProps }: SalesItemPickerWithStockProps) {
+function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockEnabled, warehouseId, value, items, onAddSelected, ...pickerProps }: SalesItemPickerWithStockProps) {
   const { i18n } = useTranslation();
   const isEnglish = i18n.language?.startsWith("en");
   // Put the controlled selection first so it is never clipped by the bounded
@@ -195,6 +195,7 @@ function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockE
       {...pickerProps}
       items={optionsWithStock}
       value={value}
+      onAddSelected={onAddSelected}
       endAdornment={stockEnabled ? (
         <div className="flex items-center gap-1">
           {value && <SalesBranchStock itemId={value} companyId={companyId} userId={userId} branchId={branchId} warehouseId={warehouseId} headers={headers} enabled />}
@@ -202,7 +203,7 @@ function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockE
       ) : undefined}
       renderItem={(item: any, selected: boolean) => (
         <div className="flex w-full min-w-0 items-start gap-2">
-          <Check className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-primary ${selected ? "opacity-100" : "opacity-0"}`} />
+          {!onAddSelected && <Check className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-primary ${selected ? "opacity-100" : "opacity-0"}`} />}
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               {item.code && <span className="shrink-0 rounded border border-primary/20 bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary">{item.code}</span>}
@@ -220,98 +221,6 @@ function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockE
         </div>
       )}
     />
-  );
-}
-
-function SalesMultiItemPicker({
-  items,
-  loading,
-  onSearchChange,
-  onAdd,
-}: {
-  items: ComponentProps<typeof SearchCombobox>["items"];
-  loading: boolean;
-  onSearchChange: (search: string) => void;
-  onAdd: (itemIds: string[]) => void | Promise<void>;
-}) {
-  const { i18n } = useTranslation();
-  const isEnglish = i18n.language?.startsWith("en");
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const availableItems = items.filter(item => item.value);
-
-  function changeOpen(next: boolean) {
-    setOpen(next);
-    if (!next) {
-      setSearch("");
-      setSelectedIds([]);
-      onSearchChange("");
-    }
-  }
-
-  return (
-    <Popover open={open} onOpenChange={changeOpen}>
-      <PopoverTrigger asChild>
-        <Button type="button" variant="outline" size="sm" className="h-6 gap-1 px-2 text-[10px]" data-testid="button-select-multiple-sales-items">
-          <Plus className="h-3 w-3" />
-          {isEnglish ? "Select multiple items" : "اختيار عدة أصناف"}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-[min(92vw,420px)] p-2">
-        <Input
-          autoFocus
-          value={search}
-          onChange={event => {
-            setSearch(event.target.value);
-            onSearchChange(event.target.value);
-          }}
-          placeholder={isEnglish ? "Search by code or name..." : "ابحث بالكود أو الاسم..."}
-          aria-label={isEnglish ? "Search items to add" : "ابحث عن أصناف لإضافتها"}
-          data-testid="sales-multi-item-search"
-        />
-        <div className="mt-2 max-h-72 overflow-y-auto rounded-md border">
-          {loading ? (
-            <p className="p-4 text-center text-xs text-muted-foreground">{isEnglish ? "Searching..." : "جارٍ البحث..."}</p>
-          ) : availableItems.length === 0 ? (
-            <p className="p-4 text-center text-xs text-muted-foreground">{isEnglish ? "No items found" : "لا توجد أصناف"}</p>
-          ) : availableItems.map(item => (
-            <label key={item.value} className="flex cursor-pointer items-center gap-2 border-b px-2 py-2 last:border-b-0 hover:bg-muted/50">
-              <input
-                type="checkbox"
-                className="h-4 w-4 shrink-0 accent-primary"
-                checked={selectedIds.includes(item.value)}
-                onChange={event => setSelectedIds(current =>
-                  event.target.checked
-                    ? [...current, item.value]
-                    : current.filter(value => value !== item.value),
-                )}
-                data-testid={`sales-multi-item-${item.value}`}
-              />
-              <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-              {item.code && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{item.code}</span>}
-            </label>
-          ))}
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <span className="text-xs text-muted-foreground">
-            {isEnglish ? `${selectedIds.length} selected` : `${selectedIds.length} صنف محدد`}
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            className="h-8"
-            disabled={!selectedIds.length || loading}
-            onClick={() => {
-              void Promise.resolve(onAdd(selectedIds)).then(() => changeOpen(false));
-            }}
-            data-testid="button-add-selected-sales-items"
-          >
-            {isEnglish ? "Add selected" : "إضافة المحدد"}
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
   );
 }
 
@@ -1871,18 +1780,34 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setQaItemId(""); setQaQty("1"); setQaFreeQty("0"); setQaPrice(""); setQaDiscount("0");
   }
 
-  async function handleMultiItemAdd(itemIds: string[]) {
+  async function handleMultiItemAdd(
+    itemIds: string[],
+    targetLineId?: string,
+    selectedOptions?: ComponentProps<typeof SearchCombobox>["items"],
+  ) {
     const selectedItems = itemIds
-      .map(itemId => inventoryItems.find((item: any) => String(item.id) === itemId))
+      .map(itemId =>
+        selectedOptions?.find(option => option.value === itemId)?.rawItem
+        ?? inventoryItems.find((item: any) => String(item.id) === itemId))
       .filter((item: any) => Boolean(item));
     if (!selectedItems.length) return;
 
-    const additions = selectedItems.map((item: any) => {
-      const line = newLine();
-      line.warehouseId = qaWarehouseId || headerWarehouseId || "";
+    const targetLine = targetLineId ? lines.find(line => line._id === targetLineId) : undefined;
+    const canReuseTarget = Boolean(targetLine && !targetLine.itemId && !targetLine.itemName && !targetLine.itemCode);
+    const additions = selectedItems.map((item: any, index: number) => {
+      const line = index === 0 && canReuseTarget ? { ...targetLine! } : newLine();
+      line.warehouseId = targetLine?.warehouseId || qaWarehouseId || headerWarehouseId || "";
       return { line, item };
     });
-    setLines(previous => [...previous, ...additions.map(({ line }) => line)]);
+    setLines(previous => {
+      if (!canReuseTarget || !targetLine || !previous.some(line => line._id === targetLine._id)) {
+        return [...previous, ...additions.map(({ line }) => line)];
+      }
+      return [
+        ...previous.map(line => line._id === targetLine._id ? additions[0].line : line),
+        ...additions.slice(1).map(({ line }) => line),
+      ];
+    });
     await Promise.all(additions.map(({ line, item }) => selectItem(line._id, String(item.id), item)));
     setFocusLineId(additions[additions.length - 1].line._id);
   }
@@ -2653,6 +2578,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       barcode: i.barcode ?? undefined,
       label: localizedName(i.nameAr, i.nameEn, "ar") || `#${i.id}`,
       labelEn: i.nameEn || undefined,
+      rawItem: i,
     })),
   ], usageModes);
   const unitItems = units
@@ -2895,14 +2821,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label className="text-[11px] text-muted-foreground">{t("salesDocForm.colItem")}</label>
             <div className="flex flex-wrap items-center justify-end gap-1">
-              {isInvoice && (
-                <SalesMultiItemPicker
-                  items={itemComboItems}
-                  loading={isSearchingItems}
-                  onSearchChange={setItemSearch}
-                  onAdd={handleMultiItemAdd}
-                />
-              )}
               {(isInvoice || isQuotation || isOrder) && canCreateCatalogItems && (
                 <Button
                   type="button"
@@ -2921,6 +2839,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <SalesItemPickerWithStock
             items={itemComboItems}
             value={qaItemId}
+            onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, undefined, selectedOptions) : undefined}
             warehouseId={qaWarehouseId || headerWarehouseId}
             onValueChange={value => {
               const item = (inventoryItems as any[]).find(candidate => String(candidate.id) === value);
@@ -3114,6 +3033,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <SalesItemPickerWithStock
                         items={itemComboItems}
                         value={l.itemId}
+                        onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined}
                         warehouseId={l.warehouseId || headerWarehouseId}
                         onValueChange={v => void selectItem(l._id, v)}
                         onSearchChange={setItemSearch}
@@ -3348,7 +3268,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {user ? (
                         <div className="min-w-0">
-                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
+                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
                           {renderSalesOptionPicker(l)}
                         </div>
                       ) : (
