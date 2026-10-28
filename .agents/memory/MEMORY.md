@@ -100,3 +100,4 @@
 - [Grid localization coverage](grid-localization-boundary.md) — audit every grid heading and surrounding control in both languages; keep entered business data unchanged.
 - [External invoice import boundary](external-invoice-import-boundary.md) — convert source files into the existing unified invoice rows for review; never infer missing facts or post on extraction alone.
 - [Company-specific invoice import formats](company-invoice-import-formats.md) — isolate each company's source format adapter and normalize into the shared invoice review flow.
+- [Saved feature scope](saved-feature-scope.md) — invoice item multi-select and Saudi VAT display only for Mahmoud's agent.
