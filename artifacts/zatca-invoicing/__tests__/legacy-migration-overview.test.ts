@@ -10,8 +10,8 @@ test("legacy migration overview links the supported RAGM transaction import flow
   assert.match(source, /ترحيل تاريخ الشركة من RAGM Cloud/);
   assert.match(source, /سندات القبض والصرف/);
   assert.match(source, /الإشعارات المدينة والدائنة/);
-  assert.match(source, /Prepare Excel or CSV rows and import them/);
-  assert.match(source, /يمكن تجهيز ملفات Excel أو CSV لهذه السندات/);
+  assert.match(source, /Each voucher can link to one posted invoice/);
+  assert.match(source, /استورد السندات من Excel أو CSV/);
   assert.match(source, /onOpenDocuments/);
   assert.match(source, /onOpenJournal/);
   assert.match(source, /onOpenCashNotes/);
@@ -20,6 +20,7 @@ test("legacy migration overview links the supported RAGM transaction import flow
 
 test("historical voucher and note imports use existing post routes and annual sequence preflight", async () => {
   const source = await readFile(new URL("../src/pages/settings/HistoricalCashNotesMigration.tsx", import.meta.url), "utf8");
+  const sequenceTypes = await readFile(new URL("../../../lib/db/src/schema/sequences.ts", import.meta.url), "utf8");
 
   assert.match(source, /\/api\/receipt-vouchers/);
   assert.match(source, /\/api\/payment-vouchers/);
@@ -28,4 +29,8 @@ test("historical voucher and note imports use existing post routes and annual se
   assert.match(source, /checkbox-post-historical-financial/);
   assert.match(source, /legacy_ragmcloud/);
   assert.match(source, /RAGM:\$\{sourceNumber\}/);
+  assert.match(source, /salesInvoiceId/);
+  assert.match(source, /purchaseInvoiceId/);
+  assert.match(sequenceTypes, /account_note_customer_debit/);
+  assert.match(sequenceTypes, /account_note_supplier_credit/);
 });

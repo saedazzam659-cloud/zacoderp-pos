@@ -4293,6 +4293,8 @@
       "receipt_voucher": "سند قبض",
       "payment_voucher": "سند صرف",
       "account_note_customer_credit": "إشعار دائن (عميل)",
+      "account_note_customer_debit": "إشعار مدين (عميل)",
+      "account_note_supplier_credit": "إشعار دائن (مورد)",
       "account_note_supplier_debit": "إشعار مدين (مورد)",
       "sales_invoice_cash": "فاتورة مبيعات - نقدي",
       "sales_invoice_credit": "فاتورة مبيعات - آجل",

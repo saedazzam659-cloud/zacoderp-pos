@@ -175,6 +175,8 @@ export function HistoricalCashNotesMigration({ cid, token, toast }: {
             else {
               const linkedPartyId = kind === "receipt" ? matches[0].customerId : matches[0].supplierId;
               if (Number(linkedPartyId) !== Number(party?.id)) issues.push("الطرف في الفاتورة المصدر لا يطابق كود الطرف");
+              if (matches[0].status !== "posted") issues.push("رحّل الفاتورة المصدر أولاً قبل ربط سند التسوية بها");
+              if (String(matches[0].currencyCode ?? "SAR").toUpperCase() !== "SAR") issues.push("الفاتورة المصدر ليست بالريال السعودي؛ هذا النموذج لا يدعم التسوية بعملة أجنبية");
             }
           }
         } else {
@@ -407,7 +409,7 @@ export function HistoricalCashNotesMigration({ cid, token, toast }: {
           <div className="flex flex-wrap items-end gap-3">
             <label className="min-w-64 space-y-1 text-sm">
               <span className="font-medium">نوع البيانات</span>
-              <Select value={kind} onValueChange={(value) => { setKind(value as ImportKind); setRows([]); setResults([]); setFileName(""); }}>
+              <Select value={kind} onValueChange={(value) => { setKind(value as ImportKind); setRows([]); setResults([]); setFileName(""); setConfirmPosting(false); setConfirmBaseCurrency(false); }}>
                 <SelectTrigger data-testid="select-historical-financial-kind"><SelectValue /></SelectTrigger>
                 <SelectContent>{Object.entries(kindLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
               </Select>

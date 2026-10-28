@@ -527,11 +527,11 @@ function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal, onOpenC
     journalsText: "ارفع ملف القيود، وسيُفحص توازنها وتواريخها والفترات المالية قبل الحفظ.",
     missing: "يتطلب مسارًا مخصصًا",
     vouchers: "سندات القبض والصرف",
-    vouchersText: "يمكن تجهيز ملفات Excel أو CSV لهذه السندات واستيرادها كمسودات أو ترحيلها عبر دورة النظام بعد المراجعة. ربط السندات بالفواتير القديمة يحتاج مراجعة مستقلة.",
+    vouchersText: "استورد السندات من Excel أو CSV بعد مطابقة الطرف والفرع والخزنة أو البنك. يمكن ربط السند بفاتورة واحدة مرحّلة؛ التوزيع على عدة فواتير غير مدعوم هنا.",
     notes: "الإشعارات المدينة والدائنة",
     notesText: "يدعم استيراد أنواع الإشعارات الأربعة من ملف Excel أو CSV، مع مطابقة الطرف والحسابات والضريبة ومراجعة السجلات قبل الإنشاء.",
     warningTitle: "مهم قبل إيقاف النظام القديم",
-    warning: "هذه الشاشة تجمع مسارات الترحيل الموجودة حاليًا ولا تعني أن كل أنواع الحركات أصبحت مدعومة. احتفظ بإمكانية الرجوع للمصدر حتى تُستورد الأنواع الناقصة وتُطابق كشوف العملاء والموردين وميزان المراجعة.",
+    warning: "الاستيراد هنا يعتمد على الملفات والمراجعة اليدوية، ولا يسحب كل السجلات تلقائيًا من RAGM Cloud. احتفظ بإمكانية الرجوع للمصدر حتى تتطابق الأعداد والإجماليات والروابط وكشوف العملاء والموردين وميزان المراجعة.",
     openDocs: "فتح ترحيل المستندات",
     openJournals: "فتح ترحيل القيود",
     openCashNotes: "فتح استيراد السندات والإشعارات",
@@ -550,11 +550,11 @@ function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal, onOpenC
     journalsText: "Upload journal entries; balance, dates, and fiscal periods are checked before saving.",
     missing: "Dedicated flow required",
     vouchers: "Receipt and payment vouchers",
-    vouchersText: "Prepare Excel or CSV rows and import them as drafts or post them through the existing lifecycle after review. Linking old vouchers to invoices still needs separate verification.",
+    vouchersText: "Import Excel or CSV rows after matching party, branch, cashbox, and bank. Each voucher can link to one posted invoice; split allocation across several invoices is not supported here.",
     notes: "Debit and credit notes",
     notesText: "All four note types can be imported from Excel or CSV, with party, account, and VAT matching checked before creation.",
     warningTitle: "Before closing the old system",
-    warning: "This page brings together the migration flows currently available; it does not mean every transaction type is supported. Keep access to the source until the missing types are imported and customer/supplier statements and the trial balance are reconciled.",
+    warning: "These flows rely on manually prepared files and review; they do not fetch every RAGM Cloud record automatically. Keep source access until counts, totals, links, customer/supplier statements, and the trial balance reconcile.",
     openDocs: "Open document migration",
     openJournals: "Open journal migration",
     openCashNotes: "Open voucher and note import",
@@ -608,7 +608,7 @@ function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal, onOpenC
                   </Badge>
                 </div>
                 <p className="mt-1 text-sm leading-6 text-muted-foreground">{description}</p>
-                {action && <Button size="sm" variant="outline" className="mt-3 gap-2" onClick={action} data-testid={`button-${index === 1 ? "open-doc-migration" : "open-journal-migration"}`}>
+                {action && <Button size="sm" variant="outline" className="mt-3 gap-2" onClick={action} data-testid={`button-open-migration-${index}`}>
                   {actionLabel}<ArrowLeft className="h-4 w-4" />
                 </Button>}
               </div>
