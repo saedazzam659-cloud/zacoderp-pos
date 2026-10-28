@@ -7,6 +7,8 @@ For this migration, customers, suppliers, items, and the chart of accounts have 
 
 The identified legacy source is RAGM Cloud (erp.ragmcloud.net). The user's end goal is a final company cutover: collect the complete authorized company dataset into a single intermediate export, import it into the current ERP, reconcile it, and stop relying on RAGM. The user expects the migration tool to help collect the data; a user-prepared template upload is not the intended end state.
 
+The user reports that RAGM refused to prepare a company export. They specifically want to collect their own company's data by signing in and assembling a backup file. Do not treat vendor-provided export as available; do not request credentials in chat.
+
 Do not accept login credentials in chat or use an unrestricted AI browser. Any collector must be source-specific, authorized, read-only, company-scoped, and explicit about unsupported data classes. Do not claim full extraction until every required dataset is verifiably covered.
 
 The user will manually create fiscal years and annual document sequences in the ERP before importing. Imports that will post must use one annual sequence per document type and preserve the independent counter for each branch; draft-only saves use draft numbering and must not be blocked by annual-sequence preflight.
