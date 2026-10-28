@@ -1893,6 +1893,56 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     }));
   }
 
+  function pickLineSalesOption(lineId: string, optionId: string) {
+    const line = lines.find(candidate => candidate._id === lineId);
+    if (!line?.itemId) return;
+    const item = inventoryItems.find((candidate: any) => String(candidate.id) === line.itemId);
+    if (!item) return;
+    const options = Array.isArray(item.variantAttributes?._salesOptions) ? item.variantAttributes._salesOptions : [];
+    const option = options.find((candidate: any) => String(candidate.id) === optionId);
+    const unitRow = (itemUnitsMap[line.itemId] || []).find((row: any) => String(row.unitId) === line.unitId);
+    const itemBasePrice = Number(item.salePrice || 0);
+    const catalogUnitPrice = Number(resolveSalesItemUnitPrice(item, unitRow));
+    const unitPriceRatio = itemBasePrice > 0 ? catalogUnitPrice / itemBasePrice : 1;
+    const currencyPrice = currencyCode && currencyCode !== defaultCurrency?.code
+      ? Number((itemCurrencyPricesMap[line.itemId] || []).find((row: any) => row.currencyCode === currencyCode)?.salePrice || 0)
+      : 0;
+    const currencyFactor = itemBasePrice > 0
+      ? (currencyPrice > 0 ? currencyPrice / itemBasePrice : 1 / Math.max(Number(exchangeRate) || 1, 0.000001))
+      : 1;
+    const catalogPrice = (itemBasePrice > 0 ? itemBasePrice : catalogUnitPrice) * unitPriceRatio * currencyFactor;
+    const currentOption = options.find((candidate: any) => {
+      const labels = [candidate.nameAr, candidate.nameEn, localizedName(candidate.nameAr, candidate.nameEn, isRtl ? "ar" : "en")]
+        .map((label: any) => String(label ?? "").trim()).filter(Boolean);
+      return labels.some((label: string) => line.itemName.endsWith(` — ${label}`));
+    });
+    const basePrice = currentOption ? catalogPrice : Number(line.baseUnitPrice || catalogPrice);
+    const optionPrice = option
+      ? Number(option.salePrice) * unitPriceRatio * currencyFactor
+      : basePrice;
+    const optionName = option
+      ? String(option.nameAr || option.nameEn || "")
+      : "";
+    const name = option ? `${item.nameAr ?? line.itemName} — ${optionName}` : (item.nameAr ?? line.itemName);
+    setLines(prev => prev.map(current => {
+      if (current._id !== lineId) return current;
+      const updated: DocLine = {
+        ...current,
+        itemName: name,
+        unitPrice: trimTrailingZeros(String(optionPrice)),
+        baseUnitPrice: trimTrailingZeros(String(optionPrice)),
+        engineUnitPrice: null,
+        engineDiscount: null,
+        appliedOfferId: null,
+        appliedOfferName: null,
+        discount: "0",
+        discountAmount: "0",
+      };
+      const { lineTotal } = calcLine(updated, priceIncludesVat);
+      return { ...updated, lineTotal: lineTotal.toFixed(2) };
+    }));
+  }
+
   // ── Promotion engine ─────────────────────────────────────────────────
   // The server is authoritative for promo math (it already filters by
   // tenant + active window + scopes). The form sends the cart whenever it
@@ -2861,6 +2911,40 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     </div>
   );
 
+  function renderSalesOptionPicker(line: DocLine) {
+    if (!isInvoice || !line.itemId) return null;
+    const item = inventoryItems.find((candidate: any) => String(candidate.id) === line.itemId);
+    const options = Array.isArray(item?.variantAttributes?._salesOptions) ? item.variantAttributes._salesOptions : [];
+    if (!options.length) return null;
+    const selected = options.find((option: any) => {
+      const labels = [option.nameAr, option.nameEn, localizedName(option.nameAr, option.nameEn, isRtl ? "ar" : "en")]
+        .map((label: any) => String(label ?? "").trim()).filter(Boolean);
+      return labels.some((label: string) => line.itemName.endsWith(` — ${label}`));
+    });
+    return (
+      <Select value={selected?.id ?? "__sales_base__"} onValueChange={value => pickLineSalesOption(line._id, value === "__sales_base__" ? "" : value)}>
+        <SelectTrigger
+          className="h-7 min-w-0 border-primary/25 bg-primary/[0.04] px-2 text-[11px] text-primary"
+          data-testid={`sales-price-option-${line._id}`}
+          aria-label={isRtl ? "خيار سعر الصنف" : "Item price option"}
+        >
+          <Tag className="me-1.5 h-3 w-3 shrink-0" />
+          <SelectValue placeholder={isRtl ? "اختر التصنيف" : "Choose option"} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__sales_base__">
+            {isRtl ? "السعر الأساسي" : "Base price"} · {fmt(line.baseUnitPrice)}
+          </SelectItem>
+          {options.map((option: any) => (
+            <SelectItem key={option.id} value={String(option.id)}>
+              {localizedName(option.nameAr, option.nameEn, isRtl ? "ar" : "en")} · {fmt(option.salePrice)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  }
+
   // ── Editable ledger grid for the tabbed items tab ─────────────────────
   // Cells are inline-editable (qty / free / price / discount / VAT / unit),
   // with a per-line discount %⇄amount toggle and a full-width notes sub-row.
@@ -2925,6 +3009,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         headers={authH}
                         stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true}
                       />
+                      {renderSalesOptionPicker(l)}
                       {(l.brandName || l.appliedOfferName) && (
                         <div className="flex flex-wrap gap-x-2 px-1 leading-tight">
                           {l.brandName ? <span className="text-[10px] text-muted-foreground truncate">({l.brandName})</span> : null}
@@ -3146,6 +3231,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       {user ? (
                         <div className="min-w-0">
                           <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
+                          {renderSalesOptionPicker(l)}
                         </div>
                       ) : (
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
@@ -3251,7 +3337,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         </span>
                       </div>
                     )}
-                    {isInvoice && l.itemId && (
+                    {isInvoice && l.itemId && !(() => {
+                      const item = inventoryItems.find((candidate: any) => String(candidate.id) === l.itemId);
+                      return Array.isArray(item?.variantAttributes?._salesOptions) && item.variantAttributes._salesOptions.length > 0;
+                    })() && (
                       <ItemBrandPicker
                         itemId={l.itemId}
                         value={l.brandId}

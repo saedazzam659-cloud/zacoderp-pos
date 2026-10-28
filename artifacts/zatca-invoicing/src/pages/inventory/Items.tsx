@@ -83,7 +83,7 @@ function CollapsibleSection({
 
 const EMPTY = {
   code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock", itemNature: "merchandise",
-  groupId: "", subgroupId: "", posGroupId: "", posSubgroupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
+  groupId: "", subgroupId: "", posGroupId: "", posSubgroupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15", salePriceOptions: [],
   reorderLevel: "0", maxLevel: "", costMethod: "weighted_avg", description: "", status: "active",
   costAccountId: "", revenueAccountId: "", imageUrl: "",
   // PRO Extension #3 — per-item default discount auto-applied on sales lines.
@@ -1551,6 +1551,7 @@ export default function Items() {
       posSubgroupId: item.posSubgroupId != null ? String(item.posSubgroupId) : "",
       unitId:  item.unitId  != null ? String(item.unitId)  : "",
       costPrice: item.costPrice ?? "0", salePrice: item.salePrice ?? "0",
+      salePriceOptions: Array.isArray(item.variantAttributes?._salesOptions) ? item.variantAttributes._salesOptions : [],
       vatRate: item.vatRate ?? "15", reorderLevel: item.reorderLevel ?? "0",
       maxLevel: item.maxLevel ?? "",
       costAccountId:    item.costAccountId    ? String(item.costAccountId)    : "",
@@ -1572,6 +1573,15 @@ export default function Items() {
   }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const options = Array.isArray(form.salePriceOptions) ? form.salePriceOptions : [];
+    if (options.some((option: any) => !String(option.nameAr ?? "").trim()
+      || String(option.salePrice ?? "").trim() === ""
+      || !Number.isFinite(Number(option.salePrice))
+      || Number(option.salePrice) < 0)) {
+      setActiveItemTab("pricing");
+      toast({ title: isRtl ? "أكمل اسم وسعر كل خيار أو احذفه" : "Complete each option name and price, or remove it", variant: "destructive" });
+      return;
+    }
     if (!Number.isSafeInteger(Number(form.unitId)) || Number(form.unitId) <= 0) {
       setActiveItemTab("basic");
       toast({ title: t("inventoryMaster.units.baseRequired"), variant: "destructive" });
@@ -1595,7 +1605,7 @@ export default function Items() {
         return;
       }
     }
-    const { retailEnabled, retailCategory, retailColor, retailSize, costAccountId, revenueAccountId, ...itemFields } = form;
+    const { retailEnabled, retailCategory, retailColor, retailSize, costAccountId, revenueAccountId, salePriceOptions, ...itemFields } = form;
     const retailTags = tagsToArray(form.tags);
     const retailAttributes = { ...(form.variantAttributes && typeof form.variantAttributes === "object" ? form.variantAttributes : {}) };
     if (canRetailVariants) {
@@ -1612,6 +1622,16 @@ export default function Items() {
         if (legacyIndex >= 0) retailTags.splice(legacyIndex, 1);
       }
     }
+    const normalizedSaleOptions = (Array.isArray(salePriceOptions) ? salePriceOptions : [])
+      .map((option: any) => ({
+        id: String(option.id || crypto.randomUUID()),
+        nameAr: String(option.nameAr || "").trim(),
+        nameEn: String(option.nameEn || "").trim(),
+        salePrice: String(option.salePrice ?? ""),
+      }))
+      .filter((option: any) => option.nameAr);
+    if (normalizedSaleOptions.length) retailAttributes._salesOptions = normalizedSaleOptions;
+    else delete retailAttributes._salesOptions;
     const payload = {
       ...itemFields,
       groupId:          form.groupId          ? Number(form.groupId)          : null,
@@ -1623,10 +1643,8 @@ export default function Items() {
         costAccountId:    costAccountId    ? Number(costAccountId)    : null,
         revenueAccountId: revenueAccountId ? Number(revenueAccountId) : null,
       } : {}),
-      ...(canRetailVariants ? {
-        tags: retailTags.join(", "),
-        variantAttributes: Object.keys(retailAttributes).length ? retailAttributes : null,
-      } : {}),
+      tags: retailTags.join(", "),
+      variantAttributes: Object.keys(retailAttributes).length ? retailAttributes : null,
     };
     if (editId) updateMut.mutate({ id: editId, data: payload });
     else        createMut.mutate({ data: payload, brandId: createBrandId });
@@ -2020,6 +2038,36 @@ export default function Items() {
                     />
                   </Field>
                 </FormGrid>
+                <div className="mt-5 space-y-3 rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold">{isRtl ? "خيارات سعر البيع" : "Sales price options"}</p>
+                      <p className="text-xs text-muted-foreground">{isRtl ? "اختر الخيار في الفاتورة لتغيير السعر دون تغيير الصنف أو مخزونه." : "Choose an option on the invoice to change the price without changing the item or its stock."}</p>
+                    </div>
+                    <Button type="button" size="sm" variant="outline" onClick={() => setForm((p: any) => ({
+                      ...p,
+                      salePriceOptions: [...(Array.isArray(p.salePriceOptions) ? p.salePriceOptions : []), {
+                        id: crypto.randomUUID(), nameAr: "", nameEn: "", salePrice: p.salePrice || "0",
+                      }],
+                    }))}>
+                      <Plus className="me-1 h-3.5 w-3.5" />{isRtl ? "إضافة خيار" : "Add option"}
+                    </Button>
+                  </div>
+                  {(Array.isArray(form.salePriceOptions) ? form.salePriceOptions : []).map((option: any, index: number) => (
+                    <div key={option.id || index} className="grid grid-cols-1 gap-2 rounded-md bg-muted/30 p-2 sm:grid-cols-[1fr_1fr_140px_auto]">
+                      <Input value={option.nameAr ?? ""} placeholder={isRtl ? "اسم الخيار" : "Option name"} aria-label={isRtl ? "اسم الخيار بالعربية" : "Arabic option name"}
+                        onChange={e => setForm((p: any) => ({ ...p, salePriceOptions: p.salePriceOptions.map((o: any, i: number) => i === index ? { ...o, nameAr: e.target.value } : o) }))} />
+                      <Input value={option.nameEn ?? ""} placeholder={isRtl ? "الاسم بالإنجليزية (اختياري)" : "English name (optional)"} aria-label={isRtl ? "اسم الخيار بالإنجليزية" : "English option name"}
+                        onChange={e => setForm((p: any) => ({ ...p, salePriceOptions: p.salePriceOptions.map((o: any, i: number) => i === index ? { ...o, nameEn: e.target.value } : o) }))} />
+                      <Input type="number" min="0" step="any" dir="ltr" value={option.salePrice ?? ""} aria-label={isRtl ? "سعر الخيار" : "Option price"}
+                        onChange={e => setForm((p: any) => ({ ...p, salePriceOptions: p.salePriceOptions.map((o: any, i: number) => i === index ? { ...o, salePrice: e.target.value } : o) }))} />
+                      <Button type="button" size="icon" variant="ghost" className="text-destructive" aria-label={isRtl ? "حذف الخيار" : "Remove option"}
+                        onClick={() => setForm((p: any) => ({ ...p, salePriceOptions: p.salePriceOptions.filter((_: any, i: number) => i !== index) }))}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("pages.items.controlData")}</p>

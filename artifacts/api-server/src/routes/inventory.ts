@@ -1864,13 +1864,10 @@ function snapshotItem(row: any): Record<string, unknown> {
   return snap;
 }
 
-// PRO Extension #20 — Validate the variantAttributes payload. We accept a
-// plain JSON object whose values are primitives (string/number/boolean) or
-// null. Reject arrays, nested objects, functions, and oversized payloads
-// (50 keys × 200 chars max) so the column can't be used as an arbitrary
-// document store. Returns either { ok: true, value } or { ok: false, error }.
+// PRO Extension #20 — Validate variant attributes and the reserved
+// per-item sales-price options payload.
 function validateVariantAttributes(input: unknown):
-  { ok: true; value: Record<string, string | number | boolean | null> | null }
+  { ok: true; value: Record<string, unknown> | null }
   | { ok: false; error: string }
 {
   if (input === undefined || input === null) return { ok: true, value: null };
@@ -1881,10 +1878,43 @@ function validateVariantAttributes(input: unknown):
   if (entries.length > 50) {
     return { ok: false, error: "عدد السمات أكثر من المسموح (الحد 50 سمة)" };
   }
-  const out: Record<string, string | number | boolean | null> = {};
+  const out: Record<string, unknown> = {};
   for (const [k, v] of entries) {
     if (typeof k !== "string" || k.length === 0 || k.length > 60) {
       return { ok: false, error: `اسم السمة "${k}" غير صالح` };
+    }
+    if (k === "_salesOptions") {
+      if (!Array.isArray(v) || v.length > 20) {
+        return { ok: false, error: "خيارات السعر يجب ألا تتجاوز 20 خياراً" };
+      }
+      const seenIds = new Set<string>();
+      const seenNames = new Set<string>();
+      const seenEnglishNames = new Set<string>();
+      const normalized = [];
+      for (const raw of v) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          return { ok: false, error: "بيانات أحد خيارات السعر غير صالحة" };
+        }
+        const option = raw as Record<string, unknown>;
+        const id = String(option.id ?? "").trim();
+        const nameAr = String(option.nameAr ?? "").trim();
+        const nameEn = String(option.nameEn ?? "").trim();
+        const price = Number(option.salePrice);
+        const nameKey = nameAr.toLocaleLowerCase();
+        const nameEnKey = nameEn.toLocaleLowerCase();
+        if (!id || id.length > 80 || seenIds.has(id) || !nameAr || nameAr.length > 100
+          || seenNames.has(nameKey) || nameEn.length > 100
+          || (nameEnKey && seenEnglishNames.has(nameEnKey))
+          || String(option.salePrice ?? "").trim() === "" || !Number.isFinite(price) || price < 0) {
+          return { ok: false, error: "تحقق من اسم وسعر كل خيار؛ السعر يجب أن يكون صفراً أو أكبر" };
+        }
+        seenIds.add(id);
+        seenNames.add(nameKey);
+        if (nameEnKey) seenEnglishNames.add(nameEnKey);
+        normalized.push({ id, nameAr, nameEn: nameEn || null, salePrice: String(price) });
+      }
+      out[k] = normalized;
+      continue;
     }
     if (v === null) { out[k] = null; continue; }
     if (typeof v === "string") {
