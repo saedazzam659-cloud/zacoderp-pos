@@ -1,5 +1,5 @@
 import { db, itemsTable, itemUnitPricesTable, unitsTable } from "@workspace/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 
 /**
  * Unit conversion deliberately does not use JavaScript Number.  PostgreSQL
@@ -251,10 +251,13 @@ export const toStorageDecimal = decimalForStorage;
 
 export interface UnitGraphRow {
   id?: number;
+  itemId?: number;
   unitId: number;
   referenceUnitId: number | null;
   relationFactor: string;
   conversionFactor?: string | null;
+  decimalPlaces?: number | null;
+  roundingMode?: string | null;
   isBase?: boolean;
   isActive?: boolean;
   legacyConversionConflict?: boolean;
@@ -553,6 +556,14 @@ export function resolveUnitGraph(input: {
   };
 }
 
+export interface PreloadedUnitConversionData {
+  itemById: Map<number, any>;
+  rowsByItemId: Map<number, UnitGraphRow[]>;
+  unitById: Map<number, any>;
+  unitByCode: Map<string, any>;
+  ownedUnitIds: Set<number>;
+}
+
 export interface ResolveItemUnitConversionArgs {
   companyId: number;
   itemId: number;
@@ -565,6 +576,7 @@ export interface ResolveItemUnitConversionArgs {
    */
   historicalFactor?: string;
   executor?: any;
+  preloaded?: PreloadedUnitConversionData;
 }
 
 export interface ResolvedItemUnitConversion {
@@ -587,17 +599,21 @@ export interface ResolvedItemUnitConversion {
  */
 export async function resolveItemUnitConversion(args: ResolveItemUnitConversionArgs): Promise<ResolvedItemUnitConversion> {
   const executor = args.executor ?? db;
-  const [item] = await executor.select().from(itemsTable).where(
-    and(eq(itemsTable.id, args.itemId), eq(itemsTable.companyId, args.companyId)),
-  );
+  const item = args.preloaded
+    ? args.preloaded.itemById.get(args.itemId)
+    : (await executor.select().from(itemsTable).where(
+        and(eq(itemsTable.id, args.itemId), eq(itemsTable.companyId, args.companyId)),
+      ))[0];
   if (!item) throw new UnitConversionError("ITEM_NOT_FOUND", "Item does not belong to this company");
 
   let requestedUnitId = args.unitId;
   let requestedCode: string | null = null;
   if (args.unitCode !== undefined) {
-    const [catalogUnit] = await executor.select().from(unitsTable).where(
-      and(eq(unitsTable.companyId, args.companyId), eq(unitsTable.code, args.unitCode)),
-    );
+    const catalogUnit = args.preloaded
+      ? args.preloaded.unitByCode.get(args.unitCode)
+      : (await executor.select().from(unitsTable).where(
+          and(eq(unitsTable.companyId, args.companyId), eq(unitsTable.code, args.unitCode)),
+        ))[0];
     if (!catalogUnit) throw new UnitConversionError("UNIT_NOT_FOUND", "Unit does not belong to this company");
     requestedCode = catalogUnit.code;
     if (requestedUnitId !== undefined && requestedUnitId !== catalogUnit.id) {
@@ -610,9 +626,11 @@ export async function resolveItemUnitConversion(args: ResolveItemUnitConversionA
   // snapshots are the sole exception: their old relation/unit may have been
   // removed after posting, and the persisted factor remains authoritative.
   if (args.unitId !== undefined && args.historicalFactor === undefined && args.unitCode === undefined) {
-    const [catalogUnit] = await executor.select().from(unitsTable).where(
-      and(eq(unitsTable.companyId, args.companyId), eq(unitsTable.id, args.unitId)),
-    );
+    const catalogUnit = args.preloaded
+      ? args.preloaded.unitById.get(args.unitId)
+      : (await executor.select().from(unitsTable).where(
+          and(eq(unitsTable.companyId, args.companyId), eq(unitsTable.id, args.unitId)),
+        ))[0];
     if (!catalogUnit) throw new UnitConversionError("UNIT_NOT_FOUND", "Unit does not belong to this company");
   }
 
@@ -636,9 +654,11 @@ export async function resolveItemUnitConversion(args: ResolveItemUnitConversionA
     };
   }
 
-  const rows = await executor.select().from(itemUnitPricesTable).where(
-    and(eq(itemUnitPricesTable.itemId, args.itemId), eq(itemUnitPricesTable.companyId, args.companyId)),
-  );
+  const rows: UnitGraphRow[] = args.preloaded
+    ? args.preloaded.rowsByItemId.get(args.itemId) ?? []
+    : await executor.select().from(itemUnitPricesTable).where(
+        and(eq(itemUnitPricesTable.itemId, args.itemId), eq(itemUnitPricesTable.companyId, args.companyId)),
+      );
   const graphUnitIds = new Set<number>();
   if (item.unitId != null) graphUnitIds.add(item.unitId);
   // The requested unit was already checked against this tenant above. Include
@@ -651,10 +671,12 @@ export async function resolveItemUnitConversion(args: ResolveItemUnitConversionA
     if (row.referenceUnitId !== null) graphUnitIds.add(row.referenceUnitId);
   }
   if (graphUnitIds.size > 0) {
-    const ownedGraphUnits = await executor.select({ id: unitsTable.id }).from(unitsTable).where(and(
-      eq(unitsTable.companyId, args.companyId),
-      inArray(unitsTable.id, [...graphUnitIds]),
-    ));
+    const ownedGraphUnits = args.preloaded
+      ? [...graphUnitIds].filter((id) => args.preloaded!.ownedUnitIds.has(id)).map((id) => ({ id }))
+      : await executor.select({ id: unitsTable.id }).from(unitsTable).where(and(
+          eq(unitsTable.companyId, args.companyId),
+          inArray(unitsTable.id, [...graphUnitIds]),
+        ));
     assertUnitGraphTenantOwnership(rows, ownedGraphUnits.map((row: { id: number }) => row.id), requestedUnitId);
   } else {
     assertUnitGraphTenantOwnership(rows, [], requestedUnitId);
@@ -738,6 +760,85 @@ export async function resolveItemUnitConversion(args: ResolveItemUnitConversionA
     decimalPlaces: row?.decimalPlaces ?? undefined,
     roundingMode: row?.roundingMode ?? undefined,
   };
+}
+
+/**
+ * Resolve invoice lines with shared reads. Item rows, item-unit graphs, and
+ * tenant-owned units are loaded in bounded queries instead of repeating the
+ * same table reads once per line.
+ */
+export async function resolveItemUnitConversions(
+  argsList: ResolveItemUnitConversionArgs[],
+  executor: any = argsList[0]?.executor ?? db,
+): Promise<ResolvedItemUnitConversion[]> {
+  if (argsList.length === 0) return [];
+  const companyId = argsList[0].companyId;
+  if (argsList.some((args) => args.companyId !== companyId)) {
+    throw new Error("A unit-conversion batch must belong to one company");
+  }
+
+  const itemIds = [...new Set(argsList.map((args) => args.itemId))];
+  const itemRows = await executor.select().from(itemsTable).where(and(
+    eq(itemsTable.companyId, companyId),
+    inArray(itemsTable.id, itemIds),
+  ));
+  const itemById = new Map<number, any>(itemRows.map((item: any) => [Number(item.id), item]));
+
+  const liveItemIds = [...new Set(argsList
+    .filter((args) => args.historicalFactor === undefined)
+    .map((args) => args.itemId))];
+  const graphRows: UnitGraphRow[] = liveItemIds.length
+    ? await executor.select().from(itemUnitPricesTable).where(and(
+        eq(itemUnitPricesTable.companyId, companyId),
+        inArray(itemUnitPricesTable.itemId, liveItemIds),
+      ))
+    : [];
+  const rowsByItemId = new Map<number, UnitGraphRow[]>();
+  for (const row of graphRows) {
+    const rows = rowsByItemId.get(Number(row.itemId)) ?? [];
+    rows.push(row);
+    rowsByItemId.set(Number(row.itemId), rows);
+  }
+
+  const relevantUnitIds = new Set<number>();
+  for (const itemId of liveItemIds) {
+    const item = itemById.get(itemId);
+    if (item?.unitId != null) relevantUnitIds.add(Number(item.unitId));
+  }
+  for (const args of argsList) {
+    if (args.unitId != null && args.historicalFactor === undefined) {
+      relevantUnitIds.add(Number(args.unitId));
+    }
+  }
+  for (const row of graphRows) {
+    relevantUnitIds.add(Number(row.unitId));
+    if (row.referenceUnitId != null) relevantUnitIds.add(Number(row.referenceUnitId));
+  }
+  const unitCodes = [...new Set(argsList
+    .map((args) => args.unitCode)
+    .filter((code): code is string => code !== undefined))];
+  const unitPredicates = [];
+  if (relevantUnitIds.size) unitPredicates.push(inArray(unitsTable.id, [...relevantUnitIds]));
+  if (unitCodes.length) unitPredicates.push(inArray(unitsTable.code, unitCodes));
+  const unitRows = unitPredicates.length
+    ? await executor.select().from(unitsTable).where(and(
+        eq(unitsTable.companyId, companyId),
+        or(...unitPredicates)!,
+      ))
+    : [];
+
+  const preloaded: PreloadedUnitConversionData = {
+    itemById,
+    rowsByItemId,
+    unitById: new Map<number, any>(unitRows.map((unit: any) => [Number(unit.id), unit])),
+    unitByCode: new Map<string, any>(unitRows.map((unit: any) => [String(unit.code), unit])),
+    ownedUnitIds: new Set<number>(unitRows.map((unit: any) => Number(unit.id))),
+  };
+  return Promise.all(argsList.map((args) => resolveItemUnitConversion({
+    ...args,
+    executor,
+    preloaded,
+  })));
 }
 
 export function isPositiveExactDecimal(value: unknown): value is string {

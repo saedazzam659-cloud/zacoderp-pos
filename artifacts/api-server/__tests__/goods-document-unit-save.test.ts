@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { resolveItemUnitConversion, UnitConversionError } from "../src/lib/unitConversion.js";
+import {
+  resolveItemUnitConversion,
+  resolveItemUnitConversions,
+  UnitConversionError,
+} from "../src/lib/unitConversion.js";
+import { itemsTable, itemUnitPricesTable, unitsTable } from "@workspace/db";
 import { goodsDocumentError } from "../../zatca-invoicing/src/lib/goodsDocumentError.js";
 
 function executorFor(item: any, rows: any[], owned: number[] = []) {
@@ -33,6 +38,47 @@ test("missing configuration and foreign mapping still fail without invented fact
       executor: executorFor({ id: 42, unitId: null }, [...rows], [...owned]),
     }), (error: unknown) => error instanceof UnitConversionError && error.code === code);
   }
+});
+
+test("purchase-line unit resolution batches shared database reads", async () => {
+  let queryCount = 0;
+  const executor = {
+    select: () => ({
+      from: (table: unknown) => ({
+        where: async () => {
+          queryCount += 1;
+          if (table === itemsTable) {
+            return [
+              { id: 42, companyId: 1, unitId: 7 },
+              { id: 43, companyId: 1, unitId: 8 },
+            ];
+          }
+          if (table === itemUnitPricesTable) {
+            return [
+              { itemId: 42, unitId: 7, referenceUnitId: null, isBase: true, isActive: true, relationFactor: "1" },
+              { itemId: 43, unitId: 8, referenceUnitId: null, isBase: true, isActive: true, relationFactor: "1" },
+            ];
+          }
+          if (table === unitsTable) {
+            return [
+              { id: 7, companyId: 1, code: "EA" },
+              { id: 8, companyId: 1, code: "BOX" },
+            ];
+          }
+          throw new Error("Unexpected table in unit-conversion batch");
+        },
+      }),
+    }),
+  };
+
+  const resolved = await resolveItemUnitConversions([
+    { companyId: 1, itemId: 42, unitId: 7 },
+    { companyId: 1, itemId: 43, unitId: 8 },
+    { companyId: 1, itemId: 42, unitId: 7 },
+  ], executor);
+
+  assert.deepEqual(resolved.map((row) => row.factor), ["1", "1", "1"]);
+  assert.equal(queryCount, 3);
 });
 
 test("Arabic unit errors identify the item and transport errors never expose SQL", () => {

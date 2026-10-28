@@ -66,7 +66,7 @@ import {
 } from "../lib/industrialPurchaseCosts.js";
 import {
   UnitConversionError,
-  resolveItemUnitConversion,
+  resolveItemUnitConversions,
   multiplyQuantity,
   divideQuantity,
   roundQuantity,
@@ -234,13 +234,15 @@ async function resolvePurchaseLineUnits(
     const key = String(row?.itemId ?? "");
     sourceByItem.set(key, [...(sourceByItem.get(key) ?? []), row]);
   }
-  return Promise.all(mappedLines.map(async (mapped, index) => {
+  const conversionArgs: any[] = [];
+  const conversionIndexes: number[] = [];
+  for (const [index, mapped] of mappedLines.entries()) {
     const input = inputLines?.[index] ?? {};
     const itemId = mapped.itemId == null ? null : Number(mapped.itemId);
     if (!itemId) {
       mapped.unitId = null;
       mapped.conversionFactor = "1";
-      return mapped;
+      continue;
     }
     const key = String(itemId);
     let old: any;
@@ -291,7 +293,7 @@ async function resolvePurchaseLineUnits(
       : Object.prototype.hasOwnProperty.call(input, "unitId")
         ? (input.unitId == null ? undefined : Number(input.unitId))
         : old?.unitId == null ? undefined : Number(old.unitId);
-    const resolved = await resolveItemUnitConversion({
+    conversionArgs.push({
       companyId,
       itemId,
       unitId: requestedUnitId,
@@ -301,12 +303,16 @@ async function resolvePurchaseLineUnits(
       historicalFactor: snapshot?.conversionFactor == null
         ? undefined
         : String(snapshot.conversionFactor),
-      executor,
     });
+    conversionIndexes.push(index);
+  }
+  const resolvedConversions = await resolveItemUnitConversions(conversionArgs, executor);
+  resolvedConversions.forEach((resolved, index) => {
+    const mapped = mappedLines[conversionIndexes[index]];
     mapped.unitId = resolved.unitId;
     mapped.conversionFactor = roundQuantity(String(resolved.factor), 18, "half_up");
-    return mapped;
-  }));
+  });
+  return mappedLines;
 }
 
 /**
