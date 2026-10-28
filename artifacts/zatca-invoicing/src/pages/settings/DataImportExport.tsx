@@ -425,6 +425,7 @@ export default function DataImportExport() {
   const [tab, setTab] = useState<string>(() => {
     try { return new URLSearchParams(window.location.search).get("tab") || "export"; } catch { return "export"; }
   });
+  const [historicalTab, setHistoricalTab] = useState("overview");
 
   const { data: entities = [], isLoading: entitiesLoading } = useQuery({
     queryKey: ["data-io-entities"],
@@ -459,15 +460,23 @@ export default function DataImportExport() {
         </TabsContent>
 
         <TabsContent value="historical" className="mt-4">
-          <Tabs defaultValue="documents" dir={isAr ? "rtl" : "ltr"}>
-            <TabsList className="grid w-full max-w-lg grid-cols-2">
-              <TabsTrigger value="documents">المستندات التاريخية</TabsTrigger>
-              <TabsTrigger value="journal">قيود اليومية</TabsTrigger>
+          <Tabs value={historicalTab} onValueChange={setHistoricalTab} dir={isAr ? "rtl" : "ltr"}>
+            <TabsList className="grid w-full max-w-3xl grid-cols-3">
+              <TabsTrigger value="overview" data-testid="tab-legacy-migration-plan">{isAr ? "خطة الترحيل" : "Migration plan"}</TabsTrigger>
+              <TabsTrigger value="documents" data-testid="tab-historical-documents">{isAr ? "المستندات التاريخية" : "Historical documents"}</TabsTrigger>
+              <TabsTrigger value="journal" data-testid="tab-historical-journals">{isAr ? "قيود اليومية" : "Journal entries"}</TabsTrigger>
             </TabsList>
+            <TabsContent value="overview" className="mt-4">
+              <LegacyMigrationOverview
+                isAr={isAr}
+                onOpenDocuments={() => setHistoricalTab("documents")}
+                onOpenJournal={() => setHistoricalTab("journal")}
+              />
+            </TabsContent>
             <TabsContent value="documents" className="mt-4">
               {cid
                 ? <HistoricalDocumentsMigration cid={cid} token={token} toast={toast} />
-                : <Card className="p-4 text-sm text-muted-foreground">اختر شركة قبل استيراد المستندات التاريخية.</Card>}
+                : <Card className="p-4 text-sm text-muted-foreground">{isAr ? "اختر شركة قبل استيراد المستندات التاريخية." : "Select a company before importing historical documents."}</Card>}
             </TabsContent>
             <TabsContent value="journal" className="mt-4">
               <HistoricalMigration entities={entities} cid={cid} token={token} toast={toast} />
@@ -485,6 +494,127 @@ export default function DataImportExport() {
           />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function LegacyMigrationOverview({ isAr, onOpenDocuments, onOpenJournal }: {
+  isAr: boolean;
+  onOpenDocuments: () => void;
+  onOpenJournal: () => void;
+}) {
+  const content = isAr ? {
+    title: "ترحيل تاريخ الشركة من RAGM Cloud",
+    intro: "اجمع السجل التاريخي في الشركة الجديدة على مراحل، وراجع البيانات قبل حفظها. لا تدخل بيانات الدخول للنظام القديم هنا؛ ارفع ملفات وتقارير الشركة التي لديك صلاحية استخدامها.",
+    source: "مصدر البيانات",
+    sourceText: "لدى RAGM Cloud قارئ محلي لفواتير المبيعات بصيغة PDF القابل للبحث، كما يدعم بعض ملفات CSV المترابطة. الملفات المصورة والقوالب المختلفة قد لا تُقرأ، لذلك لا نعتمد أي نتيجة قبل مراجعتها.",
+    already: "موجودة بالفعل",
+    importedMasters: "البيانات التأسيسية",
+    importedMastersText: "العملاء والموردون والأصناف سبق رفعهم. سيطابق مسار المستندات البيانات معهم، ولن يعيد إنشاءهم.",
+    ready: "مسار متاح",
+    docs: "الفواتير والمرتجعات",
+    docsText: "ارفع ملفات الفواتير أو ملفات CSV المدعومة، ثم راجع المطابقة والأرقام والتواريخ قبل الترحيل.",
+    journals: "القيود اليدوية",
+    journalsText: "ارفع ملف القيود، وسيُفحص توازنها وتواريخها والفترات المالية قبل الحفظ.",
+    missing: "يتطلب مسارًا مخصصًا",
+    vouchers: "سندات القبض والصرف",
+    vouchersText: "هذا المسار لا يستوردها بعد. لا تعتمد اكتمال النقل قبل إضافة معالجة تربط السندات بحساباتها وفواتيرها دون تكرار الأثر.",
+    notes: "الإشعارات المدينة والدائنة",
+    notesText: "هذا المسار لا يستوردها بعد. يلزم مسار يحافظ على نوع الإشعار ومرجعه وتفاصيله وأثره المحاسبي.",
+    warningTitle: "مهم قبل إيقاف النظام القديم",
+    warning: "هذه الشاشة تجمع مسارات الترحيل الموجودة حاليًا ولا تعني أن كل أنواع الحركات أصبحت مدعومة. احتفظ بإمكانية الرجوع للمصدر حتى تُستورد الأنواع الناقصة وتُطابق كشوف العملاء والموردين وميزان المراجعة.",
+    openDocs: "فتح ترحيل المستندات",
+    openJournals: "فتح ترحيل القيود",
+  } : {
+    title: "Migrate company history from RAGM Cloud",
+    intro: "Bring the historical record into the new company in stages and review it before saving. Do not enter legacy login credentials here; upload company files and reports you are authorized to use.",
+    source: "Source data",
+    sourceText: "RAGM Cloud sales invoices have a local reader for searchable PDFs, and some linked CSV exports are supported. Scanned PDFs and different layouts may not parse, so review every result before importing.",
+    already: "Already available",
+    importedMasters: "Master data",
+    importedMastersText: "Customers, suppliers, and items were already imported. The document flow matches against them and will not recreate them.",
+    ready: "Available flow",
+    docs: "Invoices and returns",
+    docsText: "Upload supported invoice files or CSV exports, then review matches, numbers, and dates before importing.",
+    journals: "Manual journal entries",
+    journalsText: "Upload journal entries; balance, dates, and fiscal periods are checked before saving.",
+    missing: "Dedicated flow required",
+    vouchers: "Receipt and payment vouchers",
+    vouchersText: "This flow does not import vouchers yet. Do not consider the migration complete until vouchers are linked to accounts and invoices without duplicating their accounting effect.",
+    notes: "Debit and credit notes",
+    notesText: "This flow does not import notes yet. A dedicated path must preserve note type, source reference, details, and accounting effect.",
+    warningTitle: "Before closing the old system",
+    warning: "This page brings together the migration flows currently available; it does not mean every transaction type is supported. Keep access to the source until the missing types are imported and customer/supplier statements and the trial balance are reconciled.",
+    openDocs: "Open document migration",
+    openJournals: "Open journal migration",
+  };
+
+  const steps: Array<{
+    status: "done" | "ready" | "missing";
+    title: string;
+    description: string;
+    icon: typeof Database;
+    action?: () => void;
+    actionLabel?: string;
+  }> = [
+    { status: "done", title: content.importedMasters, description: content.importedMastersText, icon: CheckCircle2 },
+    { status: "ready", title: content.docs, description: content.docsText, icon: FileSpreadsheet, action: onOpenDocuments, actionLabel: content.openDocs },
+    { status: "ready", title: content.journals, description: content.journalsText, icon: Database, action: onOpenJournal, actionLabel: content.openJournals },
+    { status: "missing", title: content.vouchers, description: content.vouchersText, icon: AlertTriangle },
+    { status: "missing", title: content.notes, description: content.notesText, icon: AlertTriangle },
+  ];
+
+  return (
+    <div className="space-y-4" data-testid="legacy-migration-overview">
+      <Card className="overflow-hidden border-sky-200 bg-gradient-to-br from-sky-50 via-background to-indigo-50">
+        <div className="p-5 md:p-6">
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-sky-100 p-3 text-sky-800"><Database className="h-6 w-6" /></div>
+            <div className="space-y-1">
+              <h2 className="text-xl font-bold">{content.title}</h2>
+              <p className="max-w-4xl text-sm leading-6 text-muted-foreground">{content.intro}</p>
+            </div>
+          </div>
+          <div className="mt-4 rounded-lg border border-sky-200 bg-background/80 p-3">
+            <div className="flex items-center gap-2 text-sm font-semibold"><FileDown className="h-4 w-4 text-sky-700" />{content.source}</div>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">{content.sourceText}</p>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        {steps.map(({ status, title, description, icon: Icon, action, actionLabel }, index) => (
+          <Card key={title} className={`p-4 ${status === "missing" ? "border-amber-200 bg-amber-50/40" : ""}`} data-testid={`migration-scope-${index}`}>
+            <div className="flex items-start gap-3">
+              <div className={`rounded-lg p-2 ${status === "done" ? "bg-emerald-100 text-emerald-700" : status === "ready" ? "bg-blue-100 text-blue-700" : "bg-amber-100 text-amber-800"}`}>
+                <Icon className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold">{title}</h3>
+                  <Badge variant={status === "missing" ? "outline" : "secondary"} className={status === "missing" ? "border-amber-300 text-amber-800" : ""}>
+                    {status === "done" ? content.already : status === "ready" ? content.ready : content.missing}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">{description}</p>
+                {action && <Button size="sm" variant="outline" className="mt-3 gap-2" onClick={action} data-testid={`button-${index === 1 ? "open-doc-migration" : "open-journal-migration"}`}>
+                  {actionLabel}<ArrowLeft className="h-4 w-4" />
+                </Button>}
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="border-rose-200 bg-rose-50/70 p-4" role="note" data-testid="migration-completeness-warning">
+        <div className="flex items-start gap-2 text-rose-900">
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+          <div>
+            <h3 className="font-semibold">{content.warningTitle}</h3>
+            <p className="mt-1 text-sm leading-6">{content.warning}</p>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }
