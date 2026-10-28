@@ -5,6 +5,7 @@ import { eq, and, sql, or, isNull, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, getAllowedBranchIds, multiBranchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureCashBoxAccount } from "../lib/entityAccounts.js";
+import { canUserUseCashBox } from "../lib/cashBoxAccess.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -43,7 +44,10 @@ router.get("/", async (req, res) => {
   const rows = conds.length
     ? await db.select().from(cashBoxesTable).where(and(...conds))
     : await db.select().from(cashBoxesTable);
-  res.json(rows);
+  const visible = rows.filter(box => canUserUseCashBox(req.authUser, box));
+  res.json(visible.map(box => req.authUser?.role === "admin" || req.authUser?.role === "superadmin"
+    ? box
+    : { ...box, accessUserIds: null }));
 });
 
 /* GET /cash-boxes/balances?companyId=X — رصيد كل خزنة (مفلترة بالفرع للمستخدم المقيد) */
@@ -52,11 +56,12 @@ router.get("/balances", async (req, res) => {
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
   const branchCond = branchOrNullScope(req, cashBoxesTable.branchId);
-  const boxes = await db.select({ id: cashBoxesTable.id })
-    .from(cashBoxesTable)
-    .where(branchCond
-      ? and(eq(cashBoxesTable.companyId, cid), branchCond)
-      : eq(cashBoxesTable.companyId, cid));
+  const visibleBoxes = (await db.select({
+    id: cashBoxesTable.id,
+    accessUserIds: cashBoxesTable.accessUserIds,
+  }).from(cashBoxesTable)
+    .where(and(eq(cashBoxesTable.companyId, cid), branchCond ?? sql`true`)))
+    .filter(box => canUserUseCashBox(req.authUser, box));
 
   const [recv, paid, transfersIn, transfersOut] = await Promise.all([
     db.select({
@@ -93,7 +98,7 @@ router.get("/balances", async (req, res) => {
   const transfersInMap = Object.fromEntries(transfersIn.filter(r => r.cashBoxId != null).map(r => [r.cashBoxId!, parseFloat(r.total)]));
   const transfersOutMap = Object.fromEntries(transfersOut.filter(r => r.cashBoxId != null).map(r => [r.cashBoxId!, parseFloat(r.total)]));
 
-  res.json(boxes.map(b => ({
+  res.json(visibleBoxes.map(b => ({
     cashBoxId: b.id,
     balance: (recvMap[b.id] ?? 0) - (paidMap[b.id] ?? 0) + (transfersInMap[b.id] ?? 0) - (transfersOutMap[b.id] ?? 0),
   })));
@@ -109,7 +114,8 @@ router.get("/:id", async (req, res) => {
   const branchCond = branchOrNullScope(req, cashBoxesTable.branchId);
   if (branchCond) conds.push(branchCond);
   const [row] = await db.select().from(cashBoxesTable).where(and(...conds));
-  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (!row || !canUserUseCashBox(req.authUser, row)) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin") row.accessUserIds = null;
   res.json(row);
 });
 
@@ -137,6 +143,28 @@ async function validateCashExpenseManager(value: unknown, companyId: number, req
   return { ok: true as const, value: managerId };
 }
 
+async function validateCashBoxAccessUsers(value: unknown, companyId: number, req: any) {
+  if (req.authUser?.role !== "admin" && req.authUser?.role !== "superadmin") {
+    return { ok: false as const, status: 403, error: "تقييد استخدام الخزنة متاح للمدير فقط" };
+  }
+  if (value == null) return { ok: true as const, value: null };
+  if (!Array.isArray(value)) return { ok: false as const, status: 400, error: "قائمة مستخدمي الخزنة غير صالحة" };
+  const ids = [...new Set(value.map(Number))];
+  if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+    return { ok: false as const, status: 400, error: "قائمة مستخدمي الخزنة غير صالحة" };
+  }
+  if (ids.length === 0) return { ok: true as const, value: [] as number[] };
+  const activeUsers = await db.select({ id: usersTable.id }).from(usersTable).where(and(
+    eq(usersTable.companyId, companyId),
+    eq(usersTable.isActive, true),
+    inArray(usersTable.id, ids),
+  ));
+  if (activeUsers.length !== ids.length) {
+    return { ok: false as const, status: 400, error: "اختر مستخدمين نشطين من الشركة نفسها" };
+  }
+  return { ok: true as const, value: ids };
+}
+
 // Auto-generate next available code like CB-0001 (scoped to company).
 async function nextCashBoxCode(cid: number): Promise<string> {
   const rows = await db.select({ code: cashBoxesTable.code })
@@ -159,6 +187,12 @@ router.post("/", async (req, res) => {
     const manager = await validateCashExpenseManager(d.cashExpenseManagerUserId, cid, req);
     if (!manager.ok) { res.status(manager.status).json({ error: manager.error }); return; }
     cashExpenseManagerUserId = manager.value;
+  }
+  let accessUserIds: number[] | null | undefined;
+  if (Object.prototype.hasOwnProperty.call(d, "accessUserIds")) {
+    const access = await validateCashBoxAccessUsers(d.accessUserIds, cid, req);
+    if (!access.ok) { res.status(access.status).json({ error: access.error }); return; }
+    accessUserIds = access.value;
   }
 
   // Uniqueness checks scoped to the company
@@ -194,6 +228,7 @@ router.post("/", async (req, res) => {
     currencyId: toInt(d.currencyId),
     accountId,
     ...(cashExpenseManagerUserId !== undefined ? { cashExpenseManagerUserId } : {}),
+    ...(accessUserIds !== undefined ? { accessUserIds } : {}),
     minBalance: toDec(d.minBalance, "0")!,
     maxBalance: toDec(d.maxBalance, null),
     isActive:   d.isActive ?? true,
@@ -226,6 +261,15 @@ router.put("/:id", async (req, res) => {
     if (!manager.ok) { res.status(manager.status).json({ error: manager.error }); return; }
     cashExpenseManagerUserId = manager.value;
   }
+  let accessUserIds: number[] | null | undefined;
+  if (Object.prototype.hasOwnProperty.call(d, "accessUserIds")) {
+    if (req.authUser?.role !== "superadmin" && Number(req.authUser?.companyId) !== current.companyId) {
+      res.status(404).json({ error: "الخزنة غير موجودة" }); return;
+    }
+    const access = await validateCashBoxAccessUsers(d.accessUserIds, current.companyId, req);
+    if (!access.ok) { res.status(access.status).json({ error: access.error }); return; }
+    accessUserIds = access.value;
+  }
 
   const [row] = await db.update(cashBoxesTable).set({
     branchId:   toInt(d.branchId),
@@ -235,6 +279,7 @@ router.put("/:id", async (req, res) => {
     currencyId: toInt(d.currencyId),
     accountId:  toInt(d.accountId),
     ...(cashExpenseManagerUserId !== undefined ? { cashExpenseManagerUserId } : {}),
+    ...(accessUserIds !== undefined ? { accessUserIds } : {}),
     minBalance: toDec(d.minBalance, "0")!,
     maxBalance: toDec(d.maxBalance, null),
     isActive:   d.isActive ?? true,

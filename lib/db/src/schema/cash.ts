@@ -24,9 +24,12 @@ export const cashBoxesTable = pgTable("cash_boxes", {
   nameEn:       text("name_en"),
   currencyId:   integer("currency_id").references(() => currenciesTable.id),
   accountId:    integer("account_id").references(() => accountsTable.id),
-  // Optional user who manages cash-expense access for this existing cashbox.
-  // Null keeps every existing cashbox unchanged.
+  // Optional exclusive operator for this cashbox. Null preserves the legacy
+  // shared-access behavior; an assigned user and company admins can use it.
   cashExpenseManagerUserId: integer("cash_expense_manager_user_id"),
+  // Null keeps legacy shared access; a list restricts use to those company users.
+  // An empty list blocks all non-admin users.
+  accessUserIds: jsonb("access_user_ids").$type<number[] | null>(),
   minBalance:   numeric("min_balance", { precision: 15, scale: 2 }).default("0"),
   maxBalance:   numeric("max_balance", { precision: 15, scale: 2 }),
   isActive:     boolean("is_active").notNull().default(true),

@@ -10,6 +10,7 @@ import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { ownDocumentFilter } from "../lib/documentVisibility.js";
+import { userCanUseCashBox } from "../lib/cashBoxAccess.js";
 import {
   supplierGroupsTable, lettersOfCreditTable, lcExpensesTable,
   companiesTable,
@@ -1776,6 +1777,7 @@ router.post("/purchase-invoices", async (req, res) => {
     if (!supplierId && (pType !== "cash" && pType !== "bank" || !!lcId)) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ الفاتورة", field: "supplierId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
+    if (pType === "cash" && !(await userCanUseCashBox(req.authUser, cid, Number(cashBoxId)))) { res.status(403).json({ error: "ليس لديك صلاحية استخدام هذه الخزنة" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
 
     // Central sequence engine is AUTHORITATIVE: when an active sequence is
@@ -1951,6 +1953,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     if (!supplierId && (pType !== "cash" && pType !== "bank" || !!lcId)) { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ الفاتورة", field: "supplierId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
+    if (pType === "cash" && !(await userCanUseCashBox(req.authUser, cid, Number(cashBoxId)))) { res.status(403).json({ error: "ليس لديك صلاحية استخدام هذه الخزنة" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
     await assertPurchaseWriteReferences(cid, {
       supplierId, branchId, cashBoxId, bankAccountId, lcId, taxId,
@@ -4150,6 +4153,7 @@ router.post("/purchase-returns", async (req, res) => {
     if (!resolvedSupplierId && pType !== "cash" && pType !== "bank") { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ المرتجع", field: "supplierId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع",  field: "branchId"   }); return; }
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
+    if (pType === "cash" && !(await userCanUseCashBox(req.authUser, cid, Number(cashBoxId)))) { res.status(403).json({ error: "ليس لديك صلاحية استخدام هذه الخزنة" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
     await assertIndustrialReturnSourceLinks(db, cid, invoiceId, lines);
     // Reserve the number in the same transaction as the draft and its lines:
@@ -4345,6 +4349,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
     if (!resolvedSupplierId && pType !== "cash" && pType !== "bank") { res.status(400).json({ error: "يجب اختيار المورد قبل حفظ المرتجع", field: "supplierId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ المرتجع",  field: "branchId"   }); return; }
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
+    if (pType === "cash" && !(await userCanUseCashBox(req.authUser, cid, Number(cashBoxId)))) { res.status(403).json({ error: "ليس لديك صلاحية استخدام هذه الخزنة" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
     await assertPurchaseWriteReferences(cid, {
       supplierId: resolvedSupplierId, branchId, cashBoxId, bankAccountId, taxId, invoiceId, lines,

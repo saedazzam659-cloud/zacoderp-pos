@@ -12,6 +12,7 @@ import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { ownDocumentFilter } from "../lib/documentVisibility.js";
+import { userCanUseCashBox } from "../lib/cashBoxAccess.js";
 import {
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable, salesReturnLinesTable,
@@ -3046,6 +3047,7 @@ router.post("/sales-invoices", async (req, res) => {
     if (!posSessionId && !customerId && pType !== "cash" && pType !== "bank") { res.status(400).json({ error: "يجب اختيار العميل قبل حفظ الفاتورة", field: "customerId" }); return; }
     if (!branchId)   { res.status(400).json({ error: "يجب اختيار الفرع قبل حفظ الفاتورة",  field: "branchId"   }); return; }
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
+    if (pType === "cash" && !(await userCanUseCashBox(req.authUser, cid, Number(cashBoxId)))) { res.status(403).json({ error: "ليس لديك صلاحية استخدام هذه الخزنة" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
     // ── Overdue-payment guard ──
     // When the customer has `paymentTermsDays > 0`, refuse a new CREDIT invoice
@@ -3554,6 +3556,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     }
     timing?.mark("validation");
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
+    if (pType === "cash" && !(await userCanUseCashBox(req.authUser, cid, Number(cashBoxId)))) { res.status(403).json({ error: "ليس لديك صلاحية استخدام هذه الخزنة" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
     // حارس ما بعد السداد: لا يجوز أن يصبح صافي الفاتورة أقل من المسدَّد عليها.
     try {
@@ -5410,6 +5413,7 @@ router.post("/sales-returns", async (req, res) => {
       }
     }
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
+    if (pType === "cash" && !(await userCanUseCashBox(req.authUser, cid, Number(cashBoxId)))) { res.status(403).json({ error: "ليس لديك صلاحية استخدام هذه الخزنة" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند ردّ المبلغ بنكياً" }); return; }
     const grossR    = (lines || []).reduce((s: number, l: any) => s + Number(l.lineTotal || 0), 0);
     const discR     = Math.max(0, Math.min(grossR, Number(discountAmount) || 0));
@@ -5669,6 +5673,7 @@ router.put("/sales-returns/:id", async (req, res) => {
       }
     }
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
+    if (pType === "cash" && !(await userCanUseCashBox(req.authUser, cid, Number(cashBoxId)))) { res.status(403).json({ error: "ليس لديك صلاحية استخدام هذه الخزنة" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند ردّ المبلغ بنكياً" }); return; }
     const grossR2 = (lines || []).reduce((s: number, l: any) => s + Number(l.lineTotal || 0), 0);
     const discR2  = Math.max(0, Math.min(grossR2, Number(discountAmount) || 0));

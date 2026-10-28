@@ -42,6 +42,8 @@ export default function CashBoxes() {
   const [delRow,  setDelRow]  = useState<any>(null);
   const [tab,     setTab]     = useState<"basic" | "limits">("basic");
   const [errors,  setErrors]  = useState<Record<string, string>>({});
+  const [accessRestricted, setAccessRestricted] = useState(false);
+  const [accessUserIds, setAccessUserIds] = useState<string[]>([]);
 
   const { data: boxes = [], isLoading } = useQuery({
     queryKey: ["cash-boxes", cid, branchKey],
@@ -99,11 +101,15 @@ export default function CashBoxes() {
   function openAdd()  {
     setEditing(null);
     setForm({ ...EMPTY, currencyId: defaultCurrencyId ? String(defaultCurrencyId) : "" });
+    setAccessRestricted(false);
+    setAccessUserIds([]);
     setAcctId(""); setErrors({}); setTab("basic"); setPanel(true);
   }
   function openEdit(r: any) {
     setEditing(r);
     setForm({ code: r.code ?? "", nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", branchId: r.branchId ? String(r.branchId) : "", accountId: "", cashExpenseManagerUserId: r.cashExpenseManagerUserId ? String(r.cashExpenseManagerUserId) : "", minBalance: r.minBalance ?? "", maxBalance: r.maxBalance ?? "", notes: r.notes ?? "", isActive: r.isActive ?? true });
+    setAccessRestricted(Array.isArray(r.accessUserIds));
+    setAccessUserIds(Array.isArray(r.accessUserIds) ? r.accessUserIds.map(String) : []);
     setAcctId(r.accountId ? String(r.accountId) : "");
     setErrors({});
     setTab("basic");
@@ -123,8 +129,9 @@ export default function CashBoxes() {
     if (form.minBalance && form.maxBalance && Number(form.maxBalance) > 0 && Number(form.minBalance) > Number(form.maxBalance)) {
       e.maxBalance = t("cashBoxes.maxMustBeGreater");
     }
+    if (accessRestricted && accessUserIds.length === 0) e.cashBoxAccess = t("cashBoxes.accessNeedsUser", "اختر مستخدماً واحداً على الأقل أو أوقف تقييد الخزنة");
     setErrors(e);
-    if (e.code || e.nameAr || e.branchId) setTab("basic");
+    if (e.code || e.nameAr || e.branchId || e.cashBoxAccess) setTab("basic");
     else if (e.minBalance || e.maxBalance) setTab("limits");
     return Object.keys(e).length === 0;
   }
@@ -139,6 +146,7 @@ export default function CashBoxes() {
         branchId:   form.branchId   ? parseInt(form.branchId)   : null,
         ...(canAssignExpenseManager ? {
           cashExpenseManagerUserId: form.cashExpenseManagerUserId ? Number(form.cashExpenseManagerUserId) : null,
+          accessUserIds: accessRestricted ? accessUserIds.map(Number) : null,
         } : {}),
       };
       const url  = editing ? `${API}/api/cash-boxes/${editing.id}` : `${API}/api/cash-boxes`;
@@ -300,6 +308,45 @@ export default function CashBoxes() {
                     </select>
                   </Field>
                 ) : null}
+                {canAssignExpenseManager && (
+                  <Field label={t("cashBoxes.accessUsers", "صلاحية استخدام الخزنة")} className="md:col-span-2">
+                    <label className="flex cursor-pointer items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={accessRestricted}
+                        onChange={event => {
+                          setAccessRestricted(event.target.checked);
+                          if (!event.target.checked) {
+                            setAccessUserIds([]);
+                            setErrors(current => { const next = { ...current }; delete next.cashBoxAccess; return next; });
+                          }
+                        }}
+                      />
+                      <span>{t("cashBoxes.restrictAccess", "تقييد استخدام الخزنة على مستخدمين محددين")}</span>
+                    </label>
+                    {!accessRestricted ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t("cashBoxes.legacyAccessHint", "عند إيقاف التقييد تبقى الخزنة متاحة حسب صلاحيات الفروع الحالية")}
+                      </p>
+                    ) : (
+                      <div className="mt-2 grid gap-2 rounded-md border p-3 sm:grid-cols-2">
+                        {(companyUsers as any[]).filter((u: any) => u.isActive).map((u: any) => (
+                          <label key={u.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={accessUserIds.includes(String(u.id))}
+                              onChange={event => setAccessUserIds(current => event.target.checked
+                                ? [...current, String(u.id)]
+                                : current.filter(id => id !== String(u.id)))}
+                            />
+                            <span>{u.nameAr || u.username || `#${u.id}`}{u.nameEn ? ` — ${u.nameEn}` : ""}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {errors.cashBoxAccess && <span className="text-xs text-destructive">{errors.cashBoxAccess}</span>}
+                  </Field>
+                )}
               </FormGrid>
             </TabsContent>
 

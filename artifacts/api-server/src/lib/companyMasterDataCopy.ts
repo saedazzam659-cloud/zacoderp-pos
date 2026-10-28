@@ -435,13 +435,14 @@ export async function copyCompanyMasterData(
       const key = norm(row.code);
       if (key && cashState.dstByKey.has(key)) { bump("cash_boxes", false); continue; }
       const id = await insert(cashBoxesTable, {
-        ...strip(row, ["branchId", "currencyId", "accountId", "cashExpenseManagerUserId"]),
+        ...strip(row, ["branchId", "currencyId", "accountId", "cashExpenseManagerUserId", "accessUserIds"]),
         companyId: targetCompanyId,
         branchId: row.branchId == null ? null : branchMap.get(row.branchId) ?? null,
         currencyId: currencyId(row.currencyId),
         accountId: row.accountId == null ? null : accountMap.get(row.accountId) ?? null,
         cashExpenseManagerUserId: row.cashExpenseManagerUserId == null
           ? null : userMap.get(row.cashExpenseManagerUserId) ?? null,
+        accessUserIds: null,
       });
       if (key) cashState.dstByKey.set(key, { id });
       bump("cash_boxes", true);

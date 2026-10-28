@@ -609,13 +609,14 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
     const cashBoxMap = new Map<number, number>();
     const cashBoxes = await tx.select().from(cashBoxesTable).where(eq(cashBoxesTable.companyId, sourceId));
     for (const c of cashBoxes) {
-      const { id: srcId, createdAt, companyId, branchId, currencyId, accountId, ...rest } = c;
+      const { id: srcId, createdAt, companyId, branchId, currencyId, accountId, accessUserIds, ...rest } = c;
       const [ins] = await tx.insert(cashBoxesTable).values({
         ...rest,
         companyId:  newCompanyId,
         branchId:   remap(branchMap, branchId),
         currencyId: remap(currencyMap, currencyId),
         accountId:  remap(accountMap, accountId),
+        accessUserIds: null,
       } as typeof cashBoxesTable.$inferInsert).returning({ id: cashBoxesTable.id });
       cashBoxMap.set(srcId, ins.id);
     }
