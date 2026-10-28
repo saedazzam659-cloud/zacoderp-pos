@@ -12,9 +12,15 @@ description: External Postgres routing boundaries and schema-heal constraints fo
 
 Agent-domain database scoping is separate from module storage routing: requests whose host matches an active agent domain with an initialized external database run business queries against that agent database. A production query against Replit's central database therefore cannot prove that an agent-domain invoice exists or is missing.
 
+The current production registry confirms `main.tafrah.com.sa` is Mahmoud's active `full_shell` agent domain with an initialized external database; `zacoderp.com` is the central deployment host and is not registered as an agent domain. Do not switch this agent's API traffic to `zacoderp.com` as a simple URL change: host-based routing would select the central database instead of Mahmoud's external database.
+
 **Why:** The owner confirmed `alkamilerp.com` uses this deployment, and its registry entry has an initialized external database; the central production replica contained no corresponding sales invoices.
 
 **How to apply:** Before interpreting an empty central production query for an agent domain, check only the registry's non-secret host/status/database-ready fields. Use an authorized, documented path to the agent database for business-row verification; if none is available, state that the central query is not authoritative and do not ask the user to re-import.
+
+**Why:** The same Replit API deployment can serve both central and agent domains, while the request host determines the business database. A shared deployment is not sufficient evidence of a shared database.
+
+**How to apply:** Before changing an agent's frontend/API origin, verify the request host still resolves to that agent's registered datasource. Never route the central product hostname to one agent's database as a shortcut.
 
 Required business tables in externally routed agent databases should have complete, idempotent DDL in the shared pre-validation heal. Generic schema reconciliation adds columns to existing tables; request readiness is strict by default. Cached ensure promises must remain scoped by active database context.
 
