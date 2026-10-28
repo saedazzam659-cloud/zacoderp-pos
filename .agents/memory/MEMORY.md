@@ -28,6 +28,7 @@
 - [Cash expense boundary](cash-expense-boundary.md) — explicit mobile grants, per-cashbox assignment, private receipts, and currency-safe reporting.
 - [Cash-transfer posting boundary](cash-transfer-posting-boundary.md) — deposits reuse the existing transfer lifecycle; preserve balance checks and exactly-once journal posting.
 - [Retail variant module boundary](clothing-module-boundary.md) — keep retail variants opt-in, reusable from item tabs, and backed by existing stock-item variants.
+- [Item sales price options](item-sales-price-options.md) — per-item selectable price options change the invoice line price but keep stock on the same item.
 - [Restaurant subgroup rollout](restaurant-subgroups-rollout.md) — current companies are commercial; subgroup classification is preparatory and must remain optional.
 - [Account-note visibility defaults](account-note-visibility-defaults.md) — show customer credit and supplier debit notes; hide the opposite types unless each company opts in.
 - [Account-note numbering boundary](account-note-numbering-boundary.md) — fresh-company customer-credit and supplier-debit notes share one counter to avoid duplicate numbers in the shared note table.
@@ -46,7 +47,7 @@
 - [Item import requirements](item-import-requirements.md) — imports require code, Arabic name, and a valid company unit; reject the whole file before writes when required data is incomplete.
 - [Legacy item-unit repair](legacy-item-unit-repair.md) — first-base repair may use saved factors for flat legacy unit links; never rewrite historical movement rows or rebase configured items.
 - [Company master-data transfer boundary](master-data-transfer-boundary.md) — transfer only setup data; exclude transactions and balances, and remap relationships by company-local codes.
-- [Historical migration uses existing masters](historical-migration-existing-masters.md) — match existing masters and use user-created fiscal years and per-type annual sequences; never alter setup or guess mappings.
+- [RAGM full company cutover](historical-migration-existing-masters.md) — collect and reconcile the full authorized company dataset before importing; target is to stop relying on RAGM.
 - [Company operational reset boundary](company-operational-reset-boundary.md) — reset only the explicitly named primary tenant; preserve setup/master data and reject demo or ZATCA-linked companies.
 - [Company hard-purge sequence boundary](company-hard-purge-sequence-boundary.md) — permanent purge may bypass protected-document deletion only in a company-scoped, transaction-local path.
 - [Wouter navigation boundaries](wouter-native-new-tab.md) — use native browser navigation for new tabs and cross-artifact routes.

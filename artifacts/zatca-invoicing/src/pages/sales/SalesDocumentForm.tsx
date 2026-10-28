@@ -2258,6 +2258,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     return out;
   }
 
+  const canSaveSimplifiedCashSaleWithoutCustomer = isInvoice
+    && invoiceType === "simplified"
+    && (paymentType === "cash" || paymentType === "bank")
+    && Number(totalAmount) < 1000;
+
   function handleSave(saveAsDraft = false) {
     if (isInvoice && draftOnly && !saveAsDraft) return;
     // React Query's pending state updates on a render; this ref closes the
@@ -2271,11 +2276,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // (i.e. the `usesOps` modes that actually render the picker).
     if (isInvoice || isOrder) {
       const missing: string[] = [];
-      if (!customerId && (
-        !isInvoice ||
-        (paymentType !== "cash" && paymentType !== "bank") ||
-        (isInvoice && Number(totalAmount) >= 1000)
-      )) {
+      if (!customerId && !canSaveSimplifiedCashSaleWithoutCustomer) {
         missing.push(t("salesDocForm.customer", { defaultValue: isRtl ? "العميل" : "Customer" }));
       }
       if (!branchId)   missing.push(t("salesDocForm.branch",   { defaultValue: isRtl ? "الفرع" : "Branch" }));
@@ -3775,7 +3776,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (!isNew) return [] as string[];
     const missing: string[] = [];
     if (isInvoice || isOrder) {
-      if (!customerId) {
+      if (!customerId && !canSaveSimplifiedCashSaleWithoutCustomer) {
         missing.push(isRtl ? "العميل" : "Customer");
       }
       if (usesBranch && !branchId) missing.push(isRtl ? "الفرع" : "Branch");
@@ -4232,7 +4233,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </p>
                     {isSimp && (
                       <p className="mt-2 text-[10px] text-emerald-700 flex items-center gap-1">
-                        <span>✓</span><span>{customerId ? (isRtl ? "تم اختيار العميل — جاهزة للحفظ" : "Customer selected — ready to save") : (isRtl ? "اختر اسم العميل لإكمال الحفظ" : "Select a customer to complete and save")}</span>
+                        <span>✓</span><span>{customerId
+                          ? (isRtl ? "تم اختيار العميل — جاهزة للحفظ" : "Customer selected — ready to save")
+                          : canSaveSimplifiedCashSaleWithoutCustomer
+                            ? (isRtl ? "يمكن الحفظ دون عميل لهذه الفاتورة النقدية/البنكية" : "This cash/bank invoice can be saved without a customer")
+                            : (isRtl ? "اختر اسم العميل لإكمال الحفظ" : "Select a customer to complete and save")}</span>
                       </p>
                     )}
                   </div>
