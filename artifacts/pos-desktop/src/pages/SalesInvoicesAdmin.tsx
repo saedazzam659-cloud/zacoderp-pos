@@ -512,6 +512,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const navCombo = { navAttr: "1", inputClassName: "zfield", onEnterNavigate: (el: HTMLElement | null) => advanceFrom(el) } as const;
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
+  const selectedLineCount = lines.filter((line) => Number(line.itemId) > 0).length;
 
   // In edit mode the first customerId effect would clobber the persisted buyer
   // snapshot / invoiceType with the live customer record — skip exactly once.
@@ -719,11 +720,17 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         .zfield:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.18);}
         .zrow:hover td{background:#eff6ff !important;}
         .zlines-wrap thead th{position:sticky;top:0;z-index:2;}
+        .zlines-wrap thead th{padding:8px 5px !important;font-size:11px !important;white-space:nowrap;}
+        .zlines-wrap tbody td{padding:5px !important;vertical-align:middle;}
+        .zlines-wrap .zfield{height:32px !important;padding:4px 6px !important;font-size:12px !important;}
+        .zsales-totals-grid{grid-template-columns:repeat(6,minmax(0,1fr)) !important;}
+        @media(max-width:1100px){.zsales-totals-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important;}}
+        @media(max-width:700px){.zsales-totals-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}}
       `}</style>
       <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل الفاتورة ${initial?.invoiceNo ?? ""}` : "فاتورة مبيعات جديدة"}</h3>
-      <FormTabs active={activeTab} onChange={setActiveTab} tabs={[
+      <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
         { key: "basic", label: "البيانات الأساسية" },
-        { key: "lines", label: `بنود الأصناف${lines.length ? ` (${lines.length})` : ""}` },
+        { key: "lines", label: `بنود الأصناف (${selectedLineCount})` },
         { key: "payments", label: "المدفوعات" },
       ]} />
 
@@ -810,21 +817,26 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </div>
 
       <div style={linesPanel(activeTab)}>
-      <div style={{ marginTop: 4, fontSize: 15, fontWeight: 700, color: "#0f172a", flexShrink: 0 }}>بنود الفاتورة</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
+        <strong style={{ fontSize: 15 }}>بنود الأصناف</strong>
+        <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>
+          {selectedLineCount} صنف
+        </span>
+      </div>
       <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 8 }}>
-      <Table style={{ minWidth: 1290 }}>
+      <Table style={{ width: "100%", minWidth: 980, tableLayout: "fixed" }}>
         <thead><tr>
-          <Th style={{ width: 44, textAlign: "center" }}>#</Th>
-          <Th style={{ minWidth: 240 }}>الصنف</Th>
-          <Th style={{ minWidth: 180 }}>الوحدة</Th>
-          <Th style={{ width: 180, textAlign: "center" }}>الكمية</Th>
-          <Th style={{ width: 80, textAlign: "center" }}>مجاني</Th>
-          <Th style={{ width: 240, textAlign: "center" }}>سعر الوحدة</Th>
-          <Th style={{ width: 170 }}>الخصم</Th>
-          <Th style={{ width: 80, textAlign: "center" }}>ض. %</Th>
-          <Th style={{ width: 150 }}>ملاحظة</Th>
-          <Th style={{ width: 130, textAlign: "left" }}>الإجمالي</Th>
-          <Th style={{ width: 40 }}></Th>
+          <Th style={{ width: "3%", textAlign: "center" }}>#</Th>
+          <Th style={{ width: "19%" }}>الصنف</Th>
+          <Th style={{ width: "10%" }}>الوحدة</Th>
+          <Th style={{ width: "8%", textAlign: "center" }}>الكمية</Th>
+          <Th style={{ width: "6%", textAlign: "center" }}>مجاني</Th>
+          <Th style={{ width: "12%", textAlign: "center" }}>سعر الوحدة</Th>
+          <Th style={{ width: "11%" }}>الخصم</Th>
+          <Th style={{ width: "6%", textAlign: "center" }}>ض. %</Th>
+          <Th style={{ width: "10%" }}>ملاحظة</Th>
+          <Th style={{ width: "11%", textAlign: "left" }}>الإجمالي</Th>
+          <Th style={{ width: "4%" }}></Th>
         </tr></thead>
         <tbody>
           {lines.map((l, i) => (
@@ -891,9 +903,13 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         </tbody>
       </Table>
       </div>
-      <button onClick={addLine} type="button" style={{ width: "100%", marginTop: 8, padding: "10px 16px", background: "#f8fafc", color: "#2563eb", border: "1px dashed #93c5fd", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600, flexShrink: 0 }}>+ إضافة سطر</button>
+      <div style={{ display: "flex", justifyContent: "flex-start", marginTop: 8 }}>
+        <button onClick={addLine} type="button" style={{ padding: "7px 14px", background: "#fff", color: "#087f69", border: "1px solid #9bd6c9", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
+          + إضافة صنف
+        </button>
+      </div>
       <div style={docFormPinned}>
-      <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       </div>
       </div>
 

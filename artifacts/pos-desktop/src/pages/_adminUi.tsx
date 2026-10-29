@@ -90,10 +90,11 @@ export function Row({ children }: { children: ReactNode }) {
 // caller — the caller keeps its own `activeTab` state and hides inactive panels
 // with `tabPanel(active, key)` (display:none, NOT unmount) so input focus and
 // per-line state survive tab switches.
-export function FormTabs<K extends string>({ tabs, active, onChange }: {
+export function FormTabs<K extends string>({ tabs, active, onChange, accentColor = "#2563eb" }: {
   tabs: { key: K; label: string; badge?: ReactNode }[];
   active: K;
   onChange: (k: K) => void;
+  accentColor?: string;
 }) {
   return (
     <div style={{ display: "flex", gap: 2, borderBottom: "2px solid #e2e8f0", margin: "4px 0 14px" }}>
@@ -104,8 +105,8 @@ export function FormTabs<K extends string>({ tabs, active, onChange }: {
             style={{
               padding: "9px 20px", border: "none", background: "none", cursor: "pointer",
               fontFamily: "inherit", fontSize: 14, fontWeight: on ? 700 : 500,
-              color: on ? "#2563eb" : "#64748b",
-              borderBottom: on ? "3px solid #2563eb" : "3px solid transparent",
+              color: on ? accentColor : "#64748b",
+              borderBottom: on ? `3px solid ${accentColor}` : "3px solid transparent",
               marginBottom: -2, display: "inline-flex", alignItems: "center", gap: 6,
             }}>
             {t.label}
@@ -628,10 +629,11 @@ export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmou
 /** Attractive totals panel; hosts the header (whole-invoice) discount control.
  *  When `rate` ≠ 1 (foreign-currency document) it also shows the grand total
  *  converted to the base currency. */
-export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride, rate, onHeaderDisc, onHeaderType }: {
+export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride, rate, onHeaderDisc, onHeaderType, layout = "stacked" }: {
   result: DiscountResult;
   headerDisc: number; headerType: DiscType; sym?: string; rate?: number;
   onHeaderDisc: (v: number) => void; onHeaderType: (t: DiscType) => void;
+  layout?: "stacked" | "compact";
 }) {
   const sym = symOverride ?? currencySymbol();
   const m = (n: number) => `${fmt(n)} ${sym}`;
@@ -642,6 +644,52 @@ export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride
   const hasHeaderDisc = result.headerDiscountValue > 0.00001;
   const totalDisc = result.lineDiscountTotal + result.headerDiscountValue;
   const rowS: CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", fontSize: 14 };
+  if (layout === "compact") {
+    const metric: CSSProperties = {
+      minWidth: 0, padding: "7px 10px", borderInlineStart: "1px solid #dbe5e8",
+      display: "flex", flexDirection: "column", justifyContent: "center", gap: 3,
+    };
+    const label: CSSProperties = { fontSize: 11, color: "#64748b", whiteSpace: "nowrap" };
+    const amount: CSSProperties = { fontSize: 13, fontWeight: 700, color: "#1e293b", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
+    return (
+      <div className="zsales-totals-grid" style={{
+        marginTop: 10, width: "100%", boxSizing: "border-box", display: "grid",
+        gridTemplateColumns: "repeat(6, minmax(0, 1fr))", alignItems: "stretch",
+        background: "#f5faf9", border: "1px solid #cfe7e1", borderRadius: 9, padding: 5,
+      }}>
+        <div style={metric}><span style={label}>الإجمالي قبل الخصم</span><span style={amount}>{m(result.grossSubtotal)}</span></div>
+        <div style={metric}><span style={label}>خصم الأصناف</span><span style={{ ...amount, color: totalDisc ? "#b45309" : "#64748b" }}>− {m(result.lineDiscountTotal)}</span></div>
+        <div style={metric}>
+          <span style={label}>خصم الفاتورة</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <input
+              type="number" step="0.01" min={0} value={headerDisc || ""} placeholder="0"
+              onChange={(e) => onHeaderDisc(Number(e.target.value) || 0)}
+              style={{ ...input, width: 74, height: 30, padding: "4px 6px", fontSize: 12 }}
+            />
+            <DiscTypeToggle value={headerType} onChange={onHeaderType} />
+          </div>
+            {hasHeaderDisc && (
+              <span style={{ fontSize: 10, color: "#b45309" }}>
+                قيمة الخصم {m(result.headerDiscountValue)}{hasLineDisc ? ` · الإجمالي ${m(totalDisc)}` : ""}
+              </span>
+            )}
+        </div>
+        <div style={metric}><span style={label}>الصافي قبل الضريبة</span><span style={amount}>{m(result.netSubtotal)}</span></div>
+        <div style={metric}><span style={label}>ضريبة القيمة المضافة</span><span style={amount}>{m(result.vatTotal)}</span></div>
+        <div style={{ ...metric, borderInlineStart: 0, background: "#e3f5ef", borderRadius: 7 }}>
+          <span style={{ ...label, color: "#087f69", fontWeight: 700 }}>الإجمالي النهائي</span>
+          <span style={{ ...amount, color: "#087f69", fontSize: 16 }}>{m(result.grandTotal)}</span>
+        </div>
+        {showBase && (
+          <div style={{ ...metric, gridColumn: "1 / -1", borderInlineStart: 0, borderTop: "1px solid #dbe5e8", marginTop: 4 }}>
+            <span style={label}>الإجمالي بالعملة الأساسية</span>
+            <span style={amount}>{fmt(result.grandTotal * r)} {baseSym}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div style={{ marginTop: 12, marginInlineStart: "auto", maxWidth: 420, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 16px" }}>
       <div style={{ ...rowS, color: "#475569" }}>
