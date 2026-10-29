@@ -14,3 +14,9 @@ Tag pushes to the current POS Desktop workflow publish a public GitHub Release; 
 **Why:** The workflow run created a non-draft release even though the intended outcome was a build-only draft.
 
 **How to apply:** Before pushing a version tag, inspect the release action's draft/publish settings and get explicit approval before making assets public.
+
+Windows Installer can return success while doing no update when the MSI enters maintenance mode and selects no features.
+
+**Why:** The user's verbose log showed `Product registered: entering maintenance mode`, skipped `FindRelatedProducts`, and `Request: Null; Action: Null` for installed features.
+
+**How to apply:** Inspect the MSI log; only in confirmed maintenance mode retry with `REINSTALL=ALL` so the package actually replaces its files.

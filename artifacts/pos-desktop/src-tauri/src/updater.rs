@@ -86,6 +86,18 @@ pub fn cleanup_stale_helpers() {
 }
 
 #[cfg(target_os = "windows")]
+fn installer_log_is_maintenance_mode(log_path: &std::path::Path) -> bool {
+    let Ok(bytes) = std::fs::read(log_path) else {
+        return false;
+    };
+    let words = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    String::from_utf16_lossy(&words).contains("Product registered: entering maintenance mode")
+}
+
+#[cfg(target_os = "windows")]
 fn run_update_helper_windows(parent_pid: u32, msi_path: PathBuf, app_path: PathBuf) {
     // SYNCHRONIZE is sufficient to wait for the parent process to terminate.
     const SYNCHRONIZE: u32 = 0x0010_0000;
@@ -106,7 +118,7 @@ fn run_update_helper_windows(parent_pid: u32, msi_path: PathBuf, app_path: PathB
     }
 
     let log_path = std::env::temp_dir().join("zacod-pos-update-install.log");
-    let result = std::process::Command::new("msiexec")
+    let mut result = std::process::Command::new("msiexec")
         .arg("/i")
         .arg(&msi_path)
         .args(["/passive", "/norestart", "/l*v"])
@@ -114,17 +126,42 @@ fn run_update_helper_windows(parent_pid: u32, msi_path: PathBuf, app_path: PathB
         .status();
 
     // 0 = success; 3010 = success, reboot required.
-    let success = matches!(
+    let mut success = matches!(
         result.as_ref().map(std::process::ExitStatus::code),
         Ok(Some(0 | 3010))
     );
+    let mut result_log_path = log_path.clone();
+
+    // A same-ProductCode MSI can enter maintenance mode instead of upgrading.
+    // With passive UI, Windows Installer may then return success without
+    // selecting any features (the old app files remain in place). Retry that
+    // specific case as an explicit repair of every already-installed feature.
+    if success && installer_log_is_maintenance_mode(&log_path) {
+        let repair_log_path = std::env::temp_dir().join("zacod-pos-update-repair.log");
+        log::warn!(
+            "[updater] MSI entered maintenance mode; retrying with REINSTALL=ALL"
+        );
+        result = std::process::Command::new("msiexec")
+            .arg("/i")
+            .arg(&msi_path)
+            .args(["REINSTALL=ALL", "REINSTALLMODE=amus"])
+            .args(["/passive", "/norestart", "/l*v"])
+            .arg(&repair_log_path)
+            .status();
+        success = matches!(
+            result.as_ref().map(std::process::ExitStatus::code),
+            Ok(Some(0 | 3010))
+        );
+        result_log_path = repair_log_path;
+    }
+
     if !success {
         let code = result
             .ok()
             .and_then(|status| status.code())
             .map(|value| value.to_string())
             .unwrap_or_else(|| "تعذّر تشغيل Windows Installer".to_string());
-        show_update_error(&code, &log_path);
+        show_update_error(&code, &result_log_path);
     }
 
     // Relaunch the app after msiexec releases the files. On failure this
