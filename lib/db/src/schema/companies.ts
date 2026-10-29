@@ -73,6 +73,10 @@ export const companiesTable = pgTable("companies", {
   // items grid grow taller. Purely presentational — items are still added via
   // the in-grid "إضافة صنف" button.
   hideQuickAddBar: boolean("hide_quick_add_bar").notNull().default(false),
+  // Company-wide input guidance styling. Disabled by default so existing UI
+  // placeholder contrast and appearance remain unchanged.
+  inputHintColorsEnabled: boolean("input_hint_colors_enabled").notNull().default(false),
+  inputHintColor: text("input_hint_color").notNull().default("#64748b"),
   // Sales-invoice quick entry preferences. Barcode entry and duplicate item
   // lines are opt-in so existing companies keep their current behavior.
   salesBarcodeEntryEnabled: boolean("sales_barcode_entry_enabled").notNull().default(false),

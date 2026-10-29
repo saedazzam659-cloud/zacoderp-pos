@@ -75,6 +75,7 @@ import {
   convertGoodsDeliveryToSalesInvoice,
   lookupSalesOrderSourceDocument,
   lookupSalesDeliverySourceDocument,
+  patchCustomer,
 } from "@workspace/api-client-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -457,6 +458,23 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const usageModes = useScreenItemModes(usageScreenKey);
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const updateCustomerInline = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Record<string, string> }) => patchCustomer(id, data as any),
+    onSuccess: (updated: any) => {
+      qc.setQueryData<any[]>(["customers", cid], current =>
+        current?.map(customer => String(customer.id) === String(updated.id) ? { ...customer, ...updated } : customer));
+      void qc.invalidateQueries({ queryKey: ["customers", cid] });
+      setCustomerDetailsDialogOpen(false);
+      toast({ title: isRtl ? "تم تحديث بيانات العميل" : "Customer details updated" });
+      // Re-run the same save path with the fresh server response; the invoice
+      // is still protected by its normal client and server ZATCA validation.
+      handleSave(customerDetailsSaveAsDraft, updated);
+    },
+    onError: (error: any) => toast({
+      title: error?.response?.data?.error ?? error?.message ?? (isRtl ? "تعذر تحديث بيانات العميل" : "Could not update customer details"),
+      variant: "destructive",
+    }),
+  });
 
   const [matchNew]            = useRoute(`${basePath}/new`);
   const [matchEdit, params]   = useRoute(`${basePath}/:id`);
@@ -572,6 +590,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [customerId,setCustomerId]      = useState("");
   const [manualPrintPartyName, setManualPrintPartyName] = useState("");
   const [quickCustomerDialogOpen, setQuickCustomerDialogOpen] = useState(false);
+  const [customerDetailsDialogOpen, setCustomerDetailsDialogOpen] = useState(false);
+  const [customerDetailsSaveAsDraft, setCustomerDetailsSaveAsDraft] = useState(false);
+  const [customerDetailsDraft, setCustomerDetailsDraft] = useState({
+    vatNumber: "", crNumber: "", buildingNumber: "", street: "", district: "", city: "", postalCode: "",
+  });
   const [quickItemDialogOpen, setQuickItemDialogOpen] = useState(false);
   // ID of the quotation the user picked from the "بناءً على عرض سعر"
   // combobox on the new-invoice form. Sent on save so the backend can mark
@@ -2345,7 +2368,45 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     && invoiceType === "simplified"
     && (paymentType === "cash" || paymentType === "bank");
 
-  function handleSave(saveAsDraft = false) {
+  function saveInlineCustomerDetails() {
+    const vat = customerDetailsDraft.vatNumber.trim();
+    const building = customerDetailsDraft.buildingNumber.trim();
+    const postal = customerDetailsDraft.postalCode.trim();
+    const missing: string[] = [];
+    if (!/^3\d{13}3$/.test(vat)) missing.push(isRtl ? "رقم ضريبي صحيح من 15 رقمًا" : "valid 15-digit VAT number");
+    if (!/^\d{4}$/.test(building)) missing.push(isRtl ? "رقم مبنى من 4 أرقام" : "4-digit building number");
+    if (!customerDetailsDraft.street.trim()) missing.push(isRtl ? "اسم الشارع" : "street");
+    if (!customerDetailsDraft.district.trim()) missing.push(isRtl ? "الحي" : "district");
+    if (!customerDetailsDraft.city.trim()) missing.push(isRtl ? "المدينة" : "city");
+    if (!/^\d{5}$/.test(postal)) missing.push(isRtl ? "رمز بريدي من 5 أرقام" : "5-digit postal code");
+    if (missing.length) {
+      toast({
+        title: isRtl ? "راجع البيانات المطلوبة" : "Check the required details",
+        description: missing.join("، "),
+        variant: "destructive",
+      });
+      return;
+    }
+    const customer = (customers as any[]).find((c: any) => String(c.id) === String(customerId));
+    if (!customer) {
+      toast({ title: isRtl ? "تعذر العثور على العميل المحدد" : "Selected customer could not be found", variant: "destructive" });
+      return;
+    }
+    updateCustomerInline.mutate({
+      id: Number(customer.id),
+      data: {
+        vatNumber: vat,
+        crNumber: customerDetailsDraft.crNumber.trim(),
+        buildingNumber: building,
+        street: customerDetailsDraft.street.trim(),
+        district: customerDetailsDraft.district.trim(),
+        city: customerDetailsDraft.city.trim(),
+        postalCode: postal,
+      },
+    });
+  }
+
+  function handleSave(saveAsDraft = false, customerOverride?: any) {
     if (isInvoice && draftOnly && !saveAsDraft) return;
     // React Query's pending state updates on a render; this ref closes the
     // same-tick double-click/Enter window before a second mutation can POST.
@@ -2372,9 +2433,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       }
       // ── متطلبات زاتكا للفاتورة الضريبية (Standard / B2B) ────────────────
       // المبسطة (Simplified / B2C) لا تحتاج إلى أي بيانات إضافية للعميل.
-      const selectedCustomer = customerId
+      const selectedCustomer = customerOverride ?? (customerId
         ? (customers as any[]).find((c: any) => String(c.id) === String(customerId))
-        : null;
+        : null);
       const hasSaudiVat = selectedCustomer
         && String(selectedCustomer.country ?? "SA").toUpperCase() === "SA"
         && String(selectedCustomer.vatNumber ?? "").trim().length > 0;
@@ -2398,11 +2459,24 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           }
         }
         if (reasons.length) {
+          if (cust) {
+            setCustomerDetailsSaveAsDraft(saveAsDraft);
+            setCustomerDetailsDraft({
+              vatNumber: String(cust.vatNumber ?? ""),
+              crNumber: String(cust.crNumber ?? ""),
+              buildingNumber: String(cust.buildingNumber ?? ""),
+              street: String(cust.street ?? ""),
+              district: String(cust.district ?? ""),
+              city: String(cust.city ?? ""),
+              postalCode: String(cust.postalCode ?? ""),
+            });
+            setCustomerDetailsDialogOpen(true);
+          }
           toast({
             title: isRtl ? "⛔ الفاتورة الضريبية تتطلّب بيانات زاتكا الكاملة" : "⛔ The tax invoice requires complete ZATCA details",
             description: isRtl
-              ? `بيانات العميل الناقصة: ${reasons.join(" — ")}. أكمل بيانات العميل من شاشة العملاء ثم أعد الحفظ.`
-              : `Missing customer details: ${reasons.join(" — ")}. Complete the customer record, then save again.`,
+              ? `بيانات العميل الناقصة: ${reasons.join(" — ")}. أكملها من النافذة هنا لحفظها في سجل العميل.`
+              : `Missing customer details: ${reasons.join(" — ")}. Complete them here to update the customer record.`,
             variant: "destructive",
           });
           return;
@@ -5022,6 +5096,54 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           </>
         )}
       </div>
+      )}
+      {customerDetailsDialogOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/50 p-4" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="inline-customer-details-title"
+            dir={isRtl ? "rtl" : "ltr"}
+            className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-background p-5 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 id="inline-customer-details-title" className="text-lg font-bold">
+                  {isRtl ? "استكمال بيانات العميل الضريبية" : "Complete customer tax details"}
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {isRtl ? "سيتم حفظ التعديلات مباشرة في سجل العميل لتظهر عند اختياره لاحقًا." : "Changes are saved to the customer record for future invoices."}
+                </p>
+              </div>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setCustomerDetailsDialogOpen(false)}
+                aria-label={isRtl ? "إغلاق" : "Close"} data-testid="button-close-customer-tax-details">×</Button>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {([
+                ["vatNumber", isRtl ? "الرقم الضريبي" : "VAT number", "3XXXXXXXXXXXXX3"],
+                ["crNumber", isRtl ? "السجل التجاري (اختياري)" : "Commercial registration (optional)", ""],
+                ["buildingNumber", isRtl ? "رقم المبنى" : "Building number", "1234"],
+                ["street", isRtl ? "اسم الشارع" : "Street", ""],
+                ["district", isRtl ? "الحي" : "District", ""],
+                ["city", isRtl ? "المدينة" : "City", ""],
+                ["postalCode", isRtl ? "الرمز البريدي" : "Postal code", "12345"],
+              ] as const).map(([key, label, placeholder]) => (
+                <div key={key} className="space-y-1.5">
+                  <Label htmlFor={`inline-customer-${key}`}>{label}</Label>
+                  <Input id={`inline-customer-${key}`} value={customerDetailsDraft[key]}
+                    placeholder={placeholder}
+                    onChange={event => setCustomerDetailsDraft(current => ({ ...current, [key]: event.target.value }))}
+                    inputMode={key === "vatNumber" || key === "buildingNumber" || key === "postalCode" ? "numeric" : undefined}
+                    data-testid={`input-inline-customer-${key}`} />
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setCustomerDetailsDialogOpen(false)}
+                data-testid="button-cancel-customer-tax-details">{isRtl ? "رجوع للفاتورة" : "Back to invoice"}</Button>
+              <Button type="button" onClick={saveInlineCustomerDetails} disabled={updateCustomerInline.isPending}
+                data-testid="button-save-inline-customer-details">
+                {updateCustomerInline.isPending ? (isRtl ? "جارٍ حفظ بيانات العميل…" : "Saving customer…") : (isRtl ? "حفظ البيانات ومتابعة الفاتورة" : "Save details and continue")}
+              </Button>
+            </div>
+          </section>
+        </div>
       )}
       {(isInvoice || isQuotation || isOrder) && (
         <QuickAddCatalogItemDialog

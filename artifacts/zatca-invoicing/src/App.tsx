@@ -292,6 +292,7 @@ import PosSettings from "@/pages/pos/PosSettings";
 import PosTerminals from "@/pages/pos/PosTerminals";
 import OnlineStore from "@/pages/online-store/OnlineStore";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import CompanyInputHintTheme from "@/components/CompanyInputHintTheme";
 import { ScreenActionsProvider } from "@/contexts/ScreenActionsContext";
 import { CallProvider } from "@/contexts/CallContext";
 import { TrainingBroadcastProvider } from "@/contexts/TrainingBroadcastContext";
@@ -1505,6 +1506,7 @@ function App() {
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
           <AuthProvider>
+            <CompanyInputHintTheme />
             <ScreenActionsProvider>
               <CallProvider>
               <TrainingBroadcastProvider>

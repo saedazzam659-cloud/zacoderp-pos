@@ -34,6 +34,7 @@ import * as XLSX from "xlsx";
 import { saveWorkbook } from "@/lib/saveFile";
 import SenderSettingsTab from "./settings/SenderSettingsTab";
 import CompanyDocumentFieldControls from "./settings/CompanyDocumentFieldControls";
+import InputHintColorsTab from "./settings/InputHintColorsTab";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
@@ -321,7 +322,7 @@ export default function GeneralSettings() {
   const [activeAgentGeneralSection, setActiveAgentGeneralSection] =
     useState<AgentGeneralSettingsSectionId>("document-options");
   const gate = useDemoActionGate();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { user, token, setUser } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -1726,6 +1727,10 @@ export default function GeneralSettings() {
             <Settings2 className="h-4 w-4 shrink-0" />
             <span className="truncate">{t("pages.generalSettings.general")}</span>
           </TabsTrigger>
+          <TabsTrigger value="inputHintColors" className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md" data-testid="tab-input-hint-colors">
+            <Settings2 className="h-4 w-4 shrink-0" />
+            <span className="truncate">{i18n.language.toLowerCase().startsWith("ar") ? "ألوان التلميحات" : "Input hint colors"}</span>
+          </TabsTrigger>
           {user?.role === "admin" && user?.company?.documentFieldControlsEnabled === true && (
             <TabsTrigger
               value="documentFields"
@@ -2602,6 +2607,18 @@ export default function GeneralSettings() {
         </Button>
       </div>
 
+        </TabsContent>
+
+        <TabsContent value="inputHintColors" className="mt-5 space-y-6">
+          <InputHintColorsTab
+            companyId={Number(user?.companyId ?? user?.company?.id)}
+            token={token}
+            enabled={user?.company?.inputHintColorsEnabled === true}
+            color={user?.company?.inputHintColor ?? "#64748b"}
+            onSaved={(enabled, color) => setUser((u: any) => ({
+              ...u, company: { ...u?.company, inputHintColorsEnabled: enabled, inputHintColor: color },
+            }))}
+          />
         </TabsContent>
 
         {/* ═══ TAB 2: Items Import ═══════════════════════════════════════════ */}

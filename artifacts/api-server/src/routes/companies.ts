@@ -438,7 +438,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   const {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
-    decimalPlaces, showZeros, hideQuickAddBar, showFreeQuantity, showSalesBranchStock, allowNegativeSales, purchaseBatchExpiryEnabled, autoPostingEnabled,
+    decimalPlaces, showZeros, hideQuickAddBar, inputHintColorsEnabled, inputHintColor, showFreeQuantity, showSalesBranchStock, allowNegativeSales, purchaseBatchExpiryEnabled, autoPostingEnabled,
     salesBarcodeEntryEnabled, allowDuplicateInvoiceItems, purchaseDirectExpensesCustodyEnabled,
     documentFieldControlsEnabled,
     showCustomerDebitNotes, showSupplierCreditNotes,
@@ -500,7 +500,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   } = req.body as {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
-    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
+    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; inputHintColorsEnabled?: boolean; inputHintColor?: string; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
     salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean; purchaseDirectExpensesCustodyEnabled?: boolean;
     documentFieldControlsEnabled?: boolean;
     showCustomerDebitNotes?: boolean; showSupplierCreditNotes?: boolean;
@@ -616,6 +616,21 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   if (showZeros !== undefined) updates.showZeros = !!showZeros;
   // UX-only toggle: hide the quick add-item bar on document item tabs.
   if (hideQuickAddBar !== undefined) updates.hideQuickAddBar = !!hideQuickAddBar;
+  if (inputHintColorsEnabled !== undefined) {
+    if (typeof inputHintColorsEnabled !== "boolean") {
+      res.status(400).json({ error: "inputHintColorsEnabled يجب أن تكون قيمة منطقية" });
+      return;
+    }
+    updates.inputHintColorsEnabled = inputHintColorsEnabled;
+  }
+  if (inputHintColor !== undefined) {
+    const color = String(inputHintColor);
+    if (!/^#[0-9a-fA-F]{6}$/.test(color)) {
+      res.status(400).json({ error: "لون التلميح يجب أن يكون بصيغة HEX صحيحة" });
+      return;
+    }
+    updates.inputHintColor = color;
+  }
   for (const [key, value] of [
     ["salesBarcodeEntryEnabled", salesBarcodeEntryEnabled],
     ["allowDuplicateInvoiceItems", allowDuplicateInvoiceItems],

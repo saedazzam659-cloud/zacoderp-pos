@@ -1,5 +1,13 @@
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
+
+/* Opt-in company-wide placeholder tint. The default remains the existing
+   component/theme color unless an admin enables the setting. */
+input::placeholder,
+textarea::placeholder,
+[contenteditable][data-placeholder]:empty::before {
+  color: var(--company-input-hint-color) !important;
+}
 @import "tw-animate-css";
 
 /* Posted/generated journal entries are intentionally non-editable, but their
