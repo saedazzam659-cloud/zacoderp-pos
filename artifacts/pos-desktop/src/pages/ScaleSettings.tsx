@@ -203,7 +203,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const S = {
-  wrap: { maxWidth: 900, margin: "0 auto", width: "100%" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const } as const,
   h2: { margin: "0 0 8px", fontSize: 22, color: "#0f172a" } as const,
   h3: { margin: "0 0 12px", fontSize: 16, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginBottom: 16, lineHeight: 1.7 } as const,

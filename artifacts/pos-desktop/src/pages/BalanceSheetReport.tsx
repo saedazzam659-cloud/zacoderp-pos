@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { reportLedgerLines, type LedgerLine } from "../lib/reports";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { useDimensions, DateField, BranchField, CostCenterField } from "./_reportFilters";
+import type { ExportColumn } from "../lib/exporters";
 
 type Row = { accountId: number; code: string; name: string; balance: number };
+
+type BSExportRow = { code: string; name: string; amount: number | string };
 
 export default function BalanceSheetReport() {
   const { branches, costCenters } = useDimensions();
@@ -59,6 +62,27 @@ export default function BalanceSheetReport() {
   const totalLE = data ? data.totalLiabilities + data.totalEquity : 0;
   const balanced = data ? Math.abs(data.totalAssets - totalLE) < 0.01 : true;
 
+  const exportRows: BSExportRow[] = data
+    ? [
+        { code: "", name: "الأصول", amount: "" },
+        ...data.assets.map((r): BSExportRow => ({ code: r.code, name: r.name, amount: Math.abs(r.balance) })),
+        { code: "", name: "إجمالي الأصول", amount: Math.abs(data.totalAssets) },
+        { code: "", name: "الخصوم", amount: "" },
+        ...data.liabilities.map((r): BSExportRow => ({ code: r.code, name: r.name, amount: Math.abs(r.balance) })),
+        { code: "", name: "إجمالي الخصوم", amount: Math.abs(data.totalLiabilities) },
+        { code: "", name: "حقوق الملكية", amount: "" },
+        ...data.equity.map((r): BSExportRow => ({ code: r.code, name: r.name, amount: Math.abs(r.balance) })),
+        { code: "", name: "إجمالي حقوق الملكية", amount: Math.abs(data.totalEquity - data.netIncome) },
+        { code: "", name: "صافي دخل الفترة الحالية", amount: data.netIncome },
+        { code: "", name: "إجمالي الخصوم وحقوق الملكية", amount: Math.abs(totalLE) },
+      ]
+    : [];
+  const exportCols: ExportColumn<BSExportRow>[] = [
+    { header: "الكود", cell: (r) => r.code },
+    { header: "الحساب", cell: (r) => r.name },
+    { header: "الرصيد", cell: (r) => r.amount },
+  ];
+
   const Section = ({ title, rows, total, color, natural }: { title: string; rows: Row[]; total: number; color: string; natural: "debit" | "credit" }) => (
     <Card style={{ marginBottom: 12 }}>
       <h3 style={{ margin: "0 0 8px", color }}>{title}</h3>
@@ -90,6 +114,9 @@ export default function BalanceSheetReport() {
 
       {data && (
         <>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+            <ExportButtons columns={exportCols} rows={exportRows} filenameBase="الميزانية-العمومية" title={`الميزانية العمومية — حتى ${asOfDate}`} />
+          </div>
           <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 8, fontSize: 14, fontWeight: 600,
             background: balanced ? "#ecfdf5" : "#fef2f2", color: balanced ? "#15803d" : "#991b1b" }}>
             {balanced ? `✓ الميزانية متوازنة — ${fmt(Math.abs(data.totalAssets))}` : `⚠️ فرق: ${fmt(Math.abs(data.totalAssets - totalLE))}`}

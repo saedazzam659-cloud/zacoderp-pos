@@ -1,7 +1,19 @@
 import { useState } from "react";
 import { listSuppliers, type Supplier } from "../lib/accounting";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, SearchCombobox, input } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, SearchCombobox, input, ExportButtons } from "./_adminUi";
 import { FilterField } from "./_reportFilters";
+import { useDataRefresh } from "../lib/dataBus";
+import type { ExportColumn } from "../lib/exporters";
+
+// Flat row mirroring the on-screen balances table (per-supplier rows + totals row).
+type BalExportRow = {
+  code: string;
+  name: string;
+  vatNumber: string;
+  phone: string;
+  balance: number;
+  note: string;
+};
 
 // suppliers_local.balance is the supplier AP balance: positive = we owe the
 // supplier (دائن), negative = the supplier owes us (مدين, e.g. over-payment).
@@ -20,6 +32,10 @@ export default function SupplierBalancesReport() {
     } finally { setLoading(false); }
   }
 
+  // Re-run the displayed balances when an invoice/voucher/journal is posted on
+  // another tab, but only when balances are already shown.
+  useDataRefresh(["invoices", "vouchers", "journal", "suppliers"], () => { if (rows) void run(); });
+
   const shown = (rows ?? []).filter((s) => {
     if (filter === "owed") return s.balance > 0.001;
     if (filter === "advance") return s.balance < -0.001;
@@ -29,6 +45,30 @@ export default function SupplierBalancesReport() {
 
   const totalOwed = shown.reduce((s, r) => s + (r.balance > 0 ? r.balance : 0), 0);
   const totalAdvance = shown.reduce((s, r) => s + (r.balance < 0 ? -r.balance : 0), 0);
+
+  // Export rows mirror the on-screen table: per-supplier rows + totals row.
+  const exportRows: BalExportRow[] = shown.map((s) => ({
+    code: s.code || "—",
+    name: s.nameAr,
+    vatNumber: s.vatNumber || "—",
+    phone: s.phone || "—",
+    balance: s.balance,
+    note: s.balance < -0.001 ? "مدين" : s.balance > 0.001 ? "دائن" : "",
+  }));
+  if (shown.length > 0) {
+    exportRows.push({
+      code: "", name: `الإجمالي (${shown.length} مورد)`, vatNumber: "", phone: "",
+      balance: shown.reduce((s, r) => s + r.balance, 0), note: "",
+    });
+  }
+  const exportCols: ExportColumn<BalExportRow>[] = [
+    { header: "الكود", cell: (r) => r.code },
+    { header: "المورد", cell: (r) => r.name },
+    { header: "الرقم الضريبي", cell: (r) => r.vatNumber },
+    { header: "الهاتف", cell: (r) => r.phone },
+    { header: "الرصيد", cell: (r) => r.balance },
+    { header: "الطبيعة", cell: (r) => r.note },
+  ];
 
   return (
     <Page title="أرصدة الموردين" subtitle="الرصيد الحالي لكل مورد. الرصيد الموجب = مستحق للمورد (دائن)، السالب = دفعة مقدمة لدى المورد (مدين).">
@@ -53,6 +93,16 @@ export default function SupplierBalancesReport() {
 
       {rows && (
         <Card>
+          {exportRows.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
+              <ExportButtons
+                columns={exportCols}
+                rows={exportRows}
+                filenameBase="أرصدة-الموردين"
+                title="أرصدة الموردين"
+              />
+            </div>
+          )}
           <div style={{ display: "flex", gap: 24, marginBottom: 10, fontSize: 13 }}>
             <div><b>إجمالي المستحق للموردين:</b> {fmt(totalOwed)}</div>
             <div><b>إجمالي الدفعات المقدمة:</b> {fmt(totalAdvance)}</div>

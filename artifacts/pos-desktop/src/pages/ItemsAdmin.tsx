@@ -1,3 +1,4 @@
+import { saveText } from "../lib/saveFile";
 // Items admin — list + add + edit + delete.
 // Uses lib/items.ts + lib/uom.ts.
 
@@ -8,10 +9,14 @@ import {
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
 import { listItemGroups } from "../lib/itemGroups";
+import { listBrands, listItemBrandLinks, setItemBrands, dropItemBrands, type ItemBrandLink } from "../lib/brands";
 import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { currencySymbol } from "../lib/currency";
 import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
+import { exportToExcel, exportToPdf, type ExportColumn } from "../lib/exporters";
+import { useDataRefresh, emitData } from "../lib/dataBus";
+import { useHideZeros, blankIfZero } from "../lib/appSettings";
 
 // ─── Excel-like grid: column defs, filtering, sorting, export ───────
 type ColKey = "name" | "qty" | "barcode" | "code" | "price" | "vat" | "source";
@@ -129,12 +134,7 @@ function itemsToCsv(list: LocalItem[], s: StockMap): string {
 }
 
 function downloadCsv(content: string, filename: string): void {
-  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  void saveText(content, filename);
 }
 
 export default function ItemsAdmin() {
@@ -272,6 +272,9 @@ export default function ItemsAdmin() {
     finally { setLoading(false); }
   }
   useEffect(() => { setPage(1); void refresh(); /* eslint-disable-next-line */ }, [search]);
+  // Live-refresh when items or stock change anywhere (a sale/purchase/return/
+  // adjustment on another keep-alive tab updates the on-hand qty column).
+  useDataRefresh(["items", "stock"], refresh);
 
   const processed = useMemo(() => {
     let list = rows.slice();
@@ -382,10 +385,26 @@ export default function ItemsAdmin() {
     downloadCsv(csv, `items_${stamp}.csv`);
     setToast({ kind: "ok", text: `تم تصدير ${processed.length} صنف إلى ملف Excel/CSV` });
   }
+  const exportColumns: ExportColumn<LocalItem>[] = [
+    { header: "الاسم", cell: (it) => it.nameAr ?? "" },
+    { header: "الاسم بالإنجليزية", cell: (it) => it.nameEn ?? "" },
+    { header: "الكمية المتاحة", cell: (it) => stockMap[it.id]?.qty ?? 0 },
+    { header: "الباركود", cell: (it) => it.barcode ?? "" },
+    { header: "الكود", cell: (it) => it.code ?? "" },
+    { header: "السعر", cell: (it) => it.salePrice },
+    { header: "الضريبة %", cell: (it) => it.vatRate },
+    { header: "المصدر", cell: (it) => (it.cloudId ? "سحابي" : "محلي") },
+  ];
+  function exportExcel() {
+    exportToExcel("items", exportColumns, processed);
+  }
+  function exportPdf() {
+    exportToPdf("قائمة الأصناف", exportColumns, processed);
+  }
 
   async function handleDelete(it: LocalItem) {
     if (!confirm(`حذف الصنف «${it.nameAr}»؟`)) return;
-    try { await deleteItem(it.id); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
+    try { await deleteItem(it.id); dropItemBrands(it.id); emitData("items"); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
     catch (e: any) { setToast({ kind: "err", text: e?.message ?? "فشل الحذف" }); }
   }
 
@@ -426,8 +445,14 @@ export default function ItemsAdmin() {
         <button onClick={() => setShowAdvanced((v) => !v)} style={showAdvanced ? S.btnToolActive : S.btnTool} title="بحث متقدم بأكثر من شرط">
           🔍 بحث متقدم
         </button>
-        <button onClick={exportCsv} style={S.btnTool} title="تصدير القائمة المفلترة إلى Excel/CSV">
-          📊 تصدير Excel
+        <button onClick={exportCsv} style={S.btnTool} title="تصدير القائمة المفلترة إلى CSV">
+          📊 CSV
+        </button>
+        <button onClick={exportExcel} style={S.btnTool} title="تصدير القائمة المفلترة إلى ملف إكسل">
+          ⬇️ إكسل
+        </button>
+        <button onClick={exportPdf} style={S.btnTool} title="تصدير / طباعة PDF">
+          🖨️ PDF
         </button>
         {hasActiveView && (
           <button onClick={clearAllViews} style={S.btnClear} title="إلغاء كل الفلاتر والترتيب">
@@ -513,7 +538,17 @@ export default function ItemsAdmin() {
       : processed.length === 0 ? <div style={S.empty}>لا توجد نتائج مطابقة — جرّب تعديل الفلاتر أو «🧹 مسح الكل»</div>
       : (
         <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff" }}>
-          <table style={S.tableFixed}>
+          <style>{`
+            .z-items-grid { border-collapse: collapse; color: #233044; }
+            .z-items-grid thead th { border-bottom: 1px solid #d9e0e8 !important; border-inline-start: 1px solid #e3e8ee; background: #f2f5f8 !important; color: #44536a !important; }
+            .z-items-grid tbody td { border-bottom: 1px solid #e7ebf0; border-inline-start: 1px solid #edf0f3; }
+            .z-items-grid tbody tr:nth-child(even) { background: #f8fafc; }
+            .z-items-grid tbody tr:hover { background: #eef4f8; }
+            @media (max-width: 900px) {
+              .z-items-grid thead th, .z-items-grid tbody td { padding: 7px 9px !important; font-size: 12px !important; }
+            }
+          `}</style>
+          <table className="z-items-grid" style={S.tableFixed}>
             <colgroup>
               {ITEM_COLS.map((c) => <col key={c.key} style={{ width: colWidths[c.key] }} />)}
               <col style={{ width: colWidths.actions }} />
@@ -897,6 +932,7 @@ function ImportCsvModal({
       }
     }
     setImporting(false);
+    if (created > 0) emitData("items");
     const parts = [`تم استيراد ${created} صنف`];
     if (skippedDup.length) parts.push(`تم تجاهل ${skippedDup.length} مكرر`);
     if (failed) parts.push(`فشل ${failed}`);
@@ -1006,13 +1042,14 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
 }) {
   const uoms = listUom();
   const itemGroups = listItemGroups();
+  const hideZeros = useHideZeros();
   const [form, setForm] = useState<CreateItemInput>({
     code: initial?.code ?? "",
     nameAr: initial?.nameAr ?? "",
     nameEn: initial?.nameEn ?? "",
     barcode: initial?.barcode ?? "",
     salePrice: initial?.salePrice ?? 0,
-    vatRate: initial?.vatRate ?? (isPharmacy ? 14 : 15),
+    vatRate: initial?.vatRate ?? (isPharmacy ? 14 : 0),
     uomId: initial?.uomId ?? getDefaultUom()?.id ?? null,
     groupId: initial?.groupId ?? null,
     nature: initial?.nature ?? "stock",
@@ -1036,6 +1073,30 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   // Multi-unit pricing — additional sale units (نص كرتونة / كرتونة …). Stored
   // in the LS overlay only (via create/updateItem), never in SQLite.
   const [units, setUnits] = useState<ItemUnit[]>(initial?.units ?? []);
+
+  // Brand links — additive/optional. One item may carry many brands, each with
+  // its own price/cost/barcode/part-number. Pure LS overlay (lib/brands.ts);
+  // brandName is PRINT-ONLY at sale time and never enters ZATCA UBL/hash/QR.
+  const allBrands = useMemo(() => listBrands().filter((b) => b.status === "active"), []);
+  const [brandLinks, setBrandLinks] = useState<ItemBrandLink[]>(
+    () => (initial ? listItemBrandLinks(initial.id) : []),
+  );
+
+  function newLinkId(): string {
+    return (crypto as any).randomUUID?.() ?? `bl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+  function addBrandLink() {
+    setBrandLinks((prev) => [
+      ...prev,
+      { id: newLinkId(), brandId: 0, barcode: "", partNumber: "", purchaseCost: 0, salePrice1: 0, status: "active" },
+    ]);
+  }
+  function updateBrandLink(id: string, patch: Partial<ItemBrandLink>) {
+    setBrandLinks((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  }
+  function removeBrandLink(id: string) {
+    setBrandLinks((prev) => prev.filter((l) => l.id !== id));
+  }
 
   function newUnitId(): string {
     return (crypto as any).randomUUID?.() ?? `u_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1088,6 +1149,23 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
       if (!(form.dosageForm ?? "").trim()) { setErr("الشكل الصيدلي مطلوب في وضع الصيدلية"); return; }
       if (!(form.strength ?? "").trim()) { setErr("التركيز مطلوب في وضع الصيدلية"); return; }
     }
+    // Brand links — additive/optional. Drop empty rows (no brand chosen), then
+    // validate: every kept row needs a brand, and no brand may repeat.
+    const cleanBrandLinks: ItemBrandLink[] = brandLinks
+      .filter((l) => l.brandId && l.brandId > 0)
+      .map((l) => ({
+        ...l,
+        barcode: (l.barcode ?? "").trim() || null,
+        partNumber: (l.partNumber ?? "").trim() || null,
+        purchaseCost: l.purchaseCost || null,
+        salePrice1: l.salePrice1 || null,
+        status: l.status ?? "active",
+      }));
+    const seenBrands = new Set<number>();
+    for (const l of cleanBrandLinks) {
+      if (seenBrands.has(l.brandId)) { setErr("لا يمكن تكرار نفس العلامة التجارية على نفس الصنف"); return; }
+      seenBrands.add(l.brandId);
+    }
     setSaving(true); setErr(null);
     try {
       let id: number;
@@ -1122,6 +1200,10 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
           batchNo: form.batchNo || null,
         });
       }
+      // Persist brand links (whole-set replace) — LS overlay only, keyed by
+      // the resolved item id. Empty set clears the item's links.
+      setItemBrands(id, cleanBrandLinks);
+      emitData("items");
       onSaved(initial ? "تم تحديث الصنف" : "تم إضافة الصنف");
     } catch (e: any) {
       // Tauri commands reject with a bare STRING; collapsing it into a generic
@@ -1132,7 +1214,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   }
 
   return (
-    <div style={{ background: "#fff", border: `2px solid ${initial ? "#2563eb" : "#16a34a"}`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
+    <div style={{ background: "#fff", border: "1px solid #d9e0e8", borderRadius: 10, padding: 20, marginBottom: 16 }}>
       <h3 style={{ ...S.modalTitle, color: initial ? "#1e40af" : "#15803d" }}>{initial ? "✏️ تعديل صنف" : "➕ صنف جديد"}</h3>
 
         {/* Core data — 4 fields per row for a denser, tidier layout. */}
@@ -1195,13 +1277,13 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
           </Field>
 
           <Field label={form.isWeighed ? "سعر البيع (يُستبدل بـ السعر/كجم)" : "سعر البيع *"}>
-            <input type="number" step="0.01" min="0" value={form.salePrice}
+            <input type="number" step="0.01" min="0" value={blankIfZero(form.salePrice, hideZeros)}
                    disabled={!!form.isWeighed}
                    onChange={(e) => setForm({ ...form, salePrice: Number(e.target.value) })}
                    style={{ ...S.input, opacity: form.isWeighed ? 0.5 : 1 }} />
           </Field>
           <Field label="نسبة الضريبة %">
-            <input type="number" step="0.5" min="0" max="100" value={form.vatRate} onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) })} style={S.input} />
+            <input type="number" step="0.5" min="0" max="100" value={form.vatRate || ""} placeholder="0" onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) || 0 })} style={S.input} />
           </Field>
         </div>
 
@@ -1217,7 +1299,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
         {form.isWeighed && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Field label={`السعر للكيلو (${currencySymbol()} / كجم) *`}>
-              <input type="number" step="0.01" min="0" value={form.pricePerKg ?? 0}
+              <input type="number" step="0.01" min="0" value={blankIfZero(form.pricePerKg ?? 0, hideZeros)}
                      onChange={(e) => setForm({ ...form, pricePerKg: Number(e.target.value) })}
                      style={S.input} />
             </Field>
@@ -1267,6 +1349,58 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
               {uoms.map((u) => <option key={u.id} value={u.nameAr} />)}
             </datalist>
             <button type="button" onClick={addUnit} style={S.btnAddCond}>+ إضافة وحدة بيع</button>
+          </>
+        )}
+
+        {/* Brand links — additive/optional. Attach one or more brands to this
+            item, each with its own price / cost / barcode / part-number. The
+            picker only appears in back-office sales invoices at sale time. */}
+        <div style={{ marginTop: 16, marginBottom: 4, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#0d9488" }}>
+          🏷️ العلامات التجارية
+        </div>
+        <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
+          اربط الصنف بعلامة تجارية واحدة أو أكثر، لكل علامة سعرها وتكلفتها وباركودها ورقم القطعة. يظهر منتقي العلامة في فواتير المبيعات (الخلفية) فقط، واسم العلامة للطباعة فقط ولا يدخل في فاتورة زاتكا.
+        </div>
+        {allBrands.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: 10, marginBottom: 8 }}>
+            لا توجد علامات تجارية معرّفة بعد. أضِف العلامات من شاشة «العلامات التجارية» أولاً.
+          </div>
+        ) : (
+          <>
+            {brandLinks.map((l) => (
+              <div key={l.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 0.9fr 0.9fr auto", gap: 8, marginBottom: 8, alignItems: "end" }}>
+                <Field label="العلامة التجارية">
+                  <SearchCombobox
+                    value={l.brandId || ""}
+                    onChange={(v) => updateBrandLink(l.id, { brandId: v === "" ? 0 : Number(v) })}
+                    style={S.input}
+                    options={[
+                      { value: "", label: "— اختر —" },
+                      ...allBrands.map((b) => ({
+                        value: b.id,
+                        label: `${b.nameAr}${b.code ? ` (${b.code})` : ""}`,
+                      })),
+                    ]}
+                  />
+                </Field>
+                <Field label="الباركود">
+                  <input value={l.barcode ?? ""} onChange={(e) => updateBrandLink(l.id, { barcode: e.target.value })} style={S.input} placeholder="EAN-13" />
+                </Field>
+                <Field label="رقم القطعة">
+                  <input value={l.partNumber ?? ""} onChange={(e) => updateBrandLink(l.id, { partNumber: e.target.value })} style={S.input} placeholder="Part #" />
+                </Field>
+                <Field label="التكلفة">
+                  <input type="number" step="0.01" min="0" value={blankIfZero(l.purchaseCost ?? 0, hideZeros)}
+                         onChange={(e) => updateBrandLink(l.id, { purchaseCost: Number(e.target.value) || 0 })} style={S.input} />
+                </Field>
+                <Field label="سعر البيع">
+                  <input type="number" step="0.01" min="0" value={blankIfZero(l.salePrice1 ?? 0, hideZeros)}
+                         onChange={(e) => updateBrandLink(l.id, { salePrice1: Number(e.target.value) || 0 })} style={S.input} />
+                </Field>
+                <button type="button" onClick={() => removeBrandLink(l.id)} style={{ ...S.btnDel, marginBottom: 12 }}>×</button>
+              </div>
+            ))}
+            <button type="button" onClick={addBrandLink} style={S.btnAddCond}>+ إضافة علامة تجارية</button>
           </>
         )}
 
@@ -1343,7 +1477,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const S = {
-  wrap: { maxWidth: 1100, margin: "0 auto", width: "100%" } as const,
+  wrap: { width: "100%", minWidth: 0, margin: 0, boxSizing: "border-box" as const } as const,
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 16 } as const,
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,
@@ -1351,9 +1485,9 @@ const S = {
   empty: { padding: 40, textAlign: "center" as const, color: "#94a3b8", background: "#fff", border: "1px dashed #e2e8f0", borderRadius: 8 } as const,
   table: { width: "100%", borderCollapse: "collapse" as const, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" } as const,
   th: { textAlign: "right" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600 } as const,
-  thRight: { textAlign: "left" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600 } as const,
-  tr: { borderBottom: "1px solid #f1f5f9" } as const,
-  td: { padding: "12px 14px", fontSize: 14, color: "#0f172a" } as const,
+  thRight: { textAlign: "left" as const, padding: "9px 11px", background: "#f2f5f8", borderBottom: "1px solid #d9e0e8", fontSize: 12, color: "#44536a", fontWeight: 700 } as const,
+  tr: { borderBottom: "1px solid #e7ebf0" } as const,
+  td: { padding: "8px 11px", fontSize: 13, color: "#233044" } as const,
   tdMono: { padding: "12px 14px", fontSize: 13, color: "#0f172a", fontFamily: "ui-monospace, monospace" } as const,
   tdRight: { padding: "12px 14px", textAlign: "left" as const } as const,
   muted: { fontSize: 12, color: "#94a3b8", marginTop: 2 } as const,
@@ -1392,11 +1526,11 @@ const S = {
   condDel: { padding: "7px 11px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontSize: 14 } as const,
   btnAddCond: { marginTop: 4, padding: "8px 14px", background: "#fff", color: "#1d4ed8", border: "1px dashed #93c5fd", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 } as const,
   tableFixed: { borderCollapse: "collapse" as const, tableLayout: "fixed" as const, width: "max-content", minWidth: "100%" } as const,
-  thSort: { position: "relative" as const, textAlign: "right" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600, cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const } as const,
+  thSort: { position: "relative" as const, textAlign: "right" as const, padding: "9px 11px", background: "#f2f5f8", borderBottom: "1px solid #d9e0e8", fontSize: 12, color: "#44536a", fontWeight: 700, cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const } as const,
   sortArrow: { fontSize: 10, color: "#94a3b8" } as const,
   resizeHandle: { position: "absolute" as const, insetInlineStart: 0, top: 0, bottom: 0, width: 7, cursor: "col-resize", userSelect: "none" as const } as const,
   thFilter: { padding: "6px 8px", background: "#f1f5f9", borderBottom: "1px solid #e2e8f0" } as const,
   filterInput: { width: "100%", padding: "5px 8px", fontSize: 12, border: "1px solid #cbd5e1", borderRadius: 5, fontFamily: "inherit", boxSizing: "border-box" as const, background: "#fff" } as const,
-  tdClip: { padding: "12px 14px", fontSize: 14, color: "#0f172a", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
-  tdMonoClip: { padding: "12px 14px", fontSize: 13, color: "#0f172a", fontFamily: "ui-monospace, monospace", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
+  tdClip: { padding: "8px 11px", fontSize: 13, color: "#233044", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
+  tdMonoClip: { padding: "8px 11px", fontSize: 12, color: "#233044", fontFamily: "ui-monospace, monospace", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
 };

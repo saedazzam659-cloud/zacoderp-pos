@@ -24,6 +24,7 @@ import {
   Page, Card, Table, Th, Td, Modal, ErrorMsg, Empty,
   input, btnSecondary, fmt,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
+  ExportButtons, gridToExportCols,
 } from "./_adminUi";
 import { currencySymbol } from "../lib/currency";
 
@@ -223,7 +224,7 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
 
       <ErrorMsg text={err} />
 
-      {filtered.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في الفواتير…" />}
+      {filtered.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في الفواتير…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="فواتير-نقاط-البيع" title="فواتير نقاط البيع" />} />}
 
       <Card style={{ marginTop: 8 }}>
         {loading ? (

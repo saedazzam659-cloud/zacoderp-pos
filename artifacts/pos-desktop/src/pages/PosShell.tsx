@@ -26,6 +26,7 @@ import DailyReportPage from "./DailyReport";
 import CustomersAdmin from "./CustomersAdmin";
 import ItemsAdmin from "./ItemsAdmin";
 import ItemGroupsAdmin from "./ItemGroupsAdmin";
+import BrandsAdmin from "./BrandsAdmin";
 import UomAdmin from "./UomAdmin";
 import UpdatesScreen from "./UpdatesScreen";
 import StandaloneUsersAdmin from "./StandaloneUsersAdmin";
@@ -84,6 +85,7 @@ import StockAdjustmentsAdmin from "./StockAdjustmentsAdmin";
 import StockMovementsReport from "./StockMovementsReport";
 import ItemCard from "./ItemCard";
 import StockValuation from "./StockValuation";
+import WarehouseStockReport from "./WarehouseStockReport";
 import SlowMovingItems from "./SlowMovingItems";
 import FreeQuantitiesReport from "./FreeQuantitiesReport";
 import ItemSalesValuationReport from "./ItemSalesValuationReport";
@@ -115,6 +117,7 @@ import { isModuleEnabled, loadWindowsModuleFlags } from "../lib/windowsModules";
 import { getAppProfile } from "../lib/standalone";
 import ExpiryReport from "./ExpiryReport";
 import StockImport from "./StockImport";
+import ItemImport from "./ItemImport";
 import InvoiceImport from "./InvoiceImport";
 import LowStockReport, { countLowStockTracked } from "./LowStockReport";
 import { listItems, bulkImportLocalItems, type CreateItemInput } from "../lib/items";
@@ -225,9 +228,9 @@ const NAV_GROUPS: NavGroupDef[] = [
     icon: "🏬",
     label: "المخازن",
     members: [
-      "items", "item_groups", "uom", "units", "warehouses", "warehouse_groups", "stock_transfers",
+      "items", "item_groups", "brands", "uom", "units", "warehouses", "warehouse_groups", "stock_transfers",
       "stocktakes", "stock_adjustments", "stock_movements", "low_stock",
-      "stock_import", "item_card", "stock_valuation", "slow_moving", "free_quantities", "item_sales_valuation",
+      "stock_import", "item_import", "item_card", "stock_valuation", "warehouse_stock", "slow_moving", "free_quantities", "item_sales_valuation",
       "inventory_dashboard", "smart_alerts", "goods_deliveries",
     ],
   },
@@ -606,7 +609,9 @@ export default function PosShell({
     { id: "supplier_groups",  icon: "🗂️", label: "مجموعات الموردين", perm: "supplier_groups" },
     { id: "items",            icon: "📦", label: "الأصناف", perm: "items" },
     { id: "item_groups",      icon: "🗂️", label: "مجموعات الأصناف", perm: "item_groups" },
+    { id: "brands",           icon: "🏷️", label: "العلامات التجارية", perm: "brands" },
     { id: "stock_import",     icon: "📥", label: "استيراد الأرصدة", perm: "stock_import" },
+    { id: "item_import",      icon: "📤", label: "استيراد الأصناف من ملف", perm: "item_import" },
     { id: "low_stock",        icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined, perm: "low_stock" },
     { id: "uom",              icon: "📐", label: "وحدات القياس", perm: "uom" },
     { id: "purchase_orders",  icon: "📋", label: "أوامر الشراء", perm: "purchase_orders" },
@@ -666,6 +671,7 @@ export default function PosShell({
     { id: "stock_transfers",   icon: "🔄", label: "التحويل بين المخازن", perm: "stock_transfers" },
     { id: "item_card",         icon: "🗃️", label: "كارت الصنف", perm: "item_card" },
     { id: "stock_valuation",   icon: "💰", label: "تقييم المخزون", perm: "stock_valuation" },
+    { id: "warehouse_stock",   icon: "🏬", label: "الكميات حسب المخزن", perm: "stock_valuation" },
     { id: "slow_moving",       icon: "🐌", label: "الأصناف بطيئة الحركة", perm: "slow_moving" },
     { id: "free_quantities",   icon: "🎁", label: "تقرير الكميات الحرة", perm: "free_quantities" },
     { id: "item_sales_valuation", icon: "📊", label: "تقييم مبيعات الأصناف", perm: "item_sales_valuation" },
@@ -712,7 +718,9 @@ export default function PosShell({
     { id: "customers", icon: "👥", label: "العملاء" },
     { id: "items",     icon: "📦", label: "الأصناف" },
     { id: "item_groups", icon: "🗂️", label: "مجموعات الأصناف" },
+    { id: "brands",    icon: "🏷️", label: "العلامات التجارية" },
     { id: "stock_import", icon: "📥", label: "استيراد الأرصدة" },
+    { id: "item_import", icon: "📤", label: "استيراد الأصناف من ملف" },
     { id: "invoice_import", icon: "📂", label: "استيراد الفواتير" },
     { id: "low_stock", icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
@@ -753,7 +761,9 @@ export default function PosShell({
           {v === "customers" && <div style={S.pagePad}><CustomersAdmin /></div>}
           {v === "items" && <div style={S.pagePad}><ItemsAdmin /></div>}
           {v === "item_groups" && <div style={S.pagePad}><ItemGroupsAdmin /></div>}
+          {v === "brands" && <div style={S.pagePad}><BrandsAdmin /></div>}
           {v === "stock_import" && <div style={S.pagePad}><StockImport onDone={() => void refreshLowStock()} /></div>}
+          {v === "item_import" && <div style={S.pagePad}><ItemImport /></div>}
           {v === "invoice_import" && <div style={S.pagePad}><InvoiceImport sellerName={effectiveCompanyName} /></div>}
           {v === "low_stock" && <div style={S.pagePad}><LowStockReport onGoToImport={() => setView("stock_import")} /></div>}
           {v === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
@@ -968,6 +978,9 @@ export default function PosShell({
           )}
           {standalone && v === "stock_valuation" && (isAdmin || can("stock_valuation")) && (
             <div style={S.pagePad}><StockValuation /></div>
+          )}
+          {standalone && v === "warehouse_stock" && (isAdmin || can("stock_valuation")) && (
+            <div style={S.pagePad}><WarehouseStockReport /></div>
           )}
           {standalone && v === "slow_moving" && (isAdmin || can("slow_moving")) && (
             <div style={S.pagePad}><SlowMovingItems /></div>
@@ -1209,7 +1222,9 @@ function labelFor(v: View): string {
     customers: "العملاء",
     items: "الأصناف",
     item_groups: "مجموعات الأصناف",
+    brands: "العلامات التجارية",
     stock_import: "استيراد الأرصدة الافتتاحية",
+    item_import: "استيراد الأصناف من ملف",
     low_stock: "الأصناف تحت الحد الأدنى",
     uom: "وحدات القياس",
     expiry: "تقرير الصلاحية",
@@ -1278,6 +1293,7 @@ function labelFor(v: View): string {
     stock_transfers: "التحويل بين المخازن",
     item_card: "كارت الصنف",
     stock_valuation: "تقييم المخزون",
+    warehouse_stock: "الكميات حسب المخزن",
     slow_moving: "الأصناف بطيئة الحركة",
     free_quantities: "تقرير الكميات الحرة",
     item_sales_valuation: "تقييم مبيعات الأصناف",
@@ -1384,7 +1400,7 @@ type DashboardProps = {
 
 function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, heartbeatErr, onPull, onPush, pushSummary, onDeactivate }: DashboardProps) {
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+    <div style={{ width: "100%", maxWidth: "none", minWidth: 0 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 16 }}>
         <Tile icon="🪪" label="معرّف الجهاز" value={String(deviceId || "—")} />
         <Tile icon="🟢" label="الحالة" value={status?.status ?? "..."} accent={status?.status === "active" ? "#16a34a" : undefined} />
@@ -1453,7 +1469,7 @@ function StandaloneDashboardView({
     await onWipe();
   }
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+    <div style={{ width: "100%", maxWidth: "none", minWidth: 0 }}>
       <section style={S.card}>
         <h2 style={S.h2}>الإعدادات السريعة</h2>
         <div style={S.btnRow}>
@@ -1683,7 +1699,7 @@ function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 
 const S = {
   // Full-viewport row: nav on the right (RTL), main column on the left.
-  shell: { display: "flex", height: "100vh", width: "100vw", fontFamily: "'Segoe UI', system-ui, sans-serif", background: "#eef2f7", overflow: "hidden" } as const,
+  shell: { display: "flex", height: "100dvh", minHeight: 0, width: "100%", minWidth: 0, fontFamily: "'Segoe UI', system-ui, sans-serif", background: "#eef2f7", overflow: "hidden" } as const,
 
   // Vertical nav rail
   nav: {
@@ -1919,8 +1935,8 @@ const S = {
   tabChipActive: { display: "flex", alignItems: "center", gap: 6, padding: "7px 10px 7px 12px", background: "#fff", color: "#1d4ed8", border: "1px solid #cbd5e1", borderBottom: "1px solid #fff", borderRadius: "8px 8px 0 0", cursor: "pointer", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" as const, maxWidth: 220, position: "relative" as const, top: 1 } as const,
   tabChipLabel: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const } as const,
   tabChipClose: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 4, border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: 0 } as const,
-  content: { flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,
-  pagePad: { padding: 24, overflowY: "auto" as const, flex: 1 } as const,
+  content: { flex: 1, minWidth: 0, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" as const } as const,
+  pagePad: { padding: "clamp(12px, 1.4vw, 24px)", overflowY: "auto" as const, overflowX: "hidden" as const, flex: 1, width: "100%", minWidth: 0, boxSizing: "border-box" as const } as const,
 
   // Dashboard internals
   card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, marginBottom: 16, boxShadow: "0 1px 3px rgba(0,0,0,.04)" } as const,

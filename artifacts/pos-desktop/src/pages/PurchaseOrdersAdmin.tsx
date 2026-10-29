@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listPurchaseOrders, getPurchaseOrder, createPurchaseOrder, updatePurchaseOrder,
   deletePurchaseOrder, setPurchaseOrderStatus, convertPurchaseOrder,
@@ -13,6 +14,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, ValidationPanel, collectDocIssues,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { useInvoiceTaxes } from "./_invoiceTax";
@@ -60,8 +62,10 @@ export default function PurchaseOrdersAdmin({ onNavigate }: { onNavigate?: (v: W
     })();
   }, []);
 
+  const sel = useRowSelect(rows);
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
+  useDataRefresh(["invoices"], refresh);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function toggleView(id: number) {
@@ -181,24 +185,57 @@ export default function PurchaseOrdersAdmin({ onNavigate }: { onNavigate?: (v: W
       }
     >
       {creating && deps && form && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <CreateForm deps={deps} seed={form} onCancel={() => setForm(null)} onDone={() => { setForm(null); void refresh(); }} />
           </div>
         </Card>
       )}
+      {rows.length > 0 && !creating && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.orderNo : null}>
+          <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+          {(() => {
+            const s = sel.selected;
+            if (!s) return null;
+            return (
+              <>
+                {s.status === "draft" && (
+                  <ActionBtn label="تأكيد" icon="✓" tone="primary" onClick={() => void changeStatus(s.id, "confirmed")} />
+                )}
+                {s.status === "confirmed" && (
+                  <ActionBtn label="مسودة" icon="↺" tone="warn" onClick={() => void changeStatus(s.id, "draft")} />
+                )}
+                {(s.status === "draft" || s.status === "confirmed") && (
+                  <ActionBtn label="تحويل لفاتورة" icon="➜" tone="success" onClick={() => void convert(s.id)} />
+                )}
+                {s.status === "draft" && (
+                  <ActionBtn label="تعديل" icon="✎" onClick={() => void startEdit(s.id)} />
+                )}
+                <ActionBtn label="نسخ" icon="⧉" onClick={() => void duplicate(s.id)} />
+                <ActionBtn label="طباعة" icon="🖶" tone="primary" onClick={() => void printDoc(s.id, "a4")} />
+                {s.status !== "converted" && (
+                  <ActionBtn label="حذف" icon="🗑" tone="danger" onClick={() => void remove(s.id)} />
+                )}
+              </>
+            );
+          })()}
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 && !creating ? <Empty text="لا توجد أوامر شراء" /> : (
           <Table>
             <thead><tr>
+              <SelectTh />
               <Th>رقم الأمر</Th><Th>التاريخ</Th><Th>التسليم المتوقع</Th><Th>المورد</Th><Th>الحالة</Th>
               <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
-              <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
+              <Th style={{ textAlign: "left" }}>الإجمالي</Th>
             </tr></thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
+                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.orderNo}</Td>
                     <Td>{p.orderDate}</Td>
                     <Td>{p.expectedDate ?? "—"}</Td>
@@ -207,52 +244,6 @@ export default function PurchaseOrdersAdmin({ onNavigate }: { onNavigate?: (v: W
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
-                    <Td>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                        <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                        </button>
-                        {p.status === "draft" && (
-                          <button onClick={() => void changeStatus(p.id, "confirmed")} disabled={creating} title="تأكيد الأمر"
-                            style={{ ...btnLink, color: "#1e40af", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                            ✓ تأكيد
-                          </button>
-                        )}
-                        {p.status === "confirmed" && (
-                          <button onClick={() => void changeStatus(p.id, "draft")} disabled={creating} title="إرجاع لمسودة"
-                            style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                            ↺ مسودة
-                          </button>
-                        )}
-                        {(p.status === "draft" || p.status === "confirmed") && (
-                          <button onClick={() => void convert(p.id)} disabled={creating} title="تحويل إلى فاتورة شراء"
-                            style={{ ...btnLink, color: "#15803d", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                            ➜ تحويل لفاتورة
-                          </button>
-                        )}
-                        {p.status === "draft" && (
-                          <button onClick={() => void startEdit(p.id)} disabled={creating} title="تعديل"
-                            style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                            ✎ تعديل
-                          </button>
-                        )}
-                        <button onClick={() => void duplicate(p.id)} disabled={creating} title="نسخ كأمر جديد"
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          ⧉ نسخ
-                        </button>
-                        <button onClick={() => void printDoc(p.id, "a4")} disabled={creating} title="طباعة A4"
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          🖶 طباعة
-                        </button>
-                        {p.status !== "converted" && (
-                          <button onClick={() => void remove(p.id)} disabled={creating} title="حذف"
-                            style={{ ...btnLink, color: "#dc2626", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                            حذف
-                          </button>
-                        )}
-                      </div>
-                    </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
@@ -331,7 +322,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
-    itemId: 0, qty: 1, unitCost: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
+    itemId: 0, qty: 1, unitCost: 0, vatRate: 0, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
   const [lines, setLines] = useState<FLine[]>(() => seed.lines.length ? seed.lines : [blankLine()]);
@@ -348,6 +339,8 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
       const next = { ...l, ...patch };
       if (patch.itemId !== undefined) {
         const it = deps.items.find((x) => x.id === Number(patch.itemId));
+        // VAT comes ONLY from the picked item (0 if it has no registered rate).
+        if (it) next.vatRate = it.vatRate ?? 0;
         if (it && it.uomId != null) {
           const u = uoms.find((x) => x.id === it.uomId);
           if (u) { next.uomId = u.id; next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }

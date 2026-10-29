@@ -3,10 +3,24 @@ import {
   listPurchases, listPurchaseReturns, listFinancialTx, listSuppliers,
   type Purchase, type PurchaseReturn, type FinancialTx, type Supplier,
 } from "../lib/accounting";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input, ExportButtons } from "./_adminUi";
 import { DateField, FilterField } from "./_reportFilters";
+import { useDataRefresh } from "../lib/dataBus";
+import type { ExportColumn } from "../lib/exporters";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
+
+// Flat row mirroring the on-screen statement table (opening row + per-line
+// running balance + totals/closing row) for Excel/PDF export.
+type StmtExportRow = {
+  date: string;
+  docType: string;
+  docNo: string;
+  description: string;
+  debit: number | "";
+  credit: number | "";
+  balance: number;
+};
 
 // One movement on the supplier's AP sub-ledger. AP is a liability with a normal
 // CREDIT balance — positive running balance = we owe the supplier (دائن). Built
@@ -21,8 +35,12 @@ type StmtLine = {
 };
 
 // AP semantics (mirror of the customer AR statement, signs flipped):
-//   • CREDIT purchase invoice → credit (AP rose, we owe more). Cash/bank
-//     invoices settle on the spot (DR purchases / CR cash) and never touch AP.
+//   • CREDIT purchase invoice → credit (AP rose, we owe more).
+//   • CASH/BANK purchase invoice (when includeCash) → shown as a PAIR: the
+//     invoice credit + an immediate settlement debit on the same date, so it
+//     appears in the statement yet nets to zero on the running balance (it
+//     settled on the spot: DR purchases / CR cash, never touching AP). No
+//     double-count: cash invoices do NOT create a financial_transactions row.
 //   • CREDIT purchase return  → debit (AP fell). Cash/bank returns refund cash.
 //   • Payment voucher (سند صرف) to the supplier → debit (we paid, AP fell).
 //   • Receipt voucher (سند قبض) from the supplier (refund/advance) → credit.
@@ -31,19 +49,39 @@ function buildLines(
   purchases: Purchase[],
   returns: PurchaseReturn[],
   txs: FinancialTx[],
+  includeCash: boolean,
 ): StmtLine[] {
   const lines: StmtLine[] = [];
   for (const inv of purchases) {
     if (inv.supplierId !== supplierId) continue;
-    if (inv.paymentMethod !== "credit") continue;
-    lines.push({
-      date: inv.invoiceDate,
-      docType: "فاتورة مشتريات",
-      docNo: inv.invoiceNo,
-      description: inv.notes || "",
-      debit: 0,
-      credit: inv.grandTotal,
-    });
+    if (inv.paymentMethod === "credit") {
+      lines.push({
+        date: inv.invoiceDate,
+        docType: "فاتورة مشتريات",
+        docNo: inv.invoiceNo,
+        description: inv.notes || "",
+        debit: 0,
+        credit: inv.grandTotal,
+      });
+    } else if (includeCash) {
+      const settle = inv.paymentMethod === "bank" ? "سداد بنكي فوري" : "سداد نقدي فوري";
+      lines.push({
+        date: inv.invoiceDate,
+        docType: "فاتورة مشتريات نقدية",
+        docNo: inv.invoiceNo,
+        description: inv.notes || "",
+        debit: 0,
+        credit: inv.grandTotal,
+      });
+      lines.push({
+        date: inv.invoiceDate,
+        docType: settle,
+        docNo: inv.invoiceNo,
+        description: "سداد قيمة الفاتورة النقدية فوراً",
+        debit: inv.grandTotal,
+        credit: 0,
+      });
+    }
   }
   for (const r of returns) {
     if (r.supplierId !== supplierId) continue;
@@ -80,6 +118,7 @@ export default function SupplierStatementReport() {
   const [fromDate, setFromDate] = useState(firstOfYear());
   const [toDate, setToDate] = useState(todayStr());
   const [includeOpening, setIncludeOpening] = useState(true);
+  const [includeCash, setIncludeCash] = useState(true);
   const [result, setResult] = useState<{ supplier: Supplier; opening: number; lines: StmtLine[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -106,7 +145,7 @@ export default function SupplierStatementReport() {
         listPurchaseReturns(100000),
         listFinancialTx(100000),
       ]);
-      const all = buildLines(supplierId, purchases, returns, txs);
+      const all = buildLines(supplierId, purchases, returns, txs, includeCash);
       // Opening = net movement (credit − debit) of every document dated BEFORE
       // the period start. The period is INCLUSIVE on both ends.
       let opening = 0;
@@ -120,11 +159,49 @@ export default function SupplierStatementReport() {
     } finally { setLoading(false); }
   }
 
+  // Re-run the displayed statement when an invoice/voucher is created on another
+  // tab, but only when a statement is already shown.
+  useDataRefresh(["invoices", "vouchers", "journal"], () => { if (result) void run(); });
+
   const totals = (result?.lines ?? []).reduce((s, l) => { s.dr += l.debit; s.cr += l.credit; return s; }, { dr: 0, cr: 0 });
   const closing = result ? result.opening + totals.cr - totals.dr : 0;
 
+  // Export rows mirror the on-screen table exactly: opening row + per-line
+  // running balance (AP: credit − debit) + totals/closing row. Raw numbers so
+  // Excel stays numeric.
+  const exportRows = useMemo<StmtExportRow[]>(() => {
+    if (!result) return [];
+    const out: StmtExportRow[] = [];
+    out.push({ date: "", docType: "", docNo: "", description: "الرصيد الافتتاحي", debit: "", credit: "", balance: result.opening });
+    let running = result.opening;
+    for (const l of result.lines) {
+      running += l.credit - l.debit;
+      out.push({
+        date: l.date,
+        docType: l.docType,
+        docNo: l.docNo,
+        description: l.description || "—",
+        debit: l.debit > 0.001 ? l.debit : "",
+        credit: l.credit > 0.001 ? l.credit : "",
+        balance: running,
+      });
+    }
+    out.push({ date: "", docType: "", docNo: "", description: "الإجمالي / الرصيد الختامي", debit: totals.dr, credit: totals.cr, balance: closing });
+    return out;
+  }, [result, totals.dr, totals.cr, closing]);
+
+  const exportCols: ExportColumn<StmtExportRow>[] = [
+    { header: "التاريخ", cell: (r) => r.date },
+    { header: "النوع", cell: (r) => r.docType },
+    { header: "المستند", cell: (r) => r.docNo },
+    { header: "البيان", cell: (r) => r.description },
+    { header: "مدين", cell: (r) => r.debit },
+    { header: "دائن", cell: (r) => r.credit },
+    { header: "الرصيد", cell: (r) => r.balance },
+  ];
+
   return (
-    <Page title="كشف حساب مورد" subtitle="حركة حساب المورد خلال الفترة (فواتير آجلة، مرتجعات آجلة، سندات الصرف والقبض) مع الرصيد الافتتاحي والجاري. الرصيد الموجب = مستحق للمورد.">
+    <Page title="كشف حساب مورد" subtitle="حركة حساب المورد خلال الفترة (الفواتير الآجلة والنقدية، المرتجعات، سندات الصرف والقبض) مع الرصيد الافتتاحي والجاري. الفواتير النقدية تظهر مع سداد فوري مقابل لها فلا تؤثر على الرصيد. الرصيد الموجب = مستحق للمورد.">
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
           <FilterField label="المورد">
@@ -148,6 +225,17 @@ export default function SupplierStatementReport() {
               تضمين
             </label>
           </FilterField>
+          <FilterField label="الفواتير النقدية">
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, height: 38 }}>
+              <input
+                type="checkbox"
+                checked={includeCash}
+                onChange={(e) => setIncludeCash(e.target.checked)}
+                style={{ width: 16, height: 16 }}
+              />
+              تضمين
+            </label>
+          </FilterField>
           <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
         </div>
         {err && <div style={{ marginTop: 8, color: "#991b1b", fontSize: 13 }}>⚠️ {err}</div>}
@@ -155,6 +243,16 @@ export default function SupplierStatementReport() {
 
       {result && (
         <Card>
+          {exportRows.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
+              <ExportButtons
+                columns={exportCols}
+                rows={exportRows}
+                filenameBase="كشف-حساب-مورد"
+                title={`كشف حساب مورد — ${result.supplier.nameAr} — ${fromDate} ← ${toDate}`}
+              />
+            </div>
+          )}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 24, marginBottom: 14, fontSize: 13 }}>
             <div><b>المورد:</b> {result.supplier.nameAr}</div>
             {result.supplier.vatNumber && <div><b>الرقم الضريبي:</b> {result.supplier.vatNumber}</div>}

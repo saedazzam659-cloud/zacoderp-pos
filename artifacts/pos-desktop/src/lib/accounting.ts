@@ -3,6 +3,7 @@
 // returns empty arrays / throws clear errors.
 
 import { invoke } from "./tauri-shim";
+import { emitData } from "./dataBus";
 
 function hasTauri(): boolean {
   return typeof window !== "undefined" &&
@@ -438,8 +439,20 @@ export async function listSuppliers(): Promise<Supplier[]> {
 }
 export async function createSupplier(input: SupplierInput): Promise<number> {
   if (!hasTauri()) notImpl();
+  // Auto-code: blank code → sequential "SUP-NNNN" from existing suppliers.
+  // Decoupled from transaction numbering — master-data fallback only.
+  if (!input.code || !input.code.trim()) {
+    let max = 0;
+    for (const s of await listSuppliers()) {
+      const m = /(\d+)\s*$/.exec(s.code ?? "");
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    input = { ...input, code: `SUP-${String(max + 1).padStart(4, "0")}` };
+  }
   try {
-    return await invoke<number>("suppliers_create", { input });
+    const id = await invoke<number>("suppliers_create", { input });
+    emitData("suppliers");
+    return id;
   } catch (e) {
     // suppliers_create posts the opening-balance JE in the SAME transaction as
     // the INSERT, so a JE failure (e.g. no open fiscal period / missing AP
@@ -447,9 +460,11 @@ export async function createSupplier(input: SupplierInput): Promise<number> {
     // never appears in pickers. If there's an opening, retry WITHOUT it so the
     // supplier at least persists; otherwise rethrow the real error.
     if ((input.openingBalance ?? 0) > 0) {
-      return await invoke<number>("suppliers_create", {
+      const id = await invoke<number>("suppliers_create", {
         input: { ...input, openingBalance: 0 },
       });
+      emitData("suppliers");
+      return id;
     }
     throw e;
   }
@@ -457,10 +472,12 @@ export async function createSupplier(input: SupplierInput): Promise<number> {
 export async function updateSupplier(id: number, input: SupplierInput): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("suppliers_update", { id, input });
+  emitData("suppliers");
 }
 export async function deleteSupplier(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("suppliers_delete", { id });
+  emitData("suppliers");
 }
 
 // ─── Cash boxes ──────────────────────────────────────────────────────
@@ -538,7 +555,9 @@ export async function listTreasuryTransfers(limit = 200): Promise<TreasuryTransf
 }
 export async function createTreasuryTransfer(input: TreasuryTransferInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("treasury_transfer_create", { input });
+  const id = await invoke<number>("treasury_transfer_create", { input });
+  emitData("vouchers", "journal", "banks", "cashboxes");
+  return id;
 }
 
 // ─── Purchases ───────────────────────────────────────────────────────
@@ -567,11 +586,13 @@ export async function deletePurchase(id: number): Promise<void> {
 export async function unpostPurchase(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("purchase_unpost", { id });
+  emitData("invoices", "journal", "stock");
 }
 /** ترحيل: re-apply a draft purchase's full impact and flip status back to posted. */
 export async function postPurchase(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("purchase_post", { id });
+  emitData("invoices", "journal", "stock");
 }
 
 // ─── Purchase returns ────────────────────────────────────────────────
@@ -585,7 +606,9 @@ export async function getPurchaseReturn(id: number): Promise<PurchaseReturn> {
 }
 export async function createPurchaseReturn(input: PurchaseReturnInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("purchase_return_create", { input });
+  const result = await invoke<number>("purchase_return_create", { input });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Purchase orders ─────────────────────────────────────────────────
@@ -615,7 +638,9 @@ export async function setPurchaseOrderStatus(id: number, status: PurchaseOrderSt
 }
 export async function convertPurchaseOrder(id: number): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("purchase_order_convert", { id });
+  const result = await invoke<number>("purchase_order_convert", { id });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Goods receipts ──────────────────────────────────────────────────
@@ -634,14 +659,18 @@ export async function createGoodsReceipt(input: GoodsReceiptInput): Promise<numb
 export async function postGoodsReceipt(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("goods_receipt_post", { id });
+  emitData("invoices", "journal", "stock");
 }
 export async function deleteGoodsReceipt(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("goods_receipt_delete", { id });
+  emitData("invoices", "journal", "stock");
 }
 export async function convertGoodsReceiptToInvoice(id: number, input: GoodsReceiptConvertInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("goods_receipt_convert_to_invoice", { id, input });
+  const result = await invoke<number>("goods_receipt_convert_to_invoice", { id, input });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Goods deliveries (سندات تسليم البضاعة) ──────────────────────────
@@ -684,10 +713,12 @@ export async function createGoodsDelivery(input: GoodsDeliveryInput): Promise<nu
 export async function postGoodsDelivery(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("goods_delivery_post", { id });
+  emitData("invoices", "journal", "stock");
 }
 export async function deleteGoodsDelivery(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("goods_delivery_delete", { id });
+  emitData("invoices", "journal", "stock");
 }
 
 // ─── Sales invoices ──────────────────────────────────────────────────
@@ -708,22 +739,26 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<numb
 export async function updateSalesInvoice(id: number, input: SalesInvoiceInput): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("sales_invoice_update", { id, input });
+  emitData("invoices", "journal", "stock");
 }
 /** Delete a (non-ZATCA-bridged, open-period) sales invoice, reversing all impact. */
 export async function deleteSalesInvoice(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("sales_invoice_delete", { id });
+  emitData("invoices", "journal", "stock");
 }
 /** فك الترحيل: reverse a posted sales invoice's GL/stock/AR impact, keep
  *  header+lines as a draft (status='draft', je_id NULL). */
 export async function unpostSalesInvoice(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("sales_invoice_unpost", { id });
+  emitData("invoices", "journal", "stock");
 }
 /** ترحيل: re-apply a draft sales invoice's full impact and flip status to posted. */
 export async function postSalesInvoice(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("sales_invoice_post", { id });
+  emitData("invoices", "journal", "stock");
 }
 /** Persist the ZATCA bridge link (QR + offline_invoices local_uuid) onto a sales invoice. */
 export async function setSalesInvoiceZatca(
@@ -762,7 +797,9 @@ export async function setQuotationStatus(id: number, status: QuotationStatus): P
 }
 export async function convertQuotationToInvoice(id: number): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("quotation_convert_to_invoice", { id });
+  const result = await invoke<number>("quotation_convert_to_invoice", { id });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Sales orders ────────────────────────────────────────────────────
@@ -794,7 +831,9 @@ export async function setSalesOrderStatus(id: number, status: SalesOrderStatus):
 }
 export async function convertSalesOrderToInvoice(id: number): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("sales_order_convert_to_invoice", { id });
+  const result = await invoke<number>("sales_order_convert_to_invoice", { id });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Sales returns ───────────────────────────────────────────────────
@@ -808,7 +847,9 @@ export async function getSalesReturn(id: number): Promise<SalesReturn> {
 }
 export async function createSalesReturn(input: SalesReturnInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("sales_return_create", { input });
+  const result = await invoke<number>("sales_return_create", { input });
+  emitData("invoices", "journal", "stock");
+  return result;
 }
 
 // ─── Financial transactions ──────────────────────────────────────────
@@ -819,6 +860,18 @@ export async function listFinancialTx(limit = 200): Promise<FinancialTx[]> {
 export async function createFinancialTx(input: FinancialTxInput): Promise<number> {
   if (!hasTauri()) notImpl();
   return await invoke<number>("financial_tx_create", { input });
+}
+// ترحيل / فك ترحيل سند قبض/صرف. Post writes a journal entry + applies the
+// cash/bank/party shadow balances; unpost deletes the JE + reverses the shadow.
+export async function financialTxPost(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("financial_tx_post", { id });
+  emitData("vouchers", "journal");
+}
+export async function financialTxUnpost(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("financial_tx_unpost", { id });
+  emitData("vouchers", "journal");
 }
 
 // ─── Journal entries ─────────────────────────────────────────────────
@@ -836,23 +889,29 @@ export async function getJournalEntryDetail(id: number): Promise<ManualJeDetail>
 }
 export async function createJournalEntry(input: ManualJeInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("journal_entry_create", { input });
+  const result = await invoke<number>("journal_entry_create", { input });
+  emitData("journal");
+  return result;
 }
 export async function updateJournalEntry(id: number, input: ManualJeInput): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("journal_entry_update", { id, input });
+  emitData("journal");
 }
 export async function postJournalEntry(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("journal_entry_post", { id });
+  emitData("journal");
 }
 export async function unpostJournalEntry(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("journal_entry_unpost", { id });
+  emitData("journal");
 }
 export async function deleteJournalEntry(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("journal_entry_delete", { id });
+  emitData("journal");
 }
 export async function peekJournalEntryNumber(): Promise<string> {
   if (!hasTauri()) return "";
@@ -915,11 +974,33 @@ export async function setPostingSettings(input: PostingSettings): Promise<void> 
 // (which returns status / sourceType / entryType). Returns the count actioned.
 export async function postingCenterPost(ids: number[]): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("posting_center_post", { ids });
+  const result = await invoke<number>("posting_center_post", { ids });
+  emitData("journal", "invoices", "vouchers", "stock");
+  return result;
 }
 export async function postingCenterUnpost(ids: number[]): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("posting_center_unpost", { ids });
+  const result = await invoke<number>("posting_center_unpost", { ids });
+  emitData("journal", "invoices", "vouchers", "stock");
+  return result;
+}
+
+// Unposted SOURCE documents (draft sales/purchase invoices + vouchers) that
+// carry NO journal entry until posted — surfaced separately from draft manual
+// JEs (which live in journal_entries_list).
+export type UnpostedDoc = {
+  docType: "sale" | "purchase" | "voucher";
+  sourceType: "sale" | "purchase" | "receipt" | "payment";
+  id: number;
+  docNo: string;
+  docDate: string;
+  description: string | null;
+  partyName: string | null;
+  total: number;
+};
+export async function postingCenterDocuments(): Promise<UnpostedDoc[]> {
+  if (!hasTauri()) return [];
+  return await invoke<UnpostedDoc[]>("posting_center_documents");
 }
 
 // ─── Fiscal years + periods (الفترات المحاسبية) ────────────────────────

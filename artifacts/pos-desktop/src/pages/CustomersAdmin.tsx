@@ -8,7 +8,8 @@ import {
 } from "../lib/customers";
 import { listCurrencies, listAccounts, type Currency, type Account } from "../lib/accounting";
 import { listBranches, type Branch } from "../lib/branches";
-import { SearchCombobox } from "./_adminUi";
+import { SearchCombobox, ExportButtons } from "./_adminUi";
+import { useDataRefresh, emitData } from "../lib/dataBus";
 
 const emptyInput: CreateCustomerInput = {
   nameAr: "", nameEn: "", phone: "", vatNumber: "",
@@ -58,6 +59,7 @@ export default function CustomersAdmin() {
     } finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); /* eslint-disable-next-line */ }, [search]);
+  useDataRefresh(["customers"], refresh);
 
   function startNew() { setErr(null); setEdit({ mode: "new", data: { ...emptyInput } }); }
   function startEdit(c: LocalCustomer) {
@@ -113,6 +115,7 @@ export default function CustomersAdmin() {
         });
         setToast({ kind: "ok", text: "تم تحديث العميل" });
       }
+      emitData("customers");
       setEdit(null); await refresh();
     } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
     finally { setBusy(false); }
@@ -122,7 +125,7 @@ export default function CustomersAdmin() {
 
   async function handleDelete(c: LocalCustomer) {
     if (!confirm(`حذف العميل «${c.nameAr}»؟`)) return;
-    try { await deleteCustomer(c.id); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
+    try { await deleteCustomer(c.id); emitData("customers"); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
     catch (e: any) { setToast({ kind: "err", text: e?.message ?? "فشل الحذف" }); }
   }
 
@@ -133,10 +136,25 @@ export default function CustomersAdmin() {
           <h2 style={S.h2}>العملاء ({rows.length})</h2>
           <div style={S.sub}>إدارة قائمة العملاء — يُزامن تلقائيًا مع السحابة عند الاتصال</div>
         </div>
-        <button onClick={startNew} disabled={!!edit}
-          style={{ ...S.btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
-          + عميل جديد
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <ExportButtons<typeof rows[number]>
+            title="العملاء"
+            filenameBase="customers"
+            rows={rows}
+            columns={[
+              { header: "الاسم", cell: (c) => c.nameAr },
+              { header: "الهاتف", cell: (c) => c.phone ?? "" },
+              { header: "الرقم الضريبي", cell: (c) => c.vatNumber ?? "" },
+              { header: "العملة", cell: (c) => c.currencyCode ?? "SAR" },
+              { header: "الرصيد", cell: (c) => Math.abs(c.balance ?? 0) },
+              { header: "حد الائتمان", cell: (c) => c.creditLimit ?? 0 },
+            ]}
+          />
+          <button onClick={startNew} disabled={!!edit}
+            style={{ ...S.btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
+            + عميل جديد
+          </button>
+        </div>
       </div>
 
       {edit && (
@@ -180,7 +198,7 @@ export default function CustomersAdmin() {
           </tr></thead>
           <tbody>
             {rows.map((c) => (
-              <tr key={c.id} style={{ ...S.tr, opacity: edit ? 0.5 : 1 }}>
+              <tr key={c.id} style={{ ...S.tr, opacity: edit ? 0.5 : 1, cursor: edit ? "default" : "pointer" }} title={edit ? undefined : "نقر مزدوج للتعديل"} onDoubleClick={() => { if (!edit) startEdit(c); }}>
                 <td style={S.td}>
                   <div style={{ fontWeight: 600 }}>{c.nameAr}</div>
                   {c.nameEn && <div style={S.muted}>{c.nameEn}</div>}
@@ -413,7 +431,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const S = {
-  wrap: { maxWidth: 1100, margin: "0 auto", width: "100%" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const } as const,
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 16 } as const,
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,

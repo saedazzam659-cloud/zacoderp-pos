@@ -1,3 +1,4 @@
+import { saveText } from "../lib/saveFile";
 // Expiry report — pharmacy-vertical only (Task #200).
 //
 // Lists every item whose `expiry_date` is non-null and within the chosen
@@ -28,13 +29,10 @@ function exportCsv(rows: LocalItem[]) {
   for (const r of rows) {
     lines.push([r.nameAr, r.nameEn, r.barcode, r.expiryDate, daysUntilExpiry(r), r.batchNo, r.activeIngredient, r.dosageForm, r.strength, r.manufacturer, r.salePrice].map(esc).join(","));
   }
-  const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `expiry-report-${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  void saveText(
+    "\uFEFF" + lines.join("\n"),
+    `expiry-report-${new Date().toISOString().slice(0, 10)}.csv`,
+  );
 }
 
 const HORIZONS = [30, 60, 90, 180, 365];
@@ -166,7 +164,7 @@ function Card({ label, count, color, bg }: { label: string; count: number; color
 }
 
 const S = {
-  wrap: { maxWidth: 1200, margin: "0 auto", width: "100%" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const } as const,
   header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 16 } as const,
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,

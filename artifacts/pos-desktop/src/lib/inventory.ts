@@ -5,6 +5,7 @@
 // every helper a safe no-op in the web preview / cloud build.
 
 import { invoke } from "./tauri-shim";
+import { emitData } from "./dataBus";
 
 function hasTauri(): boolean {
   return typeof window !== "undefined" &&
@@ -51,13 +52,17 @@ export async function listWarehouses(): Promise<Warehouse[]> {
   return await invoke<Warehouse[]>("warehouses_list");
 }
 export async function createWarehouse(input: WarehouseInput): Promise<number> {
-  return await invoke<number>("warehouses_create", { input });
+  const id = await invoke<number>("warehouses_create", { input });
+  emitData("warehouses");
+  return id;
 }
 export async function updateWarehouse(id: number, input: WarehouseInput): Promise<void> {
   await invoke("warehouses_update", { id, input });
+  emitData("warehouses");
 }
 export async function deleteWarehouse(id: number): Promise<void> {
   await invoke("warehouses_delete", { id });
+  emitData("warehouses");
 }
 
 // ─── Stock on-hand ─────────────────────────────────────────────────
@@ -141,7 +146,9 @@ export async function listStockAdjustments(): Promise<AdjustmentSummary[]> {
   return await invoke<AdjustmentSummary[]>("stock_adjustments_list");
 }
 export async function createStockAdjustment(input: AdjustmentInput): Promise<number> {
-  return await invoke<number>("stock_adjustment_create", { input });
+  const id = await invoke<number>("stock_adjustment_create", { input });
+  emitData("stock", "journal");
+  return id;
 }
 
 // ─── Stock transfers ───────────────────────────────────────────────
@@ -175,7 +182,9 @@ export async function listStockTransfers(): Promise<TransferSummary[]> {
   return await invoke<TransferSummary[]>("stock_transfers_list");
 }
 export async function createStockTransfer(input: TransferInput): Promise<number> {
-  return await invoke<number>("stock_transfer_create", { input });
+  const id = await invoke<number>("stock_transfer_create", { input });
+  emitData("stock");
+  return id;
 }
 
 // ─── Stocktakes ────────────────────────────────────────────────────
@@ -207,8 +216,12 @@ export async function listStocktakes(): Promise<StocktakeSummary[]> {
   return await invoke<StocktakeSummary[]>("stocktakes_list");
 }
 export async function createStocktake(input: StocktakeInput): Promise<number> {
-  return await invoke<number>("stocktake_create", { input });
+  const id = await invoke<number>("stocktake_create", { input });
+  emitData("stock");
+  return id;
 }
 export async function postStocktake(id: number): Promise<number> {
-  return await invoke<number>("stocktake_post", { id });
+  const adjustmentId = await invoke<number>("stocktake_post", { id });
+  emitData("stock", "journal");
+  return adjustmentId;
 }

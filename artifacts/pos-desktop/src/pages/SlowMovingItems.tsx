@@ -15,6 +15,7 @@
 // never moved and is genuinely slow.
 
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import { listStockOnHand, listStockMovements, type StockOnHand, type StockMovement } from "../lib/inventory";
 import { listItems, type LocalItem } from "../lib/items";
 import { itemGroupName } from "../lib/itemGroups";
@@ -61,6 +62,7 @@ export default function SlowMovingItems() {
     }
   }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["stock", "invoices", "items"], () => { void refresh(); });
 
   // Aggregate on-hand qty + value per item (across all warehouses).
   const balByItem = useMemo(() => {

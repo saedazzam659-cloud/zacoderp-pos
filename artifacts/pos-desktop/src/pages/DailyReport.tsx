@@ -442,7 +442,7 @@ const PRINT_CSS = `
 `;
 
 const S = {
-  wrap: { maxWidth: 1400, margin: "0 auto", width: "100%", padding: "8px 4px 24px" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, padding: 0, boxSizing: "border-box" as const } as const,
 
   header: {
     display: "flex", justifyContent: "space-between", alignItems: "flex-end",

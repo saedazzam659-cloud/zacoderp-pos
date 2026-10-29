@@ -79,6 +79,32 @@ async fn save_text_file(
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
+// Binary "Save As" export (xlsx/pdf/etc.) — JS serialises the file to bytes,
+// Rust shows the native save dialog and writes them. Mirrors save_text_file.
+#[tauri::command]
+async fn save_export_file(
+    app: tauri::AppHandle,
+    bytes: Vec<u8>,
+    suggested_name: String,
+    filter_name: String,
+    filter_ext: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter(&filter_name, &[filter_ext.as_str()])
+        .set_file_name(&suggested_name)
+        .save_file(move |fp| {
+            let _ = tx.send(fp);
+        });
+    let chosen = rx.await.map_err(|e| e.to_string())?;
+    let Some(fp) = chosen else { return Ok(None); };
+    let path: std::path::PathBuf = fp.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 #[tauri::command]
 fn get_hardware_fingerprint() -> Result<String, String> {
     license::hardware_fingerprint().map_err(|e| e.to_string())
@@ -317,6 +343,11 @@ fn parked_carts_clear_session(pos_session_id: i64) -> Result<(), String> {
 }
 
 fn main() {
+    // A detached copy of the executable performs the MSI install after the
+    // main app exits, then relaunches the installed app when setup completes.
+    if updater::run_update_helper() {
+        return;
+    }
     env_logger::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -326,6 +357,7 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|_app| {
             db::initialize().expect("DB init failed");
+            updater::cleanup_stale_helpers();
             // Task #207: if this device is configured as the LAN host, start
             // its shared-database HTTP server now. No-op for single/client.
             lan::maybe_start_host_server(
@@ -376,6 +408,7 @@ fn main() {
             backup::data_dir_set,
             sync_now,
             save_text_file,
+            save_export_file,
             get_hardware_fingerprint,
             get_device_name,
             get_os_info,
@@ -535,6 +568,8 @@ fn main() {
             accounting::sales_return_create,
             accounting::financial_tx_list,
             accounting::financial_tx_create,
+            accounting::financial_tx_post,
+            accounting::financial_tx_unpost,
             accounting::journal_entries_list,
             accounting::journal_entry_get,
             accounting::journal_entry_detail,
@@ -548,6 +583,7 @@ fn main() {
             accounting::posting_settings_set,
             accounting::posting_center_post,
             accounting::posting_center_unpost,
+            accounting::posting_center_documents,
             accounting::number_series_list,
             accounting::number_series_update,
             // Fiscal years + periods + closing wizard (الفترات المحاسبية).

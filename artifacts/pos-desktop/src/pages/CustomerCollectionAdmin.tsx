@@ -4,36 +4,57 @@ import {
   type FinancialTx, type CashBox, type Bank, type SalesInvoice,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
+import { emitData, useDataRefresh } from "../lib/dataBus";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
+  ExportButtons, gridToExportCols,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
+import { printVoucher } from "../lib/invoicePrint";
 
 // تحصيل من العملاء — a customer-scoped سند قبض. Reuses the shared
 // financial_tx pipeline (DR cash/bank, CR AR 1500, decrements customer balance),
 // optionally tagging the receipt to a specific outstanding sales invoice so the
 // invoice list + statement can surface the collected amount.
+function walletName(
+  deps: { cashBoxes: CashBox[]; banks: Bank[] } | null,
+  f: FinancialTx,
+): string | null {
+  if (!deps) return null;
+  if (f.bankId != null) return deps.banks.find((b) => b.id === f.bankId)?.name ?? null;
+  if (f.cashBoxId != null) return deps.cashBoxes.find((c) => c.id === f.cashBoxId)?.name ?? null;
+  return null;
+}
+
 export default function CustomerCollectionAdmin() {
   const [rows, setRows] = useState<FinancialTx[]>([]);
   const [creating, setCreating] = useState(false);
   const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; invoices: SalesInvoice[] } | null>(null);
 
   async function refresh() { setRows((await listFinancialTx(1000)).filter((f) => f.txType === "receipt" && f.partyType === "customer")); }
-  useEffect(() => {
-    void refresh();
-    void (async () => {
-      const [customers, cashBoxes, banks, invoices] = await Promise.all([
-        listCustomers(), listCashBoxes(), listBanks(), listSalesInvoices(5000),
-      ]);
-      setDeps({ customers, cashBoxes, banks, invoices });
-    })();
-  }, []);
+  async function loadDeps() {
+    const [customers, cashBoxes, banks, invoices] = await Promise.all([
+      listCustomers(), listCashBoxes(), listBanks(), listSalesInvoices(5000),
+    ]);
+    setDeps({ customers, cashBoxes, banks, invoices });
+  }
+  useEffect(() => { void refresh(); void loadDeps(); }, []);
 
   // Paid-so-far per sales invoice (across ALL receipts, not just this filtered view).
   const [allTx, setAllTx] = useState<FinancialTx[]>([]);
   useEffect(() => { void (async () => setAllTx(await listFinancialTx(5000)))(); }, [rows.length]);
+
+  // Live-refresh: when a sales invoice or another voucher is created/posted on a
+  // different tab, reload the deps (outstanding-invoice picker) + paid totals so
+  // the new invoice appears here without a manual page reload.
+  useDataRefresh(["invoices", "vouchers", "customers", "cashboxes", "banks"], () => {
+    void refresh();
+    void loadDeps();
+    void (async () => setAllTx(await listFinancialTx(5000)))();
+  });
 
   const invByApplied = (f: FinancialTx) =>
     f.appliedDocType === "sales_invoice" && f.appliedDocId != null
@@ -47,6 +68,7 @@ export default function CustomerCollectionAdmin() {
     { key: "amount", label: "المبلغ", type: "number", value: (f) => f.amount },
   ], [deps]);
   const grid = useGridFilter(rows, columns);
+  const sel = useRowSelect(grid.view);
 
   return (
     <Page
@@ -65,12 +87,34 @@ export default function CustomerCollectionAdmin() {
           </div>
         </Card>
       )}
-      {rows.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في سندات التحصيل…" />}
+      {rows.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في سندات التحصيل…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="سندات-التحصيل" title="سندات التحصيل من العملاء" />} />}
+      {rows.length > 0 && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.txNo : null}>
+          <ActionBtn label="طباعة" icon="🖨️" tone="primary" disabled={!sel.selected}
+            onClick={() => {
+              const f = sel.selected; if (!f) return;
+              const inv = invByApplied(f);
+              printVoucher({
+                kind: "receipt",
+                title: "سند تحصيل",
+                docNo: f.txNo,
+                date: f.txDate,
+                partyName: f.partyName ?? null,
+                amount: f.amount,
+                description: f.description ?? null,
+                walletKind: f.bankId != null ? "bank" : "cash",
+                walletName: walletName(deps, f),
+                linkedDocNo: inv ? inv.invoiceNo : null,
+              });
+            }} />
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 && !creating ? <Empty text="لا توجد سندات تحصيل" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
           <Table>
             <thead>
               <tr>
+                <SelectTh />
                 <SortableTh grid={grid} colKey="txNo">الرقم</SortableTh>
                 <SortableTh grid={grid} colKey="txDate">التاريخ</SortableTh>
                 <SortableTh grid={grid} colKey="party">العميل</SortableTh>
@@ -78,13 +122,14 @@ export default function CustomerCollectionAdmin() {
                 <SortableTh grid={grid} colKey="description">البيان</SortableTh>
                 <SortableTh grid={grid} colKey="amount" style={{ textAlign: "left" }}>المبلغ</SortableTh>
               </tr>
-              <GridFilterRow grid={grid} columns={columns} />
+              <GridFilterRow grid={grid} columns={columns} leading={1} />
             </thead>
             <tbody>
               {grid.view.map((f) => {
                 const inv = invByApplied(f);
                 return (
                   <tr key={f.id}>
+                    <SelectCell id={f.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{f.txNo}</Td><Td>{f.txDate}</Td>
                     <Td>{f.partyName ?? "—"}</Td>
                     <Td mono>{inv ? inv.invoiceNo : "—"}</Td>
@@ -165,6 +210,7 @@ function CollectForm({ deps, allTx, onCancel, onDone }: {
         appliedDocType: invoiceId != null ? "sales_invoice" : null,
         appliedDocId: invoiceId,
       });
+      emitData("vouchers", "journal", "customers", "cashboxes", "banks");
       onDone();
     } catch (e: any) { setErr(e?.message ?? "فشل"); }
     finally { setBusy(false); }

@@ -235,7 +235,7 @@ function ConnBadge({ state }: { state: ConnState }) {
 }
 
 const S = {
-  wrap: { maxWidth: 820 } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const },
   h2: { fontSize: 20, fontWeight: 800, color: "#0f172a", marginBottom: 8 } as const,
   h3: { fontSize: 15, fontWeight: 700, color: "#0f172a", marginBottom: 12 } as const,
   intro: { fontSize: 13, lineHeight: 1.8, color: "#475569", marginBottom: 20 } as const,

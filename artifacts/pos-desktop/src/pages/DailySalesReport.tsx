@@ -1,11 +1,24 @@
 import { useState } from "react";
 import { reportSalesInvoices, type SalesInvoiceReportRow } from "../lib/salesReports";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
+import type { ExportColumn } from "../lib/exporters";
 
 function payLabel(m: string): string {
   return m === "cash" ? "نقدي" : m === "bank" ? "بنك / شبكة" : "آجل";
 }
+
+// Flat row mirroring the on-screen invoices table (per-invoice rows + totals row).
+type SalesExportRow = {
+  invoiceNo: string;
+  invoiceDate: string;
+  customer: string;
+  payment: string;
+  lineCount: number | "";
+  subtotal: number;
+  vat: number;
+  total: number;
+};
 
 export default function DailySalesReport() {
   const { branches } = useDimensions();
@@ -29,6 +42,35 @@ export default function DailySalesReport() {
     { sub: 0, vat: 0, tot: 0 },
   );
 
+  // Export rows mirror the on-screen table: per-invoice rows + totals row.
+  const exportRows: SalesExportRow[] = (rows ?? []).map((r) => ({
+    invoiceNo: r.invoiceNo,
+    invoiceDate: r.invoiceDate,
+    customer: r.customerName || "عميل نقدي",
+    payment: payLabel(r.paymentMethod),
+    lineCount: r.lineCount,
+    subtotal: r.subtotal,
+    vat: r.vatTotal,
+    total: r.grandTotal,
+  }));
+  if (rows && rows.length > 0) {
+    exportRows.push({
+      invoiceNo: `الإجمالي (${rows.length} فاتورة)`,
+      invoiceDate: "", customer: "", payment: "", lineCount: "",
+      subtotal: totals.sub, vat: totals.vat, total: totals.tot,
+    });
+  }
+  const exportCols: ExportColumn<SalesExportRow>[] = [
+    { header: "رقم الفاتورة", cell: (r) => r.invoiceNo },
+    { header: "التاريخ", cell: (r) => r.invoiceDate },
+    { header: "العميل", cell: (r) => r.customer },
+    { header: "الدفع", cell: (r) => r.payment },
+    { header: "البنود", cell: (r) => r.lineCount },
+    { header: "الصافي", cell: (r) => r.subtotal },
+    { header: "الضريبة", cell: (r) => r.vat },
+    { header: "الإجمالي", cell: (r) => r.total },
+  ];
+
   return (
     <Page title="تقرير المبيعات اليومي" subtitle="قائمة فواتير المبيعات (الخلفية) خلال الفترة المحددة مع الإجماليات.">
       <Card style={{ marginBottom: 16 }}>
@@ -43,6 +85,16 @@ export default function DailySalesReport() {
 
       {rows && (
         <Card>
+          {exportRows.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
+              <ExportButtons
+                columns={exportCols}
+                rows={exportRows}
+                filenameBase="تقرير-المبيعات-اليومي"
+                title={`تقرير المبيعات اليومي — ${fromDate} ← ${toDate}`}
+              />
+            </div>
+          )}
           <Table>
             <thead>
               <tr>
