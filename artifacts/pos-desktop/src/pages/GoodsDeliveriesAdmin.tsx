@@ -12,7 +12,7 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, ValidationPanel, collectDocIssues,
+  LineDiscountCell, InvoiceTotals, ValidationPanel, collectDocIssues, EmptyItemsRow,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -199,7 +199,7 @@ function CreateForm({ deps, onCancel, onDone }: {
     itemId: 0, qty: 1, unitPrice: 0, unitCost: 0, vatRate: 0, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
-  const [lines, setLines] = useState<FLine[]>(() => [blankLine()]);
+  const [lines, setLines] = useState<FLine[]>([]);
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [err, setErr] = useState<string | null>(null);
@@ -341,6 +341,7 @@ function CreateForm({ deps, onCancel, onDone }: {
           <Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
+          {lines.length === 0 && <EmptyItemsRow colSpan={8} />}
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>

@@ -11,4 +11,8 @@ The 4 shared-helper document forms (SalesInvoicesAdmin, PurchasesAdmin, SalesRet
 
 **How to apply:** keep `linesScroll` to `overflowX:auto` only (the table is ~1290px wide → needs horizontal scroll); let vertical scrolling belong to `pagePad`. The POS register (SalesScreen/ReturnsScreen) uses its OWN local `S.linesScroll`, so it is unaffected by these shared helpers — don't confuse the two.
 
-Doc forms open with ~10 blank rows (`Array.from({length:10}, ()=>blankLine())`); this is safe because save filters empties (`lines.filter(l=>l.itemId && (l.qty||0)>0)`) and `collectDocIssues` ignores fully-blank rows.
+New item tabs should open with no editable blank lines and a calm empty-state area about six item-row heights tall. Add an actual line only when the user requests one; preserve real prefilled lines when editing or converting a source document.
+
+**Why:** The repeated empty input rows made a new invoice look like a broken, prefilled grid. The user explicitly chose a clean six-row-height space without row lines.
+
+**How to apply:** Use the shared empty item-state presentation for invoice, order, receipt/delivery, quotation, and return forms. Keep the line arrays empty for new documents, retain existing lines for edits/prefills, and leave calculations and save validation based on real rows unchanged.

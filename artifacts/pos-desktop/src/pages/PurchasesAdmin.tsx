@@ -14,7 +14,7 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel, EmptyItemsRow,
   docFormShell, linesPanel, linesScroll, docFormPinned, contentPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
@@ -445,7 +445,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
     itemId: 0, qty: 1, unitCost: 0, vatRate: 0, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
-  const [lines, setLines] = useState<FLine[]>(() => seed.lines.length ? seed.lines : Array.from({ length: 10 }, () => blankLine()));
+  const [lines, setLines] = useState<FLine[]>(() => seed.lines.length ? seed.lines : []);
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -640,6 +640,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
           <Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
+          {lines.length === 0 && <EmptyItemsRow colSpan={8} />}
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>

@@ -10,7 +10,7 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel, EmptyItemsRow,
   docFormShell, linesPanel, linesScroll, docFormPinned, contentPanel,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
@@ -189,7 +189,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
   const [lines, setLines] = useState<FLine[]>(() =>
     initial?.lines?.length
       ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
-      : Array.from({ length: 10 }, () => blankLine()),
+      : [],
   );
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
@@ -348,6 +348,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
           <Th style={{ width: 120, textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
+          {lines.length === 0 && <EmptyItemsRow colSpan={8} />}
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>

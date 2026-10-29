@@ -60,6 +60,28 @@ export function Td({ children, mono, num, style, colSpan, rowSpan }: { children?
   }}>{children}</td>;
 }
 
+export function EmptyItemsRow({ colSpan }: { colSpan: number }) {
+  return (
+    <tr data-testid="empty-items-state">
+      <td colSpan={colSpan} style={{ padding: 0, height: 246, border: 0, background: "#fff" }}>
+        <div style={{
+          height: 246, boxSizing: "border-box", display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", gap: 8,
+          background: "linear-gradient(180deg, #fff 0%, #f8fafc 100%)",
+          borderBottom: "1px dashed #e2e8f0", color: "#64748b",
+        }}>
+          <div aria-hidden="true" style={{
+            width: 42, height: 42, borderRadius: 14, display: "grid", placeItems: "center",
+            background: "#eaf7f4", color: "#087f69", fontSize: 24, fontWeight: 500,
+          }}>＋</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#475569" }}>ابدأ بإضافة الأصناف</div>
+          <div style={{ fontSize: 12 }}>ستظهر بنود المستند هنا</div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 export function Modal({ title, children, onCancel, wide }: { title: string; children: ReactNode; onCancel: () => void; wide?: boolean }) {
   return (
     <div dir="rtl" onClick={onCancel}
@@ -126,8 +148,9 @@ export function tabPanel(active: string, key: string): CSSProperties {
 // ── Document-form layout (natural page flow, web parity) ───────────────────
 // The back-office document forms flow naturally inside the page wrapper
 // (PosShell `pagePad`, which already owns the vertical scroll). They are NOT
-// bounded to a fixed viewport height: the lines grid shows all of its rows (the
-// document opens with ~10 empty rows ready) and the whole page scrolls as one,
+// bounded to a fixed viewport height: the lines grid shows all of its rows and
+// the whole page scrolls as one. New documents start with a clean six-row-height
+// empty state; actual editable rows appear only after adding an item.
 // exactly like the web app. A prior fixed-height shell (calc(100vh-200px) +
 // internal scroll) collapsed the grid to a tiny header-only box on smaller
 // windows, so it was removed.
