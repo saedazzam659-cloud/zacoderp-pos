@@ -14,7 +14,7 @@ import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, EmptyItemsRow,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
@@ -262,7 +262,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const [lines, setLines] = useState<FLine[]>(() =>
     initial && initial.lines.length
       ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
-      : [blankLine()],
+      : [],
   );
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
@@ -524,6 +524,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           <Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
+          {lines.length === 0 && <EmptyItemsRow colSpan={10} />}
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>

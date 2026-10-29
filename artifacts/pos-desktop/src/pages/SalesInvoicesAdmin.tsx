@@ -20,7 +20,7 @@ import { getCompanyProfile, useHideZeros, blankIfZero } from "../lib/appSettings
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel, EmptyItemsRow,
   docFormShell, linesPanel, linesScroll, docFormPinned, contentPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
@@ -467,7 +467,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         brandId: bl[i]?.brandId ?? null, brandName: bl[i]?.brandName ?? null,
       }));
     }
-    return Array.from({ length: 10 }, () => blankLine());
+    return [];
   });
   const [expandedLineIndices, setExpandedLineIndices] = useState<Set<number>>(() => {
     const savedBrands = initial ? getInvoiceLineBrands(initial.id) : [];
@@ -856,6 +856,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           <Th style={{ width: "7%", textAlign: "center" }}>إجراءات</Th>
         </tr></thead>
         <tbody>
+          {lines.length === 0 && <EmptyItemsRow colSpan={10} />}
           {lines.map((l, i) => {
             const expanded = expandedLineIndices.has(i);
             return (
