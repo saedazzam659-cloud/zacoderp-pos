@@ -469,6 +469,12 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
     }
     return Array.from({ length: 10 }, () => blankLine());
   });
+  const [expandedLineIndices, setExpandedLineIndices] = useState<Set<number>>(() => {
+    const savedBrands = initial ? getInvoiceLineBrands(initial.id) : [];
+    return new Set(initial?.lines.flatMap((line, index) =>
+      line.note?.trim() || savedBrands[index]?.brandId ? [index] : [],
+    ) ?? []);
+  });
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -534,6 +540,9 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   }, [customerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function setLine(i: number, patch: Partial<FLine>) {
+    if (patch.itemId && itemHasBrands(patch.itemId)) {
+      setExpandedLineIndices((current) => new Set(current).add(i));
+    }
     setLines((ls) => ls.map((l, k) => {
       if (k !== i) return l;
       const next = { ...l, ...patch };
@@ -596,7 +605,12 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       return [...ls, nl];
     });
   }
-  function removeLine(i: number) { setLines((ls) => ls.filter((_, k) => k !== i)); }
+  function removeLine(i: number) {
+    setLines((ls) => ls.filter((_, k) => k !== i));
+    setExpandedLineIndices((current) => new Set(
+      [...current].flatMap((index) => index === i ? [] : [index > i ? index - 1 : index]),
+    ));
+  }
   function onSelectTax(v: string | number) {
     const id = v === "" ? "" : Number(v);
     setTaxId(id);
@@ -723,9 +737,13 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         .zlines-wrap thead th{padding:8px 5px !important;font-size:11px !important;white-space:nowrap;}
         .zlines-wrap tbody td{padding:5px !important;vertical-align:middle;}
         .zlines-wrap .zfield{height:32px !important;padding:4px 6px !important;font-size:12px !important;}
+        .zline-details td{background:#f2faf7 !important;border-top:0 !important;padding:10px 14px !important;}
+        .zline-details-panel{display:grid;grid-template-columns:minmax(220px,1fr) minmax(280px,2fr);gap:12px;align-items:end;}
+        .zline-detail-label{display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:5px;}
         .zsales-totals-grid{grid-template-columns:repeat(6,minmax(0,1fr)) !important;}
         @media(max-width:1100px){.zsales-totals-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important;}}
         @media(max-width:700px){.zsales-totals-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}}
+        @media(max-width:700px){.zline-details-panel{grid-template-columns:1fr;}}
       `}</style>
       <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل الفاتورة ${initial?.invoiceNo ?? ""}` : "فاتورة مبيعات جديدة"}</h3>
       <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
@@ -824,82 +842,115 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         </span>
       </div>
       <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 8 }}>
-      <Table style={{ width: "100%", minWidth: 980, tableLayout: "fixed" }}>
+      <Table style={{ width: "100%", minWidth: 900, tableLayout: "fixed" }}>
         <thead><tr>
           <Th style={{ width: "3%", textAlign: "center" }}>#</Th>
-          <Th style={{ width: "19%" }}>الصنف</Th>
+          <Th style={{ width: "23%" }}>الصنف</Th>
           <Th style={{ width: "10%" }}>الوحدة</Th>
           <Th style={{ width: "8%", textAlign: "center" }}>الكمية</Th>
           <Th style={{ width: "6%", textAlign: "center" }}>مجاني</Th>
-          <Th style={{ width: "12%", textAlign: "center" }}>سعر الوحدة</Th>
-          <Th style={{ width: "11%" }}>الخصم</Th>
+          <Th style={{ width: "13%", textAlign: "center" }}>سعر الوحدة</Th>
+          <Th style={{ width: "12%" }}>الخصم</Th>
           <Th style={{ width: "6%", textAlign: "center" }}>ض. %</Th>
-          <Th style={{ width: "10%" }}>ملاحظة</Th>
-          <Th style={{ width: "11%", textAlign: "left" }}>الإجمالي</Th>
-          <Th style={{ width: "4%" }}></Th>
+          <Th style={{ width: "12%", textAlign: "left" }}>الإجمالي</Th>
+          <Th style={{ width: "7%", textAlign: "center" }}>إجراءات</Th>
         </tr></thead>
         <tbody>
-          {lines.map((l, i) => (
-            <tr key={i} className="zrow" style={{ background: i % 2 ? "#fbfdff" : "#fff" }}>
-              <Td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</Td>
-              <Td>
-                <SearchCombobox
-                  value={l.itemId}
-                  onChange={(v) => setLine(i, { itemId: Number(v) })}
-                  {...navCombo}
-                  style={input}
-                  options={[
-                    { value: 0, label: "— اختر —" },
-                    ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
-                  ]}
-                />
-                {itemHasBrands(l.itemId) && (
-                  <div style={{ marginTop: 4 }}>
+          {lines.map((l, i) => {
+            const expanded = expandedLineIndices.has(i);
+            return (
+              <React.Fragment key={`line-${i}`}>
+                <tr className="zrow" style={{ background: i % 2 ? "#fbfdff" : "#fff" }}>
+                  <Td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</Td>
+                  <Td>
                     <SearchCombobox
-                      value={l.brandId ?? ""}
-                      onChange={(v) => setLine(i, { brandId: v === "" ? null : Number(v) })}
-                      style={{ ...input, fontSize: 12 }}
-                      options={[
-                        { value: "", label: "🏷️ بدون علامة تجارية" },
-                        ...listItemBrands(l.itemId).map((b) => ({ value: b.brandId, label: b.brandNameAr })),
-                      ]}
-                    />
-                  </div>
-                )}
-              </Td>
-              <Td>
-                {(() => {
-                  const selItem = deps.items.find((x) => x.id === l.itemId);
-                  const baseName = selItem?.uomId != null
-                    ? (uoms.find((u) => u.id === selItem.uomId)?.nameAr ?? "")
-                    : (defUom?.nameAr ?? "");
-                  const unitOpts = selItem
-                    ? [
-                        { value: "base", label: baseName || "أساسي" },
-                        ...((selItem.units ?? []).map((u) => ({ value: `add:${u.id}`, label: `${u.name} (×${u.factor})` }))),
-                      ]
-                    : [{ value: "base", label: defUom?.nameAr ?? "" }];
-                  return (
-                    <SearchCombobox
-                      value={l.unitKey ?? "base"}
-                      onChange={(v) => setLine(i, { unitKey: String(v) })}
+                      value={l.itemId}
+                      onChange={(v) => setLine(i, { itemId: Number(v) })}
                       {...navCombo}
                       style={input}
-                      options={unitOpts}
+                      options={[
+                        { value: 0, label: "— اختر —" },
+                        ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
+                      ]}
                     />
-                  );
-                })()}
-              </Td>
-              <Td><input type="number" step="0.001" value={blankIfZero(l.qty, hideZeros)} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
-              <Td><input type="number" step="0.001" value={blankIfZero(l.freeQty ?? 0, hideZeros)} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
-              <Td><input type="number" step="0.01" value={blankIfZero(l.unitPrice, hideZeros)} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
-              <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} navAttr="1" inputClassName="zfield" onEnterNavigate={(el) => advanceFrom(el)} /></Td>
-              <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
-              <Td><input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} {...navInput} /></Td>
-              <Td num style={{ fontWeight: 700, color: "#0f172a" }}>{docSym} {fmt(l.lineTotal)}</Td>
-              <Td><button onClick={() => removeLine(i)} style={{ ...btnLink, color: "#dc2626", fontSize: 18 }}>×</button></Td>
-            </tr>
-          ))}
+                  </Td>
+                  <Td>
+                    {(() => {
+                      const selItem = deps.items.find((x) => x.id === l.itemId);
+                      const baseName = selItem?.uomId != null
+                        ? (uoms.find((u) => u.id === selItem.uomId)?.nameAr ?? "")
+                        : (defUom?.nameAr ?? "");
+                      const unitOpts = selItem
+                        ? [
+                            { value: "base", label: baseName || "أساسي" },
+                            ...((selItem.units ?? []).map((u) => ({ value: `add:${u.id}`, label: `${u.name} (×${u.factor})` }))),
+                          ]
+                        : [{ value: "base", label: defUom?.nameAr ?? "" }];
+                      return (
+                        <SearchCombobox
+                          value={l.unitKey ?? "base"}
+                          onChange={(v) => setLine(i, { unitKey: String(v) })}
+                          {...navCombo}
+                          style={input}
+                          options={unitOpts}
+                        />
+                      );
+                    })()}
+                  </Td>
+                  <Td><input type="number" step="0.001" value={blankIfZero(l.qty, hideZeros)} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
+                  <Td><input type="number" step="0.001" value={blankIfZero(l.freeQty ?? 0, hideZeros)} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
+                  <Td><input type="number" step="0.01" value={blankIfZero(l.unitPrice, hideZeros)} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
+                  <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} navAttr="1" inputClassName="zfield" onEnterNavigate={(el) => advanceFrom(el)} /></Td>
+                  <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
+                  <Td num style={{ fontWeight: 700, color: "#0f172a" }}>{docSym} {fmt(l.lineTotal)}</Td>
+                  <Td>
+                    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedLineIndices((current) => {
+                          const next = new Set(current);
+                          if (next.has(i)) next.delete(i); else next.add(i);
+                          return next;
+                        })}
+                        aria-label={expanded ? "إخفاء تفاصيل السطر" : "فتح تفاصيل السطر"}
+                        title={expanded ? "إخفاء التفاصيل" : "ملاحظة وبيانات إضافية"}
+                        style={{ ...btnLink, color: expanded ? "#087f69" : "#64748b", fontSize: 16, padding: "2px 5px" }}
+                      >
+                        {expanded ? "⌄" : "⋯"}
+                      </button>
+                      <button type="button" onClick={() => removeLine(i)} aria-label="حذف السطر" title="حذف السطر" style={{ ...btnLink, color: "#dc2626", fontSize: 17, padding: "2px 5px" }}>×</button>
+                    </div>
+                  </Td>
+                </tr>
+                {expanded && (
+                  <tr className="zline-details">
+                    <Td colSpan={10}>
+                      <div className="zline-details-panel">
+                        {itemHasBrands(l.itemId) && (
+                          <div>
+                            <label className="zline-detail-label">العلامة التجارية</label>
+                            <SearchCombobox
+                              value={l.brandId ?? ""}
+                              onChange={(v) => setLine(i, { brandId: v === "" ? null : Number(v) })}
+                              style={input}
+                              options={[
+                                { value: "", label: "بدون علامة تجارية" },
+                                ...listItemBrands(l.itemId).map((b) => ({ value: b.brandId, label: b.brandNameAr })),
+                              ]}
+                            />
+                          </div>
+                        )}
+                        <div style={{ gridColumn: itemHasBrands(l.itemId) ? undefined : "1 / -1" }}>
+                          <label className="zline-detail-label">ملاحظة السطر</label>
+                          <input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} {...navInput} />
+                        </div>
+                      </div>
+                    </Td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
         </tbody>
       </Table>
       </div>
