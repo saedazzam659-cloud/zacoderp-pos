@@ -439,7 +439,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
     decimalPlaces, showZeros, hideQuickAddBar, inputHintColorsEnabled, inputHintColor, showFreeQuantity, showSalesBranchStock, allowNegativeSales, purchaseBatchExpiryEnabled, autoPostingEnabled,
-    salesBarcodeEntryEnabled, allowDuplicateInvoiceItems, purchaseDirectExpensesCustodyEnabled,
+    salesBarcodeEntryEnabled, allowDuplicateInvoiceItems, purchaseDirectExpensesCustodyEnabled, purchaseVatInInventoryCost,
     documentFieldControlsEnabled,
     showCustomerDebitNotes, showSupplierCreditNotes,
     allowUnbalancedOpeningBalances, openingBalanceReminderMessage,
@@ -501,7 +501,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
     decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; inputHintColorsEnabled?: boolean; inputHintColor?: string; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
-    salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean; purchaseDirectExpensesCustodyEnabled?: boolean;
+    salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean; purchaseDirectExpensesCustodyEnabled?: boolean; purchaseVatInInventoryCost?: boolean;
     documentFieldControlsEnabled?: boolean;
     showCustomerDebitNotes?: boolean; showSupplierCreditNotes?: boolean;
     allowUnbalancedOpeningBalances?: boolean;
@@ -635,6 +635,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     ["salesBarcodeEntryEnabled", salesBarcodeEntryEnabled],
     ["allowDuplicateInvoiceItems", allowDuplicateInvoiceItems],
     ["purchaseDirectExpensesCustodyEnabled", purchaseDirectExpensesCustodyEnabled],
+    ["purchaseVatInInventoryCost", purchaseVatInInventoryCost],
   ] as const) {
     if (value === undefined) continue;
     if (typeof value !== "boolean") {

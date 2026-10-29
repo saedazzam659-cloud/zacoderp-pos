@@ -946,6 +946,38 @@ router.get("/subscriptions/usage", requireSuperAdmin, async (req, res) => {
 
 // ─── Global system settings ────────────────────────────────────────────────
 const AUTO_SUSPEND_KEY = "auto_suspend_expired";
+const NEW_COMPANY_PURCHASE_VAT_COST_KEY = "new_company_purchase_vat_in_inventory_cost";
+router.get("/system-settings/purchase-vat-cost-default", requireSuperAdmin, async (_req, res) => {
+  const [row] = await centralDb.select().from(systemSettingsTable)
+    .where(eq(systemSettingsTable.key, NEW_COMPANY_PURCHASE_VAT_COST_KEY));
+  res.json({ enabled: row?.value === "on", updatedAt: row?.updatedAt ?? null });
+});
+
+router.put("/system-settings/purchase-vat-cost-default", requireSuperAdmin, async (req, res): Promise<void> => {
+  if (typeof req.body?.enabled !== "boolean") {
+    res.status(400).json({ error: "يجب تحديد هل تُضاف الضريبة إلى تكلفة المخزون" });
+    return;
+  }
+  const value = req.body.enabled ? "on" : "off";
+  await centralDb.execute(sql`
+    INSERT INTO system_settings (key, value, updated_at)
+    VALUES (${NEW_COMPANY_PURCHASE_VAT_COST_KEY}, ${value}, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+  `);
+  await writeAudit({
+    userId: req.adminUser?.id ?? null,
+    username: req.adminUser?.username ?? null,
+    role: "superadmin",
+    companyId: null,
+    module: "companies",
+    action: "edit",
+    entityType: "system_setting",
+    entityId: NEW_COMPANY_PURCHASE_VAT_COST_KEY,
+    metadata: { enabled: req.body.enabled },
+  });
+  res.json({ ok: true, enabled: req.body.enabled });
+});
+
 router.get("/system-settings/deleted-records-restore", requireSuperAdmin, async (_req, res) => {
   const [row] = await centralDb.select().from(systemSettingsTable)
     .where(eq(systemSettingsTable.key, DELETED_RECORDS_RESTORE_KEY));

@@ -466,6 +466,8 @@ export default function SuperAdminDashboard() {
               href: "/admin/subscriptions", icon: Package, bg: "bg-violet-100", color: "text-violet-700" },
             { title: "التراخيص", desc: "إصدار وإدارة تراخيص الشركات",
               href: "/admin/licenses", icon: KeyRound, bg: "bg-blue-100", color: "text-blue-700" },
+            { title: "افتراضات الشركات الجديدة", desc: "القيمة الافتراضية لتكلفة ضريبة مشتريات المخزون",
+              href: "/admin/company-defaults", icon: Package, bg: "bg-emerald-100", color: "text-emerald-700" },
             // ── Control-Center pillars ────────────────────────────────
             { title: "مركز النسخ الاحتياطي", desc: `${b?.last7d ?? 0} نسخة آخر 7 أيام${(b?.missingCount ?? 0) > 0 ? ` • ${b?.missingCount} شركة متأخرة` : ""}`,
               href: "/admin/backups", icon: HardDrive, bg: "bg-emerald-100", color: "text-emerald-700" },

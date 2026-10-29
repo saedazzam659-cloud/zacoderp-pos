@@ -1,9 +1,16 @@
-import { db, companiesTable, sequencesTable, sequenceLogsTable, sequenceCountersTable, SEQUENCE_TX_TYPES } from "@workspace/db";
+import { db, centralDb, companiesTable, sequencesTable, sequenceLogsTable, sequenceCountersTable, systemSettingsTable, SEQUENCE_TX_TYPES } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import ar from "../../../zatca-invoicing/src/i18n/locales/ar.json";
 
 // The settings screen and new-company defaults use the same Arabic labels.
 const sequenceNamesAr: Record<string, string> = ar.sequences.tx;
+
+export async function getNewCompanyPurchaseVatInventoryCostDefault(): Promise<boolean> {
+  const [row] = await centralDb.select({ value: systemSettingsTable.value })
+    .from(systemSettingsTable)
+    .where(eq(systemSettingsTable.key, "new_company_purchase_vat_in_inventory_cost"));
+  return row?.value === "on";
+}
 
 /**
  * Fresh-company-only settings. Call after the legacy template step: that step
@@ -39,6 +46,7 @@ export async function seedNewCompanyDefaults(
   database: Pick<typeof db, "transaction"> = db,
 ): Promise<void> {
   if (!Number.isInteger(companyId) || companyId <= 0) throw new Error("Invalid new company id");
+  const purchaseVatInInventoryCost = await getNewCompanyPurchaseVatInventoryCostDefault();
   await database.transaction(async (tx) => {
     const [company] = await tx.select({ id: companiesTable.id }).from(companiesTable)
       .where(eq(companiesTable.id, companyId)).for("update");
@@ -70,6 +78,9 @@ export async function seedNewCompanyDefaults(
       defaultSalesReturnPaymentType: "cash",
       defaultPurchasePaymentType: "cash",
       defaultPurchaseReturnPaymentType: "cash",
+      // New companies start by treating recoverable input VAT separately
+      // from inventory cost. Existing companies are not touched by this seed.
+      purchaseVatInInventoryCost,
       updatedAt: new Date(),
     }).where(eq(companiesTable.id, companyId));
     await tx.delete(sequencesTable).where(eq(sequencesTable.companyId, companyId));

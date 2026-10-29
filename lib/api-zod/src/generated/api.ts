@@ -37,6 +37,8 @@ export const GuardianPortalLoginResponse = zod.object({
   "childrenCount": zod.number().min(guardianPortalLoginResponseAccountChildrenCountMin)
 })
 })
+
+
 /**
  * @summary Read children linked to the signed-in guardian
  */
@@ -492,6 +494,8 @@ export const GetSchoolStudentAcademicHistoryResponse = zod.object({
 }))
 }))
 })
+
+
 /**
  * @summary Create new target-year enrollments without changing source-year records
  */
@@ -1881,6 +1885,28 @@ export const ListSecurityActiveCompaniesResponse = zod.object({
   "name": zod.string(),
   "error": zod.string()
 }))
+})
+
+
+/**
+ * @summary Get the default purchase VAT inventory-cost policy for new companies
+ */
+export const GetPurchaseVatCostDefaultResponse = zod.object({
+  "enabled": zod.boolean(),
+  "updatedAt": zod.coerce.date().nullable()
+})
+
+
+/**
+ * @summary Update the purchase VAT inventory-cost default for future companies
+ */
+export const UpdatePurchaseVatCostDefaultBody = zod.object({
+  "enabled": zod.boolean()
+})
+
+export const UpdatePurchaseVatCostDefaultResponse = zod.object({
+  "ok": zod.boolean(),
+  "enabled": zod.boolean()
 })
 
 
@@ -5794,3 +5820,5 @@ export const GetMobileTrackingManagerReportResponse = zod.object({
 })
 }))
 })
+
+

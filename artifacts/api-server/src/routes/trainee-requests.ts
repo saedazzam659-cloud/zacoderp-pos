@@ -212,6 +212,9 @@ router.post("/:id/approve", async (req, res) => {
   const endDate = new Date(Date.now() + durationDays * 86400000).toISOString().split("T")[0];
 
   try {
+    const purchaseVatInInventoryCost = envMode === "separate"
+      ? await (await import("../lib/newCompanyDefaults.js")).getNewCompanyPurchaseVatInventoryCostDefault()
+      : false;
     // ── Atomic approval ────────────────────────────────────────────────
     // Everything that flips state (request row, company/subscription
     // seed, user creation) runs in ONE transaction under a row lock on
@@ -259,6 +262,7 @@ router.post("/:id/approve", async (req, res) => {
           isSandbox: true,
           status: "active",
           sequenceProtectionEnabled: true,
+          purchaseVatInInventoryCost,
           journalEntryFormMode: "manual",
           menuPermissions,
         }).returning();

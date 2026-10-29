@@ -161,6 +161,7 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       showFreeQuantity:          false,
       showCustomerDebitNotes:    source.showCustomerDebitNotes,
       showSupplierCreditNotes:   source.showSupplierCreditNotes,
+      purchaseVatInInventoryCost: source.purchaseVatInInventoryCost,
       menuPermissions:           normalizeCompanyMenuPermissions(source.menuPermissions),
       windowsModulePermissions:  source.windowsModulePermissions,
       autoPostingEnabled:        source.autoPostingEnabled,

@@ -2067,6 +2067,31 @@ export default function GeneralSettings() {
             </span>
           </span>
         </label>
+        {user?.role === "admin" && (
+          <label
+            data-testid="purchase-vat-in-inventory-cost-setting"
+            className={cn(
+              "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+              user?.company?.purchaseVatInInventoryCost === true
+                ? "border-primary bg-primary/5 shadow-sm"
+                : "border-border hover:border-primary/40 hover:bg-muted/30"
+            )}
+          >
+            <input
+              type="checkbox"
+              className="mt-0.5 h-5 w-5 cursor-pointer"
+              checked={user?.company?.purchaseVatInInventoryCost === true}
+              disabled={postingSaving}
+              onChange={event => togglePostingMode({ purchaseVatInInventoryCost: event.target.checked })}
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-semibold">إضافة ضريبة مشتريات المخزون إلى تكلفة الصنف</span>
+              <span className="block text-xs text-muted-foreground leading-relaxed">
+                عند التفعيل تُضمّن الضريبة في تكلفة المخزون. عند الإيقاف تُسجّل ضريبة المدخلات منفصلة. يطبق التغيير على فواتير الشراء الجديدة فقط.
+              </span>
+            </span>
+          </label>
+        )}
         <label
           data-testid="hide-quick-add-toggle"
           className={cn(

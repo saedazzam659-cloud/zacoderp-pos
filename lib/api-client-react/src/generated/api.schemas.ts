@@ -3358,6 +3358,21 @@ export interface PosItemGroupInput {
   imageUrl?: string | null;
 }
 
+export interface PurchaseVatCostDefault {
+  enabled: boolean;
+  /** @nullable */
+  updatedAt: string | null;
+}
+
+export interface PurchaseVatCostDefaultInput {
+  enabled: boolean;
+}
+
+export interface PurchaseVatCostDefaultUpdateResponse {
+  ok: boolean;
+  enabled: boolean;
+}
+
 export type GetSchoolEnrollmentPromotionPlanParams = {
 /**
  * @minimum 1
@@ -3981,3 +3996,4 @@ to: string;
  */
 userId?: number;
 };
+

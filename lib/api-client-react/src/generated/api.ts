@@ -140,6 +140,9 @@ import type {
   PurchaseSourceDocument,
   PurchaseVariantNetByItemResponse,
   PurchaseVariantNetBySupplierResponse,
+  PurchaseVatCostDefault,
+  PurchaseVatCostDefaultInput,
+  PurchaseVatCostDefaultUpdateResponse,
   RejectCashTransferBody,
   RiskAssessment,
   RiskControl,
@@ -381,6 +384,13 @@ export function useGetGuardianPortalChildren<TData = Awaited<ReturnType<typeof g
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+
 export const getSetGuardianStudentBiometricConsentUrl = (studentId: number,) => {
 
 
@@ -523,6 +533,13 @@ export function useGetSchoolGuardianPortalAccounts<TData = Awaited<ReturnType<ty
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+
 export const getCreateSchoolGuardianPortalAccountUrl = () => {
 
 
@@ -4001,6 +4018,154 @@ export function useListSecurityActiveCompanies<TData = Awaited<ReturnType<typeof
 
 
 
+
+export const getGetPurchaseVatCostDefaultUrl = () => {
+
+
+
+
+  return `/api/admin/system-settings/purchase-vat-cost-default`
+}
+
+/**
+ * @summary Get the default purchase VAT inventory-cost policy for new companies
+ */
+export const getPurchaseVatCostDefault = async ( options?: RequestInit): Promise<PurchaseVatCostDefault> => {
+
+  return customFetch<PurchaseVatCostDefault>(getGetPurchaseVatCostDefaultUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPurchaseVatCostDefaultQueryKey = () => {
+    return [
+    `/api/admin/system-settings/purchase-vat-cost-default`
+    ] as const;
+    }
+
+
+export const getGetPurchaseVatCostDefaultQueryOptions = <TData = Awaited<ReturnType<typeof getPurchaseVatCostDefault>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPurchaseVatCostDefault>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPurchaseVatCostDefaultQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPurchaseVatCostDefault>>> = ({ signal }) => getPurchaseVatCostDefault({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPurchaseVatCostDefault>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPurchaseVatCostDefaultQueryResult = NonNullable<Awaited<ReturnType<typeof getPurchaseVatCostDefault>>>
+export type GetPurchaseVatCostDefaultQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the default purchase VAT inventory-cost policy for new companies
+ */
+
+export function useGetPurchaseVatCostDefault<TData = Awaited<ReturnType<typeof getPurchaseVatCostDefault>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPurchaseVatCostDefault>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPurchaseVatCostDefaultQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdatePurchaseVatCostDefaultUrl = () => {
+
+
+
+
+  return `/api/admin/system-settings/purchase-vat-cost-default`
+}
+
+/**
+ * @summary Update the purchase VAT inventory-cost default for future companies
+ */
+export const updatePurchaseVatCostDefault = async (purchaseVatCostDefaultInput: PurchaseVatCostDefaultInput, options?: RequestInit): Promise<PurchaseVatCostDefaultUpdateResponse> => {
+
+  return customFetch<PurchaseVatCostDefaultUpdateResponse>(getUpdatePurchaseVatCostDefaultUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(purchaseVatCostDefaultInput)
+  }
+);}
+
+
+
+
+
+export const getUpdatePurchaseVatCostDefaultMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePurchaseVatCostDefault>>, TError,{data: BodyType<PurchaseVatCostDefaultInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updatePurchaseVatCostDefault>>, TError,{data: BodyType<PurchaseVatCostDefaultInput>}, TContext> => {
+
+const mutationKey = ['updatePurchaseVatCostDefault'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePurchaseVatCostDefault>>, {data: BodyType<PurchaseVatCostDefaultInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updatePurchaseVatCostDefault(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdatePurchaseVatCostDefaultMutationResult = NonNullable<Awaited<ReturnType<typeof updatePurchaseVatCostDefault>>>
+    export type UpdatePurchaseVatCostDefaultMutationBody = BodyType<PurchaseVatCostDefaultInput>
+    export type UpdatePurchaseVatCostDefaultMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Update the purchase VAT inventory-cost default for future companies
+ */
+export const useUpdatePurchaseVatCostDefault = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePurchaseVatCostDefault>>, TError,{data: BodyType<PurchaseVatCostDefaultInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updatePurchaseVatCostDefault>>,
+        TError,
+        {data: BodyType<PurchaseVatCostDefaultInput>},
+        TContext
+      > => {
+      return useMutation(getUpdatePurchaseVatCostDefaultMutationOptions(options));
+    }
 
 export const getGetSecurityActiveCompanySessionsUrl = (companyId: number,
     params: GetSecurityActiveCompanySessionsParams,) => {
@@ -12234,3 +12399,10 @@ export function useGetMobileTrackingManagerReport<TData = Awaited<ReturnType<typ
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+

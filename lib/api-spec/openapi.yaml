@@ -1096,6 +1096,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /admin/system-settings/purchase-vat-cost-default:
+    get:
+      operationId: getPurchaseVatCostDefault
+      tags: [admin]
+      summary: Get the default purchase VAT inventory-cost policy for new companies
+      responses:
+        "200":
+          description: Current default
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseVatCostDefault"
+    put:
+      operationId: updatePurchaseVatCostDefault
+      tags: [admin]
+      summary: Update the purchase VAT inventory-cost default for future companies
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseVatCostDefaultInput"
+      responses:
+        "200":
+          description: Updated default
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseVatCostDefaultUpdateResponse"
+        "400":
+          description: Invalid setting value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /admin/security/active-companies/{companyId}/sessions:
     parameters:
       - name: companyId
@@ -6616,3 +6651,20 @@ components:
         nameAr: { type: string, minLength: 1, maxLength: 200 }
         nameEn: { type: ["string", "null"], maxLength: 200 }
         imageUrl: { type: ["string", "null"], maxLength: 1024 }
+    PurchaseVatCostDefault:
+      type: object
+      required: [enabled, updatedAt]
+      properties:
+        enabled: { type: boolean }
+        updatedAt: { type: ["string", "null"], format: date-time }
+    PurchaseVatCostDefaultInput:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    PurchaseVatCostDefaultUpdateResponse:
+      type: object
+      required: [ok, enabled]
+      properties:
+        ok: { type: boolean }
+        enabled: { type: boolean }

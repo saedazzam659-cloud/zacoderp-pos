@@ -82,6 +82,10 @@ export const companiesTable = pgTable("companies", {
   salesBarcodeEntryEnabled: boolean("sales_barcode_entry_enabled").notNull().default(false),
   allowDuplicateInvoiceItems: boolean("allow_duplicate_invoice_items").notNull().default(false),
   purchaseDirectExpensesCustodyEnabled: boolean("purchase_direct_expenses_custody_enabled").notNull().default(false),
+  // Controls capitalization of recoverable purchase VAT into stock cost.
+  // Existing companies retain the legacy behavior (true); fresh-company
+  // seeding may apply the platform default without changing old tenants.
+  purchaseVatInInventoryCost: boolean("purchase_vat_in_inventory_cost").notNull().default(true),
   // Master safety switch for negative-stock sales. When off, neither a
   // warehouse policy nor an invoice-level override may post stock below zero.
   allowNegativeSales: boolean("allow_negative_sales").notNull().default(false),

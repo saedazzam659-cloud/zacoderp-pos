@@ -22,6 +22,7 @@ import UserTrackingLive from "@/pages/admin/UserTrackingLive";
 import UserAttendanceReport from "@/pages/admin/UserAttendanceReport";
 import UserMovementReport from "@/pages/admin/UserMovementReport";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
+import PurchaseInventoryCostDefault from "@/pages/PurchaseInventoryCostDefault";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import InvoiceFieldPolicies from "@/pages/admin/InvoiceFieldPolicies";
 import EnterCompany from "@/pages/admin/EnterCompany";
@@ -944,6 +945,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/industries" component={Industries} />}
             {isSuperAdmin && <Route path="/admin/company-cloning" component={CompanyCloning} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
+            {isSuperAdmin && <Route path="/admin/company-defaults" component={PurchaseInventoryCostDefault} />}
             {isSuperAdmin && <Route path="/admin/pos-devices" component={PosDevices} />}
             {isSuperAdmin && <Route path="/admin/offline-licenses" component={OfflineLicenses} />}
             {isSuperAdmin && <Route path="/admin/download-codes" component={DownloadCodes} />}

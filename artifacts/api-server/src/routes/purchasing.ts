@@ -2114,6 +2114,10 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
     let [inv] = await db.select().from(purchaseInvoicesTable)
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    const [companyCostPolicy] = await db.select({
+      purchaseVatInInventoryCost: companiesTable.purchaseVatInInventoryCost,
+    }).from(companiesTable).where(eq(companiesTable.id, cid)).limit(1);
+    const capitalizePurchaseVat = companyCostPolicy?.purchaseVatInInventoryCost !== false;
     const historicalImportMode = (inv as any).historicalImportMode ?? "financial_inventory";
     if (historicalImportMode === "archive_only") {
       res.status(409).json({ error: "هذا المستند مؤرشف فقط ولا يمكن ترحيله." });
@@ -2404,7 +2408,18 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
       // Example: buy 10 @ 100 + 2 free ⇒ 12 units for 1000 ⇒ 83.33 avg.
       const qty      = Number(multiplyQuantity(String(line.qty || "0"), factor))
         + Number(multiplyQuantity(String(line.freeQty || "0"), factor));
-      const cost     = Number(line.finalCost || line.unitPrice);
+      let cost = Number(line.finalCost || line.unitPrice);
+      if (!capitalizePurchaseVat && Number(line.vatRate) > 0) {
+        const rate = Number(line.vatRate) / 100;
+        const qtyPaid = Number(line.qty || 1);
+        const discountRate = Math.max(0, Math.min(100, Number(line.discount) || 0)) / 100;
+        const afterDiscount = Math.max(
+          0,
+          qtyPaid * Number(line.unitPrice || 0) * (1 - discountRate) - Number(line.discountAmount || 0),
+        );
+        const netLine = inv.priceIncludesVat ? afterDiscount / (1 + rate) : afterDiscount;
+        cost = netLine + Number(line.expenseShare || 0);
+      }
       const landedCost = cost + (directExpenseShares.get(line.id) ?? 0);
       const costUnit = qty > 0
         ? Number(roundQuantity(divideQuantity(String(landedCost), String(qty)), 18, "half_up"))
