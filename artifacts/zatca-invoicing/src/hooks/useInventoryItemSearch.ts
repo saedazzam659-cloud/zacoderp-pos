@@ -39,6 +39,7 @@ export function useInventoryItemSearch(
     ),
     enabled: enabled && !!selectedKey,
     staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: "always",
   });
 
   const searchQuery = useQuery<any[]>({
@@ -49,6 +50,7 @@ export function useInventoryItemSearch(
     ),
     enabled,
     staleTime: 60 * 1000,
+    refetchOnWindowFocus: "always",
   });
 
   // Keep the last known row for a selected item while its dedicated lookup is

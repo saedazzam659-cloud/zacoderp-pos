@@ -1029,7 +1029,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     enabled: !!user,
     staleTime: 30_000,
     refetchOnMount: true,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: "always",
   });
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
