@@ -8,3 +8,9 @@ Keep both POS Desktop installer variants. The small online MSI remains the sourc
 **Why:** The user confirmed that both sources should remain active; the problem to solve is availability of a newer online release, not removal of the offline installer.
 
 **How to apply:** When changing release selection or synchronization, preserve `win-x64` for the in-app/web path and `win-x64-exe` for the full offline installer.
+
+Tag pushes to the current POS Desktop workflow publish a public GitHub Release; do not assume the release is a draft.
+
+**Why:** The workflow run created a non-draft release even though the intended outcome was a build-only draft.
+
+**How to apply:** Before pushing a version tag, inspect the release action's draft/publish settings and get explicit approval before making assets public.
