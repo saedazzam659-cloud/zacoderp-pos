@@ -1,11 +1,19 @@
 import { useState } from "react";
 import { reportLedgerLines, type LedgerLine } from "../lib/reports";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { useDimensions, DateField, BranchField, CostCenterField } from "./_reportFilters";
+import type { ExportColumn } from "../lib/exporters";
 
 type Agg = {
   accountId: number; code: string; name: string;
   openNet: number; periodDr: number; periodCr: number;
+};
+
+type TBExportRow = {
+  code: string; name: string;
+  openDr: number | string; openCr: number | string;
+  periodDr: number | string; periodCr: number | string;
+  closeDr: number | string; closeCr: number | string;
 };
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
@@ -61,6 +69,40 @@ export default function TrialBalanceReport() {
   const balanced = Math.abs(totals.closeDr - totals.closeCr) < 0.01;
   const cell = (n: number) => (Math.abs(n) > 0.001 ? fmt(n) : "");
 
+  const numCell = (n: number): number | string => (Math.abs(n) > 0.001 ? n : "");
+  const exportRows: TBExportRow[] = rows && rows.length > 0
+    ? [
+        ...rows.map((a): TBExportRow => {
+          const close = a.openNet + a.periodDr - a.periodCr;
+          return {
+            code: a.code, name: a.name,
+            openDr: numCell(a.openNet > 0 ? a.openNet : 0),
+            openCr: numCell(a.openNet < 0 ? -a.openNet : 0),
+            periodDr: numCell(a.periodDr),
+            periodCr: numCell(a.periodCr),
+            closeDr: numCell(close > 0 ? close : 0),
+            closeCr: numCell(close < 0 ? -close : 0),
+          };
+        }),
+        {
+          code: "", name: "الإجمالي",
+          openDr: totals.openDr, openCr: totals.openCr,
+          periodDr: totals.periodDr, periodCr: totals.periodCr,
+          closeDr: totals.closeDr, closeCr: totals.closeCr,
+        },
+      ]
+    : [];
+  const exportCols: ExportColumn<TBExportRow>[] = [
+    { header: "الكود", cell: (r) => r.code },
+    { header: "اسم الحساب", cell: (r) => r.name },
+    { header: "افتتاحي مدين", cell: (r) => r.openDr },
+    { header: "افتتاحي دائن", cell: (r) => r.openCr },
+    { header: "حركة مدين", cell: (r) => r.periodDr },
+    { header: "حركة دائن", cell: (r) => r.periodCr },
+    { header: "ختامي مدين", cell: (r) => r.closeDr },
+    { header: "ختامي دائن", cell: (r) => r.closeCr },
+  ];
+
   return (
     <Page title="ميزان المراجعة بالمجاميع" subtitle="الأرصدة الافتتاحية + حركة الفترة + الأرصدة الختامية لكل حساب (القيود المرحّلة فقط).">
       <Card style={{ marginBottom: 16 }}>
@@ -76,6 +118,11 @@ export default function TrialBalanceReport() {
 
       {rows && (
         <Card>
+          {rows.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+              <ExportButtons columns={exportCols} rows={exportRows} filenameBase="ميزان-المراجعة" title={`ميزان المراجعة بالمجاميع — ${fromDate} ← ${toDate}`} />
+            </div>
+          )}
           {rows.length === 0 ? <Empty text="لا توجد حركة في الفترة المحددة" /> : (
             <Table>
               <thead>

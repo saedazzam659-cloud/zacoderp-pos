@@ -2,6 +2,7 @@ import { useState } from "react";
 import { reportPurchaseInvoiceLines } from "../lib/purchaseReports";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
@@ -11,6 +12,8 @@ type Bucket = {
 };
 
 export default function PurchasesByItemReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const { branches } = useDimensions();
   const [fromDate, setFromDate] = useState(firstOfYear());
   const [toDate, setToDate] = useState(todayStr());
@@ -20,7 +23,7 @@ export default function PurchasesByItemReport() {
   const [err, setErr] = useState<string | null>(null);
 
   async function run() {
-    if (fromDate > toDate) { setErr("تاريخ البداية يجب أن يكون قبل تاريخ النهاية"); return; }
+    if (fromDate > toDate) { setErr(text("تاريخ البداية يجب أن يكون قبل تاريخ النهاية", "Start date must be on or before end date.")); return; }
     setErr(null); setLoading(true);
     try {
       const lines = await reportPurchaseInvoiceLines({ fromDate, toDate, branchId: branchId === "" ? null : branchId });
@@ -38,13 +41,13 @@ export default function PurchasesByItemReport() {
   const totalQty = (rows ?? []).reduce((s, r) => s + r.qty, 0);
 
   return (
-    <Page title="المشتريات حسب الصنف" subtitle="إجمالي مشتريات كل صنف خلال الفترة مرتبة تنازلياً مع نسبة المساهمة.">
+    <Page title={text("المشتريات حسب الصنف", "Purchases by item")} subtitle={text("إجمالي مشتريات كل صنف خلال الفترة مرتبة تنازلياً مع نسبة المساهمة.", "Total purchases per item for the period, sorted by contribution.")}>
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <DateField label="من تاريخ" value={fromDate} onChange={setFromDate} />
-          <DateField label="إلى تاريخ" value={toDate} onChange={setToDate} />
+          <DateField label={text("من تاريخ", "From date")} value={fromDate} onChange={setFromDate} />
+          <DateField label={text("إلى تاريخ", "To date")} value={toDate} onChange={setToDate} />
           <BranchField branches={branches} value={branchId} onChange={setBranchId} />
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : text("عرض", "Run report")}</button>
         </div>
         {err && <div style={{ marginTop: 8, color: "#991b1b", fontSize: 13 }}>⚠️ {err}</div>}
       </Card>
@@ -54,17 +57,17 @@ export default function PurchasesByItemReport() {
           <Table>
             <thead>
               <tr>
-                <Th style={{ width: 120 }}>كود الصنف</Th>
-                <Th>اسم الصنف</Th>
-                <Th style={{ textAlign: "left", width: 110 }}>الكمية</Th>
-                <Th style={{ textAlign: "center", width: 90 }}>الفواتير</Th>
-                <Th style={{ textAlign: "left", width: 150 }}>إجمالي المشتريات</Th>
-                <Th style={{ textAlign: "left", width: 100 }}>المساهمة</Th>
+                <Th style={{ width: 120 }}>{text("كود الصنف", "Item code")}</Th>
+                <Th>{text("اسم الصنف", "Item name")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 110 }}>{text("الكمية", "Quantity")}</Th>
+                <Th style={{ textAlign: "center", width: 90 }}>{text("الفواتير", "Invoices")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 150 }}>{text("إجمالي المشتريات", "Purchases total")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 100 }}>{text("المساهمة", "Share")}</Th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><Td colSpan={6}><Empty text="لا توجد مشتريات في الفترة المحددة" /></Td></tr>
+                <tr><Td colSpan={6}><Empty text={text("لا توجد مشتريات في الفترة المحددة", "No purchases for this period")} /></Td></tr>
               )}
               {rows.map((r) => (
                 <tr key={r.itemId}>
@@ -78,7 +81,7 @@ export default function PurchasesByItemReport() {
               ))}
               {rows.length > 0 && (
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
-                  <Td colSpan={2}>الإجمالي ({rows.length} صنف)</Td>
+                  <Td colSpan={2}>{text("الإجمالي", "Total")} ({rows.length} {text("صنف", "items")})</Td>
                   <Td num>{fmt(totalQty)}</Td>
                   <Td />
                   <Td num>{fmt(grandTotal)}</Td>

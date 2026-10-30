@@ -5,15 +5,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { currencySymbol, CURRENCIES, baseCurrencyCode } from "../lib/currency";
-import { getDecimals } from "../lib/appSettings";
+import { getDecimals, useUiLanguage } from "../lib/appSettings";
 import type { DiscType, DiscountResult } from "../lib/discount";
+import { exportToExcel, exportToPdf, type ExportColumn } from "../lib/exporters";
 
 export function Page({ title, subtitle, right, children }: {
   title: string; subtitle?: string; right?: ReactNode; children: ReactNode;
 }) {
+  const language = useUiLanguage();
   return (
-    <div dir="rtl" style={{ padding: 24, maxWidth: 1280, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={{ padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16, minWidth: 0 }}>
         <div>
           <h2 style={{ margin: 0 }}>{title}</h2>
           {subtitle && <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>{subtitle}</div>}
@@ -30,7 +32,21 @@ export function Card({ children, style }: { children: ReactNode; style?: CSSProp
 }
 
 export function Table({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  return <table style={{ width: "100%", borderCollapse: "collapse", ...style }}>{children}</table>;
+  return (
+    <>
+      <style>{`
+        table.z-admin-table { border-collapse: collapse; color: #233044; }
+        table.z-admin-table thead th { border-bottom: 1px solid #d9e0e8 !important; border-inline-start: 1px solid #e3e8ee; color: #44536a !important; background: #f2f5f8 !important; }
+        table.z-admin-table tbody td { border-top: 0 !important; border-bottom: 1px solid #e7ebf0; border-inline-start: 1px solid #edf0f3; }
+        table.z-admin-table tbody tr:nth-child(even) { background: #f8fafc; }
+        table.z-admin-table tbody tr:hover > td { background-color: #eef4f8; }
+        @media (max-width: 900px) {
+          table.z-admin-table thead th, table.z-admin-table tbody td { padding: 7px 9px !important; font-size: 12px !important; }
+        }
+      `}</style>
+      <table className="z-admin-table" style={{ width: "100%", borderCollapse: "collapse", ...style }}>{children}</table>
+    </>
+  );
 }
 export function Th({ children, style, colSpan, rowSpan }: { children?: ReactNode; style?: CSSProperties; colSpan?: number; rowSpan?: number }) {
   return <th colSpan={colSpan} rowSpan={rowSpan} style={{ textAlign: "right", padding: "10px 14px", fontSize: 12, color: "#64748b", fontWeight: 600, background: "#f8fafc", ...style }}>{children}</th>;
@@ -45,9 +61,32 @@ export function Td({ children, mono, num, style, colSpan, rowSpan }: { children?
   }}>{children}</td>;
 }
 
-export function Modal({ title, children, onCancel, wide }: { title: string; children: ReactNode; onCancel: () => void; wide?: boolean }) {
+export function EmptyItemsRow({ colSpan }: { colSpan: number }) {
   return (
-    <div dir="rtl" onClick={onCancel}
+    <tr data-testid="empty-items-state">
+      <td colSpan={colSpan} style={{ padding: 0, height: 246, border: 0, background: "#fff" }}>
+        <div style={{
+          height: 246, boxSizing: "border-box", display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", gap: 8,
+          background: "linear-gradient(180deg, #fff 0%, #f8fafc 100%)",
+          borderBottom: "1px dashed #e2e8f0", color: "#64748b",
+        }}>
+          <div aria-hidden="true" style={{
+            width: 42, height: 42, borderRadius: 14, display: "grid", placeItems: "center",
+            background: "#eaf7f4", color: "#087f69", fontSize: 24, fontWeight: 500,
+          }}>＋</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#475569" }}>ابدأ بإضافة الأصناف</div>
+          <div style={{ fontSize: 12 }}>ستظهر بنود المستند هنا</div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+export function Modal({ title, children, onCancel, wide }: { title: string; children: ReactNode; onCancel: () => void; wide?: boolean }) {
+  const language = useUiLanguage();
+  return (
+    <div dir={language === "en" ? "ltr" : "rtl"} onClick={onCancel}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
       <div onClick={(e) => e.stopPropagation()}
         style={{ background: "#fff", borderRadius: 12, padding: 24, width: wide ? 880 : 480, maxWidth: "94vw", maxHeight: "92vh", overflowY: "auto" }}>
@@ -67,6 +106,75 @@ export function Field({ label, children, style }: { label: string; children: Rea
 export function Row({ children }: { children: ReactNode }) {
   return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{children}</div>;
 }
+
+// ── Document form tabs (SAP-style) ─────────────────────────────────────────
+// A lightweight controlled tab bar used by the back-office document forms
+// (sales/purchase invoices + returns) so the header split matches the web app:
+// «البيانات الأساسية / بنود الأصناف / المدفوعات». Panels are rendered by the
+// caller — the caller keeps its own `activeTab` state and hides inactive panels
+// with `tabPanel(active, key)` (display:none, NOT unmount) so input focus and
+// per-line state survive tab switches.
+export function FormTabs<K extends string>({ tabs, active, onChange, accentColor = "#2563eb" }: {
+  tabs: { key: K; label: string; badge?: ReactNode }[];
+  active: K;
+  onChange: (k: K) => void;
+  accentColor?: string;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 2, borderBottom: "2px solid #e2e8f0", margin: "4px 0 14px" }}>
+      {tabs.map((t) => {
+        const on = t.key === active;
+        return (
+          <button key={t.key} type="button" onClick={() => onChange(t.key)}
+            style={{
+              padding: "9px 20px", border: "none", background: "none", cursor: "pointer",
+              fontFamily: "inherit", fontSize: 14, fontWeight: on ? 700 : 500,
+              color: on ? accentColor : "#64748b",
+              borderBottom: on ? `3px solid ${accentColor}` : "3px solid transparent",
+              marginBottom: -2, display: "inline-flex", alignItems: "center", gap: 6,
+            }}>
+            {t.label}
+            {t.badge}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+// Hide an inactive tab panel without unmounting it (preserves controlled-input
+// focus + per-line state). Spread onto the panel wrapper's style.
+export function tabPanel(active: string, key: string): CSSProperties {
+  return active === key ? {} : { display: "none" };
+}
+
+// ── Document-form layout (natural page flow, web parity) ───────────────────
+// The back-office document forms flow naturally inside the page wrapper
+// (PosShell `pagePad`, which already owns the vertical scroll). They are NOT
+// bounded to a fixed viewport height: the lines grid shows all of its rows and
+// the whole page scrolls as one. New documents start with a clean six-row-height
+// empty state; actual editable rows appear only after adding an item.
+// exactly like the web app. A prior fixed-height shell (calc(100vh-200px) +
+// internal scroll) collapsed the grid to a tiny header-only box on smaller
+// windows, so it was removed.
+export const docFormShell: CSSProperties = { display: "block" };
+// Spread onto the «بنود الأصناف» tab panel: a normal block when active, hidden
+// (state preserved) when not.
+export function linesPanel(active: string): CSSProperties {
+  return active === "lines" ? { display: "block" } : { display: "none" };
+}
+// Spread onto the non-lines tab panels (basic/payments): a normal block when
+// active, hidden (state preserved) when not.
+export function contentPanel(active: string, key: string): CSSProperties {
+  return active === key ? { display: "block" } : { display: "none" };
+}
+// The lines-grid wrapper — grows with its rows; only scrolls HORIZONTALLY for
+// the wide multi-column table. Vertical scrolling is owned by the page wrapper.
+export const linesScroll: CSSProperties = {
+  overflowX: "auto",
+  border: "1px solid #e2e8f0", borderRadius: 10,
+};
+// Kept for API compatibility; harmless in normal block flow.
+export const docFormPinned: CSSProperties = { flexShrink: 0 };
 export function ErrorMsg({ text }: { text: string | null }) {
   if (!text) return null;
   return <div style={{ padding: 8, background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 6, fontSize: 13, marginTop: 8 }}>⚠️ {text}</div>;
@@ -136,6 +244,111 @@ export const btnPrimary: CSSProperties = { padding: "8px 16px", background: "#25
 export const btnSecondary: CSSProperties = { padding: "8px 16px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 14 };
 export const btnDanger: CSSProperties = { padding: "6px 12px", background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 13 };
 export const btnLink: CSSProperties = { background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontFamily: "inherit", fontSize: 13, padding: 0 };
+
+// ─── Row-action chips ────────────────────────────────────────────────
+// A more attractive, consistent replacement for the bare text `btnLink`
+// used inside table row action cells (ترحيل / تعديل / حذف / فك الترحيل …).
+// Renders a small tinted pill with a soft border per semantic tone, so the
+// invoice grids read as proper buttons rather than plain hyperlinks.
+export type ChipTone = "default" | "primary" | "success" | "warn" | "danger" | "purple";
+const CHIP_TONES: Record<ChipTone, { bg: string; fg: string; border: string }> = {
+  default: { bg: "#f1f5f9", fg: "#334155", border: "#e2e8f0" },
+  primary: { bg: "#eff6ff", fg: "#1d4ed8", border: "#bfdbfe" },
+  success: { bg: "#ecfdf5", fg: "#15803d", border: "#bbf7d0" },
+  warn:    { bg: "#fffbeb", fg: "#b45309", border: "#fde68a" },
+  danger:  { bg: "#fef2f2", fg: "#dc2626", border: "#fecaca" },
+  purple:  { bg: "#faf5ff", fg: "#7c3aed", border: "#e9d5ff" },
+};
+export function actionChip(tone: ChipTone = "default", disabled = false): CSSProperties {
+  const t = CHIP_TONES[tone];
+  return {
+    display: "inline-flex", alignItems: "center", gap: 4,
+    padding: "4px 11px", background: t.bg, color: t.fg,
+    border: `1px solid ${t.border}`, borderRadius: 999,
+    cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.45 : 1,
+    fontFamily: "inherit", fontSize: 12.5, fontWeight: 600, lineHeight: 1.4,
+    whiteSpace: "nowrap", transition: "filter .12s ease",
+  };
+}
+
+// ─── Top action bar + single-row selection ───────────────────────────
+// Document grids expose their per-row verbs (عرض/طباعة/إرجاع/ترحيل/تعديل/
+// حذف/فك الترحيل …) from ONE attractive bar above the table instead of a
+// cramped action cell on every row. The user ticks a single row (radio), the
+// bar lights up the verbs valid for THAT row's status, and clicking runs the
+// existing handler against the selected id. `useRowSelect` also self-clears
+// the selection when the chosen row vanishes after a refresh.
+export function useRowSelect<T extends { id: number }>(rows: T[]) {
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  useEffect(() => {
+    if (selectedId != null && !rows.some((r) => r.id === selectedId)) setSelectedId(null);
+  }, [rows, selectedId]);
+  const selected = rows.find((r) => r.id === selectedId) ?? null;
+  const toggle = (id: number) => setSelectedId((cur) => (cur === id ? null : id));
+  return { selectedId, setSelectedId, selected, toggle, clear: () => setSelectedId(null) };
+}
+
+// Narrow leading header cell for the selection column.
+export function SelectTh() {
+  return <Th style={{ width: 36 }}></Th>;
+}
+
+// Leading row cell carrying the selection radio. Clicking the row's radio
+// (or the cell) selects it; clicking the active one again clears it.
+export function SelectCell({ id, selectedId, onToggle }: { id: number; selectedId: number | null; onToggle: (id: number) => void }) {
+  const on = selectedId === id;
+  return (
+    <Td style={{ width: 36, textAlign: "center" }}>
+      <input type="radio" name="rowsel" checked={on} onChange={() => onToggle(id)}
+        onClick={() => { if (on) onToggle(id); }} aria-label="تحديد الصف"
+        style={{ cursor: "pointer", width: 16, height: 16, accentColor: "#2563eb" }} />
+    </Td>
+  );
+}
+
+// The sticky-feeling top bar. `selectedLabel` shows what's currently ticked
+// (e.g. the document number) so the user knows what the verbs will act on.
+export function ActionBar({ selectedLabel, children }: { selectedLabel?: ReactNode; children: ReactNode }) {
+  return (
+    <div style={{
+      display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center",
+      padding: "10px 12px", marginBottom: 12, background: "#f8fafc",
+      border: "1px solid #e2e8f0", borderRadius: 10,
+    }}>
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: "#475569", marginInlineEnd: 4 }}>
+        {selectedLabel ? <>المحدّد: <span style={{ color: "#0f172a" }}>{selectedLabel}</span></> : "اختر صفاً من الجدول لتفعيل الإجراءات"}
+      </span>
+      <div style={{ flex: 1 }} />
+      {children}
+    </div>
+  );
+}
+
+// A verb button for the ActionBar. `tone` maps to the same chip palette; the
+// button is disabled (greyed) when the verb is invalid for the selection.
+export function ActionBtn({ label, icon, tone = "default", onClick, disabled, title }: {
+  label: string; icon?: string; tone?: ChipTone; onClick: () => void; disabled?: boolean; title?: string;
+}) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} title={title ?? label}
+      style={{ ...actionChip(tone, disabled), padding: "7px 14px", fontSize: 13 }}>
+      {icon ? <span aria-hidden>{icon}</span> : null} {label}
+    </button>
+  );
+}
+
+// ─── Tauri error text ────────────────────────────────────────────────
+// Tauri `Err(String)` rejects `invoke` with a RAW string, so `e.message` is
+// undefined and naive `e?.message ?? "fallback"` hides the real cause. Always
+// surface the string when present.
+export function errText(e: unknown, fallback: string): string {
+  if (typeof e === "string" && e.trim()) return e;
+  if (e && typeof e === "object" && "message" in e) {
+    const m = (e as { message?: unknown }).message;
+    if (typeof m === "string" && m.trim()) return m;
+  }
+  return fallback;
+}
 
 // ─── Searchable combobox ─────────────────────────────────────────────
 // Drop-in replacement for <select>. Renders a clickable trigger styled
@@ -441,10 +654,11 @@ export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmou
 /** Attractive totals panel; hosts the header (whole-invoice) discount control.
  *  When `rate` ≠ 1 (foreign-currency document) it also shows the grand total
  *  converted to the base currency. */
-export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride, rate, onHeaderDisc, onHeaderType }: {
+export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride, rate, onHeaderDisc, onHeaderType, layout = "stacked" }: {
   result: DiscountResult;
   headerDisc: number; headerType: DiscType; sym?: string; rate?: number;
   onHeaderDisc: (v: number) => void; onHeaderType: (t: DiscType) => void;
+  layout?: "stacked" | "compact";
 }) {
   const sym = symOverride ?? currencySymbol();
   const m = (n: number) => `${fmt(n)} ${sym}`;
@@ -455,6 +669,52 @@ export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride
   const hasHeaderDisc = result.headerDiscountValue > 0.00001;
   const totalDisc = result.lineDiscountTotal + result.headerDiscountValue;
   const rowS: CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", fontSize: 14 };
+  if (layout === "compact") {
+    const metric: CSSProperties = {
+      minWidth: 0, padding: "7px 10px", borderInlineStart: "1px solid #dbe5e8",
+      display: "flex", flexDirection: "column", justifyContent: "center", gap: 3,
+    };
+    const label: CSSProperties = { fontSize: 11, color: "#64748b", whiteSpace: "nowrap" };
+    const amount: CSSProperties = { fontSize: 13, fontWeight: 700, color: "#1e293b", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
+    return (
+      <div className="zsales-totals-grid" style={{
+        marginTop: 10, width: "100%", boxSizing: "border-box", display: "grid",
+        gridTemplateColumns: "repeat(6, minmax(0, 1fr))", alignItems: "stretch",
+        background: "#f5faf9", border: "1px solid #cfe7e1", borderRadius: 9, padding: 5,
+      }}>
+        <div style={metric}><span style={label}>الإجمالي قبل الخصم</span><span style={amount}>{m(result.grossSubtotal)}</span></div>
+        <div style={metric}><span style={label}>خصم الأصناف</span><span style={{ ...amount, color: totalDisc ? "#b45309" : "#64748b" }}>− {m(result.lineDiscountTotal)}</span></div>
+        <div style={metric}>
+          <span style={label}>خصم الفاتورة</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <input
+              type="number" step="0.01" min={0} value={headerDisc || ""} placeholder="0"
+              onChange={(e) => onHeaderDisc(Number(e.target.value) || 0)}
+              style={{ ...input, width: 74, height: 30, padding: "4px 6px", fontSize: 12 }}
+            />
+            <DiscTypeToggle value={headerType} onChange={onHeaderType} />
+          </div>
+            {hasHeaderDisc && (
+              <span style={{ fontSize: 10, color: "#b45309" }}>
+                قيمة الخصم {m(result.headerDiscountValue)}{hasLineDisc ? ` · الإجمالي ${m(totalDisc)}` : ""}
+              </span>
+            )}
+        </div>
+        <div style={metric}><span style={label}>الصافي قبل الضريبة</span><span style={amount}>{m(result.netSubtotal)}</span></div>
+        <div style={metric}><span style={label}>ضريبة القيمة المضافة</span><span style={amount}>{m(result.vatTotal)}</span></div>
+        <div style={{ ...metric, borderInlineStart: 0, background: "#e3f5ef", borderRadius: 7 }}>
+          <span style={{ ...label, color: "#087f69", fontWeight: 700 }}>الإجمالي النهائي</span>
+          <span style={{ ...amount, color: "#087f69", fontSize: 16 }}>{m(result.grandTotal)}</span>
+        </div>
+        {showBase && (
+          <div style={{ ...metric, gridColumn: "1 / -1", borderInlineStart: 0, borderTop: "1px solid #dbe5e8", marginTop: 4 }}>
+            <span style={label}>الإجمالي بالعملة الأساسية</span>
+            <span style={amount}>{fmt(result.grandTotal * r)} {baseSym}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div style={{ marginTop: 12, marginInlineStart: "auto", maxWidth: 420, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 16px" }}>
       <div style={{ ...rowS, color: "#475569" }}>
@@ -760,6 +1020,39 @@ export function GridToolbar<T>({ grid, placeholder, extra }: { grid: GridFilter<
       )}
       {extra}
     </div>
+  );
+}
+
+/** Adapt the screen's existing GridColumn[] into export columns (header + cell)
+ *  so list screens get Excel/PDF export with zero extra column definitions. */
+export function gridToExportCols<T>(cols: GridColumn<T>[]): ExportColumn<T>[] {
+  return cols.map((c) => ({
+    header: c.label,
+    cell: (r: T) => (c.text ? c.text(r) : c.value(r)),
+  }));
+}
+
+/** Excel + PDF export buttons. Drop into a GridToolbar `extra` slot (pass
+ *  `gridToExportCols(columns)` + `grid.view`) or any list/report screen with
+ *  explicit ExportColumn[]. Both exports are fully offline. */
+export function ExportButtons<T>({ columns, rows, filenameBase, title }: {
+  columns: ExportColumn<T>[];
+  rows: T[];
+  filenameBase: string;
+  title: string;
+}) {
+  const disabled = rows.length === 0;
+  return (
+    <>
+      <button type="button" disabled={disabled}
+        onClick={() => exportToExcel(filenameBase, columns, rows)}
+        style={{ ...btnSecondary, opacity: disabled ? 0.5 : 1, cursor: disabled ? "default" : "pointer" }}
+        title="تصدير إلى ملف إكسل (Excel)">⬇️ إكسل</button>
+      <button type="button" disabled={disabled}
+        onClick={() => exportToPdf(title, columns, rows)}
+        style={{ ...btnSecondary, opacity: disabled ? 0.5 : 1, cursor: disabled ? "default" : "pointer" }}
+        title="تصدير القائمة كاملة كملف PDF (لطباعة فاتورة مفردة اختر صفها ثم اضغط «طباعة الفاتورة»)">📄 تصدير القائمة (PDF)</button>
+    </>
   );
 }
 

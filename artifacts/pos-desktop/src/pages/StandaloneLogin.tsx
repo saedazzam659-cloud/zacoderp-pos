@@ -11,11 +11,15 @@
 
 import { useEffect, useState } from "react";
 import { authLocalUser, type LocalSession, listLocalUsers } from "../lib/standalone";
+import NumberSystemControl from "./NumberSystemControl";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 export default function StandaloneLogin({ onSignedIn, customerName }: {
   onSignedIn: (s: LocalSession) => void;
   customerName: string;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [usernames, setUsernames] = useState<string[]>([]);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -40,17 +44,20 @@ export default function StandaloneLogin({ onSignedIn, customerName }: {
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <form onSubmit={submit} style={S.card}>
         <div style={S.brand}>
           <div style={S.brandIcon}>zacode</div>
           <div>
             <div style={S.brandName}>{customerName}</div>
-            <div style={S.brandTag}>تسجيل دخول الكاشير — وضع مستقل</div>
+            <div style={S.brandTag}>{text("تسجيل دخول الكاشير — وضع مستقل", "Cashier sign in — standalone mode")}</div>
           </div>
         </div>
+      <div style={{ display: "flex", justifyContent: language === "en" ? "flex-end" : "flex-start" }}>
+          <NumberSystemControl />
+        </div>
         <label style={S.label}>
-          اسم المستخدم
+          {text("اسم المستخدم", "Username")}
           <input value={username} onChange={(e) => setUsername(e.target.value)}
                  list="standalone-users" autoFocus style={S.input} />
           <datalist id="standalone-users">
@@ -58,15 +65,15 @@ export default function StandaloneLogin({ onSignedIn, customerName }: {
           </datalist>
         </label>
         <label style={S.label}>
-          كلمة المرور
+          {text("كلمة المرور", "Password")}
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={S.input} />
         </label>
         {err && <div style={S.err}>⚠️ {err}</div>}
         <button disabled={busy || !username || !password} style={S.btn}>
-          {busy ? "جارٍ التحقق…" : "دخول"}
+          {busy ? text("جارٍ التحقق…", "Checking…") : text("دخول", "Sign in")}
         </button>
         <div style={S.foot}>
-          نسي كلمة المرور؟ تواصل مع مسؤول الجهاز لإعادة التعيين من شاشة المستخدمين.
+          {text("نسي كلمة المرور؟ تواصل مع مسؤول الجهاز لإعادة التعيين من شاشة المستخدمين.", "Forgot your password? Ask the device administrator to reset it from User Management.")}
         </div>
       </form>
     </div>

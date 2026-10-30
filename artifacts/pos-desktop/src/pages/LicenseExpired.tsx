@@ -14,6 +14,7 @@
 // re-activation walkthrough.
 
 import { useState } from "react";
+import { formatUiDate, uiText, useUiLanguage } from "../lib/appSettings";
 
 type Props = {
   expiresAt: string | null;
@@ -23,10 +24,12 @@ type Props = {
 };
 
 export default function LicenseExpired({ expiresAt, companyName, onRetry, onDeactivate }: Props) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [retrying, setRetrying] = useState(false);
 
   const expiresText = expiresAt
-    ? new Date(expiresAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" })
+    ? formatUiDate(expiresAt, language)
     : null;
 
   async function handleRetry() {
@@ -36,19 +39,22 @@ export default function LicenseExpired({ expiresAt, companyName, onRetry, onDeac
   }
 
   async function handleDeactivate() {
-    if (!confirm("سيتم إلغاء تفعيل الجهاز ومسح بياناته من هذا الجهاز. هل أنت متأكد؟")) return;
+    if (!confirm(text(
+      "سيتم إلغاء تفعيل الجهاز ومسح بياناته من هذا الجهاز. هل أنت متأكد؟",
+      "This will deactivate the device and erase its local data. Are you sure?",
+    ))) return;
     await onDeactivate();
   }
 
   return (
-    <div dir="rtl" style={S.shell}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.shell}>
       <div style={S.card}>
         <div style={S.iconWrap}>
           <div style={S.iconCircle}>⏱️</div>
         </div>
-        <h1 style={S.title}>انتهى اشتراك هذا الجهاز</h1>
+        <h1 style={S.title}>{text("انتهى اشتراك هذا الجهاز", "This device's subscription has expired")}</h1>
         <p style={S.lead}>
-          تواصل مع الدعم الفني للتجديد
+          {text("تواصل مع الدعم الفني للتجديد", "Contact support to renew")}
         </p>
 
         {companyName && (
@@ -57,43 +63,44 @@ export default function LicenseExpired({ expiresAt, companyName, onRetry, onDeac
 
         {expiresText && (
           <div style={S.expiryRow}>
-            <span style={S.expiryLabel}>تاريخ انتهاء الاشتراك:</span>
+            <span style={S.expiryLabel}>{text("تاريخ انتهاء الاشتراك:", "Subscription expiry date:")}</span>
             <span style={S.expiryValue}>{expiresText}</span>
           </div>
         )}
 
-        <div style={S.help}>
-          <div style={S.helpTitle}>📞 الدعم الفني — م/ كرم عزام</div>
+        <div style={{ ...S.help, textAlign: language === "en" ? "left" : "right" }}>
+          <div style={S.helpTitle}>{text("📞 الدعم الفني — م/ كرم عزام", "📞 Technical support — Eng. Karam Azzam")}</div>
           <div style={S.helpText}>
-            تواصل مع فريق الدعم الفني لتجديد الاشتراك. بعد التجديد، اضغط
-            "إعادة المحاولة" أدناه ليعود الجهاز للعمل مباشرة بدون الحاجة
-            لإعادة التفعيل.
+            {text(
+              "تواصل مع فريق الدعم الفني لتجديد الاشتراك. بعد التجديد، اضغط «إعادة المحاولة» أدناه ليعود الجهاز للعمل مباشرة بدون الحاجة لإعادة التفعيل.",
+              "Contact technical support to renew the subscription. After renewal, select “Retry” below to resume using this device without reactivating it.",
+            )}
           </div>
           <div style={S.contactBlock}>
             <div style={S.contactRow}>
-              <span style={S.contactLabel}>من داخل مصر:</span>
+              <span style={S.contactLabel}>{text("من داخل مصر:", "From within Egypt:")}</span>
               <a href="tel:01000903159" style={S.contactLink}>📞 01000903159</a>
-              <a href="https://wa.me/201000903159" target="_blank" rel="noreferrer" style={S.contactLinkWa}>💬 واتساب</a>
+              <a href="https://wa.me/201000903159" target="_blank" rel="noreferrer" style={S.contactLinkWa}>💬 {text("واتساب", "WhatsApp")}</a>
             </div>
             <div style={S.contactRow}>
-              <span style={S.contactLabel}>من خارج مصر:</span>
+              <span style={S.contactLabel}>{text("من خارج مصر:", "From outside Egypt:")}</span>
               <a href="tel:+201000903159" style={S.contactLink} dir="ltr">📞 00201000903159</a>
-              <a href="https://wa.me/201000903159" target="_blank" rel="noreferrer" style={S.contactLinkWa}>💬 واتساب</a>
+              <a href="https://wa.me/201000903159" target="_blank" rel="noreferrer" style={S.contactLinkWa}>💬 {text("واتساب", "WhatsApp")}</a>
             </div>
           </div>
         </div>
 
         <div style={S.actions}>
           <button onClick={handleRetry} disabled={retrying} style={S.btnPrimary}>
-            {retrying ? "جارٍ التحقق…" : "🔄 إعادة المحاولة"}
+            {retrying ? text("جارٍ التحقق…", "Checking…") : `🔄 ${text("إعادة المحاولة", "Retry")}`}
           </button>
           <button onClick={handleDeactivate} style={S.btnGhost}>
-            إلغاء تفعيل الجهاز
+            {text("إلغاء تفعيل الجهاز", "Deactivate device")}
           </button>
         </div>
 
         <div style={S.footer}>
-          لن تتمكن من استخدام نقطة البيع حتى يتم تجديد الاشتراك.
+          {text("لن تتمكن من استخدام نقطة البيع حتى يتم تجديد الاشتراك.", "You cannot use the point of sale until the subscription is renewed.")}
         </div>
       </div>
     </div>

@@ -1,3 +1,4 @@
+import { saveText } from "../lib/saveFile";
 // Items admin — list + add + edit + delete.
 // Uses lib/items.ts + lib/uom.ts.
 
@@ -8,10 +9,14 @@ import {
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
 import { listItemGroups } from "../lib/itemGroups";
+import { listBrands, listItemBrandLinks, setItemBrands, dropItemBrands, type ItemBrandLink } from "../lib/brands";
 import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { currencySymbol } from "../lib/currency";
 import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
+import { exportToExcel, exportToPdf, type ExportColumn } from "../lib/exporters";
+import { useDataRefresh, emitData } from "../lib/dataBus";
+import { useHideZeros, blankIfZero, uiText, useUiLanguage, type UiLanguage } from "../lib/appSettings";
 
 // ─── Excel-like grid: column defs, filtering, sorting, export ───────
 type ColKey = "name" | "qty" | "barcode" | "code" | "price" | "vat" | "source";
@@ -58,6 +63,17 @@ const OP_LABELS: Record<FilterOp, string> = {
 };
 function opsForType(t: ColType): FilterOp[] {
   return t === "number" ? ["eq", "neq", "gt", "gte", "lt", "lte"] : ["contains", "starts", "eq", "neq"];
+}
+const OP_LABELS_EN: Record<FilterOp, string> = {
+  contains: "Contains", starts: "Starts with", eq: "Equals", neq: "Does not equal",
+  gt: "Greater than", gte: "Greater than or equal", lt: "Less than", lte: "Less than or equal",
+};
+const ITEM_COL_LABELS_EN: Record<ColKey, string> = {
+  name: "Name", qty: "Available quantity", barcode: "Barcode", code: "Code",
+  price: "Price", vat: "Tax", source: "Source",
+};
+function itemColLabel(col: ColDef, language: UiLanguage): string {
+  return language === "en" ? ITEM_COL_LABELS_EN[col.key] : col.label;
 }
 
 /** Number column quick-filter: supports >, >=, <, <=, =, a-b range, else substring. */
@@ -108,8 +124,10 @@ function evalAdvCond(c: AdvCond, it: LocalItem, s: StockMap): boolean {
   return true;
 }
 
-function itemsToCsv(list: LocalItem[], s: StockMap): string {
-  const headers = ["الاسم", "الاسم بالإنجليزية", "الكمية المتاحة", "الباركود", "الكود", "السعر", "الضريبة %", "المصدر"];
+function itemsToCsv(list: LocalItem[], s: StockMap, language: UiLanguage): string {
+  const headers = language === "en"
+    ? ["Name", "English name", "Available quantity", "Barcode", "Code", "Price", "Tax %", "Source"]
+    : ["الاسم", "الاسم بالإنجليزية", "الكمية المتاحة", "الباركود", "الكود", "السعر", "الضريبة %", "المصدر"];
   const esc = (x: string) => (/[",\n\r]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x);
   const lines = [headers.map(esc).join(",")];
   for (const it of list) {
@@ -122,22 +140,19 @@ function itemsToCsv(list: LocalItem[], s: StockMap): string {
       it.code ?? "",
       it.salePrice.toFixed(2),
       String(it.vatRate),
-      it.cloudId ? "سحابي" : "محلي",
+      it.cloudId ? uiText("سحابي", "Cloud", language) : uiText("محلي", "Local", language),
     ].map((c) => esc(String(c))).join(","));
   }
   return "\uFEFF" + lines.join("\r\n");
 }
 
 function downloadCsv(content: string, filename: string): void {
-  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  void saveText(content, filename);
 }
 
 export default function ItemsAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<LocalItem[]>([]);
   const [stockMap, setStockMap] = useState<StockMap>({});
   const [search, setSearch] = useState("");
@@ -197,16 +212,16 @@ export default function ItemsAdmin() {
    *   - "otc"    : items where requiresPrescription is false (OTC only)
    */
   async function importEdaCatalog(preset: "all" | "top" | "otc" | "category", category?: string) {
-    const label = preset === "all" ? "الكامل" : preset === "top" ? "الأكثر مبيعًا" : preset === "otc" ? "اللي بدون روشتة" : `فئة ${category}`;
-    if (!confirm(`سيتم استيراد كتالوج EDA — ${label}. متابعة؟`)) return;
+    const label = preset === "all" ? text("الكامل", "Full catalog") : preset === "top" ? text("الأكثر مبيعًا", "Top sellers") : preset === "otc" ? text("اللي بدون روشتة", "Over-the-counter only") : `${text("فئة", "Category")} ${category}`;
+    if (!confirm(text(`سيتم استيراد كتالوج EDA — ${label}. متابعة؟`, `Import EDA catalog — ${label}?`))) return;
     setImportingEda(true);
     try {
       const baseUrl = (import.meta as any).env?.BASE_URL ?? "/";
       const res = await fetch(`${baseUrl}catalogs/eda_pharmacy_2026.csv`);
-      if (!res.ok) throw new Error(`فشل تحميل الكتالوج (${res.status})`);
-      const text = await res.text();
-      const grid = parseCsv(text);
-      if (grid.length < 2) throw new Error("الكتالوج فارغ");
+      if (!res.ok) throw new Error(text(`فشل تحميل الكتالوج (${res.status})`, `Could not load catalog (${res.status}).`));
+      const csvText = await res.text();
+      const grid = parseCsv(csvText);
+      if (grid.length < 2) throw new Error(text("الكتالوج فارغ", "The catalog is empty."));
       const header = grid[0].map((h) => h.trim().toLowerCase());
       const idx = (n: string) => header.indexOf(n);
       const cols = {
@@ -245,15 +260,15 @@ export default function ItemsAdmin() {
       } else if (preset === "otc") {
         rows = rows.filter((r) => !r.requiresPrescription);
       } else if (preset === "category") {
-        if (!category) throw new Error("لم يتم تحديد الفئة");
+        if (!category) throw new Error(text("لم يتم تحديد الفئة", "No category was selected."));
         rows = rows.filter((r) => (r.dosageForm ?? "").toLowerCase() === category.toLowerCase());
       }
       const { inserted, skippedDup } = await bulkImportLocalItems(rows, { dedupBy: "barcode" });
-      setToast({ kind: "ok", text: `تم استيراد ${inserted} دواء${skippedDup ? ` — تم تجاهل ${skippedDup} مكرر` : ""}` });
+      setToast({ kind: "ok", text: language === "en" ? `Imported ${inserted} medicines${skippedDup ? ` — skipped ${skippedDup} duplicates` : ""}.` : `تم استيراد ${inserted} دواء${skippedDup ? ` — تم تجاهل ${skippedDup} مكرر` : ""}` });
       setShowEda(false);
       await refresh();
     } catch (e: any) {
-      setToast({ kind: "err", text: e?.message ?? "فشل استيراد كتالوج EDA" });
+      setToast({ kind: "err", text: e?.message ?? text("فشل استيراد كتالوج EDA", "Could not import EDA catalog.") });
     } finally {
       setImportingEda(false);
     }
@@ -272,6 +287,9 @@ export default function ItemsAdmin() {
     finally { setLoading(false); }
   }
   useEffect(() => { setPage(1); void refresh(); /* eslint-disable-next-line */ }, [search]);
+  // Live-refresh when items or stock change anywhere (a sale/purchase/return/
+  // adjustment on another keep-alive tab updates the on-hand qty column).
+  useDataRefresh(["items", "stock"], refresh);
 
   const processed = useMemo(() => {
     let list = rows.slice();
@@ -358,14 +376,14 @@ export default function ItemsAdmin() {
     const ctx = measureCanvas.current.getContext("2d");
     if (!ctx) return;
     ctx.font = "600 13px system-ui, -apple-system, sans-serif";
-    let max = ctx.measureText(col.label).width + 28;
+    let max = ctx.measureText(itemColLabel(col, language)).width + 28;
     ctx.font = "14px system-ui, -apple-system, sans-serif";
     for (const it of processed) {
       const w = ctx.measureText(col.text(it, stockMap)).width;
       if (w > max) max = w;
     }
     setColWidths((prev) => ({ ...prev, [key]: Math.max(60, Math.min(700, Math.ceil(max) + 32)) }));
-  }, [processed, stockMap]);
+  }, [processed, stockMap, language]);
 
   const hasActiveView = !!sort
     || Object.values(columnFilters).some((v) => (v ?? "").trim() !== "")
@@ -377,37 +395,53 @@ export default function ItemsAdmin() {
     setLogic("and");
   }
   function exportCsv() {
-    const csv = itemsToCsv(processed, stockMap);
+    const csv = itemsToCsv(processed, stockMap, language);
     const stamp = new Date().toISOString().slice(0, 10);
     downloadCsv(csv, `items_${stamp}.csv`);
-    setToast({ kind: "ok", text: `تم تصدير ${processed.length} صنف إلى ملف Excel/CSV` });
+    setToast({ kind: "ok", text: text(`تم تصدير ${processed.length} صنف إلى ملف Excel/CSV`, `Exported ${processed.length} items to Excel/CSV.`) });
+  }
+  const exportColumns: ExportColumn<LocalItem>[] = [
+    { header: text("الاسم", "Name"), cell: (it) => it.nameAr ?? "" },
+    { header: text("الاسم بالإنجليزية", "English name"), cell: (it) => it.nameEn ?? "" },
+    { header: text("الكمية المتاحة", "Available quantity"), cell: (it) => stockMap[it.id]?.qty ?? 0 },
+    { header: text("الباركود", "Barcode"), cell: (it) => it.barcode ?? "" },
+    { header: text("الكود", "Code"), cell: (it) => it.code ?? "" },
+    { header: text("السعر", "Price"), cell: (it) => it.salePrice },
+    { header: text("الضريبة %", "Tax %"), cell: (it) => it.vatRate },
+    { header: text("المصدر", "Source"), cell: (it) => (it.cloudId ? text("سحابي", "Cloud") : text("محلي", "Local")) },
+  ];
+  function exportExcel() {
+    exportToExcel("items", exportColumns, processed);
+  }
+  function exportPdf() {
+    exportToPdf(text("قائمة الأصناف", "Item list"), exportColumns, processed);
   }
 
   async function handleDelete(it: LocalItem) {
-    if (!confirm(`حذف الصنف «${it.nameAr}»؟`)) return;
-    try { await deleteItem(it.id); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
-    catch (e: any) { setToast({ kind: "err", text: e?.message ?? "فشل الحذف" }); }
+    if (!confirm(`${text("حذف الصنف", "Delete item")} «${it.nameAr}»?`)) return;
+    try { await deleteItem(it.id); dropItemBrands(it.id); emitData("items"); setToast({ kind: "ok", text: text("تم الحذف", "Item deleted.") }); await refresh(); }
+    catch (e: any) { setToast({ kind: "err", text: e?.message ?? text("فشل الحذف", "Could not delete item.") }); }
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.headerRow}>
         <div>
-          <h2 style={S.h2}>الأصناف ({rows.length})</h2>
-          <div style={S.sub}>إدارة قائمة الأصناف وأسعار البيع — السحب من السحابة يُحدّث القائمة تلقائيًا</div>
+          <h2 style={S.h2}>{text("الأصناف", "Items")} ({rows.length})</h2>
+          <div style={S.sub}>{text("إدارة قائمة الأصناف وأسعار البيع — السحب من السحابة يُحدّث القائمة تلقائيًا", "Manage item catalog and sales prices. Cloud pulls refresh the list automatically.")}</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           {isPharmacy && (
             <button onClick={() => setShowEda(true)} disabled={importingEda} style={S.btnEda}>
-              {importingEda ? "... جاري الاستيراد" : "💊 استيراد كتالوج EDA"}
+              {importingEda ? text("... جاري الاستيراد", "Importing…") : `💊 ${text("استيراد كتالوج EDA", "Import EDA catalog")}`}
             </button>
           )}
           <button onClick={() => setShowImport(true)} style={S.btnImport}>
-            📥 استيراد من CSV
+            📥 {text("استيراد من CSV", "Import CSV")}
           </button>
           <button onClick={() => { setEditing(null); setShowForm(true); }} disabled={showForm}
             style={{ ...S.btnPrimary, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>
-            + صنف جديد
+            + {text("صنف جديد", "New item")}
           </button>
         </div>
       </div>
@@ -417,43 +451,49 @@ export default function ItemsAdmin() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="بحث سريع بالاسم أو الكود أو الباركود..."
+          placeholder={text("بحث سريع بالاسم أو الكود أو الباركود...", "Search by name, code, or barcode…")}
           style={{ ...S.search, marginBottom: 0, flex: 1, minWidth: 220 }}
         />
-        <button onClick={() => setShowFilters((v) => !v)} style={showFilters ? S.btnToolActive : S.btnTool} title="إظهار صف فلتر تحت كل عمود">
-          ⛃ فلاتر الأعمدة
+        <button onClick={() => setShowFilters((v) => !v)} style={showFilters ? S.btnToolActive : S.btnTool} title={text("إظهار صف فلتر تحت كل عمود", "Show a filter row under each column")}>
+          ⛃ {text("فلاتر الأعمدة", "Column filters")}
         </button>
-        <button onClick={() => setShowAdvanced((v) => !v)} style={showAdvanced ? S.btnToolActive : S.btnTool} title="بحث متقدم بأكثر من شرط">
-          🔍 بحث متقدم
+        <button onClick={() => setShowAdvanced((v) => !v)} style={showAdvanced ? S.btnToolActive : S.btnTool} title={text("بحث متقدم بأكثر من شرط", "Advanced search with multiple conditions")}>
+          🔍 {text("بحث متقدم", "Advanced search")}
         </button>
-        <button onClick={exportCsv} style={S.btnTool} title="تصدير القائمة المفلترة إلى Excel/CSV">
-          📊 تصدير Excel
+        <button onClick={exportCsv} style={S.btnTool} title={text("تصدير القائمة المفلترة إلى CSV", "Export filtered items to CSV")}>
+          📊 CSV
+        </button>
+        <button onClick={exportExcel} style={S.btnTool} title={text("تصدير القائمة المفلترة إلى ملف إكسل", "Export filtered items to Excel")}>
+          ⬇️ {text("إكسل", "Excel")}
+        </button>
+        <button onClick={exportPdf} style={S.btnTool} title={text("تصدير / طباعة PDF", "Export / print PDF")}>
+          🖨️ PDF
         </button>
         {hasActiveView && (
-          <button onClick={clearAllViews} style={S.btnClear} title="إلغاء كل الفلاتر والترتيب">
-            🧹 مسح الكل
+          <button onClick={clearAllViews} style={S.btnClear} title={text("إلغاء كل الفلاتر والترتيب", "Clear all filters and sorting")}>
+            🧹 {text("مسح الكل", "Clear all")}
           </button>
         )}
       </div>
 
       <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
-        عدد النتائج: {processed.length}{processed.length !== rows.length ? ` من أصل ${rows.length}` : ""}
+        {text("عدد النتائج:", "Results:")} {processed.length}{processed.length !== rows.length ? ` ${text("من أصل", "of")} ${rows.length}` : ""}
       </div>
 
       {/* ── Advanced multi-condition search ── */}
       {showAdvanced && (
         <div style={S.advPanel}>
           <div style={S.advHeader}>
-            <strong style={{ fontSize: 14, color: "#0f172a" }}>🔍 بحث متقدم</strong>
+            <strong style={{ fontSize: 14, color: "#0f172a" }}>🔍 {text("بحث متقدم", "Advanced search")}</strong>
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-              <span style={{ color: "#64748b" }}>دمج الشروط:</span>
-              <button onClick={() => setLogic("and")} style={logic === "and" ? S.logicActive : S.logicBtn}>تحقّق الكل (و)</button>
-              <button onClick={() => setLogic("or")} style={logic === "or" ? S.logicActive : S.logicBtn}>تحقّق أي (أو)</button>
+              <span style={{ color: "#64748b" }}>{text("دمج الشروط:", "Combine conditions:")}</span>
+              <button onClick={() => setLogic("and")} style={logic === "and" ? S.logicActive : S.logicBtn}>{text("تحقّق الكل (و)", "Match all (AND)")}</button>
+              <button onClick={() => setLogic("or")} style={logic === "or" ? S.logicActive : S.logicBtn}>{text("تحقّق أي (أو)", "Match any (OR)")}</button>
             </div>
           </div>
           {conditions.length === 0 && (
             <div style={{ fontSize: 13, color: "#94a3b8", padding: "6px 0" }}>
-              لا توجد شروط — اضغط «➕ إضافة شرط». مثال: السعر «أكبر من» 30 و الكمية المتاحة «أصغر من» 5.
+              {text("لا توجد شروط — اضغط «➕ إضافة شرط». مثال: السعر «أكبر من» 30 و الكمية المتاحة «أصغر من» 5.", "No conditions — select “Add condition”. Example: price greater than 30 and available quantity less than 5.")}
             </div>
           )}
           {conditions.map((c) => {
@@ -471,28 +511,28 @@ export default function ItemsAdmin() {
                   }}
                   style={S.condSelect}
                 >
-                  {ITEM_COLS.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+                  {ITEM_COLS.map((x) => <option key={x.key} value={x.key}>{itemColLabel(x, language)}</option>)}
                 </select>
                 <select
                   value={c.op}
                   onChange={(e) => { const op = e.target.value as FilterOp; setConditions((prev) => prev.map((p) => (p.id === c.id ? { ...p, op } : p))); }}
                   style={S.condSelect}
                 >
-                  {ops.map((o) => <option key={o} value={o}>{OP_LABELS[o]}</option>)}
+                  {ops.map((o) => <option key={o} value={o}>{text(OP_LABELS[o], OP_LABELS_EN[o])}</option>)}
                 </select>
                 <input
                   value={c.value}
                   type={col.type === "number" ? "number" : "text"}
                   onChange={(e) => { const value = e.target.value; setConditions((prev) => prev.map((p) => (p.id === c.id ? { ...p, value } : p))); }}
-                  placeholder="القيمة"
+                  placeholder={text("القيمة", "Value")}
                   style={S.condInput}
                 />
-                <button onClick={() => setConditions((prev) => prev.filter((p) => p.id !== c.id))} style={S.condDel} title="حذف الشرط">🗑</button>
+                <button onClick={() => setConditions((prev) => prev.filter((p) => p.id !== c.id))} style={S.condDel} title={text("حذف الشرط", "Remove condition")}>🗑</button>
               </div>
             );
           })}
           <button onClick={() => setConditions((prev) => [...prev, { id: Date.now() + prev.length, field: "name", op: "contains", value: "" }])} style={S.btnAddCond}>
-            ➕ إضافة شرط
+            ➕ {text("إضافة شرط", "Add condition")}
           </button>
         </div>
       )}
@@ -508,12 +548,22 @@ export default function ItemsAdmin() {
         />
       )}
 
-      {loading ? <div style={S.empty}>... جاري التحميل</div>
-      : rows.length === 0 ? <div style={S.empty}>لا توجد أصناف — أضف صنف جديد أو اسحب من السحابة</div>
-      : processed.length === 0 ? <div style={S.empty}>لا توجد نتائج مطابقة — جرّب تعديل الفلاتر أو «🧹 مسح الكل»</div>
+      {loading ? <div style={S.empty}>{text("... جاري التحميل", "Loading…")}</div>
+      : rows.length === 0 ? <div style={S.empty}>{text("لا توجد أصناف — أضف صنف جديد أو اسحب من السحابة", "No items yet — add an item or sync from the cloud.")}</div>
+      : processed.length === 0 ? <div style={S.empty}>{text("لا توجد نتائج مطابقة — جرّب تعديل الفلاتر أو «🧹 مسح الكل»", "No matching results — adjust filters or select “Clear all”.")}</div>
       : (
         <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff" }}>
-          <table style={S.tableFixed}>
+          <style>{`
+            .z-items-grid { border-collapse: collapse; color: #233044; }
+            .z-items-grid thead th { border-bottom: 1px solid #d9e0e8 !important; border-inline-start: 1px solid #e3e8ee; background: #f2f5f8 !important; color: #44536a !important; }
+            .z-items-grid tbody td { border-bottom: 1px solid #e7ebf0; border-inline-start: 1px solid #edf0f3; }
+            .z-items-grid tbody tr:nth-child(even) { background: #f8fafc; }
+            .z-items-grid tbody tr:hover { background: #eef4f8; }
+            @media (max-width: 900px) {
+              .z-items-grid thead th, .z-items-grid tbody td { padding: 7px 9px !important; font-size: 12px !important; }
+            }
+          `}</style>
+          <table className="z-items-grid" style={S.tableFixed}>
             <colgroup>
               {ITEM_COLS.map((c) => <col key={c.key} style={{ width: colWidths[c.key] }} />)}
               <col style={{ width: colWidths.actions }} />
@@ -523,9 +573,9 @@ export default function ItemsAdmin() {
                 {ITEM_COLS.map((c) => {
                   const active = sort?.key === c.key;
                   return (
-                    <th key={c.key} style={S.thSort} onClick={() => toggleSort(c.key)} title="اضغط للترتيب تصاعدي/تنازلي">
+                    <th key={c.key} style={{ ...S.thSort, textAlign: language === "en" ? "left" : "right" }} onClick={() => toggleSort(c.key)} title={text("اضغط للترتيب تصاعدي/تنازلي", "Click to sort ascending or descending")}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                        {c.label}
+                        {itemColLabel(c, language)}
                         <span style={S.sortArrow}>{active ? (sort!.dir === "asc" ? "▲" : "▼") : "⇅"}</span>
                       </span>
                       <span
@@ -533,12 +583,12 @@ export default function ItemsAdmin() {
                         onDoubleClick={(e) => { e.stopPropagation(); autoFit(c.key); }}
                         onClick={(e) => e.stopPropagation()}
                         style={S.resizeHandle}
-                        title="اسحب لتغيير العرض — دبل كليك للضبط التلقائي"
+                        title={text("اسحب لتغيير العرض — دبل كليك للضبط التلقائي", "Drag to resize; double-click to auto-fit")}
                       />
                     </th>
                   );
                 })}
-                <th style={S.thRight}>إجراء</th>
+                <th style={{ ...S.thRight, textAlign: language === "en" ? "right" : "left" }}>{text("إجراء", "Actions")}</th>
               </tr>
               {showFilters && (
                 <tr>
@@ -546,15 +596,15 @@ export default function ItemsAdmin() {
                     <th key={c.key} style={S.thFilter}>
                       {c.key === "source" ? (
                         <select value={columnFilters[c.key] ?? ""} onChange={(e) => setColumnFilters((prev) => ({ ...prev, [c.key]: e.target.value }))} style={S.filterInput}>
-                          <option value="">الكل</option>
-                          <option value="سحابي">سحابي</option>
-                          <option value="محلي">محلي</option>
+                          <option value="">{text("الكل", "All")}</option>
+                          <option value="سحابي">{text("سحابي", "Cloud")}</option>
+                          <option value="محلي">{text("محلي", "Local")}</option>
                         </select>
                       ) : (
                         <input
                           value={columnFilters[c.key] ?? ""}
                           onChange={(e) => setColumnFilters((prev) => ({ ...prev, [c.key]: e.target.value }))}
-                          placeholder={c.type === "number" ? "مثال: >30 أو 10-20" : "بحث..."}
+                          placeholder={c.type === "number" ? text("مثال: >30 أو 10-20", "e.g. >30 or 10-20") : text("بحث...", "Search…")}
                           style={S.filterInput}
                         />
                       )}
@@ -577,32 +627,32 @@ export default function ItemsAdmin() {
                     setEditing(it);
                     setShowForm(true);
                   }}
-                  title={showForm ? "أغلق النموذج الحالي أولاً" : "اضغط على السطر للتعديل"}
+                  title={showForm ? text("أغلق النموذج الحالي أولاً", "Close the current form first") : text("اضغط على السطر للتعديل", "Click the row to edit")}
                 >
                   <td style={S.tdClip}>
                     <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {it.nameAr}
                       {it.units && it.units.length > 0 && (
                         <span style={S.badgeUnits} title={it.units.map((u) => `${u.name} (${u.factor})`).join("، ")}>
-                          📦 {it.units.length} وحدة
+                          📦 {it.units.length} {text("وحدة", "units")}
                         </span>
                       )}
                     </div>
                     {it.nameEn && <div style={{ ...S.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.nameEn}</div>}
                   </td>
-                  <td style={S.td}>{renderQty(stockMap[it.id])}</td>
+                  <td style={S.td}>{renderQty(stockMap[it.id], language)}</td>
                   <td style={S.tdMonoClip}>{it.barcode ?? "—"}</td>
                   <td style={S.tdMonoClip}>{it.code ?? "—"}</td>
                   <td style={S.td}><strong>{it.salePrice.toFixed(2)}</strong> {currencySymbol()}</td>
                   <td style={S.td}>{it.vatRate}%</td>
                   <td style={S.td}>
                     <span style={it.cloudId ? S.badgeCloud : S.badgeLocal}>
-                      {it.cloudId ? `☁️ #${it.cloudId}` : "📱 محلي"}
+                      {it.cloudId ? `☁️ #${it.cloudId}` : `📱 ${text("محلي", "Local")}`}
                     </span>
                   </td>
                   <td style={S.tdRight} onClick={(e) => e.stopPropagation()}>
-                    <button onClick={() => { setEditing(it); setShowForm(true); }} disabled={showForm} style={{ ...S.btnEdit, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>تعديل</button>
-                    <button onClick={() => handleDelete(it)} disabled={showForm} style={{ ...S.btnDel, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>حذف</button>
+                    <button onClick={() => { setEditing(it); setShowForm(true); }} disabled={showForm} style={{ ...S.btnEdit, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>{text("تعديل", "Edit")}</button>
+                    <button onClick={() => handleDelete(it)} disabled={showForm} style={{ ...S.btnDel, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>{text("حذف", "Delete")}</button>
                   </td>
                 </tr>
               ))}
@@ -696,6 +746,8 @@ function EdaImportModal({
   onClose: () => void;
   onImport: (preset: "all" | "top" | "otc" | "category", category?: string) => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [categories, setCategories] = useState<{ name: string; count: number }[] | null>(null);
   const [catErr, setCatErr] = useState<string | null>(null);
@@ -706,13 +758,13 @@ function EdaImportModal({
     try {
       const baseUrl = (import.meta as any).env?.BASE_URL ?? "/";
       const res = await fetch(`${baseUrl}catalogs/eda_pharmacy_2026.csv`);
-      if (!res.ok) throw new Error(`فشل تحميل الكتالوج (${res.status})`);
-      const text = await res.text();
-      const grid = parseCsv(text);
-      if (grid.length < 2) throw new Error("الكتالوج فاضي");
+      if (!res.ok) throw new Error(text(`فشل تحميل الكتالوج (${res.status})`, `Could not load catalog (${res.status}).`));
+      const csvText = await res.text();
+      const grid = parseCsv(csvText);
+      if (grid.length < 2) throw new Error(text("الكتالوج فاضي", "The catalog is empty."));
       const header = grid[0].map((h) => h.trim().toLowerCase());
       const iDf = header.indexOf("dosageform");
-      if (iDf < 0) throw new Error("عمود dosageForm غير موجود في الكتالوج");
+      if (iDf < 0) throw new Error(text("عمود dosageForm غير موجود في الكتالوج", "The catalog is missing the dosageForm column."));
       const counts = new Map<string, number>();
       for (let i = 1; i < grid.length; i++) {
         const v = (grid[i][iDf] ?? "").trim();
@@ -734,30 +786,30 @@ function EdaImportModal({
   return (
     <div style={S.modalBg} onClick={() => !importing && onClose()}>
       <div style={{ ...S.modal, maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
-        <h3 style={{ marginTop: 0, color: "#86198f" }}>💊 استيراد كتالوج EDA</h3>
+        <h3 style={{ marginTop: 0, color: "#86198f" }}>💊 {text("استيراد كتالوج EDA", "Import EDA catalog")}</h3>
         {!showCategoryPicker ? (
           <>
-            <p style={{ fontSize: 13, color: "#475569" }}>اختر النطاق المناسب — التكرارات هتتجاهل تلقائيًا حسب الباركود.</p>
+            <p style={{ fontSize: 13, color: "#475569" }}>{text("اختر النطاق المناسب — التكرارات هتتجاهل تلقائيًا حسب الباركود.", "Choose a scope. Duplicate barcodes will be skipped automatically.")}</p>
             <div style={{ display: "grid", gap: 10 }}>
               <button disabled={importing} onClick={() => onImport("all")} style={S.btnPrimary}>
-                📦 كل الأدوية (~500 صنف)
+                📦 {text("كل الأدوية", "All medicines")} (~500 {text("صنف", "items")})
               </button>
               <button disabled={importing} onClick={() => onImport("top")} style={S.btnEda}>
-                ⭐ الأكثر مبيعًا (~150 صنف بأسعار اقتصادية)
+                ⭐ {text("الأكثر مبيعًا", "Top sellers")} (~150 {text("صنف بأسعار اقتصادية", "budget-priced items")})
               </button>
               <button disabled={importing} onClick={() => onImport("otc")} style={S.btnEda}>
-                💊 بدون روشتة فقط (OTC)
+                💊 {text("بدون روشتة فقط", "Over-the-counter only")} (OTC)
               </button>
               <button disabled={importing || loadingCats} onClick={() => void loadCategories()} style={S.btnEda}>
-                {loadingCats ? "... جاري قراءة الفئات" : "🏷️ حسب الفئة (شكل الجرعة)"}
+                {loadingCats ? text("... جاري قراءة الفئات", "Loading categories…") : `🏷️ ${text("حسب الفئة (شكل الجرعة)", "By category (dosage form)")}`}
               </button>
               {catErr && <div style={{ color: "#dc2626", fontSize: 12 }}>{catErr}</div>}
-              <button disabled={importing} onClick={onClose} style={S.btnGhost}>إلغاء</button>
+              <button disabled={importing} onClick={onClose} style={S.btnGhost}>{text("إلغاء", "Cancel")}</button>
             </div>
           </>
         ) : (
           <>
-            <p style={{ fontSize: 13, color: "#475569" }}>اختر الفئة المراد استيرادها — الرقم بين قوسين عدد الأصناف.</p>
+            <p style={{ fontSize: 13, color: "#475569" }}>{text("اختر الفئة المراد استيرادها — الرقم بين قوسين عدد الأصناف.", "Choose a category to import. The number in parentheses is the item count.")}</p>
             <div style={{ display: "grid", gap: 6, maxHeight: 360, overflowY: "auto", padding: 4 }}>
               {(categories ?? []).map((c) => (
                 <button
@@ -771,16 +823,16 @@ function EdaImportModal({
                 </button>
               ))}
               {categories?.length === 0 && (
-                <div style={{ color: "#64748b", fontSize: 13, textAlign: "center" }}>لا توجد فئات معرّفة في الكتالوج</div>
+                <div style={{ color: "#64748b", fontSize: 13, textAlign: "center" }}>{text("لا توجد فئات معرّفة في الكتالوج", "No categories are defined in the catalog.")}</div>
               )}
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button disabled={importing} onClick={() => setShowCategoryPicker(false)} style={{ ...S.btnGhost, flex: 1 }}>← رجوع</button>
-              <button disabled={importing} onClick={onClose} style={{ ...S.btnGhost, flex: 1 }}>إلغاء</button>
+              <button disabled={importing} onClick={() => setShowCategoryPicker(false)} style={{ ...S.btnGhost, flex: 1 }}>← {text("رجوع", "Back")}</button>
+              <button disabled={importing} onClick={onClose} style={{ ...S.btnGhost, flex: 1 }}>{text("إلغاء", "Cancel")}</button>
             </div>
           </>
         )}
-        {importing && <div style={{ marginTop: 12, fontSize: 13, color: "#64748b", textAlign: "center" }}>... جاري الاستيراد، لا تغلق النافذة</div>}
+        {importing && <div style={{ marginTop: 12, fontSize: 13, color: "#64748b", textAlign: "center" }}>{text("... جاري الاستيراد، لا تغلق النافذة", "Importing… Do not close this window.")}</div>}
       </div>
     </div>
   );
@@ -794,6 +846,8 @@ function ImportCsvModal({
   onClose: () => void;
   onDone: (msg: string) => Promise<void> | void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string>("");
   const [parsed, setParsed] = useState<ParsedRow[] | null>(null);
@@ -806,9 +860,9 @@ function ImportCsvModal({
   async function onFile(f: File) {
     setError(null); setParsed(null); setFileName(f.name);
     try {
-      const text = await f.text();
-      const grid = parseCsv(text);
-      if (grid.length < 2) { setError("الملف فاضي أو ما فيش صفوف بيانات"); return; }
+      const csvText = await f.text();
+      const grid = parseCsv(csvText);
+      if (grid.length < 2) { setError(text("الملف فاضي أو ما فيش صفوف بيانات", "The file is empty or has no data rows.")); return; }
       const header = grid[0].map((h) => h.trim().toLowerCase());
       const idx = (name: string) => header.indexOf(name);
       const iCode = idx("code");
@@ -818,7 +872,7 @@ function ImportCsvModal({
       const iPr = idx("saleprice");
       const iVat = idx("vatrate");
       if (iAr < 0 || iPr < 0) {
-        setError("الأعمدة المطلوبة: nameAr و salePrice على الأقل (الترويسة الأولى).");
+        setError(text("الأعمدة المطلوبة: nameAr و salePrice على الأقل (الترويسة الأولى).", "Required columns: at least nameAr and salePrice in the first row."));
         return;
       }
       const out: ParsedRow[] = [];
@@ -840,14 +894,14 @@ function ImportCsvModal({
           salePrice: price,
           vatRate: vat,
         };
-        if (!nameAr) parsedRow.error = "الاسم بالعربية فاضي";
-        else if (!Number.isFinite(price) || price <= 0) parsedRow.error = "السعر غير صالح";
-        else if (!Number.isFinite(vat) || vat < 0 || vat > 100) parsedRow.error = "الضريبة غير صالحة";
+        if (!nameAr) parsedRow.error = text("الاسم بالعربية فاضي", "Arabic name is blank.");
+        else if (!Number.isFinite(price) || price <= 0) parsedRow.error = text("السعر غير صالح", "Invalid price.");
+        else if (!Number.isFinite(vat) || vat < 0 || vat > 100) parsedRow.error = text("الضريبة غير صالحة", "Invalid tax rate.");
         out.push(parsedRow);
       }
       setParsed(out);
     } catch (e: any) {
-      setError(e?.message ?? "تعذّر قراءة الملف");
+      setError(e?.message ?? text("تعذّر قراءة الملف", "Could not read file."));
     }
   }
 
@@ -897,9 +951,10 @@ function ImportCsvModal({
       }
     }
     setImporting(false);
-    const parts = [`تم استيراد ${created} صنف`];
-    if (skippedDup.length) parts.push(`تم تجاهل ${skippedDup.length} مكرر`);
-    if (failed) parts.push(`فشل ${failed}`);
+    if (created > 0) emitData("items");
+    const parts = language === "en" ? [`Imported ${created} items`] : [`تم استيراد ${created} صنف`];
+    if (skippedDup.length) parts.push(language === "en" ? `Skipped ${skippedDup.length} duplicates` : `تم تجاهل ${skippedDup.length} مكرر`);
+    if (failed) parts.push(language === "en" ? `Failed ${failed}` : `فشل ${failed}`);
     await onDone(parts.join(" — "));
   }
 
@@ -910,20 +965,20 @@ function ImportCsvModal({
   return (
     <div style={S.modalBg} onClick={onClose}>
       <div style={{ ...S.modal, maxWidth: 720 }} onClick={(e) => e.stopPropagation()}>
-        <h3 style={S.modalTitle}>📥 استيراد أصناف من ملف CSV</h3>
+        <h3 style={S.modalTitle}>📥 {text("استيراد أصناف من ملف CSV", "Import items from CSV")}</h3>
 
         <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 12, fontSize: 13, color: "#475569", marginBottom: 12, lineHeight: 1.7 }}>
-          <strong>الأعمدة المطلوبة:</strong> <code>code, nameAr, nameEn, barcode, salePrice, vatRate</code>
+          <strong>{text("الأعمدة المطلوبة:", "Columns:")}</strong> <code>code, nameAr, nameEn, barcode, salePrice, vatRate</code>
           <br />
-          <strong>إلزامي:</strong> nameAr + salePrice. <strong>اختياري:</strong> الباقي.
+          <strong>{text("إلزامي:", "Required:")}</strong> nameAr + salePrice. <strong>{text("اختياري:", "Optional:")}</strong> {text("الباقي.", "all others.")}
           <br />
-          الترميز: UTF-8 (مدعوم BOM للفتح من Excel).
+          {text("الترميز: UTF-8 (مدعوم BOM للفتح من Excel).", "Encoding: UTF-8 (Excel BOM supported).")}
         </div>
 
         {!parsed && (
           <>
             <button onClick={() => fileRef.current?.click()} style={{ ...S.btnPrimary, width: "100%", padding: "16px" }}>
-              اختر ملف CSV...
+              {text("اختر ملف CSV...", "Choose CSV file…")}
             </button>
             <input
               ref={fileRef}
@@ -942,43 +997,43 @@ function ImportCsvModal({
           <>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, margin: "12px 0" }}>
               <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: 12, borderRadius: 8 }}>
-                <div style={{ fontSize: 12, color: "#166534" }}>صالح للاستيراد</div>
+                <div style={{ fontSize: 12, color: "#166534" }}>{text("صالح للاستيراد", "Ready to import")}</div>
                 <div style={{ fontSize: 24, fontWeight: 700, color: "#166534" }}>{validCount}</div>
               </div>
               <div style={{ background: errorCount ? "#fef2f2" : "#f8fafc", border: `1px solid ${errorCount ? "#fecaca" : "#e2e8f0"}`, padding: 12, borderRadius: 8 }}>
-                <div style={{ fontSize: 12, color: errorCount ? "#991b1b" : "#64748b" }}>صفوف بها أخطاء</div>
+                <div style={{ fontSize: 12, color: errorCount ? "#991b1b" : "#64748b" }}>{text("صفوف بها أخطاء", "Rows with errors")}</div>
                 <div style={{ fontSize: 24, fontWeight: 700, color: errorCount ? "#991b1b" : "#64748b" }}>{errorCount}</div>
               </div>
             </div>
 
             {previewBad.length > 0 && (
               <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: 10, marginBottom: 12, fontSize: 12, color: "#991b1b" }}>
-                <strong>أمثلة على الأخطاء:</strong>
+                <strong>{text("أمثلة على الأخطاء:", "Error examples:")}</strong>
                 {previewBad.map((r) => (
-                  <div key={r.rowNum}>صف {r.rowNum}: {r.error}</div>
+                  <div key={r.rowNum}>{text("صف", "Row")} {r.rowNum}: {r.error}</div>
                 ))}
               </div>
             )}
 
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13 }}>
               <input type="checkbox" checked={skipDupes} onChange={(e) => setSkipDupes(e.target.checked)} />
-              تجاهل الأصناف المكررة (نفس الباركود أو الكود)
+              {text("تجاهل الأصناف المكررة (نفس الباركود أو الكود)", "Skip duplicate items (same barcode or code)")}
             </label>
 
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, fontSize: 13 }}>
-              <span>الضريبة الافتراضية لو الخانة فاضية:</span>
+              <span>{text("الضريبة الافتراضية لو الخانة فاضية:", "Default tax when blank:")}</span>
               <input type="number" min={0} max={100} step={1} value={defaultVat} onChange={(e) => setDefaultVat(Number(e.target.value))} style={{ ...S.input, width: 80 }} />
               <span>%</span>
             </div>
 
             <div style={S.btnRow}>
               <button onClick={doImport} disabled={validCount === 0} style={S.btnPrimary}>
-                ✅ استيراد {validCount} صنف
+                ✅ {text("استيراد", "Import")} {validCount} {text("صنف", "items")}
               </button>
               <button onClick={() => { setParsed(null); setFileName(""); }} style={S.btnGhost}>
-                اختيار ملف آخر
+                {text("اختيار ملف آخر", "Choose another file")}
               </button>
-              <button onClick={onClose} style={S.btnGhost}>إلغاء</button>
+              <button onClick={onClose} style={S.btnGhost}>{text("إلغاء", "Cancel")}</button>
             </div>
           </>
         )}
@@ -986,7 +1041,7 @@ function ImportCsvModal({
         {importing && progress && (
           <div style={{ marginTop: 16 }}>
             <div style={{ fontSize: 14, marginBottom: 8 }}>
-              جاري الاستيراد... {progress.done} / {progress.total}
+              {text("جاري الاستيراد...", "Importing…")} {progress.done} / {progress.total}
             </div>
             <div style={{ background: "#e2e8f0", borderRadius: 999, overflow: "hidden", height: 10 }}>
               <div style={{ background: "#2563eb", height: "100%", width: `${(progress.done / Math.max(1, progress.total)) * 100}%`, transition: "width .15s" }} />
@@ -1004,15 +1059,18 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   onClose: () => void;
   onSaved: (msg: string) => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const uoms = listUom();
   const itemGroups = listItemGroups();
+  const hideZeros = useHideZeros();
   const [form, setForm] = useState<CreateItemInput>({
     code: initial?.code ?? "",
     nameAr: initial?.nameAr ?? "",
     nameEn: initial?.nameEn ?? "",
     barcode: initial?.barcode ?? "",
     salePrice: initial?.salePrice ?? 0,
-    vatRate: initial?.vatRate ?? (isPharmacy ? 14 : 15),
+    vatRate: initial?.vatRate ?? (isPharmacy ? 14 : 0),
     uomId: initial?.uomId ?? getDefaultUom()?.id ?? null,
     groupId: initial?.groupId ?? null,
     nature: initial?.nature ?? "stock",
@@ -1037,6 +1095,30 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   // in the LS overlay only (via create/updateItem), never in SQLite.
   const [units, setUnits] = useState<ItemUnit[]>(initial?.units ?? []);
 
+  // Brand links — additive/optional. One item may carry many brands, each with
+  // its own price/cost/barcode/part-number. Pure LS overlay (lib/brands.ts);
+  // brandName is PRINT-ONLY at sale time and never enters ZATCA UBL/hash/QR.
+  const allBrands = useMemo(() => listBrands().filter((b) => b.status === "active"), []);
+  const [brandLinks, setBrandLinks] = useState<ItemBrandLink[]>(
+    () => (initial ? listItemBrandLinks(initial.id) : []),
+  );
+
+  function newLinkId(): string {
+    return (crypto as any).randomUUID?.() ?? `bl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+  function addBrandLink() {
+    setBrandLinks((prev) => [
+      ...prev,
+      { id: newLinkId(), brandId: 0, barcode: "", partNumber: "", purchaseCost: 0, salePrice1: 0, status: "active" },
+    ]);
+  }
+  function updateBrandLink(id: string, patch: Partial<ItemBrandLink>) {
+    setBrandLinks((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  }
+  function removeBrandLink(id: string) {
+    setBrandLinks((prev) => prev.filter((l) => l.id !== id));
+  }
+
   function newUnitId(): string {
     return (crypto as any).randomUUID?.() ?? `u_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   }
@@ -1051,16 +1133,16 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   }
 
   async function submit() {
-    if (!form.nameAr.trim()) { setErr("الاسم بالعربية مطلوب"); return; }
+    if (!form.nameAr.trim()) { setErr(text("الاسم بالعربية مطلوب", "Arabic name is required.")); return; }
     // Task #201: weighed items are priced per-kg, not per-unit, so the
     // "sale price" field is meaningless and validation must switch over
     // to pricePerKg.
     if (form.isWeighed) {
-      if (!form.pricePerKg || form.pricePerKg <= 0) { setErr("السعر للكيلو يجب أن يكون أكبر من صفر"); return; }
+      if (!form.pricePerKg || form.pricePerKg <= 0) { setErr(text("السعر للكيلو يجب أن يكون أكبر من صفر", "Price per kilogram must be greater than zero.")); return; }
     } else {
-      if (form.salePrice <= 0) { setErr("السعر يجب أن يكون أكبر من صفر"); return; }
+      if (form.salePrice <= 0) { setErr(text("السعر يجب أن يكون أكبر من صفر", "Price must be greater than zero.")); return; }
     }
-    if (form.vatRate < 0 || form.vatRate > 100) { setErr("نسبة الضريبة بين 0 و 100"); return; }
+    if (form.vatRate < 0 || form.vatRate > 100) { setErr(text("نسبة الضريبة بين 0 و 100", "Tax rate must be between 0 and 100.")); return; }
     // Multi-unit validation — only for non-weighed items (units are hidden for
     // weighed). Each unit needs a name, a factor > 0, and a price > 0.
     const cleanUnits: ItemUnit[] = form.isWeighed ? [] : units
@@ -1071,22 +1153,39 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
       const base = (form.barcode ?? "").trim();
       if (base) seenBarcodes.add(base);
       for (const u of cleanUnits) {
-        if (!u.name) { setErr("اسم وحدة البيع الإضافية مطلوب"); return; }
-        if (!u.factor || u.factor <= 0) { setErr(`معامل التحويل للوحدة "${u.name}" يجب أن يكون أكبر من صفر`); return; }
-        if (u.price <= 0) { setErr(`سعر الوحدة "${u.name}" يجب أن يكون أكبر من صفر`); return; }
+        if (!u.name) { setErr(text("اسم وحدة البيع الإضافية مطلوب", "Additional sales unit name is required.")); return; }
+        if (!u.factor || u.factor <= 0) { setErr(text(`معامل التحويل للوحدة "${u.name}" يجب أن يكون أكبر من صفر`, `Conversion factor for unit "${u.name}" must be greater than zero.`)); return; }
+        if (u.price <= 0) { setErr(text(`سعر الوحدة "${u.name}" يجب أن يكون أكبر من صفر`, `Price for unit "${u.name}" must be greater than zero.`)); return; }
         // Reject barcodes that collide with the base barcode or a sibling unit —
         // the scanner resolves the first match, so duplicates are ambiguous.
         const bc = (u.barcode ?? "").trim();
         if (bc) {
-          if (seenBarcodes.has(bc)) { setErr(`الباركود "${bc}" مكرر — يجب أن يكون باركود كل وحدة فريداً`); return; }
+          if (seenBarcodes.has(bc)) { setErr(text(`الباركود "${bc}" مكرر — يجب أن يكون باركود كل وحدة فريداً`, `Barcode "${bc}" is duplicated. Each unit must have a unique barcode.`)); return; }
           seenBarcodes.add(bc);
         }
       }
     }
     if (isPharmacy) {
-      if (!(form.activeIngredient ?? "").trim()) { setErr("المادة الفعّالة مطلوبة في وضع الصيدلية"); return; }
-      if (!(form.dosageForm ?? "").trim()) { setErr("الشكل الصيدلي مطلوب في وضع الصيدلية"); return; }
-      if (!(form.strength ?? "").trim()) { setErr("التركيز مطلوب في وضع الصيدلية"); return; }
+      if (!(form.activeIngredient ?? "").trim()) { setErr(text("المادة الفعّالة مطلوبة في وضع الصيدلية", "Active ingredient is required in pharmacy mode.")); return; }
+      if (!(form.dosageForm ?? "").trim()) { setErr(text("الشكل الصيدلي مطلوب في وضع الصيدلية", "Dosage form is required in pharmacy mode.")); return; }
+      if (!(form.strength ?? "").trim()) { setErr(text("التركيز مطلوب في وضع الصيدلية", "Strength is required in pharmacy mode.")); return; }
+    }
+    // Brand links — additive/optional. Drop empty rows (no brand chosen), then
+    // validate: every kept row needs a brand, and no brand may repeat.
+    const cleanBrandLinks: ItemBrandLink[] = brandLinks
+      .filter((l) => l.brandId && l.brandId > 0)
+      .map((l) => ({
+        ...l,
+        barcode: (l.barcode ?? "").trim() || null,
+        partNumber: (l.partNumber ?? "").trim() || null,
+        purchaseCost: l.purchaseCost || null,
+        salePrice1: l.salePrice1 || null,
+        status: l.status ?? "active",
+      }));
+    const seenBrands = new Set<number>();
+    for (const l of cleanBrandLinks) {
+      if (seenBrands.has(l.brandId)) { setErr(text("لا يمكن تكرار نفس العلامة التجارية على نفس الصنف", "The same brand cannot be linked to an item more than once.")); return; }
+      seenBrands.add(l.brandId);
     }
     setSaving(true); setErr(null);
     try {
@@ -1122,41 +1221,45 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
           batchNo: form.batchNo || null,
         });
       }
-      onSaved(initial ? "تم تحديث الصنف" : "تم إضافة الصنف");
+      // Persist brand links (whole-set replace) — LS overlay only, keyed by
+      // the resolved item id. Empty set clears the item's links.
+      setItemBrands(id, cleanBrandLinks);
+      emitData("items");
+      onSaved(initial ? text("تم تحديث الصنف", "Item updated.") : text("تم إضافة الصنف", "Item added."));
     } catch (e: any) {
       // Tauri commands reject with a bare STRING; collapsing it into a generic
       // "فشل الحفظ" hid the real cause. Show the string (or Error.message) as-is.
-      setErr(typeof e === "string" ? e : (e?.message ?? "فشل الحفظ"));
+      setErr(typeof e === "string" ? e : (e?.message ?? text("فشل الحفظ", "Could not save item.")));
     }
     finally { setSaving(false); }
   }
 
   return (
-    <div style={{ background: "#fff", border: `2px solid ${initial ? "#2563eb" : "#16a34a"}`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
-      <h3 style={{ ...S.modalTitle, color: initial ? "#1e40af" : "#15803d" }}>{initial ? "✏️ تعديل صنف" : "➕ صنف جديد"}</h3>
+    <div style={{ background: "#fff", border: "1px solid #d9e0e8", borderRadius: 10, padding: 20, marginBottom: 16 }}>
+      <h3 style={{ ...S.modalTitle, color: initial ? "#1e40af" : "#15803d" }}>{initial ? `✏️ ${text("تعديل صنف", "Edit item")}` : `➕ ${text("صنف جديد", "New item")}`}</h3>
 
         {/* Core data — 4 fields per row for a denser, tidier layout. */}
         <div style={S.formGrid4}>
-          <Field label="الاسم بالعربية *">
+          <Field label={text("الاسم بالعربية *", "Arabic name *")}>
             <input value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} style={S.input} autoFocus />
           </Field>
-          <Field label="الاسم بالإنجليزية">
+          <Field label={text("الاسم بالإنجليزية", "English name")}>
             <input value={form.nameEn ?? ""} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} style={S.input} />
           </Field>
-          <Field label="الكود الداخلي">
-            <input value={form.code ?? ""} onChange={(e) => setForm({ ...form, code: e.target.value })} style={S.input} placeholder="مثلاً: ITEM-001" />
+          <Field label={text("الكود الداخلي", "Internal code")}>
+            <input value={form.code ?? ""} onChange={(e) => setForm({ ...form, code: e.target.value })} style={S.input} placeholder={text("مثلاً: ITEM-001", "e.g. ITEM-001")} />
           </Field>
-          <Field label="الباركود">
+          <Field label={text("الباركود", "Barcode")}>
             <input value={form.barcode ?? ""} onChange={(e) => setForm({ ...form, barcode: e.target.value })} style={S.input} placeholder="EAN-13" />
           </Field>
 
-          <Field label="مجموعة الصنف">
+          <Field label={text("مجموعة الصنف", "Item group")}>
             <SearchCombobox
               value={form.groupId ?? ""}
               onChange={(v) => setForm({ ...form, groupId: v === "" ? null : Number(v) })}
               style={S.input}
               options={[
-                { value: "", label: "— بدون —" },
+                { value: "", label: text("— بدون —", "— None —") },
                 ...itemGroups.map((g) => ({
                   value: g.id,
                   label: `${g.nameAr}${g.code ? ` (${g.code})` : ""}`,
@@ -1164,25 +1267,25 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
               ]}
             />
           </Field>
-          <Field label="طبيعة الصنف">
+          <Field label={text("طبيعة الصنف", "Item nature")}>
             <select value={form.nature ?? "stock"}
                     onChange={(e) => setForm({ ...form, nature: e.target.value as CreateItemInput["nature"] })}
                     style={S.input}>
-              <option value="stock">مخزني</option>
-              <option value="service">خدمي</option>
+              <option value="stock">{text("مخزني", "Stock item")}</option>
+              <option value="service">{text("خدمي", "Service")}</option>
             </select>
           </Field>
-          <Field label="نوع الصنف">
+          <Field label={text("نوع الصنف", "Item type")}>
             <select value={form.itemType ?? "finished"}
                     onChange={(e) => setForm({ ...form, itemType: e.target.value as CreateItemInput["itemType"] })}
                     style={S.input}>
-              <option value="finished">تام</option>
-              <option value="semi">نصف مصنع</option>
-              <option value="raw">مواد خام</option>
-              <option value="other">أخرى</option>
+              <option value="finished">{text("تام", "Finished")}</option>
+              <option value="semi">{text("نصف مصنع", "Semi-finished")}</option>
+              <option value="raw">{text("مواد خام", "Raw material")}</option>
+              <option value="other">{text("أخرى", "Other")}</option>
             </select>
           </Field>
-          <Field label="وحدة القياس">
+          <Field label={text("وحدة القياس", "Unit of measure")}>
             <SearchCombobox
               value={form.uomId ?? ""}
               onChange={(v) => setForm({ ...form, uomId: v === "" ? null : Number(v) })}
@@ -1194,37 +1297,37 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
             />
           </Field>
 
-          <Field label={form.isWeighed ? "سعر البيع (يُستبدل بـ السعر/كجم)" : "سعر البيع *"}>
-            <input type="number" step="0.01" min="0" value={form.salePrice}
+          <Field label={form.isWeighed ? text("سعر البيع (يُستبدل بـ السعر/كجم)", "Sales price (replaced by price/kg)") : text("سعر البيع *", "Sales price *")}>
+            <input type="number" step="0.01" min="0" value={blankIfZero(form.salePrice, hideZeros)}
                    disabled={!!form.isWeighed}
                    onChange={(e) => setForm({ ...form, salePrice: Number(e.target.value) })}
                    style={{ ...S.input, opacity: form.isWeighed ? 0.5 : 1 }} />
           </Field>
-          <Field label="نسبة الضريبة %">
-            <input type="number" step="0.5" min="0" max="100" value={form.vatRate} onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) })} style={S.input} />
+          <Field label={text("نسبة الضريبة %", "Tax rate %")}>
+            <input type="number" step="0.5" min="0" max="100" value={form.vatRate || ""} placeholder="0" onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) || 0 })} style={S.input} />
           </Field>
         </div>
 
         {/* Scale (Task #201) — applies to all verticals. */}
         <div style={{ marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#1d4ed8" }}>
-          ⚖️ بيانات الميزان
+          ⚖️ {text("بيانات الميزان", "Scale details")}
         </div>
         <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, color: "#475569" }}>
           <input type="checkbox" checked={!!form.isWeighed}
                  onChange={(e) => setForm({ ...form, isWeighed: e.target.checked })} />
-          صنف يُباع بالوزن (يفتح نافذة وزن عند الإضافة، أو يُقرأ من باركود الميزان)
+          {text("صنف يُباع بالوزن (يفتح نافذة وزن عند الإضافة، أو يُقرأ من باركود الميزان)", "Sold by weight (opens a weighing dialog or reads a scale barcode)")}
         </label>
         {form.isWeighed && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label={`السعر للكيلو (${currencySymbol()} / كجم) *`}>
-              <input type="number" step="0.01" min="0" value={form.pricePerKg ?? 0}
+            <Field label={`${text("السعر للكيلو", "Price per kilogram")} (${currencySymbol()} / ${text("كجم", "kg")}) *`}>
+              <input type="number" step="0.01" min="0" value={blankIfZero(form.pricePerKg ?? 0, hideZeros)}
                      onChange={(e) => setForm({ ...form, pricePerKg: Number(e.target.value) })}
                      style={S.input} />
             </Field>
-            <Field label="رقم PLU (للميزان)">
+            <Field label={text("رقم PLU (للميزان)", "PLU number (scale)")}>
               <input value={form.plu ?? ""} maxLength={6}
                      onChange={(e) => setForm({ ...form, plu: e.target.value.replace(/\D/g, "") })}
-                     style={S.input} placeholder="مثلاً: 12345" />
+                      style={S.input} placeholder={text("مثلاً: 12345", "e.g. 12345")} />
             </Field>
           </div>
         )}
@@ -1233,29 +1336,29 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
         {!form.isWeighed && (
           <>
             <div style={{ marginTop: 16, marginBottom: 4, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#7c3aed" }}>
-              📦 وحدات بيع إضافية
+              📦 {text("وحدات بيع إضافية", "Additional sales units")}
             </div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
-              الوحدة الأساسية = قطعة بسعر البيع أعلاه. أضف وحدات أكبر (نص كرتونة / كرتونة …) لكل منها سعر، ومعامل التحويل = عدد القطع، وباركود اختياري. المخزون يُخصم بالقطعة.
+              {text("الوحدة الأساسية = قطعة بسعر البيع أعلاه. أضف وحدات أكبر (نص كرتونة / كرتونة …) لكل منها سعر، ومعامل التحويل = عدد القطع، وباركود اختياري. المخزون يُخصم بالقطعة.", "The base unit is one piece at the sales price above. Add larger units with their own price, piece conversion factor, and optional barcode. Stock is deducted by piece.")}
             </div>
             {units.map((u) => (
               <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr 0.9fr 1.2fr auto", gap: 8, marginBottom: 8, alignItems: "end" }}>
-                <Field label="اسم الوحدة">
+                <Field label={text("اسم الوحدة", "Unit name")}>
                   <input list="pos-uom-suggestions" value={u.name}
                          onChange={(e) => updateUnit(u.id, { name: e.target.value })}
-                         style={S.input} placeholder="كرتونة" />
+                          style={S.input} placeholder={text("كرتونة", "Carton")} />
                 </Field>
-                <Field label="عدد القطع">
+                <Field label={text("عدد القطع", "Number of pieces")}>
                   <input type="number" step="1" min="1" value={u.factor}
                          onChange={(e) => updateUnit(u.id, { factor: Number(e.target.value) })}
                          style={S.input} />
                 </Field>
-                <Field label="السعر">
+                <Field label={text("السعر", "Price")}>
                   <input type="number" step="0.01" min="0" value={u.price}
                          onChange={(e) => updateUnit(u.id, { price: Number(e.target.value) })}
                          style={S.input} />
                 </Field>
-                <Field label="باركود (اختياري)">
+                <Field label={text("باركود (اختياري)", "Barcode (optional)")}>
                   <input value={u.barcode ?? ""}
                          onChange={(e) => updateUnit(u.id, { barcode: e.target.value })}
                          style={S.input} placeholder="EAN-13" />
@@ -1266,46 +1369,98 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
             <datalist id="pos-uom-suggestions">
               {uoms.map((u) => <option key={u.id} value={u.nameAr} />)}
             </datalist>
-            <button type="button" onClick={addUnit} style={S.btnAddCond}>+ إضافة وحدة بيع</button>
+            <button type="button" onClick={addUnit} style={S.btnAddCond}>+ {text("إضافة وحدة بيع", "Add sales unit")}</button>
+          </>
+        )}
+
+        {/* Brand links — additive/optional. Attach one or more brands to this
+            item, each with its own price / cost / barcode / part-number. The
+            picker only appears in back-office sales invoices at sale time. */}
+        <div style={{ marginTop: 16, marginBottom: 4, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#0d9488" }}>
+          🏷️ {text("العلامات التجارية", "Brands")}
+        </div>
+        <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
+          {text("اربط الصنف بعلامة تجارية واحدة أو أكثر، لكل علامة سعرها وتكلفتها وباركودها ورقم القطعة. يظهر منتقي العلامة في فواتير المبيعات (الخلفية) فقط، واسم العلامة للطباعة فقط ولا يدخل في فاتورة زاتكا.", "Link one or more brands to this item. Each brand can have its own price, cost, barcode, and part number. Brand selection is available only on back-office sales invoices; the brand name is for printing and is not included in ZATCA invoices.")}
+        </div>
+        {allBrands.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: 10, marginBottom: 8 }}>
+            {text("لا توجد علامات تجارية معرّفة بعد. أضِف العلامات من شاشة «العلامات التجارية» أولاً.", "No brands are defined. Add brands from the Brands screen first.")}
+          </div>
+        ) : (
+          <>
+            {brandLinks.map((l) => (
+              <div key={l.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 0.9fr 0.9fr auto", gap: 8, marginBottom: 8, alignItems: "end" }}>
+                <Field label={text("العلامة التجارية", "Brand")}>
+                  <SearchCombobox
+                    value={l.brandId || ""}
+                    onChange={(v) => updateBrandLink(l.id, { brandId: v === "" ? 0 : Number(v) })}
+                    style={S.input}
+                    options={[
+                      { value: "", label: text("— اختر —", "— Select —") },
+                      ...allBrands.map((b) => ({
+                        value: b.id,
+                        label: `${b.nameAr}${b.code ? ` (${b.code})` : ""}`,
+                      })),
+                    ]}
+                  />
+                </Field>
+                <Field label={text("الباركود", "Barcode")}>
+                  <input value={l.barcode ?? ""} onChange={(e) => updateBrandLink(l.id, { barcode: e.target.value })} style={S.input} placeholder="EAN-13" />
+                </Field>
+                <Field label={text("رقم القطعة", "Part number")}>
+                  <input value={l.partNumber ?? ""} onChange={(e) => updateBrandLink(l.id, { partNumber: e.target.value })} style={S.input} placeholder="Part #" />
+                </Field>
+                <Field label={text("التكلفة", "Cost")}>
+                  <input type="number" step="0.01" min="0" value={blankIfZero(l.purchaseCost ?? 0, hideZeros)}
+                         onChange={(e) => updateBrandLink(l.id, { purchaseCost: Number(e.target.value) || 0 })} style={S.input} />
+                </Field>
+                <Field label={text("سعر البيع", "Sales price")}>
+                  <input type="number" step="0.01" min="0" value={blankIfZero(l.salePrice1 ?? 0, hideZeros)}
+                         onChange={(e) => updateBrandLink(l.id, { salePrice1: Number(e.target.value) || 0 })} style={S.input} />
+                </Field>
+                <button type="button" onClick={() => removeBrandLink(l.id)} style={{ ...S.btnDel, marginBottom: 12 }}>×</button>
+              </div>
+            ))}
+            <button type="button" onClick={addBrandLink} style={S.btnAddCond}>+ {text("إضافة علامة تجارية", "Add brand")}</button>
           </>
         )}
 
         {isPharmacy && (
           <>
             <div style={{ marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#86198f" }} key="pharma-header">
-              💊 بيانات الدواء (صيدلية)
+              💊 {text("بيانات الدواء (صيدلية)", "Medicine details (pharmacy)")}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Field label="المادة الفعّالة">
+              <Field label={text("المادة الفعّالة", "Active ingredient")}>
                 <input value={form.activeIngredient ?? ""} onChange={(e) => setForm({ ...form, activeIngredient: e.target.value })} style={S.input} placeholder="Paracetamol" />
               </Field>
-              <Field label="الشركة المصنّعة">
+              <Field label={text("الشركة المصنّعة", "Manufacturer")}>
                 <input value={form.manufacturer ?? ""} onChange={(e) => setForm({ ...form, manufacturer: e.target.value })} style={S.input} />
               </Field>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Field label="الشكل الصيدلي">
-                <input value={form.dosageForm ?? ""} onChange={(e) => setForm({ ...form, dosageForm: e.target.value })} style={S.input} placeholder="أقراص / شراب / كبسولات" />
+              <Field label={text("الشكل الصيدلي", "Dosage form")}>
+                <input value={form.dosageForm ?? ""} onChange={(e) => setForm({ ...form, dosageForm: e.target.value })} style={S.input} placeholder={text("أقراص / شراب / كبسولات", "Tablets / syrup / capsules")} />
               </Field>
-              <Field label="التركيز">
-                <input value={form.strength ?? ""} onChange={(e) => setForm({ ...form, strength: e.target.value })} style={S.input} placeholder="500 ملجم" />
+              <Field label={text("التركيز", "Strength")}>
+                <input value={form.strength ?? ""} onChange={(e) => setForm({ ...form, strength: e.target.value })} style={S.input} placeholder={text("500 ملجم", "500 mg")} />
               </Field>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Field label="تاريخ الصلاحية">
+              <Field label={text("تاريخ الصلاحية", "Expiry date")}>
                 <input type="date" value={form.expiryDate ?? ""} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} style={S.input} />
               </Field>
-              <Field label="رقم التشغيلة">
+              <Field label={text("رقم التشغيلة", "Batch number")}>
                 <input value={form.batchNo ?? ""} onChange={(e) => setForm({ ...form, batchNo: e.target.value })} style={S.input} />
               </Field>
             </div>
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, color: "#475569" }}>
               <input type="checkbox" checked={!!form.requiresPrescription} onChange={(e) => setForm({ ...form, requiresPrescription: e.target.checked })} />
-              يتطلّب وصفة طبية (روشتة)
+              {text("يتطلّب وصفة طبية (روشتة)", "Prescription required")}
             </label>
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13, color: "#dc2626", fontWeight: 600 }}>
               <input type="checkbox" checked={!!form.controlled} onChange={(e) => setForm({ ...form, controlled: e.target.checked })} />
-              ⚠️ دواء مخدّر / خاضع للرقابة (controlled substance)
+              ⚠️ {text("دواء مخدّر / خاضع للرقابة", "Controlled substance")}
             </label>
           </>
         )}
@@ -1314,9 +1469,9 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
 
         <div style={S.btnRow}>
           <button onClick={submit} disabled={saving} style={S.btnPrimary}>
-            {saving ? "..." : initial ? "💾 حفظ التعديلات" : "✅ إضافة"}
+            {saving ? "..." : initial ? `💾 ${text("حفظ التعديلات", "Save changes")}` : `✅ ${text("إضافة", "Add item")}`}
           </button>
-          <button onClick={onClose} style={S.btnGhost}>إلغاء</button>
+          <button onClick={onClose} style={S.btnGhost}>{text("إلغاء", "Cancel")}</button>
         </div>
     </div>
   );
@@ -1328,9 +1483,9 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
  * "غير متتبَّع" (—). Tracked items are colour-coded: out-of-stock (نفد) in red,
  * at/below reorder point in amber, otherwise green.
  */
-function renderQty(s: StockMap[number] | undefined) {
+function renderQty(s: StockMap[number] | undefined, language: UiLanguage) {
   if (!s) return <span style={S.qtyUntracked}>—</span>;
-  if (s.qty <= 0) return <span style={S.qtyZero}>نفد</span>;
+  if (s.qty <= 0) return <span style={S.qtyZero}>{uiText("نفد", "Out of stock", language)}</span>;
   const low = s.reorderPoint > 0 && s.qty <= s.reorderPoint;
   return <span style={low ? S.qtyLow : S.qtyOk}>{s.qty}</span>;
 }
@@ -1343,7 +1498,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const S = {
-  wrap: { maxWidth: 1100, margin: "0 auto", width: "100%" } as const,
+  wrap: { width: "100%", minWidth: 0, margin: 0, boxSizing: "border-box" as const } as const,
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 16 } as const,
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,
@@ -1351,9 +1506,9 @@ const S = {
   empty: { padding: 40, textAlign: "center" as const, color: "#94a3b8", background: "#fff", border: "1px dashed #e2e8f0", borderRadius: 8 } as const,
   table: { width: "100%", borderCollapse: "collapse" as const, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" } as const,
   th: { textAlign: "right" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600 } as const,
-  thRight: { textAlign: "left" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600 } as const,
-  tr: { borderBottom: "1px solid #f1f5f9" } as const,
-  td: { padding: "12px 14px", fontSize: 14, color: "#0f172a" } as const,
+  thRight: { textAlign: "left" as const, padding: "9px 11px", background: "#f2f5f8", borderBottom: "1px solid #d9e0e8", fontSize: 12, color: "#44536a", fontWeight: 700 } as const,
+  tr: { borderBottom: "1px solid #e7ebf0" } as const,
+  td: { padding: "8px 11px", fontSize: 13, color: "#233044" } as const,
   tdMono: { padding: "12px 14px", fontSize: 13, color: "#0f172a", fontFamily: "ui-monospace, monospace" } as const,
   tdRight: { padding: "12px 14px", textAlign: "left" as const } as const,
   muted: { fontSize: 12, color: "#94a3b8", marginTop: 2 } as const,
@@ -1392,11 +1547,11 @@ const S = {
   condDel: { padding: "7px 11px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontSize: 14 } as const,
   btnAddCond: { marginTop: 4, padding: "8px 14px", background: "#fff", color: "#1d4ed8", border: "1px dashed #93c5fd", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 } as const,
   tableFixed: { borderCollapse: "collapse" as const, tableLayout: "fixed" as const, width: "max-content", minWidth: "100%" } as const,
-  thSort: { position: "relative" as const, textAlign: "right" as const, padding: "12px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 13, color: "#475569", fontWeight: 600, cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const } as const,
+  thSort: { position: "relative" as const, textAlign: "right" as const, padding: "9px 11px", background: "#f2f5f8", borderBottom: "1px solid #d9e0e8", fontSize: 12, color: "#44536a", fontWeight: 700, cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const } as const,
   sortArrow: { fontSize: 10, color: "#94a3b8" } as const,
   resizeHandle: { position: "absolute" as const, insetInlineStart: 0, top: 0, bottom: 0, width: 7, cursor: "col-resize", userSelect: "none" as const } as const,
   thFilter: { padding: "6px 8px", background: "#f1f5f9", borderBottom: "1px solid #e2e8f0" } as const,
   filterInput: { width: "100%", padding: "5px 8px", fontSize: 12, border: "1px solid #cbd5e1", borderRadius: 5, fontFamily: "inherit", boxSizing: "border-box" as const, background: "#fff" } as const,
-  tdClip: { padding: "12px 14px", fontSize: 14, color: "#0f172a", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
-  tdMonoClip: { padding: "12px 14px", fontSize: 13, color: "#0f172a", fontFamily: "ui-monospace, monospace", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
+  tdClip: { padding: "8px 11px", fontSize: 13, color: "#233044", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
+  tdMonoClip: { padding: "8px 11px", fontSize: 12, color: "#233044", fontFamily: "ui-monospace, monospace", overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const } as const,
 };

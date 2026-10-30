@@ -23,6 +23,8 @@ import {
   saveUserToken, clearUserToken, saveCashierContext, type CashierContext,
   getDeviceName, getFingerprint, TAURI_MODE,
 } from "../lib/tauri-shim";
+import NumberSystemControl from "./NumberSystemControl";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type Props = {
   baseUrl: string;
@@ -34,6 +36,8 @@ type Props = {
 type Step = "creds" | "branch" | "terminal";
 
 export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [step, setStep] = useState<Step>("creds");
 
   // ── Step 1: credentials ─────────────────────────────────────────────
@@ -63,7 +67,7 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
   async function submitCreds(e?: React.FormEvent) {
     e?.preventDefault();
     if (!companyCode.trim() || !username.trim() || !password) {
-      setErr("الرجاء تعبئة كود الشركة واسم المستخدم وكلمة المرور");
+      setErr(text("الرجاء تعبئة كود الشركة واسم المستخدم وكلمة المرور", "Enter the company code, username, and password."));
       return;
     }
     setBusy(true); setErr(null);
@@ -99,7 +103,7 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
       const bs = await apiAuth.listBranches(true);
 
       if (bs.length === 0) {
-        setErr("لا يوجد فرع مرتبط بحسابك. تواصل مع مدير النظام لربط الحساب بفرع.");
+        setErr(text("لا يوجد فرع مرتبط بحسابك. تواصل مع مدير النظام لربط الحساب بفرع.", "No branch is linked to your account. Ask your administrator to link one."));
         setBusy(false); return;
       }
       setBranches(bs);
@@ -117,7 +121,7 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
         const msg = (e.details as any)?.error ?? e.message;
         setErr(`${msg}`);
       } else {
-        setErr(e?.message ?? "تعذّر تسجيل الدخول");
+        setErr(e?.message ?? text("تعذّر تسجيل الدخول", "Could not sign in."));
       }
     } finally { setBusy(false); }
   }
@@ -131,11 +135,11 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
       const active = ts.filter(t => t.isActive);
       setTerminals(active);
       if (active.length === 0) {
-        setErr("لا توجد طُرق بيع مفعّلة في هذا الفرع. اطلب من المدير إضافة طريقة بيع.");
+        setErr(text("لا توجد طُرق بيع مفعّلة في هذا الفرع. اطلب من المدير إضافة طريقة بيع.", "No active POS terminals are available for this branch. Ask an administrator to add one."));
       }
       setStep("terminal");
     } catch (e: any) {
-      setErr(e?.message ?? "تعذّر تحميل طُرق البيع");
+      setErr(e?.message ?? text("تعذّر تحميل طُرق البيع", "Could not load POS terminals."));
     } finally { setBusy(false); }
   }
 
@@ -143,7 +147,7 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
   async function openSession() {
     if (!userToken || !userInfo || !branchId || !terminalId) return;
     const t = terminals.find(x => x.id === terminalId);
-    if (!t) { setErr("اختر طريقة البيع أولاً"); return; }
+    if (!t) { setErr(text("اختر طريقة البيع أولاً", "Select a POS terminal first.")); return; }
     setBusy(true); setErr(null);
     try {
       const api = createApi({ baseUrl, deviceToken, userToken });
@@ -180,7 +184,7 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
         const msg = (e.details as any)?.error ?? e.message;
         setErr(`${msg}`);
       } else {
-        setErr(e?.message ?? "تعذّر فتح وردية البيع");
+        setErr(e?.message ?? text("تعذّر فتح وردية البيع", "Could not open the POS session."));
       }
     } finally { setBusy(false); }
   }
@@ -194,57 +198,60 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
 
   // ─── Render ─────────────────────────────────────────────────────────
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <header style={S.header}>
         <div style={S.brandIcon}>zacode</div>
         <div>
-          <h1 style={S.title}>تسجيل دخول الكاشير</h1>
+          <h1 style={S.title}>{text("تسجيل دخول الكاشير", "Cashier sign in")}</h1>
           <div style={S.sub}>
-            {step === "creds"    && "أدخل بيانات حسابك السحابي للبدء"}
-            {step === "branch"   && "اختر الفرع الذي تعمل به الآن"}
-            {step === "terminal" && "اختر طريقة البيع (نقطة البيع)"}
+            {step === "creds"    && text("أدخل بيانات حسابك السحابي للبدء", "Enter your cloud account details to continue.")}
+            {step === "branch"   && text("اختر الفرع الذي تعمل به الآن", "Choose the branch you are working at.")}
+            {step === "terminal" && text("اختر طريقة البيع (نقطة البيع)", "Choose the point-of-sale terminal.")}
           </div>
         </div>
       </header>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -10 }}>
+        <NumberSystemControl />
+      </div>
 
       <div style={S.progressRow}>
-        <Dot active={step === "creds"} done={step !== "creds"} label="الحساب" />
+        <Dot active={step === "creds"} done={step !== "creds"} label={text("الحساب", "Account")} />
         <Line />
-        <Dot active={step === "branch"} done={step === "terminal"} label="الفرع" />
+        <Dot active={step === "branch"} done={step === "terminal"} label={text("الفرع", "Branch")} />
         <Line />
-        <Dot active={step === "terminal"} done={false} label="طريقة البيع" />
+        <Dot active={step === "terminal"} done={false} label={text("طريقة البيع", "POS terminal")} />
       </div>
 
       <main style={S.main}>
         {step === "creds" && (
           <form onSubmit={submitCreds} style={S.form}>
-            <Field label="كود الشركة">
+            <Field label={text("كود الشركة", "Company code")}>
               <input
                 value={companyCode}
                 onChange={(e) => setCompanyCode(e.target.value.toUpperCase())}
-                placeholder="مثل: ZACOD"
+                placeholder={text("مثل: ZACOD", "e.g. ZACOD")}
                 style={{ ...S.input, fontFamily: "ui-monospace, monospace", letterSpacing: 1 }}
                 autoFocus
               />
             </Field>
-            <Field label="اسم المستخدم">
+            <Field label={text("اسم المستخدم", "Username")}>
               <input value={username} onChange={(e) => setUsername(e.target.value)} style={S.input} />
             </Field>
-            <Field label="كلمة المرور">
+            <Field label={text("كلمة المرور", "Password")}>
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={S.input} />
             </Field>
 
             {err && <div style={S.err}>⚠️ {err}</div>}
 
             <button type="submit" disabled={busy} style={S.btnPrimary}>
-              {busy ? "جارٍ التحقق..." : "🔓 تسجيل الدخول"}
+              {busy ? text("جارٍ التحقق...", "Checking...") : `🔓 ${text("تسجيل الدخول", "Sign in")}`}
             </button>
           </form>
         )}
 
         {step === "branch" && (
           <div>
-            <p style={S.lead}>أنت مرتبط بأكثر من فرع. اختر الفرع الذي ستعمل به في هذه الوردية:</p>
+            <p style={S.lead}>{text("أنت مرتبط بأكثر من فرع. اختر الفرع الذي ستعمل به في هذه الوردية:", "Your account is linked to more than one branch. Choose the branch for this session:")}</p>
             <div style={S.grid}>
               {branches.map(b => (
                 <button
@@ -266,12 +273,12 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
         {step === "terminal" && (
           <div>
             <p style={S.lead}>
-              الفرع: <strong>{branches.find(b => b.id === branchId)?.nameAr ?? "—"}</strong>
-              <button onClick={() => { setStep("branch"); setTerminalId(null); }} style={S.linkBtn}>(تغيير)</button>
+              {text("الفرع:", "Branch:")} <strong>{branches.find(b => b.id === branchId)?.nameAr ?? "—"}</strong>
+              <button onClick={() => { setStep("branch"); setTerminalId(null); }} style={S.linkBtn}>({text("تغيير", "Change")})</button>
             </p>
 
             {terminals.length === 0 ? (
-              <div style={S.empty}>لا توجد طُرق بيع متاحة. أضف واحدة من شاشة "طُرق البيع" في النظام السحابي.</div>
+              <div style={S.empty}>{text('لا توجد طُرق بيع متاحة. أضف واحدة من شاشة "طُرق البيع" في النظام السحابي.', 'No POS terminals are available. Add one from "POS terminals" in the cloud system.')}</div>
             ) : (
               <div style={S.grid}>
                 {terminals.map(t => {
@@ -286,12 +293,12 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
                         ...(terminalId === t.id ? S.cardBtnActive : {}),
                         ...(busyBy ? S.cardBtnDisabled : {}),
                       }}
-                      title={busyBy ? "مستخدمة الآن من قبل كاشير آخر" : undefined}
+                      title={busyBy ? text("مستخدمة الآن من قبل كاشير آخر", "Currently in use by another cashier") : undefined}
                     >
                       <div style={S.cardIcon}>{busyBy ? "🔒" : "💻"}</div>
                       <div style={S.cardName}>{t.nameAr}</div>
                       <div style={S.cardCode}>{t.code}</div>
-                      {busyBy && <div style={S.busy}>مشغولة</div>}
+                      {busyBy && <div style={S.busy}>{text("مشغولة", "In use")}</div>}
                     </button>
                   );
                 })}
@@ -301,14 +308,14 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
             {err && <div style={S.err}>⚠️ {err}</div>}
 
             <button onClick={openSession} disabled={busy || terminalId == null} style={{ ...S.btnPrimary, marginTop: 16 }}>
-              {busy ? "جارٍ فتح الوردية..." : "✅ فتح الوردية والبدء"}
+              {busy ? text("جارٍ فتح الوردية...", "Opening session...") : `✅ ${text("فتح الوردية والبدء", "Open session and start")}`}
             </button>
           </div>
         )}
       </main>
 
       <footer style={S.footer}>
-        <span>{TAURI_MODE === "tauri" ? "🪟 وضع التطبيق الأصلي" : "🌐 وضع المتصفح (تطوير)"}</span>
+        <span>{TAURI_MODE === "tauri" ? `🪟 ${text("وضع التطبيق الأصلي", "Desktop app")}` : `🌐 ${text("وضع المتصفح (تطوير)", "Browser preview")}`}</span>
         <span style={{ color: "#94a3b8" }}>{baseUrl}</span>
       </footer>
     </div>

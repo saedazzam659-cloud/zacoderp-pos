@@ -4,58 +4,84 @@ import {
   type FinancialTx, type CashBox, type Bank, type SalesInvoice,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
+import { emitData, useDataRefresh } from "../lib/dataBus";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
+  ExportButtons, gridToExportCols,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
+import { printVoucher } from "../lib/invoicePrint";
+import { formatUiDate, uiText, useUiLanguage } from "../lib/appSettings";
 
 // تحصيل من العملاء — a customer-scoped سند قبض. Reuses the shared
 // financial_tx pipeline (DR cash/bank, CR AR 1500, decrements customer balance),
 // optionally tagging the receipt to a specific outstanding sales invoice so the
 // invoice list + statement can surface the collected amount.
+function walletName(
+  deps: { cashBoxes: CashBox[]; banks: Bank[] } | null,
+  f: FinancialTx,
+): string | null {
+  if (!deps) return null;
+  if (f.bankId != null) return deps.banks.find((b) => b.id === f.bankId)?.name ?? null;
+  if (f.cashBoxId != null) return deps.cashBoxes.find((c) => c.id === f.cashBoxId)?.name ?? null;
+  return null;
+}
+
 export default function CustomerCollectionAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<FinancialTx[]>([]);
   const [creating, setCreating] = useState(false);
   const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; invoices: SalesInvoice[] } | null>(null);
 
   async function refresh() { setRows((await listFinancialTx(1000)).filter((f) => f.txType === "receipt" && f.partyType === "customer")); }
-  useEffect(() => {
-    void refresh();
-    void (async () => {
-      const [customers, cashBoxes, banks, invoices] = await Promise.all([
-        listCustomers(), listCashBoxes(), listBanks(), listSalesInvoices(5000),
-      ]);
-      setDeps({ customers, cashBoxes, banks, invoices });
-    })();
-  }, []);
+  async function loadDeps() {
+    const [customers, cashBoxes, banks, invoices] = await Promise.all([
+      listCustomers(), listCashBoxes(), listBanks(), listSalesInvoices(5000),
+    ]);
+    setDeps({ customers, cashBoxes, banks, invoices });
+  }
+  useEffect(() => { void refresh(); void loadDeps(); }, []);
 
   // Paid-so-far per sales invoice (across ALL receipts, not just this filtered view).
   const [allTx, setAllTx] = useState<FinancialTx[]>([]);
   useEffect(() => { void (async () => setAllTx(await listFinancialTx(5000)))(); }, [rows.length]);
 
+  // Live-refresh: when a sales invoice or another voucher is created/posted on a
+  // different tab, reload the deps (outstanding-invoice picker) + paid totals so
+  // the new invoice appears here without a manual page reload.
+  useDataRefresh(["invoices", "vouchers", "customers", "cashboxes", "banks"], () => {
+    void refresh();
+    void loadDeps();
+    void (async () => setAllTx(await listFinancialTx(5000)))();
+  });
+
   const invByApplied = (f: FinancialTx) =>
     f.appliedDocType === "sales_invoice" && f.appliedDocId != null
       ? deps?.invoices.find((i) => i.id === f.appliedDocId) ?? null : null;
   const columns = useMemo<GridColumn<FinancialTx>[]>(() => [
-    { key: "txNo", label: "الرقم", value: (f) => f.txNo },
-    { key: "txDate", label: "التاريخ", value: (f) => f.txDate },
-    { key: "party", label: "العميل", value: (f) => f.partyName ?? "" },
-    { key: "invoice", label: "الفاتورة المرتبطة", value: (f) => invByApplied(f)?.invoiceNo ?? "" },
-    { key: "description", label: "البيان", value: (f) => f.description ?? "" },
-    { key: "amount", label: "المبلغ", type: "number", value: (f) => f.amount },
-  ], [deps]);
+    { key: "txNo", label: text("الرقم", "Number"), value: (f) => f.txNo },
+    { key: "txDate", label: text("التاريخ", "Date"), value: (f) => f.txDate },
+    { key: "party", label: text("العميل", "Customer"), value: (f) => f.partyName ?? "" },
+    { key: "invoice", label: text("الفاتورة المرتبطة", "Linked invoice"), value: (f) => invByApplied(f)?.invoiceNo ?? "" },
+    { key: "description", label: text("البيان", "Description"), value: (f) => f.description ?? "" },
+    { key: "amount", label: text("المبلغ", "Amount"), type: "number", value: (f) => f.amount },
+  ], [deps, language]);
   const grid = useGridFilter(rows, columns);
+  const sel = useRowSelect(grid.view);
 
   return (
+    <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title="تحصيل من العملاء"
-      subtitle="سند قبض مرتبط بالعميل — يخصم من رصيد العميل ويظهر في كشف حسابه"
+      title={text("تحصيل من العملاء", "Customer receipts")}
+      subtitle={text("سند قبض مرتبط بالعميل — يخصم من رصيد العميل ويظهر في كشف حسابه", "Customer receipts reduce the customer balance and appear on the customer statement")}
       right={
         <button onClick={() => setCreating(true)}
           style={{ ...btnPrimary, background: "#15803d", opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}
-          disabled={!deps || creating}>+ سند تحصيل</button>
+          disabled={!deps || creating}>+ {text("سند تحصيل", "Receipt voucher")}</button>
       }
     >
       {creating && deps && (
@@ -65,27 +91,50 @@ export default function CustomerCollectionAdmin() {
           </div>
         </Card>
       )}
-      {rows.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في سندات التحصيل…" />}
+      {rows.length > 0 && <GridToolbar grid={grid} placeholder={text("🔍 بحث في سندات التحصيل…", "🔍 Search receipt vouchers…")} extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="customer-receipts" title={text("سندات التحصيل من العملاء", "Customer receipt vouchers")} />} />}
+      {rows.length > 0 && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.txNo : null}>
+          <ActionBtn label={text("طباعة", "Print")} icon="🖨️" tone="primary" disabled={!sel.selected}
+            onClick={() => {
+              const f = sel.selected; if (!f) return;
+              const inv = invByApplied(f);
+              printVoucher({
+                kind: "receipt",
+                title: text("سند تحصيل", "Receipt voucher"),
+                docNo: f.txNo,
+                date: f.txDate,
+                partyName: f.partyName ?? null,
+                amount: f.amount,
+                description: f.description ?? null,
+                walletKind: f.bankId != null ? "bank" : "cash",
+                walletName: walletName(deps, f),
+                linkedDocNo: inv ? inv.invoiceNo : null,
+              });
+            }} />
+        </ActionBar>
+      )}
       <Card>
-        {rows.length === 0 && !creating ? <Empty text="لا توجد سندات تحصيل" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
+        {rows.length === 0 && !creating ? <Empty text={text("لا توجد سندات تحصيل", "No receipt vouchers")} /> : grid.view.length === 0 ? <Empty text={text("لا نتائج مطابقة للبحث", "No matching results")} /> : (
           <Table>
             <thead>
               <tr>
-                <SortableTh grid={grid} colKey="txNo">الرقم</SortableTh>
-                <SortableTh grid={grid} colKey="txDate">التاريخ</SortableTh>
-                <SortableTh grid={grid} colKey="party">العميل</SortableTh>
-                <SortableTh grid={grid} colKey="invoice">الفاتورة المرتبطة</SortableTh>
-                <SortableTh grid={grid} colKey="description">البيان</SortableTh>
-                <SortableTh grid={grid} colKey="amount" style={{ textAlign: "left" }}>المبلغ</SortableTh>
+                <SelectTh />
+                <SortableTh grid={grid} colKey="txNo">{text("الرقم", "Number")}</SortableTh>
+                <SortableTh grid={grid} colKey="txDate">{text("التاريخ", "Date")}</SortableTh>
+                <SortableTh grid={grid} colKey="party">{text("العميل", "Customer")}</SortableTh>
+                <SortableTh grid={grid} colKey="invoice">{text("الفاتورة المرتبطة", "Linked invoice")}</SortableTh>
+                <SortableTh grid={grid} colKey="description">{text("البيان", "Description")}</SortableTh>
+                <SortableTh grid={grid} colKey="amount" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المبلغ", "Amount")}</SortableTh>
               </tr>
-              <GridFilterRow grid={grid} columns={columns} />
+              <GridFilterRow grid={grid} columns={columns} leading={1} />
             </thead>
             <tbody>
               {grid.view.map((f) => {
                 const inv = invByApplied(f);
                 return (
                   <tr key={f.id}>
-                    <Td mono>{f.txNo}</Td><Td>{f.txDate}</Td>
+                    <SelectCell id={f.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
+                    <Td mono>{f.txNo}</Td><Td>{formatUiDate(f.txDate, language)}</Td>
                     <Td>{f.partyName ?? "—"}</Td>
                     <Td mono>{inv ? inv.invoiceNo : "—"}</Td>
                     <Td>{f.description ?? "—"}</Td>
@@ -98,6 +147,7 @@ export default function CustomerCollectionAdmin() {
         )}
       </Card>
     </Page>
+    </div>
   );
 }
 
@@ -106,6 +156,8 @@ function CollectForm({ deps, allTx, onCancel, onDone }: {
   allTx: FinancialTx[];
   onCancel: () => void; onDone: () => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const { branches, costCenters } = useDimensions();
   const [date, setDate] = useState(todayStr());
   const [branchId, setBranchId] = useState<number | "">("");
@@ -151,8 +203,8 @@ function CollectForm({ deps, allTx, onCancel, onDone }: {
   async function save() {
     setBusy(true); setErr(null);
     try {
-      if (customerId == null) throw new Error("اختر العميل");
-      if (amount <= 0) throw new Error("أدخل مبلغاً موجباً");
+      if (customerId == null) throw new Error(text("اختر العميل", "Select a customer."));
+      if (amount <= 0) throw new Error(text("أدخل مبلغاً موجباً", "Enter an amount greater than zero."));
       await createFinancialTx({
         txDate: date, txType: "receipt",
         partyType: "customer", partyId: customerId,
@@ -165,76 +217,77 @@ function CollectForm({ deps, allTx, onCancel, onDone }: {
         appliedDocType: invoiceId != null ? "sales_invoice" : null,
         appliedDocId: invoiceId,
       });
+      emitData("vouchers", "journal", "customers", "cashboxes", "banks");
       onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save receipt voucher.")); }
     finally { setBusy(false); }
   }
 
   return (
     <div>
-      <h3 style={{ marginTop: 0, color: "#15803d" }}>سند تحصيل جديد</h3>
-      <Field label="العميل">
+      <h3 style={{ marginTop: 0, color: "#15803d" }}>{text("سند تحصيل جديد", "New receipt voucher")}</h3>
+      <Field label={text("العميل", "Customer")}>
         <SearchCombobox
           value={customerId ?? ""}
           onChange={(v) => { setCustomerId(Number(v) || null); setInvoiceId(null); }}
           style={input}
           options={[
-            { value: "", label: "— اختر —" },
-            ...deps.customers.map((c) => ({ value: c.id, label: `${c.nameAr} (رصيد: ${fmt(c.balance ?? 0)})` })),
+            { value: "", label: text("— اختر —", "— Select —") },
+            ...deps.customers.map((c) => ({ value: c.id, label: `${c.nameAr} (${text("الرصيد", "Balance")}: ${fmt(c.balance ?? 0)})` })),
           ]}
         />
       </Field>
 
       {customerId != null && (
-        <Field label="ربط بفاتورة (اختياري)">
+        <Field label={text("ربط بفاتورة (اختياري)", "Link to invoice (optional)")}>
           <SearchCombobox
             value={invoiceId ?? ""}
             onChange={(v) => pickInvoice(Number(v) || null)}
             style={input}
             options={[
-              { value: "", label: "— بدون ربط —" },
-              ...openInvoices.map((x) => ({ value: x.inv.id, label: `${x.inv.invoiceNo} — متبقّي ${fmt(x.outstanding)}` })),
+              { value: "", label: text("— بدون ربط —", "— No link —") },
+              ...openInvoices.map((x) => ({ value: x.inv.id, label: `${x.inv.invoiceNo} — ${text("متبقّي", "Outstanding")} ${fmt(x.outstanding)}` })),
             ]}
           />
         </Field>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-        <Field label="المبلغ"><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} /></Field>
-        <Field label="المحفظة">
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+        <Field label={text("المبلغ", "Amount")}><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} /></Field>
+        <Field label={text("المحفظة", "Wallet")}>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? btnPrimary : btnSecondary}>خزينة</button>
-            <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? btnPrimary : btnSecondary}>بنك</button>
+            <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? btnPrimary : btnSecondary}>{text("خزينة", "Cashbox")}</button>
+            <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? btnPrimary : btnSecondary}>{text("بنك", "Bank")}</button>
           </div>
         </Field>
       </div>
 
       {walletKind === "cash" ? (
-        <Field label="الخزينة">
+        <Field label={text("الخزينة", "Cashbox")}>
           <SearchCombobox value={cashBoxId ?? ""} onChange={(v) => setCashBoxId(Number(v) || null)} style={input}
             options={deps.cashBoxes.map((c) => ({ value: c.id, label: `${c.name} (${fmt(c.balance)})` }))} />
         </Field>
       ) : (
-        <Field label="البنك">
+        <Field label={text("البنك", "Bank")}>
           <SearchCombobox value={bankId ?? ""} onChange={(v) => setBankId(Number(v) || null)} style={input}
             options={deps.banks.map((b) => ({ value: b.id, label: `${b.name} (${fmt(b.balance)})` }))} />
         </Field>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label="الفرع">
+        <Field label={text("الفرع", "Branch")}>
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
         </Field>
-        <Field label="مركز التكلفة">
+        <Field label={text("مركز التكلفة", "Cost center")}>
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
       </div>
-      <Field label="البيان"><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
+      <Field label={text("البيان", "Description")}><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} type="button" style={{ ...btnPrimary, background: "#15803d" }}>{busy ? "..." : "حفظ وترحيل"}</button>
+        <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
+        <button onClick={save} disabled={busy} type="button" style={{ ...btnPrimary, background: "#15803d" }}>{busy ? "..." : text("حفظ وترحيل", "Save and post")}</button>
       </Actions>
     </div>
   );

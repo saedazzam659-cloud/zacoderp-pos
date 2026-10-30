@@ -6,8 +6,10 @@ import {
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, Empty, SearchCombobox,
-  btnPrimary, btnLink, fmtCurrency,
+  btnPrimary, btnLink, fmtCurrency, ExportButtons,
 } from "./_adminUi";
+import { useDataRefresh } from "../lib/dataBus";
+import { uiText, useUiLanguage, type UiLanguage } from "../lib/appSettings";
 
 const emptyInput: SupplierInput = {
   code: null, nameAr: "", nameEn: null, phone: null, vatNumber: null, notes: null,
@@ -23,12 +25,16 @@ type EditState =
   | null;
 
 // Supplier balance follows AP convention: positive = we owe (دائن).
-function balanceNature(bal: number): { label: string; color: string } {
+function balanceNature(bal: number, language: UiLanguage): { label: string; color: string } {
   if (Math.abs(bal) < 0.001) return { label: "—", color: "#94a3b8" };
-  return bal > 0 ? { label: "دائن", color: "#dc2626" } : { label: "مدين", color: "#16a34a" };
+  return bal > 0
+    ? { label: uiText("دائن", "Credit", language), color: "#dc2626" }
+    : { label: uiText("مدين", "Debit", language), color: "#16a34a" };
 }
 
 export default function SuppliersAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<Supplier[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -42,6 +48,7 @@ export default function SuppliersAdmin() {
     setRows(s); setCurrencies(cur); setAccounts(acc); setGroups(grp);
   }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["suppliers"], refresh);
 
   function startNew() { setErr(null); setEdit({ mode: "new", data: { ...emptyInput } }); }
   function startEdit(s: Supplier) {
@@ -66,7 +73,7 @@ export default function SuppliersAdmin() {
   async function save() {
     if (!edit) return;
     const f = edit.data;
-    if (!f.nameAr.trim()) { setErr("الاسم بالعربي مطلوب"); return; }
+    if (!f.nameAr.trim()) { setErr(text("الاسم بالعربي مطلوب", "Arabic name is required.")); return; }
     setBusy(true); setErr(null);
     try {
       if (edit.mode === "new") {
@@ -85,27 +92,43 @@ export default function SuppliersAdmin() {
       }
       setEdit(null);
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل الحفظ", "Could not save supplier.")); }
     finally { setBusy(false); }
   }
 
   async function remove(s: Supplier) {
-    if (!confirm(`حذف المورد ${s.nameAr}؟`)) return;
+    if (!confirm(text(`حذف المورد ${s.nameAr}؟`, `Delete supplier “${s.nameAr}”?`))) return;
     try { await deleteSupplier(s.id); await refresh(); }
-    catch (e: any) { alert(e?.message ?? "فشل الحذف"); }
+    catch (e: any) { alert(e?.message ?? text("فشل الحذف", "Could not delete supplier.")); }
   }
 
   const currencyOpts = currencies.length > 0 ? currencies.map(c => c.code) : ["SAR"];
 
   return (
+    <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title="الموردون"
-      subtitle={`${rows.length} مورد — يمكن تحديد العملة والرصيد الافتتاحي عند الإضافة`}
+      title={text("الموردون", "Suppliers")}
+      subtitle={text(`${rows.length} مورد — يمكن تحديد العملة والرصيد الافتتاحي عند الإضافة`, `${rows.length} suppliers — set currency and opening balance when adding a supplier`)}
       right={
-        <button onClick={startNew} disabled={!!edit}
-          style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
-          + إضافة مورد
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <ExportButtons<typeof rows[number]>
+            title={text("الموردون", "Suppliers")}
+            filenameBase="suppliers"
+            rows={rows}
+            columns={[
+              { header: text("الكود", "Code"), cell: (s) => s.code ?? "" },
+              { header: text("الاسم", "Name"), cell: (s) => s.nameAr },
+              { header: text("هاتف", "Phone"), cell: (s) => s.phone ?? "" },
+              { header: text("الرقم الضريبي", "Tax number"), cell: (s) => s.vatNumber ?? "" },
+              { header: text("العملة", "Currency"), cell: (s) => s.currencyCode || "SAR" },
+              { header: text("الرصيد", "Balance"), cell: (s) => Math.abs(s.balance) },
+            ]}
+          />
+          <button onClick={startNew} disabled={!!edit}
+            style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
+            + {text("إضافة مورد", "Add supplier")}
+          </button>
+        </div>
       }
     >
       {edit && (
@@ -124,28 +147,28 @@ export default function SuppliersAdmin() {
       )}
 
       <Card>
-        {rows.length === 0 ? <Empty text="لا يوجد موردون بعد" /> : (
+        {rows.length === 0 ? <Empty text={text("لا يوجد موردون بعد", "No suppliers yet")} /> : (
           <Table>
             <thead><tr>
-              <Th>الكود</Th><Th>الاسم</Th><Th>هاتف</Th><Th>الرقم الضريبي</Th>
-              <Th style={{ width: 90 }}>العملة</Th>
-              <Th style={{ textAlign: "left" }}>الرصيد</Th><Th style={{ width: 90 }}>النوع</Th>
-              <Th style={{ width: 160 }}>إجراءات</Th>
+              <Th>{text("الكود", "Code")}</Th><Th>{text("الاسم", "Name")}</Th><Th>{text("هاتف", "Phone")}</Th><Th>{text("الرقم الضريبي", "Tax number")}</Th>
+              <Th style={{ width: 90 }}>{text("العملة", "Currency")}</Th>
+              <Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الرصيد", "Balance")}</Th><Th style={{ width: 90 }}>{text("النوع", "Balance type")}</Th>
+              <Th style={{ width: 160 }}>{text("إجراءات", "Actions")}</Th>
             </tr></thead>
             <tbody>
               {rows.map((s) => (
-                <tr key={s.id} style={{ opacity: edit ? 0.5 : 1 }}>
+                <tr key={s.id} style={{ opacity: edit ? 0.5 : 1, cursor: edit ? "default" : "pointer" }} title={edit ? undefined : text("نقر مزدوج للتعديل", "Double-click to edit")} onDoubleClick={() => { if (!edit) startEdit(s); }}>
                   <Td mono>{s.code ?? "—"}</Td>
                   <Td>{s.nameAr}{s.nameEn && <span style={{ color: "#94a3b8", marginInlineStart: 8 }}>{s.nameEn}</span>}</Td>
                   <Td>{s.phone ?? "—"}</Td>
                   <Td mono>{s.vatNumber ?? "—"}</Td>
                   <Td><span style={{ background: "#eff6ff", color: "#1e40af", padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600 }}>{s.currencyCode || "SAR"}</span></Td>
-                  <Td num style={{ color: balanceNature(s.balance).color, fontWeight: 600 }}>{fmtCurrency(Math.abs(s.balance), "SAR")}</Td>
-                  <Td style={{ color: balanceNature(s.balance).color, fontWeight: 600 }}>{balanceNature(s.balance).label}</Td>
+                  <Td num style={{ color: balanceNature(s.balance, language).color, fontWeight: 600 }}>{fmtCurrency(Math.abs(s.balance), "SAR")}</Td>
+                  <Td style={{ color: balanceNature(s.balance, language).color, fontWeight: 600 }}>{balanceNature(s.balance, language).label}</Td>
                   <Td>
-                    <button onClick={() => startEdit(s)} disabled={!!edit} style={btnLink}>تعديل</button>
+                    <button onClick={() => startEdit(s)} disabled={!!edit} style={btnLink}>{text("تعديل", "Edit")}</button>
                     {" · "}
-                    <button onClick={() => remove(s)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                    <button onClick={() => remove(s)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>{text("حذف", "Delete")}</button>
                   </Td>
                 </tr>
               ))}
@@ -154,6 +177,7 @@ export default function SuppliersAdmin() {
         )}
       </Card>
     </Page>
+    </div>
   );
 }
 
@@ -167,6 +191,8 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
   accounts: Account[];
   groups: SupplierGroup[];
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   // Payables control accounts: liability type only (mirrors the web AP picker).
   const apAccounts = accounts.filter((a) => a.type === "liability" && a.isActive);
   const [tab, setTab] = useState<"basic" | "address" | "accounting">("basic");
@@ -179,49 +205,49 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
 
   return (
     <div style={F.formCard}>
-      <div style={F.formTitle}>{mode === "new" ? "مورد جديد" : "تعديل بيانات المورد"}</div>
+      <div style={F.formTitle}>{mode === "new" ? text("مورد جديد", "New supplier") : text("تعديل بيانات المورد", "Edit supplier")}</div>
 
       <div style={F.tabBar}>
-        <button type="button" onClick={() => setTab("basic")} style={tab === "basic" ? F.tabActive : F.tab}>المعلومات الأساسية</button>
-        <button type="button" onClick={() => setTab("address")} style={tab === "address" ? F.tabActive : F.tab}>العنوان الوطني</button>
-        <button type="button" onClick={() => setTab("accounting")} style={tab === "accounting" ? F.tabActive : F.tab}>الإعدادات المحاسبية</button>
+        <button type="button" onClick={() => setTab("basic")} style={tab === "basic" ? F.tabActive : F.tab}>{text("المعلومات الأساسية", "Basic information")}</button>
+        <button type="button" onClick={() => setTab("address")} style={tab === "address" ? F.tabActive : F.tab}>{text("العنوان الوطني", "National address")}</button>
+        <button type="button" onClick={() => setTab("accounting")} style={tab === "accounting" ? F.tabActive : F.tab}>{text("الإعدادات المحاسبية", "Accounting settings")}</button>
       </div>
 
       {tab === "basic" && (
       <>
       <div style={F.grid}>
-        <Field label="الكود">
-          <input value={data.code ?? ""} onChange={(e) => setField("code", e.target.value || null)} style={F.bigInput} placeholder="كود المورد" />
+        <Field label={text("الكود", "Code")}>
+          <input value={data.code ?? ""} onChange={(e) => setField("code", e.target.value || null)} style={F.bigInput} placeholder={text("كود المورد", "Supplier code")} />
         </Field>
-        <Field label="الاسم بالعربي *">
-          <input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={F.bigInput} placeholder="اسم المورد" />
+        <Field label={text("الاسم بالعربي *", "Arabic name *")}>
+          <input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={F.bigInput} placeholder={text("اسم المورد", "Arabic supplier name")} />
         </Field>
-        <Field label="الاسم بالإنجليزي">
+        <Field label={text("الاسم بالإنجليزي", "English name")}>
           <input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value || null)} style={F.bigInput} placeholder="Supplier name" />
         </Field>
-        <Field label="رقم الهاتف">
-          <input value={data.phone ?? ""} onChange={(e) => setField("phone", e.target.value || null)} style={F.bigInput} placeholder="هاتف" />
+        <Field label={text("رقم الهاتف", "Phone number")}>
+          <input value={data.phone ?? ""} onChange={(e) => setField("phone", e.target.value || null)} style={F.bigInput} placeholder={text("هاتف", "Phone")} />
         </Field>
-        <Field label="البريد الإلكتروني">
+        <Field label={text("البريد الإلكتروني", "Email")}>
           <input value={data.email ?? ""} onChange={(e) => setField("email", e.target.value || null)} style={F.bigInput} placeholder="email@example.com" />
         </Field>
-        <Field label="الرقم الضريبي">
-          <input value={data.vatNumber ?? ""} onChange={(e) => setField("vatNumber", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="الرقم الضريبي" />
+        <Field label={text("الرقم الضريبي", "Tax number")}>
+          <input value={data.vatNumber ?? ""} onChange={(e) => setField("vatNumber", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder={text("الرقم الضريبي", "Tax number")} />
         </Field>
-        <Field label="السجل التجاري">
-          <input value={data.crNumber ?? ""} onChange={(e) => setField("crNumber", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="رقم السجل التجاري" />
+        <Field label={text("السجل التجاري", "Commercial registration")}>
+          <input value={data.crNumber ?? ""} onChange={(e) => setField("crNumber", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder={text("رقم السجل التجاري", "Commercial registration number")} />
         </Field>
-        <Field label="العملة">
+        <Field label={text("العملة", "Currency")}>
           <select value={data.currencyCode ?? "SAR"} onChange={(e) => setField("currencyCode", e.target.value)} style={F.bigInput}>
             {currencyOpts.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </Field>
-        <Field label="مجموعة الموردين">
+        <Field label={text("مجموعة الموردين", "Supplier group")}>
           <SearchCombobox
             value={data.groupId ?? ""}
             onChange={(v) => setField("groupId", v === "" ? null : Number(v))}
-            options={[{ value: "", label: "— بدون —" }, ...groups.map((g) => ({ value: g.id, label: g.nameAr }))]}
-            placeholder="— بدون —"
+            options={[{ value: "", label: text("— بدون —", "— None —") }, ...groups.map((g) => ({ value: g.id, label: g.nameAr }))]}
+            placeholder={text("— بدون —", "— None —")}
           />
         </Field>
       </div>
@@ -231,26 +257,26 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
 
       {tab === "address" && (
       <div style={F.grid}>
-        <Field label="المدينة">
-          <input value={data.city ?? ""} onChange={(e) => setField("city", e.target.value || null)} style={F.bigInput} placeholder="المدينة" />
+        <Field label={text("المدينة", "City")}>
+          <input value={data.city ?? ""} onChange={(e) => setField("city", e.target.value || null)} style={F.bigInput} placeholder={text("المدينة", "City")} />
         </Field>
-        <Field label="الحي">
-          <input value={data.district ?? ""} onChange={(e) => setField("district", e.target.value || null)} style={F.bigInput} placeholder="الحي" />
+        <Field label={text("الحي", "District")}>
+          <input value={data.district ?? ""} onChange={(e) => setField("district", e.target.value || null)} style={F.bigInput} placeholder={text("الحي", "District")} />
         </Field>
-        <Field label="الشارع">
-          <input value={data.street ?? ""} onChange={(e) => setField("street", e.target.value || null)} style={F.bigInput} placeholder="الشارع" />
+        <Field label={text("الشارع", "Street")}>
+          <input value={data.street ?? ""} onChange={(e) => setField("street", e.target.value || null)} style={F.bigInput} placeholder={text("الشارع", "Street")} />
         </Field>
-        <Field label="رقم المبنى">
-          <input value={data.buildingNumber ?? ""} onChange={(e) => setField("buildingNumber", e.target.value || null)} style={F.bigInput} placeholder="رقم المبنى" />
+        <Field label={text("رقم المبنى", "Building number")}>
+          <input value={data.buildingNumber ?? ""} onChange={(e) => setField("buildingNumber", e.target.value || null)} style={F.bigInput} placeholder={text("رقم المبنى", "Building number")} />
         </Field>
-        <Field label="الرمز البريدي">
-          <input value={data.postalCode ?? ""} onChange={(e) => setField("postalCode", e.target.value || null)} style={F.bigInput} placeholder="الرمز البريدي" />
+        <Field label={text("الرمز البريدي", "Postal code")}>
+          <input value={data.postalCode ?? ""} onChange={(e) => setField("postalCode", e.target.value || null)} style={F.bigInput} placeholder={text("الرمز البريدي", "Postal code")} />
         </Field>
-        <Field label="الدولة">
+        <Field label={text("الدولة", "Country")}>
           <input value={data.country ?? ""} onChange={(e) => setField("country", e.target.value || null)} style={F.bigInput} placeholder="SA" />
         </Field>
-        <Field label="العنوان الوطني المختصر">
-          <input value={data.nationalAddressShort ?? ""} onChange={(e) => setField("nationalAddressShort", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="مثال: RIYD2929" />
+        <Field label={text("العنوان الوطني المختصر", "Short national address")}>
+          <input value={data.nationalAddressShort ?? ""} onChange={(e) => setField("nationalAddressShort", e.target.value || null)} style={{ ...F.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder={text("مثال: RIYD2929", "Example: RIYD2929")} />
         </Field>
       </div>
       )}
@@ -258,43 +284,43 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
       {tab === "accounting" && (
       <>
       <div style={F.grid}>
-        <Field label="حساب الذمم الدائنة (المورد)">
+        <Field label={text("حساب الذمم الدائنة (المورد)", "Supplier payable account")}>
           <select value={data.apAccountId ?? 0} onChange={(e) => setField("apAccountId", Number(e.target.value) || null)} style={F.bigInput}>
-            <option value={0}>الافتراضي (الدائنون 2100)</option>
+            <option value={0}>{text("الافتراضي (الدائنون 2100)", "Default (Accounts payable 2100)")}</option>
             {apAccounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
           </select>
         </Field>
-        <Field label="إظهار في كشوف الحسابات">
+        <Field label={text("إظهار في كشوف الحسابات", "Include in statements")}>
           <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 0", fontSize: 15, color: "#0f172a" }}>
             <input type="checkbox" checked={data.includeInStatements ?? true} onChange={(e) => setField("includeInStatements", e.target.checked)} style={{ width: 18, height: 18 }} />
-            تضمين المورد في كشف الحساب
+            {text("تضمين المورد في كشف الحساب", "Include supplier in statements")}
           </label>
         </Field>
       </div>
 
-      <div style={F.section}>ملاحظات</div>
+      <div style={F.section}>{text("ملاحظات", "Notes")}</div>
       <textarea value={data.notes ?? ""} onChange={(e) => setField("notes", e.target.value || null)}
-        style={{ ...F.bigInput, minHeight: 70, resize: "vertical" }} placeholder="ملاحظات إضافية" />
+        style={{ ...F.bigInput, minHeight: 70, resize: "vertical" }} placeholder={text("ملاحظات إضافية", "Additional notes")} />
 
       {mode === "new" && (
         <>
-          <div style={F.section}>الرصيد الافتتاحي (عند الإضافة فقط)</div>
+          <div style={F.section}>{text("الرصيد الافتتاحي (عند الإضافة فقط)", "Opening balance (new suppliers only)")}</div>
           <div style={F.grid}>
-            <Field label="المبلغ">
+            <Field label={text("المبلغ", "Amount")}>
               <input type="number" step="0.01" min="0" value={data.openingBalance ?? 0}
                 onChange={(e) => setField("openingBalance", Number(e.target.value) || 0)}
                 style={F.bigInput} placeholder="0.00" />
             </Field>
-            <Field label="الطبيعة">
+            <Field label={text("الطبيعة", "Balance type")}>
               <select value={data.openingNature ?? "credit"}
                 onChange={(e) => setField("openingNature", e.target.value as "debit" | "credit")}
                 style={F.bigInput}>
-                <option value="credit">دائن (له علينا)</option>
-                <option value="debit">مدين (لنا عليه)</option>
+                <option value="credit">{text("دائن (له علينا)", "Credit (we owe supplier)")}</option>
+                <option value="debit">{text("مدين (لنا عليه)", "Debit (supplier owes us)")}</option>
               </select>
             </Field>
           </div>
-          <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>يُرحَّل قيد افتتاحي مقابل حقوق الملكية عند الحفظ.</div>
+          <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>{text("يُرحَّل قيد افتتاحي مقابل حقوق الملكية عند الحفظ.", "An opening entry against equity is posted when saved.")}</div>
         </>
       )}
       </>
@@ -303,8 +329,8 @@ function SupplierForm({ mode, data, setField, onSave, onCancel, busy, err, curre
       {err && <div style={F.formErr}>⚠️ {err}</div>}
 
       <div style={F.formActions}>
-        <button onClick={handleSave} disabled={busy} style={F.btnSave}>{busy ? "جاري الحفظ..." : "حفظ"}</button>
-        <button onClick={onCancel} disabled={busy} style={F.btnCancel}>إلغاء</button>
+        <button onClick={handleSave} disabled={busy} style={F.btnSave}>{busy ? text("جاري الحفظ...", "Saving…") : text("حفظ", "Save")}</button>
+        <button onClick={onCancel} disabled={busy} style={F.btnCancel}>{text("إلغاء", "Cancel")}</button>
       </div>
     </div>
   );

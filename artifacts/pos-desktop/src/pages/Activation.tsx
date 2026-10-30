@@ -22,21 +22,13 @@ import {
 import { wipeStandalone } from "../lib/standalone";
 import { getCountryIso, setCountryIso } from "../lib/currency";
 import { SearchCombobox } from "./_adminUi";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type Country = { code: string; name: string };
 
-const STEP_TITLES = [
-  "مرحباً بك في ZACOD POS",
-  "اتفاقية الترخيص",
-  "إعدادات الاتصال",
-  "اختبار الاتصال بالخادم",
-  "إدخال مفتاح الترخيص",
-  "بصمة الجهاز والتفعيل",
-];
-
 const SERVER_PRESETS = [
-  { label: "السحابة الرسمية (zacoderp.com)", url: "https://zacoderp.com" },
-  { label: "مخصص…", url: "" },
+  { url: "https://zacoderp.com" },
+  { url: "" },
 ];
 
 export type ActivatedInfo = {
@@ -48,6 +40,16 @@ export type ActivatedInfo = {
 };
 
 export default function Activation({ onActivated }: { onActivated: (info: ActivatedInfo) => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
+  const stepTitles = [
+    text("مرحباً بك في ZACOD POS", "Welcome to ZACOD POS"),
+    text("اتفاقية الترخيص", "License agreement"),
+    text("إعدادات الاتصال", "Connection settings"),
+    text("اختبار الاتصال بالخادم", "Server connection test"),
+    text("إدخال مفتاح الترخيص", "Enter license key"),
+    text("بصمة الجهاز والتفعيل", "Device fingerprint and activation"),
+  ];
   const [step, setStep] = useState(0);
   const [accepted, setAccepted] = useState(false);
 
@@ -93,7 +95,7 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
       setPing("ok");
     } catch (e: any) {
       setPing("fail");
-      setErr(e?.message ?? "تعذّر الاتصال بالخادم. تأكد من الإنترنت والعنوان.");
+      setErr(e?.message ?? text("تعذّر الاتصال بالخادم. تأكد من الإنترنت والعنوان.", "Could not connect to the server. Check the internet connection and address."));
     } finally {
       setBusy(false);
     }
@@ -101,7 +103,7 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
 
   // ─── Step 6: finalize activation ────────────────────────────────────
   async function finalize() {
-    if (!fingerprint) { setErr("بصمة الجهاز غير جاهزة"); return; }
+    if (!fingerprint) { setErr(text("بصمة الجهاز غير جاهزة", "Device fingerprint is not ready.")); return; }
     setBusy(true); setErr(null);
     try {
       const api = createApi({ baseUrl: effectiveUrl() });
@@ -125,14 +127,14 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
     } catch (e: any) {
       if (e instanceof ApiError) {
         const codeMap: Record<number, string> = {
-          400: "بيانات غير صحيحة. راجع مفتاح الترخيص.",
-          403: "الترخيص غير مفعّل لشركتك. تواصل مع الإدارة.",
-          404: "مفتاح الترخيص غير موجود.",
-          409: "هذا الترخيص مرتبط بجهاز آخر. اطلب من المسؤول فكّ الربط أولاً.",
+          400: text("بيانات غير صحيحة. راجع مفتاح الترخيص.", "Invalid details. Check the license key."),
+          403: text("الترخيص غير مفعّل لشركتك. تواصل مع الإدارة.", "This license is not enabled for your company. Contact your administrator."),
+          404: text("مفتاح الترخيص غير موجود.", "License key not found."),
+          409: text("هذا الترخيص مرتبط بجهاز آخر. اطلب من المسؤول فكّ الربط أولاً.", "This license is linked to another device. Ask an administrator to unlink it first."),
         };
-        setErr(codeMap[e.status] ?? `خطأ ${e.status}: ${e.message}`);
+        setErr(codeMap[e.status] ?? text(`خطأ ${e.status}: ${e.message}`, `Error ${e.status}: ${e.message}`));
       } else {
-        setErr(e?.message ?? "فشل التفعيل");
+        setErr(e?.message ?? text("فشل التفعيل", "Activation failed."));
       }
     } finally {
       setBusy(false);
@@ -154,109 +156,110 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
 
   function next() {
     if (step === 2) { setStep(3); setTimeout(testConnection, 100); return; }
-    setStep(Math.min(STEP_TITLES.length - 1, step + 1));
+    setStep(Math.min(stepTitles.length - 1, step + 1));
   }
 
   // ─── Render ────────────────────────────────────────────────────────
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <header style={S.header}>
-        <h1 style={S.title}>{STEP_TITLES[step]}</h1>
+        <h1 style={S.title}>{stepTitles[step]}</h1>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button
             onClick={async () => {
-              if (!confirm("⚠️ تغيير وضع التطبيق سيؤدي إلى مسح كل البيانات المحلية على هذا الجهاز (السلال المعلّقة، الفواتير غير المرفوعة، ذاكرة الكتالوج). الترخيص السحابي على السيرفر لن يتأثر. هل أنت متأكد؟")) return;
+              if (!confirm(text("⚠️ تغيير وضع التطبيق سيؤدي إلى مسح كل البيانات المحلية على هذا الجهاز (السلال المعلّقة، الفواتير غير المرفوعة، ذاكرة الكتالوج). الترخيص السحابي على السيرفر لن يتأثر. هل أنت متأكد؟", "⚠️ Changing the app mode erases all local data on this device (parked carts, unsent invoices, and catalog cache). The cloud license is not affected. Continue?"))) return;
               await wipeStandalone();
               location.reload();
             }}
             style={{ padding: "6px 12px", fontSize: 13, background: "#fff", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", color: "#475569" }}
-            title="مسح بيانات الجهاز والعودة لاختيار طريقة التشغيل"
+            title={text("مسح بيانات الجهاز والعودة لاختيار طريقة التشغيل", "Erase device data and return to operating mode selection")}
           >
-            ← تغيير الوضع
+            {language === "en" ? "Change mode →" : "← تغيير الوضع"}
           </button>
           <div style={S.mode}>
-            {TAURI_MODE === "tauri" ? "🪟 وضع التطبيق الأصلي" : "🌐 وضع المتصفح (تطوير)"}
+            {TAURI_MODE === "tauri" ? text("🪟 وضع التطبيق الأصلي", "🪟 Native app mode") : text("🌐 وضع المتصفح (تطوير)", "🌐 Browser mode (development)")}
           </div>
         </div>
       </header>
 
       <div style={S.progressBg}>
-        <div style={{ ...S.progressFg, width: `${((step + 1) / STEP_TITLES.length) * 100}%` }} />
+        <div style={{ ...S.progressFg, width: `${((step + 1) / stepTitles.length) * 100}%` }} />
       </div>
-      <div style={S.stepCounter}>الخطوة {step + 1} من {STEP_TITLES.length}</div>
+        <div style={{ ...S.stepCounter, textAlign: language === "en" ? "left" : "right" }}>{text("الخطوة", "Step")} {step + 1} {text("من", "of")} {stepTitles.length}</div>
 
       <main style={S.main}>
         {step === 0 && (
           <div>
-            <p style={S.lead}>سيتم تثبيت تطبيق نقاط البيع المتصل بحسابك السحابي.</p>
+            <p style={S.lead}>{text("سيتم تثبيت تطبيق نقاط البيع المتصل بحسابك السحابي.", "This will install the point-of-sale app connected to your cloud account.")}</p>
             <ul style={S.bullets}>
-              <li>✅ يعمل أثناء انقطاع الإنترنت (قاعدة بيانات محلية مشفّرة)</li>
-              <li>✅ مزامنة تلقائية للفواتير والعملاء فور عودة الاتصال</li>
-              <li>✅ توقيع فواتير ZATCA Phase 2 محلياً</li>
-              <li>✅ دعم الطابعات الحرارية ودرج النقود وقارئ الباركود</li>
+              <li>✅ {text("يعمل أثناء انقطاع الإنترنت (قاعدة بيانات محلية مشفّرة)", "Works during internet outages (encrypted local database)")}</li>
+              <li>✅ {text("مزامنة تلقائية للفواتير والعملاء فور عودة الاتصال", "Automatically syncs invoices and customers when the connection returns")}</li>
+              <li>✅ {text("توقيع فواتير ZATCA Phase 2 محلياً", "Signs ZATCA Phase 2 invoices locally")}</li>
+              <li>✅ {text("دعم الطابعات الحرارية ودرج النقود وقارئ الباركود", "Supports thermal printers, cash drawers, and barcode scanners")}</li>
             </ul>
           </div>
         )}
 
         {step === 1 && (
           <div>
-            <p>راجع شروط الاستخدام واتفاقية ترخيص المستخدم النهائي (EULA) قبل المتابعة.</p>
+            <p>{text("راجع شروط الاستخدام واتفاقية ترخيص المستخدم النهائي (EULA) قبل المتابعة.", "Review the terms of use and end-user license agreement (EULA) before continuing.")}</p>
             <div style={S.eulaBox}>
-              يحق لك تثبيت هذا التطبيق على عدد الأجهزة المُصرّح به في باقتك. يُمنع تعديل
-              الكود البرمجي أو الهندسة العكسية. مفتاح الترخيص شخصي لشركتك ويُلغى تلقائياً
-              عند انتهاء الاشتراك أو فكّ الارتباط من قِبل المسؤول.
+              {text("يحق لك تثبيت هذا التطبيق على عدد الأجهزة المُصرّح به في باقتك. يُمنع تعديل الكود البرمجي أو الهندسة العكسية. مفتاح الترخيص شخصي لشركتك ويُلغى تلقائياً عند انتهاء الاشتراك أو فكّ الارتباط من قِبل المسؤول.", "You may install this app on the number of devices allowed by your plan. Modifying or reverse engineering the software is prohibited. The license key is assigned to your company and is revoked when the subscription expires or an administrator unlinks it.")}
             </div>
             <label style={S.check}>
               <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
-              أوافق على الشروط
+              {text("أوافق على الشروط", "I agree to the terms")}
             </label>
           </div>
         )}
 
         {step === 2 && (
           <div>
-            <Field label="الخادم">
+            <Field label={text("الخادم", "Server")}>
               <SearchCombobox
                 value={serverPreset}
                 onChange={(v) => setServerPreset(Number(v))}
-                options={SERVER_PRESETS.map((p, i) => ({ value: i, label: p.label }))}
+                options={SERVER_PRESETS.map((p, i) => ({
+                  value: i,
+                  label: i === 0 ? text("السحابة الرسمية (zacoderp.com)", "Official cloud (zacoderp.com)") : text("مخصص…", "Custom…"),
+                }))}
                 style={S.input}
               />
             </Field>
             {serverPreset === 1 && (
-              <Field label="عنوان مخصص">
+              <Field label={text("عنوان مخصص", "Custom address")}>
                 <input value={serverUrl} onChange={(e) => setServerUrl(e.target.value)}
                   placeholder="https://your-domain.com" style={S.input} />
               </Field>
             )}
-            <Field label="الدولة">
+            <Field label={text("الدولة", "Country")}>
               <SearchCombobox
                 value={country}
                 onChange={(v) => setCountry(String(v))}
                 options={[
-                  { value: "SA", label: "🇸🇦 المملكة العربية السعودية" },
-                  { value: "EG", label: "🇪🇬 مصر" },
-                  { value: "AE", label: "🇦🇪 الإمارات" },
-                  { value: "KW", label: "🇰🇼 الكويت" },
-                  { value: "BH", label: "🇧🇭 البحرين" },
-                  { value: "OM", label: "🇴🇲 عُمان" },
-                  { value: "QA", label: "🇶🇦 قطر" },
-                  { value: "JO", label: "🇯🇴 الأردن" },
-                  { value: "IQ", label: "🇮🇶 العراق" },
-                  { value: "LB", label: "🇱🇧 لبنان" },
-                  { value: "SY", label: "🇸🇾 سوريا" },
-                  { value: "YE", label: "🇾🇪 اليمن" },
-                  { value: "PS", label: "🇵🇸 فلسطين" },
-                  { value: "SD", label: "🇸🇩 السودان" },
-                  { value: "LY", label: "🇱🇾 ليبيا" },
-                  { value: "TN", label: "🇹🇳 تونس" },
-                  { value: "DZ", label: "🇩🇿 الجزائر" },
-                  { value: "MA", label: "🇲🇦 المغرب" },
-                  { value: "MR", label: "🇲🇷 موريتانيا" },
-                  { value: "SO", label: "🇸🇴 الصومال" },
-                  { value: "DJ", label: "🇩🇯 جيبوتي" },
-                  { value: "KM", label: "🇰🇲 جزر القمر" },
-                  { value: "ALL", label: "🌍 دولة أخرى" },
+                  { value: "SA", label: text("🇸🇦 المملكة العربية السعودية", "🇸🇦 Saudi Arabia") },
+                  { value: "EG", label: text("🇪🇬 مصر", "🇪🇬 Egypt") },
+                  { value: "AE", label: text("🇦🇪 الإمارات", "🇦🇪 United Arab Emirates") },
+                  { value: "KW", label: text("🇰🇼 الكويت", "🇰🇼 Kuwait") },
+                  { value: "BH", label: text("🇧🇭 البحرين", "🇧🇭 Bahrain") },
+                  { value: "OM", label: text("🇴🇲 عُمان", "🇴🇲 Oman") },
+                  { value: "QA", label: text("🇶🇦 قطر", "🇶🇦 Qatar") },
+                  { value: "JO", label: text("🇯🇴 الأردن", "🇯🇴 Jordan") },
+                  { value: "IQ", label: text("🇮🇶 العراق", "🇮🇶 Iraq") },
+                  { value: "LB", label: text("🇱🇧 لبنان", "🇱🇧 Lebanon") },
+                  { value: "SY", label: text("🇸🇾 سوريا", "🇸🇾 Syria") },
+                  { value: "YE", label: text("🇾🇪 اليمن", "🇾🇪 Yemen") },
+                  { value: "PS", label: text("🇵🇸 فلسطين", "🇵🇸 Palestine") },
+                  { value: "SD", label: text("🇸🇩 السودان", "🇸🇩 Sudan") },
+                  { value: "LY", label: text("🇱🇾 ليبيا", "🇱🇾 Libya") },
+                  { value: "TN", label: text("🇹🇳 تونس", "🇹🇳 Tunisia") },
+                  { value: "DZ", label: text("🇩🇿 الجزائر", "🇩🇿 Algeria") },
+                  { value: "MA", label: text("🇲🇦 المغرب", "🇲🇦 Morocco") },
+                  { value: "MR", label: text("🇲🇷 موريتانيا", "🇲🇷 Mauritania") },
+                  { value: "SO", label: text("🇸🇴 الصومال", "🇸🇴 Somalia") },
+                  { value: "DJ", label: text("🇩🇯 جيبوتي", "🇩🇯 Djibouti") },
+                  { value: "KM", label: text("🇰🇲 جزر القمر", "🇰🇲 Comoros") },
+                  { value: "ALL", label: text("🌍 دولة أخرى", "🌍 Other country") },
                 ]}
                 style={S.input}
               />
@@ -266,56 +269,56 @@ export default function Activation({ onActivated }: { onActivated: (info: Activa
 
         {step === 3 && (
           <div>
-            <p>جاري اختبار الاتصال بـ <code style={S.code}>{effectiveUrl()}</code></p>
+            <p>{text("جاري اختبار الاتصال بـ", "Testing connection to")} <code style={S.code}>{effectiveUrl()}</code></p>
             <div style={S.pingBox}>
-              {ping === "idle" && <span>⏳ جارٍ الاختبار…</span>}
+              {ping === "idle" && <span>⏳ {text("جارٍ الاختبار…", "Testing…")}</span>}
               {ping === "ok" && (
                 <span style={{ color: "#059669" }}>
-                  ✅ الاتصال ناجح ({countries?.length ?? 0} دولة مدعومة)
+                  ✅ {text(`الاتصال ناجح (${countries?.length ?? 0} دولة مدعومة)`, `Connection successful (${countries?.length ?? 0} supported countries)`)}
                 </span>
               )}
-              {ping === "fail" && <span style={{ color: "#dc2626" }}>❌ فشل الاتصال</span>}
+              {ping === "fail" && <span style={{ color: "#dc2626" }}>❌ {text("فشل الاتصال", "Connection failed")}</span>}
             </div>
             {ping === "fail" && (
-              <button onClick={testConnection} disabled={busy} style={S.btnSecondary}>إعادة المحاولة</button>
+              <button onClick={testConnection} disabled={busy} style={S.btnSecondary}>{text("إعادة المحاولة", "Try again")}</button>
             )}
           </div>
         )}
 
         {step === 4 && (
           <div>
-            <Field label="مفتاح الترخيص">
+            <Field label={text("مفتاح الترخيص", "License key")}>
               <input value={licenseKey} onChange={(e) => setLicenseKey(e.target.value.toUpperCase())}
                 placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" style={{ ...S.input, fontFamily: "ui-monospace, monospace", letterSpacing: 1 }} autoFocus />
             </Field>
             <p style={S.hint}>
-              المفتاح يصلك من SuperAdmin بعد شراء الباقة (24 خانة على شكل 5 مجموعات بـ "-").
+              {text('المفتاح يصلك من SuperAdmin بعد شراء الباقة (24 خانة على شكل 5 مجموعات بـ "-").', 'Your Super Admin provides the key after plan purchase (24 characters in 5 groups separated by hyphens).')}
             </p>
           </div>
         )}
 
         {step === 5 && (
           <div>
-            <p>سيتم الآن جمع بصمة الجهاز وتفعيل الترخيص.</p>
+            <p>{text("سيتم الآن جمع بصمة الجهاز وتفعيل الترخيص.", "The device fingerprint will now be collected and the license activated.")}</p>
             <div style={S.fpBox}>
-              <KV k="اسم الجهاز" v={deviceName} />
-              <KV k="نظام التشغيل" v={osInfo} />
-              <KV k="إصدار التطبيق" v={appVersion} />
-              <KV k="بصمة الجهاز (SHA-256 مُختصرة)" v={fingerprint ? fingerprint.slice(0, 32) + "…" : "..."} mono />
+              <KV k={text("اسم الجهاز", "Device name")} v={deviceName} />
+              <KV k={text("نظام التشغيل", "Operating system")} v={osInfo} />
+              <KV k={text("إصدار التطبيق", "App version")} v={appVersion} />
+              <KV k={text("بصمة الجهاز (SHA-256 مُختصرة)", "Device fingerprint (short SHA-256)")} v={fingerprint ? fingerprint.slice(0, 32) + "…" : "..."} mono />
             </div>
             {err && <div style={S.err}>⚠️ {err}</div>}
             <button onClick={finalize} disabled={busy || !fingerprint || !licenseKey} style={S.btnPrimary}>
-              {busy ? "جارٍ التفعيل..." : "تفعيل الجهاز الآن"}
+              {busy ? text("جارٍ التفعيل...", "Activating…") : text("تفعيل الجهاز الآن", "Activate device")}
             </button>
           </div>
         )}
       </main>
 
       <footer style={S.footer}>
-        <button onClick={() => { setErr(null); setStep(Math.max(0, step - 1)); }} disabled={step === 0 || busy} style={S.btnSecondary}>السابق</button>
-        {step < STEP_TITLES.length - 1 && (
+        <button onClick={() => { setErr(null); setStep(Math.max(0, step - 1)); }} disabled={step === 0 || busy} style={S.btnSecondary}>{text("السابق", "Previous")}</button>
+        {step < stepTitles.length - 1 && (
           <button onClick={next} disabled={!canAdvance() || busy} style={S.btnPrimary}>
-            {step === 2 ? "اختبار الاتصال" : "التالي"}
+            {step === 2 ? text("اختبار الاتصال", "Test connection") : text("التالي", "Next")}
           </button>
         )}
       </footer>

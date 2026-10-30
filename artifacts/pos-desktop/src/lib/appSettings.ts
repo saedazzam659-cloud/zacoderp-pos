@@ -13,13 +13,21 @@
 
 import { useEffect, useState } from "react";
 
-const EVT = "pos-desktop-company-changed";
+export const APP_SETTINGS_EVENT = "pos-desktop-company-changed";
+const EVT = APP_SETTINGS_EVENT;
 
 const LS_LOGO = "pos_desktop_company_logo";   // base64 data URL or https URL
 const LS_NAME = "pos_desktop_company_name";
 const LS_VAT = "pos_desktop_company_vat";
 const LS_CR = "pos_desktop_company_cr";
+const LS_PHONE = "pos_desktop_company_phone";
 const LS_DECIMALS = "pos_desktop_decimal_places";
+const LS_HIDE_ZEROS = "pos_desktop_hide_zeros";
+const LS_NUMBER_SYSTEM = "pos_desktop_number_system";
+const LS_UI_LANGUAGE = "pos_desktop_ui_language";
+
+export type NumberSystem = "arabic" | "latin";
+export type UiLanguage = "ar" | "en";
 
 export const DECIMALS_MIN = 0;
 export const DECIMALS_MAX = 6;
@@ -34,6 +42,7 @@ export type CompanyProfile = {
   name: string;
   vat: string;
   cr: string;
+  phone: string;
   decimals: number;
 };
 
@@ -67,6 +76,69 @@ export function getDecimals(): number {
   return _decimals;
 }
 
+export function getNumberSystem(): NumberSystem {
+  if (typeof window === "undefined") return "arabic";
+  return localStorage.getItem(LS_NUMBER_SYSTEM) === "latin" ? "latin" : "arabic";
+}
+
+export function setNumberSystem(system: NumberSystem): void {
+  writeKey(LS_NUMBER_SYSTEM, system);
+  window.dispatchEvent(new Event(EVT));
+}
+
+export function useNumberSystem(): NumberSystem {
+  const [system, setSystem] = useState<NumberSystem>(() => getNumberSystem());
+  useEffect(() => {
+    const refresh = () => setSystem(getNumberSystem());
+    window.addEventListener(EVT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(EVT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return system;
+}
+
+export function getUiLanguage(): UiLanguage {
+  if (typeof window === "undefined") return "ar";
+  return localStorage.getItem(LS_UI_LANGUAGE) === "en" ? "en" : "ar";
+}
+
+/** Kept internal until English translations cover the complete POS Desktop UI. */
+export function setUiLanguage(language: UiLanguage): void {
+  writeKey(LS_UI_LANGUAGE, language);
+  window.dispatchEvent(new Event(EVT));
+}
+
+export function useUiLanguage(): UiLanguage {
+  const [language, setLanguage] = useState<UiLanguage>(() => getUiLanguage());
+  useEffect(() => {
+    const refresh = () => setLanguage(getUiLanguage());
+    window.addEventListener(EVT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(EVT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return language;
+}
+
+export function uiText(arabic: string, english: string, language = getUiLanguage()): string {
+  return language === "en" ? english : arabic;
+}
+
+/** Format stored date values for the active interface language without shifting date-only values across time zones. */
+export function formatUiDate(value: string, language = getUiLanguage()): string {
+  const input = value.trim();
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(input) ? `${input}T00:00:00` : input);
+  if (!Number.isFinite(date.getTime())) return value;
+  return date.toLocaleDateString(language === "en" ? "en-GB" : "ar-SA", {
+    year: "numeric", month: "short", day: "numeric",
+  });
+}
+
 /** Only allow data:image/* or https:// logo sources (anti-XSS, mirrors web safeLogoSrc). */
 export function safeLogoSrc(s: string | null | undefined): string {
   if (!s) return "";
@@ -82,6 +154,7 @@ export function getCompanyProfile(): CompanyProfile {
     name: ls(LS_NAME),
     vat: ls(LS_VAT),
     cr: ls(LS_CR),
+    phone: ls(LS_PHONE),
     decimals: readDecimals(),
   };
 }
@@ -101,6 +174,7 @@ export function setCompanyProfile(p: CompanyProfile): void {
   writeKey(LS_NAME, (p.name ?? "").trim());
   writeKey(LS_VAT, (p.vat ?? "").trim());
   writeKey(LS_CR, (p.cr ?? "").trim());
+  writeKey(LS_PHONE, (p.phone ?? "").trim());
   const dp = Math.min(DECIMALS_MAX, Math.max(DECIMALS_MIN, Math.floor(Number(p.decimals) || 0)));
   writeKey(LS_DECIMALS, String(dp));
   _decimals = dp;
@@ -136,6 +210,43 @@ export function useDecimals(): number {
     };
   }, []);
   return dp;
+}
+
+// ─── Hide-zeros preference ───────────────────────────────────────────
+// When ON (the default for fresh installs) numeric input fields render BLANK
+// instead of a literal 0, so the user types over an empty box rather than
+// fighting a leading zero. Stored "1"/"0"; absent key ⇒ ON.
+export function getHideZeros(): boolean {
+  if (typeof window === "undefined") return true;
+  const raw = localStorage.getItem(LS_HIDE_ZEROS);
+  if (raw == null) return true;
+  return raw === "1";
+}
+
+export function setHideZeros(on: boolean): void {
+  writeKey(LS_HIDE_ZEROS, on ? "1" : "0");
+  window.dispatchEvent(new Event(EVT));
+}
+
+/** Live hide-zeros flag — re-renders when toggled in الإعدادات. */
+export function useHideZeros(): boolean {
+  const [v, setV] = useState<boolean>(() => getHideZeros());
+  useEffect(() => {
+    const refresh = () => setV(getHideZeros());
+    window.addEventListener(EVT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(EVT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return v;
+}
+
+/** Input-value helper: returns "" for a zero amount when `hide` is on. */
+export function blankIfZero(n: number | string | null | undefined, hide: boolean): number | string {
+  if (!hide) return n ?? 0;
+  return Number(n) === 0 ? "" : (n ?? 0);
 }
 
 // ─── Tauri SQLite mirror (fire-and-forget) ───────────────────────────

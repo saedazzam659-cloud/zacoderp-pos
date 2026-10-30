@@ -1,24 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import { listStockMovements, listWarehouses, type StockMovement, type Warehouse } from "../lib/inventory";
 import { listItems } from "../lib/items";
 import type { LocalItem } from "../lib/items";
 import {
   Page, Card, Table, Th, Td, Empty, input, btnSecondary, fmt, todayStr, SearchCombobox,
 } from "./_adminUi";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
-const REF_LABEL: Record<string, string> = {
-  purchase: "فاتورة شراء",
-  purchase_return: "مرتجع شراء",
-  sale: "فاتورة بيع",
-  sale_return: "مرتجع بيع",
-  adjustment: "تسوية",
-  stocktake: "جرد",
-  transfer_in: "تحويل وارد",
-  transfer_out: "تحويل صادر",
-  opening: "رصيد افتتاحي",
+const REF_LABEL: Record<string, [string, string]> = {
+  purchase: ["فاتورة شراء", "Purchase invoice"],
+  purchase_return: ["مرتجع شراء", "Purchase return"],
+  sale: ["فاتورة بيع", "Sales invoice"],
+  sale_return: ["مرتجع بيع", "Sales return"],
+  adjustment: ["تسوية", "Adjustment"],
+  stocktake: ["جرد", "Stocktake"],
+  transfer_in: ["تحويل وارد", "Transfer in"],
+  transfer_out: ["تحويل صادر", "Transfer out"],
+  opening: ["رصيد افتتاحي", "Opening balance"],
 };
 
 export default function StockMovementsReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [items, setItems] = useState<LocalItem[]>([]);
   const [warehouseId, setWarehouseId] = useState<number | "">("");
@@ -48,6 +52,7 @@ export default function StockMovementsReport() {
     } finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useDataRefresh(["stock", "invoices", "journal"], () => { void refresh(); });
 
   const totals = useMemo(() => {
     let inQ = 0, outQ = 0;
@@ -57,53 +62,53 @@ export default function StockMovementsReport() {
 
   return (
     <Page
-      title="حركة المخزون"
-      subtitle={`${rows.length} حركة · داخل ${fmt(totals.inQ)} · خارج ${fmt(totals.outQ)}`}
+      title={text("حركة المخزون", "Stock movements")}
+      subtitle={`${rows.length} ${text("حركة", "movements")} · ${text("داخل", "In")} ${fmt(totals.inQ)} · ${text("خارج", "Out")} ${fmt(totals.outQ)}`}
     >
       <Card style={{ padding: 16, marginBottom: 12 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
           <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>المخزن</div>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>{text("المخزن", "Warehouse")}</div>
             <SearchCombobox
               value={warehouseId}
               onChange={(v) => setWarehouseId(v === "" ? "" : Number(v))}
               style={input}
               options={[
-                { value: "", label: "كل المخازن" },
+                { value: "", label: text("كل المخازن", "All warehouses") },
                 ...warehouses.map((w) => ({ value: w.id, label: w.name })),
               ]}
             />
           </label>
           <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>الصنف</div>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>{text("الصنف", "Item")}</div>
             <SearchCombobox
               value={itemId}
               onChange={(v) => setItemId(v === "" ? "" : Number(v))}
               style={input}
               options={[
-                { value: "", label: "كل الأصناف" },
+                { value: "", label: text("كل الأصناف", "All items") },
                 ...items.map((i) => ({ value: i.id, label: i.nameAr })),
               ]}
             />
           </label>
           <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>من تاريخ</div>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>{text("من تاريخ", "From date")}</div>
             <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={input} />
           </label>
           <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>إلى تاريخ</div>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>{text("إلى تاريخ", "To date")}</div>
             <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={input} />
           </label>
-          <button onClick={() => void refresh()} disabled={loading} style={btnSecondary}>{loading ? "..." : "تحديث"}</button>
+          <button onClick={() => void refresh()} disabled={loading} style={btnSecondary}>{loading ? "..." : text("تحديث", "Refresh")}</button>
         </div>
       </Card>
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد حركات" /> : (
+        {rows.length === 0 ? <Empty text={text("لا توجد حركات", "No stock movements")} /> : (
           <Table>
             <thead><tr>
-              <Th>التاريخ</Th><Th>المخزن</Th><Th>الصنف</Th>
-              <Th>المرجع</Th><Th>وارد</Th><Th>صادر</Th>
-              <Th>الرصيد بعد</Th><Th>التكلفة</Th>
+              <Th>{text("التاريخ", "Date")}</Th><Th>{text("المخزن", "Warehouse")}</Th><Th>{text("الصنف", "Item")}</Th>
+              <Th>{text("المرجع", "Reference")}</Th><Th>{text("وارد", "In")}</Th><Th>{text("صادر", "Out")}</Th>
+              <Th>{text("الرصيد بعد", "Balance after")}</Th><Th>{text("التكلفة", "Cost")}</Th>
             </tr></thead>
             <tbody>
               {rows.map((r) => (
@@ -111,7 +116,7 @@ export default function StockMovementsReport() {
                   <Td mono>{r.entry_date}</Td>
                   <Td>{r.warehouse_name}</Td>
                   <Td>{r.item_name}</Td>
-                  <Td>{REF_LABEL[r.ref_type] ?? r.ref_type}{r.ref_id ? ` #${r.ref_id}` : ""}</Td>
+                  <Td>{REF_LABEL[r.ref_type] ? uiText(...REF_LABEL[r.ref_type], language) : r.ref_type}{r.ref_id ? ` #${r.ref_id}` : ""}</Td>
                   <Td num style={{ color: "#16a34a" }}>{r.qty_delta > 0 ? fmt(r.qty_delta) : ""}</Td>
                   <Td num style={{ color: "#dc2626" }}>{r.qty_delta < 0 ? fmt(-r.qty_delta) : ""}</Td>
                   <Td num style={{ fontWeight: 600 }}>{fmt(r.balance_after)}</Td>

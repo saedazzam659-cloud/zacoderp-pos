@@ -5,6 +5,7 @@
 // so untracked items (reorderPoint = 0) never appear here.
 
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import { listItems, type LocalItem } from "../lib/items";
 import {
   getStock,
@@ -15,6 +16,7 @@ import {
   type StockMap,
 } from "../lib/stock";
 import { SearchCombobox } from "./_adminUi";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type Row = {
   item: LocalItem;
@@ -24,6 +26,8 @@ type Row = {
 };
 
 export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [items, setItems] = useState<LocalItem[]>([]);
   const [stockMap, setStockMap] = useState<StockMap>({});
   const [loading, setLoading] = useState(true);
@@ -43,6 +47,7 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
     } finally { setLoading(false); }
   }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["stock", "items"], () => { void refresh(); });
 
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
@@ -81,37 +86,37 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
   async function saveEdit(id: number) {
     const q = Number(editQty);
     const rp = Number(editRp);
-    if (!Number.isFinite(q) || q < 0) { setToast({ kind: "err", text: "الرصيد غير صالح" }); return; }
-    if (!Number.isFinite(rp) || rp < 0) { setToast({ kind: "err", text: "حد الطلب غير صالح" }); return; }
+    if (!Number.isFinite(q) || q < 0) { setToast({ kind: "err", text: text("الرصيد غير صالح", "Invalid balance.") }); return; }
+    if (!Number.isFinite(rp) || rp < 0) { setToast({ kind: "err", text: text("حد الطلب غير صالح", "Invalid reorder point.") }); return; }
     try {
       await setStockShared(id, q, rp);
       setEditingId(null);
       setStockMap(await getAllStockShared());
-      setToast({ kind: "ok", text: "تم الحفظ" });
+      setToast({ kind: "ok", text: text("تم الحفظ", "Saved.") });
     } catch (e: any) {
-      setToast({ kind: "err", text: e?.message ?? "فشل الحفظ — تعذّر الوصول للجهاز المضيف" });
+      setToast({ kind: "err", text: e?.message ?? text("فشل الحفظ — تعذّر الوصول للجهاز المضيف", "Could not save — host device is unreachable.") });
     }
   }
   async function untrack(id: number, name: string) {
-    if (!confirm(`إيقاف تتبّع الرصيد للصنف «${name}»؟ (سيتم تصفير حد الطلب)`)) return;
+    if (!confirm(`${text("إيقاف تتبّع الرصيد للصنف", "Stop tracking stock for item")} «${name}»? (${text("سيتم تصفير حد الطلب", "The reorder point will be reset")})`)) return;
     try {
       await setReorderPointShared(id, 0);
       setStockMap(await getAllStockShared());
-      setToast({ kind: "ok", text: "تم إيقاف التتبّع" });
+      setToast({ kind: "ok", text: text("تم إيقاف التتبّع", "Tracking stopped.") });
     } catch (e: any) {
-      setToast({ kind: "err", text: e?.message ?? "فشل — تعذّر الوصول للجهاز المضيف" });
+      setToast({ kind: "err", text: e?.message ?? text("فشل — تعذّر الوصول للجهاز المضيف", "Failed — host device is unreachable.") });
     }
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.header}>
         <div>
-          <h2 style={S.h2}>الأصناف تحت الحد الأدنى</h2>
-          <div style={S.sub}>الأصناف التي وصلت أو نزلت عن حد إعادة الطلب — رتّبت حسب أكبر نقص</div>
+          <h2 style={S.h2}>{text("الأصناف تحت الحد الأدنى", "Items below reorder level")}</h2>
+          <div style={S.sub}>{text("الأصناف التي وصلت أو نزلت عن حد إعادة الطلب — رتّبت حسب أكبر نقص", "Items at or below their reorder point, sorted by largest shortfall.")}</div>
         </div>
         {onGoToImport && (
-          <button onClick={onGoToImport} style={S.btnGhost}>📥 استيراد أرصدة جديدة</button>
+          <button onClick={onGoToImport} style={S.btnGhost}>📥 {text("استيراد أرصدة جديدة", "Import new balances")}</button>
         )}
       </div>
 
@@ -119,7 +124,7 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="🔍 بحث بالاسم أو الباركود..."
+          placeholder={text("🔍 بحث بالاسم أو الباركود...", "🔍 Search by name or barcode…")}
           style={S.search}
         />
         <div style={{ minWidth: 220 }}>
@@ -127,9 +132,9 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
             value={filter}
             onChange={(v) => setFilter(v as any)}
             options={[
-              { value: "below", label: "أقل من الحد الأدنى فقط" },
-              { value: "below_or_equal", label: "عند الحد الأدنى أو أقل" },
-              { value: "all_tracked", label: "كل الأصناف المتتبَّعة" },
+              { value: "below", label: text("أقل من الحد الأدنى فقط", "Below reorder point only") },
+              { value: "below_or_equal", label: text("عند الحد الأدنى أو أقل", "At or below reorder point") },
+              { value: "all_tracked", label: text("كل الأصناف المتتبَّعة", "All tracked items") },
             ]}
             style={S.select}
           />
@@ -138,13 +143,13 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
 
       {toast && <div style={toast.kind === "ok" ? S.ok : S.err}>{toast.text}</div>}
 
-      {loading ? <div style={S.empty}>... جاري التحميل</div>
+      {loading ? <div style={S.empty}>{text("... جاري التحميل", "Loading…")}</div>
       : rows.length === 0 ? (
         <div style={S.empty}>
           <div style={{ fontSize: 40 }}>✅</div>
-          <div style={{ fontSize: 16, fontWeight: 600, marginTop: 8 }}>لا توجد أصناف تحت الحد الأدنى</div>
+          <div style={{ fontSize: 16, fontWeight: 600, marginTop: 8 }}>{text("لا توجد أصناف تحت الحد الأدنى", "No items below the reorder point")}</div>
           <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>
-            كل الأصناف المتتبَّعة فوق حد الطلب — أو لم يتم تحديد حد طلب لأي صنف بعد
+            {text("كل الأصناف المتتبَّعة فوق حد الطلب — أو لم يتم تحديد حد طلب لأي صنف بعد", "All tracked items are above their reorder point, or no reorder points have been set.")}
           </div>
         </div>
       ) : (
@@ -152,12 +157,12 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
           <table style={S.table}>
             <thead>
               <tr>
-                <th style={S.th}>الاسم</th>
-                <th style={S.th}>الباركود</th>
-                <th style={S.th}>الرصيد الحالي</th>
-                <th style={S.th}>حد الطلب</th>
-                <th style={S.th}>النقص</th>
-                <th style={S.thRight}>إجراء</th>
+                <th style={S.th}>{text("الاسم", "Name")}</th>
+                <th style={S.th}>{text("الباركود", "Barcode")}</th>
+                <th style={S.th}>{text("الرصيد الحالي", "Current stock")}</th>
+                <th style={S.th}>{text("حد الطلب", "Reorder point")}</th>
+                <th style={S.th}>{text("النقص", "Shortfall")}</th>
+                <th style={S.thRight}>{text("إجراء", "Action")}</th>
               </tr>
             </thead>
             <tbody>
@@ -191,13 +196,13 @@ export default function LowStockReport({ onGoToImport }: { onGoToImport?: () => 
                     <td style={S.tdRight}>
                       {editing ? (
                         <>
-                          <button onClick={() => saveEdit(r.item.id)} style={S.btnSave}>حفظ</button>
-                          <button onClick={cancelEdit} style={S.btnCancel}>إلغاء</button>
+                          <button onClick={() => saveEdit(r.item.id)} style={S.btnSave}>{text("حفظ", "Save")}</button>
+                          <button onClick={cancelEdit} style={S.btnCancel}>{text("إلغاء", "Cancel")}</button>
                         </>
                       ) : (
                         <>
-                          <button onClick={() => startEdit(r)} style={S.btnEdit}>تعديل</button>
-                          <button onClick={() => untrack(r.item.id, r.item.nameAr)} style={S.btnUntrack}>إيقاف التتبّع</button>
+                          <button onClick={() => startEdit(r)} style={S.btnEdit}>{text("تعديل", "Edit")}</button>
+                          <button onClick={() => untrack(r.item.id, r.item.nameAr)} style={S.btnUntrack}>{text("إيقاف التتبّع", "Stop tracking")}</button>
                         </>
                       )}
                     </td>
@@ -225,7 +230,7 @@ export async function countLowStockTracked(items: LocalItem[]): Promise<number> 
 export { getStock };
 
 const S = {
-  wrap: { padding: 24, maxWidth: 1280, margin: "0 auto", display: "flex", flexDirection: "column" as const, gap: 16 } as const,
+  wrap: { padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const, display: "flex", flexDirection: "column" as const, gap: 16 } as const,
   header: { display: "flex", justifyContent: "space-between", alignItems: "flex-end" } as const,
   h2: { fontSize: 22, fontWeight: 700, color: "#0f172a", margin: 0 } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,

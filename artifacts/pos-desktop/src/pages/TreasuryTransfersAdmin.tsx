@@ -8,6 +8,8 @@ import {
   Page, Card, Table, Th, Td, Empty, input, btnPrimary, btnSecondary,
   fmtCurrency, fmt, todayStr, SearchCombobox, Field, Row, ErrorMsg,
 } from "./_adminUi";
+import { useDataRefresh } from "../lib/dataBus";
+import { formatUiDate, uiText, useUiLanguage } from "../lib/appSettings";
 
 type Endpoint = { kind: TreasuryKind; id: number };
 type Draft = {
@@ -29,6 +31,8 @@ function parseEndpointKey(k: string): Endpoint | null {
 }
 
 export default function TreasuryTransfersAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<TreasuryTransfer[]>([]);
   const [cashBoxes, setCashBoxes] = useState<CashBox[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -45,6 +49,10 @@ export default function TreasuryTransfersAdmin() {
     setRows(tt); setCashBoxes(cb); setBanks(bk); setCurrencies(cur);
   }
   useEffect(() => { void refresh(); }, []);
+
+  // Refresh the list + balances when a voucher/journal/bank/cashbox is mutated
+  // on another tab.
+  useDataRefresh(["vouchers", "journal", "banks", "cashboxes"], () => { void refresh(); });
 
   const endpointOpts = useMemo(() => [
     ...cashBoxes.map(c => ({ value: endpointKey({ kind: "cash", id: c.id }), label: `💰 ${c.name}`, hint: `${c.currencyCode} · ${fmt(c.balance)}` })),
@@ -94,10 +102,10 @@ export default function TreasuryTransfersAdmin() {
   function closeForm() { setShowForm(false); setErr(null); }
 
   async function submit() {
-    if (!draft.from || !draft.to) { setErr("اختر الجهة المُحوّل منها وإليها"); return; }
-    if (draft.from.kind === draft.to.kind && draft.from.id === draft.to.id) { setErr("لا يمكن التحويل لنفس الجهة"); return; }
+    if (!draft.from || !draft.to) { setErr(text("اختر الجهة المُحوّل منها وإليها", "Select both the source and destination.")); return; }
+    if (draft.from.kind === draft.to.kind && draft.from.id === draft.to.id) { setErr(text("لا يمكن التحويل لنفس الجهة", "Source and destination must be different.")); return; }
     const aF = Number(draft.amountFrom), aT = Number(draft.amountTo);
-    if (!isFinite(aF) || aF <= 0 || !isFinite(aT) || aT <= 0) { setErr("أدخل المبالغ بشكل صحيح"); return; }
+    if (!isFinite(aF) || aF <= 0 || !isFinite(aT) || aT <= 0) { setErr(text("أدخل المبالغ بشكل صحيح", "Enter valid transfer and received amounts.")); return; }
     setBusy(true); setErr(null);
     try {
       await createTreasuryTransfer({
@@ -108,42 +116,43 @@ export default function TreasuryTransfersAdmin() {
         notes: draft.notes.trim() || null,
       });
       closeForm(); await refresh();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save transfer.")); }
     finally { setBusy(false); }
   }
 
   return (
+    <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title="تحويل الخزن"
-      subtitle="تحويل بين خزينة/بنك (نفس العملة أو عملات مختلفة). فرق الصرف يُسجَّل تلقائيًا في حساب فروقات العملة."
-      right={!showForm && <button onClick={openForm} style={btnPrimary}>+ تحويل جديد</button>}
+      title={text("تحويل الخزن", "Treasury transfers")}
+      subtitle={text("تحويل بين خزينة/بنك (نفس العملة أو عملات مختلفة). فرق الصرف يُسجَّل تلقائيًا في حساب فروقات العملة.", "Transfer between cashboxes and banks in the same or different currencies. Exchange differences are posted automatically to the FX account.")}
+      right={!showForm && <button onClick={openForm} style={btnPrimary}>+ {text("تحويل جديد", "New transfer")}</button>}
     >
       {showForm && (
         <Card style={{ padding: 16, marginBottom: 16 }}>
-          <h4 style={{ margin: "0 0 12px" }}>تحويل خزينة جديد</h4>
+          <h4 style={{ margin: "0 0 12px" }}>{text("تحويل خزينة جديد", "New treasury transfer")}</h4>
           <Row>
-            <Field label="من (الجهة المُحوَّل منها)">
+            <Field label={text("من (الجهة المُحوَّل منها)", "From (source)")}>
               <SearchCombobox
                 value={draft.from ? endpointKey(draft.from) : ""}
                 onChange={(v) => setDraft({ ...draft, from: parseEndpointKey(String(v)) })}
                 options={endpointOpts}
               />
-              {fromInfo && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>الرصيد المتاح: <b>{fmtCurrency(fromInfo.balance, fromInfo.currency)}</b></div>}
+              {fromInfo && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{text("الرصيد المتاح:", "Available balance:")} <b>{fmtCurrency(fromInfo.balance, fromInfo.currency)}</b></div>}
             </Field>
-            <Field label="إلى (الجهة المُحوَّل إليها)">
+            <Field label={text("إلى (الجهة المُحوَّل إليها)", "To (destination)")}>
               <SearchCombobox
                 value={draft.to ? endpointKey(draft.to) : ""}
                 onChange={(v) => setDraft({ ...draft, to: parseEndpointKey(String(v)) })}
                 options={endpointOpts}
               />
-              {toInfo && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>الرصيد الحالي: <b>{fmtCurrency(toInfo.balance, toInfo.currency)}</b></div>}
+              {toInfo && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{text("الرصيد الحالي:", "Current balance:")} <b>{fmtCurrency(toInfo.balance, toInfo.currency)}</b></div>}
             </Field>
           </Row>
           <Row>
-            <Field label={`المبلغ المُحوَّل ${fromInfo ? `(${fromInfo.currency})` : ""}`}>
+            <Field label={`${text("المبلغ المُحوَّل", "Transfer amount")} ${fromInfo ? `(${fromInfo.currency})` : ""}`}>
               <input type="number" step="0.0001" min="0" value={draft.amountFrom} onChange={(e) => onFromAmountChange(e.target.value)} style={input} placeholder="0.00" />
             </Field>
-            <Field label={`المبلغ المُستلَم ${toInfo ? `(${toInfo.currency})` : ""}`}>
+            <Field label={`${text("المبلغ المُستلَم", "Received amount")} ${toInfo ? `(${toInfo.currency})` : ""}`}>
               <input
                 type="number" step="0.0001" min="0"
                 value={draft.amountTo}
@@ -152,43 +161,43 @@ export default function TreasuryTransfersAdmin() {
                 style={{ ...input, background: sameCurrency ? "#f1f5f9" : "#fff" }}
                 placeholder="0.00"
               />
-              {sameCurrency && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>نفس العملة — يُحسب تلقائيًا</div>}
+              {sameCurrency && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{text("نفس العملة — يُحسب تلقائيًا", "Same currency — calculated automatically")}</div>}
             </Field>
           </Row>
           <Row>
-            <Field label="التاريخ">
+            <Field label={text("التاريخ", "Date")}>
               <input type="date" value={draft.transferDate} onChange={(e) => setDraft({ ...draft, transferDate: e.target.value })} style={input} />
             </Field>
-            <Field label="ملاحظات">
-              <input value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} style={input} placeholder="اختياري" />
+            <Field label={text("ملاحظات", "Notes")}>
+              <input value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} style={input} placeholder={text("اختياري", "Optional")} />
             </Field>
           </Row>
           <ErrorMsg text={err} />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
-            <button onClick={submit} disabled={busy} style={btnPrimary}>{busy ? "..." : "حفظ التحويل"}</button>
-            <button onClick={closeForm} disabled={busy} style={btnSecondary}>إلغاء</button>
+            <button onClick={submit} disabled={busy} style={btnPrimary}>{busy ? "..." : text("حفظ التحويل", "Save transfer")}</button>
+            <button onClick={closeForm} disabled={busy} style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
           </div>
         </Card>
       )}
 
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد تحويلات" /> : (
+        {rows.length === 0 ? <Empty text={text("لا توجد تحويلات", "No transfers yet")} /> : (
           <Table>
             <thead><tr>
-              <Th style={{ width: 110 }}>رقم</Th>
-              <Th style={{ width: 110 }}>التاريخ</Th>
-              <Th>من</Th>
-              <Th>إلى</Th>
-              <Th style={{ textAlign: "left", width: 160 }}>المُحوَّل</Th>
-              <Th style={{ textAlign: "left", width: 160 }}>المُستلَم</Th>
-              <Th style={{ textAlign: "left", width: 140 }}>فرق الصرف</Th>
-              <Th>ملاحظات</Th>
+               <Th style={{ width: 110 }}>{text("رقم", "Number")}</Th>
+               <Th style={{ width: 110 }}>{text("التاريخ", "Date")}</Th>
+               <Th>{text("من", "From")}</Th>
+               <Th>{text("إلى", "To")}</Th>
+               <Th style={{ textAlign: language === "en" ? "right" : "left", width: 160 }}>{text("المُحوَّل", "Transferred")}</Th>
+               <Th style={{ textAlign: language === "en" ? "right" : "left", width: 160 }}>{text("المُستلَم", "Received")}</Th>
+               <Th style={{ textAlign: language === "en" ? "right" : "left", width: 140 }}>{text("فرق الصرف", "FX difference")}</Th>
+               <Th>{text("ملاحظات", "Notes")}</Th>
             </tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
                   <Td mono>{r.transferNo}</Td>
-                  <Td mono>{r.transferDate}</Td>
+                  <Td mono>{formatUiDate(r.transferDate, language)}</Td>
                   <Td>{r.fromKind === "cash" ? "💰" : "🏦"} {r.fromName ?? `#${r.fromId}`}</Td>
                   <Td>{r.toKind === "cash" ? "💰" : "🏦"} {r.toName ?? `#${r.toId}`}</Td>
                   <Td num>{fmtCurrency(r.amountFrom, r.fromCurrency)}</Td>
@@ -204,5 +213,6 @@ export default function TreasuryTransfersAdmin() {
         )}
       </Card>
     </Page>
+    </div>
   );
 }

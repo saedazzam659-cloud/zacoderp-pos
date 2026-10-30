@@ -15,10 +15,12 @@
 // never moved and is genuinely slow.
 
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import { listStockOnHand, listStockMovements, type StockOnHand, type StockMovement } from "../lib/inventory";
 import { listItems, type LocalItem } from "../lib/items";
 import { itemGroupName } from "../lib/itemGroups";
 import { useCurrencySymbol } from "../lib/currency";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 import {
   Page, Card, Table, Th, Td, Empty, input, btnSecondary, fmt, fmtCurrency,
 } from "./_adminUi";
@@ -37,6 +39,8 @@ interface Row {
 const NEVER = 9999;
 
 export default function SlowMovingItems() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   useCurrencySymbol(); // subscribe so currency formatting re-renders on country change
   const [items, setItems] = useState<LocalItem[]>([]);
   const [onHand, setOnHand] = useState<StockOnHand[]>([]);
@@ -61,6 +65,7 @@ export default function SlowMovingItems() {
     }
   }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["stock", "invoices", "items"], () => { void refresh(); });
 
   // Aggregate on-hand qty + value per item (across all warehouses).
   const balByItem = useMemo(() => {
@@ -140,26 +145,33 @@ export default function SlowMovingItems() {
   }, [items, balByItem, lastMoveByItem, threshold, coverageDays, search]);
 
   const totalLocked = useMemo(() => rows.reduce((s, r) => s + r.value, 0), [rows]);
+  const displayDate = (value: string | null) => {
+    if (!value) return "—";
+    const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+    return Number.isNaN(date.getTime())
+      ? value
+      : new Intl.DateTimeFormat(language === "en" ? "en-US" : "ar", { dateStyle: "medium" }).format(date);
+  };
 
   function idleBadge(daysIdle: number) {
     const bg = daysIdle >= 365 ? "#fee2e2" : daysIdle >= 180 ? "#fef3c7" : "#fefce8";
     const fg = daysIdle >= 365 ? "#991b1b" : daysIdle >= 180 ? "#92400e" : "#854d0e";
     return (
       <span style={{ background: bg, color: fg, borderRadius: 999, padding: "2px 8px", fontWeight: 700, fontSize: 12 }}>
-        {daysIdle === NEVER ? "لم يتحرك" : `${fmt(daysIdle)} يوم`}
+        {daysIdle === NEVER ? text("لم يتحرك", "No movement") : `${fmt(daysIdle)} ${text("يوم", "days")}`}
       </span>
     );
   }
 
   return (
     <Page
-      title="الأصناف بطيئة الحركة"
-      subtitle={`${rows.length} صنف · القيمة المجمّدة ${fmtCurrency(totalLocked)} · حد الركود ${threshold} يوم`}
+      title={text("الأصناف بطيئة الحركة", "Slow-moving items")}
+      subtitle={`${rows.length} ${text("صنف", "items")} · ${text("القيمة المجمّدة", "Tied-up value")} ${fmtCurrency(totalLocked)} · ${text("حد الركود", "Idle threshold")} ${threshold} ${text("يوم", "days")}`}
     >
       <Card style={{ padding: 16, marginBottom: 12 }}>
         <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 10, alignItems: "end" }}>
           <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>أقل عدد أيام ركود</div>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>{text("أقل عدد أيام ركود", "Minimum idle days")}</div>
             <input
               type="number"
               min={1}
@@ -170,32 +182,31 @@ export default function SlowMovingItems() {
             />
           </label>
           <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>بحث (اسم / كود)</div>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>{text("بحث (اسم / كود)", "Search (name / code)")}</div>
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={input}
-              placeholder="ابحث باسم الصنف أو الكود"
+              placeholder={text("ابحث باسم الصنف أو الكود", "Search by item name or code")}
             />
           </label>
-          <button onClick={() => void refresh()} disabled={loading} style={btnSecondary}>{loading ? "..." : "تحديث"}</button>
+          <button onClick={() => void refresh()} disabled={loading} style={btnSecondary}>{loading ? "..." : text("تحديث", "Refresh")}</button>
         </div>
       </Card>
 
       {truncated && (
         <Card style={{ padding: 12, marginBottom: 12, background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", fontSize: 13 }}>
-          ⚠️ سجل الحركات كبير (أكثر من 5000 حركة) — التغطية المؤكدة تعود لآخر {Number.isFinite(coverageDays) ? `${fmt(coverageDays as number)} يوم` : "—"} فقط.
-          الأصناف بلا حركة داخل هذه النافذة تُعرض كـ «لم يتحرك» (بطيئة الحركة مؤكدة) فقط عندما تتجاوز التغطية حدّ الركود.
-          {undetermined > 0 && ` يوجد ${fmt(undetermined)} صنف لا يمكن الجزم ببطء حركته لأن التغطية أقصر من الحدّ المحدد — لم يُدرَج في القائمة.`}
+          ⚠️ {text("سجل الحركات كبير (أكثر من 5000 حركة) — التغطية المؤكدة تعود لآخر", "The movement ledger exceeds 5,000 entries. Confirmed coverage goes back only")} {Number.isFinite(coverageDays) ? `${fmt(coverageDays as number)} ${text("يوم", "days")}` : "—"} {text("فقط. الأصناف بلا حركة داخل هذه النافذة تُعرض كـ «لم يتحرك» (بطيئة الحركة مؤكدة) فقط عندما تتجاوز التغطية حدّ الركود.", "Items with no movement in this window are marked “No movement” only when the coverage meets the idle threshold.")}
+          {undetermined > 0 && ` ${text("يوجد", "There are")} ${fmt(undetermined)} ${text("صنف لا يمكن الجزم ببطء حركته لأن التغطية أقصر من الحدّ المحدد — لم يُدرَج في القائمة.", "items whose slow movement cannot be confirmed because coverage is shorter than the threshold; they are excluded.")}`}
         </Card>
       )}
 
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد أصناف بطيئة الحركة ضمن هذا الحد" /> : (
+        {rows.length === 0 ? <Empty text={text("لا توجد أصناف بطيئة الحركة ضمن هذا الحد", "No slow-moving items meet this threshold")} /> : (
           <Table>
             <thead><tr>
-              <Th>الكود</Th><Th>الصنف</Th><Th>المجموعة</Th>
-              <Th>الرصيد</Th><Th>القيمة</Th><Th>آخر حركة</Th><Th>أيام الركود</Th>
+              <Th>{text("الكود", "Code")}</Th><Th>{text("الصنف", "Item")}</Th><Th>{text("المجموعة", "Group")}</Th>
+              <Th>{text("الرصيد", "Stock")}</Th><Th>{text("القيمة", "Value")}</Th><Th>{text("آخر حركة", "Last movement")}</Th><Th>{text("أيام الركود", "Idle days")}</Th>
             </tr></thead>
             <tbody>
               {rows.map((r) => (
@@ -205,12 +216,12 @@ export default function SlowMovingItems() {
                   <Td>{r.groupName ?? "—"}</Td>
                   <Td num>{fmt(r.qty)}</Td>
                   <Td num style={{ fontWeight: 600 }}>{fmtCurrency(r.value)}</Td>
-                  <Td>{r.lastMove ?? "—"}</Td>
+                  <Td>{displayDate(r.lastMove)}</Td>
                   <Td>{idleBadge(r.daysIdle)}</Td>
                 </tr>
               ))}
               <tr style={{ background: "#f1f5f9" }}>
-                <Td style={{ fontWeight: 700 }}>الإجمالي</Td>
+                <Td style={{ fontWeight: 700 }}>{text("الإجمالي", "Total")}</Td>
                 <Td>—</Td>
                 <Td>—</Td>
                 <Td>—</Td>

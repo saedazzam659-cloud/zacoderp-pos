@@ -6,6 +6,7 @@ import {
   listItemGroups, createItemGroup, updateItemGroup, deleteItemGroup,
   type ItemGroup, type CreateItemGroupInput,
 } from "../lib/itemGroups";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 const emptyInput: CreateItemGroupInput = { code: "", nameAr: "", nameEn: "" };
 
@@ -15,6 +16,8 @@ type EditState =
   | null;
 
 export default function ItemGroupsAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<ItemGroup[]>(() => listItemGroups());
   const [edit, setEdit] = useState<EditState>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -37,27 +40,27 @@ export default function ItemGroupsAdmin() {
   function save() {
     if (!edit) return;
     const f = edit.data;
-    if (!f.nameAr.trim()) { setErr("الاسم بالعربية مطلوب"); return; }
+    if (!f.nameAr.trim()) { setErr(text("الاسم بالعربية مطلوب", "Arabic name is required.")); return; }
     if (edit.mode === "new") createItemGroup(f); else updateItemGroup(edit.id, f);
     setEdit(null); setErr(null); refresh();
-    setToast({ kind: "ok", text: edit.mode === "new" ? "تمت الإضافة" : "تم التعديل" });
+    setToast({ kind: "ok", text: edit.mode === "new" ? text("تمت الإضافة", "Added.") : text("تم التعديل", "Updated.") });
   }
 
   function handleDelete(g: ItemGroup) {
-    if (!confirm(`حذف مجموعة «${g.nameAr}»؟`)) return;
-    deleteItemGroup(g.id); refresh(); setToast({ kind: "ok", text: "تم الحذف" });
+    if (!confirm(`${text("حذف مجموعة", "Delete group")} «${g.nameAr}»?`)) return;
+    deleteItemGroup(g.id); refresh(); setToast({ kind: "ok", text: text("تم الحذف", "Deleted.") });
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.headerRow}>
         <div>
-          <h2 style={S.h2}>مجموعات الأصناف ({rows.length})</h2>
-          <div style={S.sub}>تصنيف الأصناف — مشروبات، منظفات، أدوية…</div>
+          <h2 style={S.h2}>{text("مجموعات الأصناف", "Item groups")} ({rows.length})</h2>
+          <div style={S.sub}>{text("تصنيف الأصناف — مشروبات، منظفات، أدوية…", "Organize items into groups, such as drinks, cleaning products, or medicines.")}</div>
         </div>
         <button onClick={startNew} disabled={!!edit}
           style={{ ...S.btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
-          + مجموعة جديدة
+          + {text("مجموعة جديدة", "New group")}
         </button>
       </div>
 
@@ -65,10 +68,10 @@ export default function ItemGroupsAdmin() {
 
       <table style={S.table}>
         <thead><tr>
-          <th style={S.th}>الكود</th>
-          <th style={S.th}>الاسم بالعربية</th>
-          <th style={S.th}>الاسم بالإنجليزية</th>
-          <th style={S.thRight}>إجراء</th>
+          <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("الكود", "Code")}</th>
+          <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("الاسم بالعربية", "Arabic name")}</th>
+          <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("الاسم بالإنجليزية", "English name")}</th>
+          <th style={{ ...S.thRight, textAlign: language === "en" ? "right" : "left" }}>{text("إجراء", "Actions")}</th>
         </tr></thead>
         <tbody>
           {edit?.mode === "new" && (
@@ -83,8 +86,8 @@ export default function ItemGroupsAdmin() {
                 <td style={S.td}><strong>{g.nameAr}</strong></td>
                 <td style={S.td}>{g.nameEn ?? "—"}</td>
                 <td style={S.tdRight}>
-                  <button onClick={() => startEdit(g)} disabled={!!edit} style={S.btnEdit}>تعديل</button>
-                  <button onClick={() => handleDelete(g)} disabled={!!edit} style={S.btnDel}>حذف</button>
+                  <button onClick={() => startEdit(g)} disabled={!!edit} style={S.btnEdit}>{text("تعديل", "Edit")}</button>
+                  <button onClick={() => handleDelete(g)} disabled={!!edit} style={S.btnDel}>{text("حذف", "Delete")}</button>
                 </td>
               </tr>
             )
@@ -100,16 +103,18 @@ function EditRow({ data, setField, onSave, onCancel, err, isNew }: {
   setField: <K extends keyof CreateItemGroupInput>(k: K, v: CreateItemGroupInput[K]) => void;
   onSave: () => void; onCancel: () => void; err: string | null; isNew?: boolean;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const ci: React.CSSProperties = { ...S.input, padding: "6px 8px", fontSize: 13 };
   return (
     <>
       <tr style={{ ...S.tr, background: isNew ? "#f0fdf4" : "#eff6ff" }}>
         <td style={S.td}><input value={data.code ?? ""} onChange={(e) => setField("code", e.target.value)} style={ci} placeholder="GEN" /></td>
-        <td style={S.td}><input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={ci} placeholder="الاسم بالعربية *" /></td>
-        <td style={S.td}><input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value)} style={ci} placeholder="الإنجليزية" /></td>
+        <td style={S.td}><input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={ci} placeholder={text("الاسم بالعربية *", "Arabic name *")} /></td>
+        <td style={S.td}><input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value)} style={ci} placeholder={text("الإنجليزية", "English name")} /></td>
         <td style={S.tdRight}>
-          <button onClick={onSave} style={S.btnSaveSm}>حفظ</button>
-          <button onClick={onCancel} style={S.btnCancelSm}>إلغاء</button>
+          <button onClick={onSave} style={S.btnSaveSm}>{text("حفظ", "Save")}</button>
+          <button onClick={onCancel} style={S.btnCancelSm}>{text("إلغاء", "Cancel")}</button>
         </td>
       </tr>
       {err && (
@@ -120,7 +125,7 @@ function EditRow({ data, setField, onSave, onCancel, err, isNew }: {
 }
 
 const S = {
-  wrap: { maxWidth: 900, margin: "0 auto", width: "100%" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const } as const,
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 16 } as const,
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,

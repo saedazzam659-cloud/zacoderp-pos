@@ -34,6 +34,7 @@ import {
   saveParkedCart, listParkedCarts, deleteParkedCart, takeResumeCartId,
 } from "../lib/parkedCarts";
 import { useTaxSettings, computeTotals } from "../lib/taxSettings";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 const LS_THEME = "pos_desktop_register_theme";
@@ -67,6 +68,8 @@ type Props = {
 };
 
 export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", posSessionId = 0, cashierName, reuseInvoiceId = null, onReuseConsumed }: Props) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const sym = useCurrencySymbol();
   const [theme, setTheme] = useState<ThemeName>(getStoredTheme);
   const T = theme === "onyx" ? ONYX : AURORA;
@@ -530,7 +533,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
   const selectedMethod = payMethods.find((m) => m.id === payMethodId) ?? null;
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <style>{scrollbarCss(T)}</style>
 
       {/* ─── Top header bar ─────────────────────────────────────── */}
@@ -540,12 +543,12 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
             <div style={S.brandIcon}>🛒</div>
             <div style={{ minWidth: 0 }}>
               <div style={S.brandName}>{companyName}</div>
-              <div style={S.brandSub}>محطة بيع #01</div>
+              <div style={S.brandSub}>{text("محطة بيع #01", "POS terminal #01")}</div>
             </div>
           </div>
           <div style={S.headerDivider} />
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <span style={S.headerLabel}>👤 الكاشير</span>
+            <span style={S.headerLabel}>👤 {text("الكاشير", "Cashier")}</span>
             <span style={S.headerValue}>{cashierName || "—"}</span>
           </div>
         </div>
@@ -561,7 +564,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
             <span style={S.headerLabel}>{now.toLocaleDateString("ar-SA")}</span>
           </div>
           {customer ? (
-            <button onClick={() => setShowCustomerPicker(true)} style={S.customerBtnActive} title="تغيير العميل">
+            <button onClick={() => setShowCustomerPicker(true)} style={S.customerBtnActive} title={text("تغيير العميل", "Change customer")}>
               👤 {customer.nameAr}
             </button>
           ) : (
@@ -569,7 +572,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
               ＋ عميل نقدي
             </button>
           )}
-          <button onClick={toggleTheme} style={S.themeBtn} title="تبديل المظهر (أورورا / أونيكس)">
+          <button onClick={toggleTheme} style={S.themeBtn} title={text("تبديل المظهر (أورورا / أونيكس)", "Switch theme (Aurora / Onyx)")}>
             {theme === "onyx" ? "🌙 أونيكس" : "☀️ أورورا"}
           </button>
         </div>
@@ -581,7 +584,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
         <section style={S.invoicePane}>
           <div style={S.invoiceHeader}>
             <div>
-              <div style={{ fontSize: 17, fontWeight: 800 }}>الفاتورة الحالية</div>
+              <div style={{ fontSize: 17, fontWeight: 800 }}>{text("الفاتورة الحالية", "Current invoice")}</div>
               <div style={{ fontSize: 12, opacity: 0.75, marginTop: 2 }}>
                 {activeParkedId ? "سلة مستأنفة" : "فاتورة جديدة"}
                 {lastInvoice ? ` · آخر: ${lastInvoice}` : ""}
@@ -594,7 +597,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
           <div style={S.fastRow}>
             <input
               autoFocus
-              placeholder="🔍 ابحث بالكود أو اسم الصنف أو الباركود ثم اختر النتيجة أو اضغط Enter"
+              placeholder={text("🔍 ابحث بالكود أو اسم الصنف أو الباركود ثم اختر النتيجة أو اضغط Enter", "🔍 Search by item code, name, or barcode; select a result or press Enter")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void addByQuery(); }}
@@ -606,18 +609,18 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
               onChange={(e) => setFastQty(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void addByQuery(); }}
               style={S.fastQty}
-              title="الكمية"
+              title={text("الكمية", "Quantity")}
             />
-            <button onClick={() => void addByQuery()} style={S.fastAddBtn}>إضافة</button>
+            <button onClick={() => void addByQuery()} style={S.fastAddBtn}>{text("إضافة", "Add")}</button>
           </div>
 
           {/* Live search results — click a row to add it to the invoice */}
           {search.trim() !== "" && (
             <div className="reg-scroll" style={S.searchResults}>
               {loadingItems && items.length === 0 ? (
-                <div style={S.resultEmpty}>... جاري البحث</div>
+                <div style={S.resultEmpty}>{text("... جاري البحث", "Searching…")}</div>
               ) : items.length === 0 ? (
-                <div style={S.resultEmpty}>لا توجد أصناف مطابقة</div>
+                <div style={S.resultEmpty}>{text("لا توجد أصناف مطابقة", "No matching items")}</div>
               ) : (
                 items.slice(0, 50).map((item) => (
                   <button key={item.id} onClick={() => addFromResult(item)} style={S.resultRow}>
@@ -633,11 +636,11 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
 
           {/* Table header — 5 columns (T3) */}
           <div style={S.tableHead}>
-            <div style={S.colName}>الصنف</div>
-            <div style={S.colQty}>الكمية</div>
-            <div style={S.colUnit}>الوحدة</div>
-            <div style={S.colPrice}>السعر</div>
-            <div style={S.colTotal}>الإجمالي</div>
+            <div style={S.colName}>{text("الصنف", "Item")}</div>
+            <div style={S.colQty}>{text("الكمية", "Quantity")}</div>
+            <div style={S.colUnit}>{text("الوحدة", "Unit")}</div>
+            <div style={S.colPrice}>{text("السعر", "Price")}</div>
+            <div style={S.colTotal}>{text("الإجمالي", "Total")}</div>
             <div style={S.colDel} />
           </div>
 
@@ -646,8 +649,8 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
             {cart.length === 0 ? (
               <div style={S.cartEmpty}>
                 <div style={{ fontSize: 44, marginBottom: 8 }}>🧾</div>
-                <div>لا توجد أصناف في الفاتورة</div>
-                <div style={{ fontSize: 12, marginTop: 6, opacity: 0.7 }}>اضغط على صنف أو امسح باركود</div>
+                <div>{text("لا توجد أصناف في الفاتورة", "No items in this invoice")}</div>
+                <div style={{ fontSize: 12, marginTop: 6, opacity: 0.7 }}>{text("اضغط على صنف أو امسح باركود", "Select an item or scan a barcode")}</div>
               </div>
             ) : (
               cart.map((l, idx) => (
@@ -666,7 +669,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
                   <div style={{ ...S.colPrice, ...S.cellMuted }}>{l.item.salePrice.toFixed(2)}</div>
                   <div style={{ ...S.colTotal, ...S.cellTotal }}>{(l.item.salePrice * l.qty).toFixed(2)}</div>
                   <div style={S.colDel}>
-                    <button onClick={() => removeLine(l.lineId)} style={S.delBtn} title="حذف">×</button>
+                    <button onClick={() => removeLine(l.lineId)} style={S.delBtn} title={text("حذف", "Delete")}>×</button>
                   </div>
                 </div>
               ))
@@ -683,7 +686,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
                   <span>· ضريبة {vatRatePct}%{taxMode === "inclusive" ? " (شاملة)" : ""} {totals.vat.toFixed(2)}</span>
                 </div>
                 <div style={S.totalsInlineGrand}>
-                  <span>الإجمالي</span>
+                  <span>{text("الإجمالي", "Total")}</span>
                   <span>{totals.grandTotal.toFixed(2)} {sym}</span>
                 </div>
               </div>
@@ -691,7 +694,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
               {/* Paid — middle */}
               {cart.length > 0 && (
                 <div style={S.paidInline}>
-                  <label style={S.paidLabel}>💵 المدفوع</label>
+                  <label style={S.paidLabel}>💵 {text("المدفوع", "Amount paid")}</label>
                   <input
                     type="number" inputMode="decimal" step="0.01" min="0" placeholder="0.00"
                     value={paidStr} onChange={(e) => setPaidStr(e.target.value)} style={S.paidInputSm}
@@ -707,7 +710,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
               {/* Small action buttons — pushed to the left of the screen */}
               <div style={S.miniActions}>
                 {payMethods.length === 0 ? (
-                  <button style={S.miniToggleActive} disabled>💵 نقدي</button>
+                  <button style={S.miniToggleActive} disabled>💵 {text("نقدي", "Cash")}</button>
                 ) : (
                   payMethods.map((m) => (
                     <button
@@ -720,8 +723,8 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
                     </button>
                   ))
                 )}
-                <button onClick={parkCart} disabled={cart.length === 0} style={S.miniBtn}>📌 تعليق</button>
-                <button onClick={clearCart} disabled={cart.length === 0} style={S.miniBtn}>🧾 جديدة</button>
+                <button onClick={parkCart} disabled={cart.length === 0} style={S.miniBtn}>📌 {text("تعليق", "Park")}</button>
+                <button onClick={clearCart} disabled={cart.length === 0} style={S.miniBtn}>🧾 {text("جديدة", "New")}</button>
                 <button onClick={() => checkout(selectedMethod)} disabled={paying || cart.length === 0} style={S.miniSaveBtn}>
                   {paying ? "..." : "💾 حفظ وطباعة"}
                 </button>
@@ -775,30 +778,32 @@ function UnitPickerModal({
   onPick: (unit: ItemUnit | null) => void;
   onCancel: () => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const M = makeModalStyles(T);
   const units = item.units ?? [];
   return (
     <div style={M.overlay} onClick={onCancel}>
-      <div dir="rtl" style={{ ...M.card, maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+      <div dir={language === "en" ? "ltr" : "rtl"} style={{ ...M.card, maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
         <div style={M.title}>{item.nameAr}</div>
-        <div style={M.subtitle}>اختر وحدة البيع</div>
+        <div style={M.subtitle}>{text("اختر وحدة البيع", "Choose a sales unit")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <button onClick={() => onPick(null)} style={M.unitRow}>
-            <span style={{ fontWeight: 700, color: T.text }}>قطعة</span>
+            <span style={{ fontWeight: 700, color: T.text }}>{text("قطعة", "Piece")}</span>
             <span style={{ color: T.accent, fontWeight: 700 }}>{item.salePrice.toFixed(2)} {currencySymbol()}</span>
           </button>
           {units.map((u) => (
             <button key={u.id} onClick={() => onPick(u)} style={M.unitRow}>
               <span style={{ fontWeight: 700, color: T.text }}>
                 {u.name}
-                <span style={{ fontSize: 12, color: T.subtext, fontWeight: 400, marginInlineStart: 6 }}>({u.factor} قطعة)</span>
+                <span style={{ fontSize: 12, color: T.subtext, fontWeight: 400, marginInlineStart: 6 }}>({u.factor} {text("قطعة", "pieces")})</span>
               </span>
               <span style={{ color: T.accent, fontWeight: 700 }}>{u.price.toFixed(2)} {currencySymbol()}</span>
             </button>
           ))}
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-          <button onClick={onCancel} style={M.backBtn}>إلغاء</button>
+          <button onClick={onCancel} style={M.backBtn}>{text("إلغاء", "Cancel")}</button>
         </div>
       </div>
     </div>
@@ -807,6 +812,8 @@ function UnitPickerModal({
 
 // ─── Customer picker modal ─────────────────────────────────────────
 function CustomerPicker({ T, onSelect, onClose }: { T: Tokens; onSelect: (c: LocalCustomer) => void; onClose: () => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const M = makeModalStyles(T);
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<LocalCustomer[]>([]);
@@ -830,7 +837,7 @@ function CustomerPicker({ T, onSelect, onClose }: { T: Tokens; onSelect: (c: Loc
   }, [q]);
 
   async function handleCreate() {
-    if (!newName.trim()) { setErr("اسم العميل مطلوب"); return; }
+    if (!newName.trim()) { setErr(text("اسم العميل مطلوب", "Customer name is required.")); return; }
     setSaving(true); setErr(null);
     try {
       const c = await createCustomer({
@@ -840,29 +847,29 @@ function CustomerPicker({ T, onSelect, onClose }: { T: Tokens; onSelect: (c: Loc
       });
       onSelect(c);
     } catch (e: any) {
-      setErr(`تعذّر الإنشاء: ${e?.message ?? e}`);
+      setErr(`${text("تعذّر الإنشاء:", "Could not create customer:")} ${e?.message ?? e}`);
     } finally { setSaving(false); }
   }
 
   return (
     <div style={M.overlay} onClick={onClose}>
-      <div dir="rtl" style={M.card} onClick={(e) => e.stopPropagation()}>
+      <div dir={language === "en" ? "ltr" : "rtl"} style={M.card} onClick={(e) => e.stopPropagation()}>
         <div style={M.header}>
-          <h3 style={{ margin: 0, fontSize: 18, color: T.text }}>{showNew ? "👤 عميل جديد" : "👥 اختر العميل"}</h3>
+          <h3 style={{ margin: 0, fontSize: 18, color: T.text }}>{showNew ? `👤 ${text("عميل جديد", "New customer")}` : `👥 ${text("اختر العميل", "Choose a customer")}`}</h3>
           <button onClick={onClose} style={M.closeBtn}>×</button>
         </div>
 
         {!showNew ? (
           <>
-            <input autoFocus placeholder="🔍 بحث بالاسم، الجوال، أو الرقم الضريبي..."
+            <input autoFocus placeholder={text("🔍 بحث بالاسم، الجوال، أو الرقم الضريبي...", "🔍 Search by name, phone, or tax number…")}
               value={q} onChange={(e) => setQ(e.target.value)} style={M.search} />
             <div style={M.list}>
               {loading ? (
-                <div style={M.listEmpty}>... جاري التحميل</div>
+                <div style={M.listEmpty}>{text("... جاري التحميل", "Loading…")}</div>
               ) : rows.length === 0 ? (
                 <div style={M.listEmpty}>
                   <div style={{ fontSize: 32, marginBottom: 8 }}>🤷‍♂️</div>
-                  <div>لا يوجد عميل مطابق</div>
+                  <div>{text("لا يوجد عميل مطابق", "No matching customer")}</div>
                 </div>
               ) : (
                 rows.map((c) => (
@@ -875,33 +882,33 @@ function CustomerPicker({ T, onSelect, onClose }: { T: Tokens; onSelect: (c: Loc
                         </div>
                       )}
                     </div>
-                    <span style={{ color: T.accent, fontSize: 14, fontWeight: 600 }}>اختيار ←</span>
+                    <span style={{ color: T.accent, fontSize: 14, fontWeight: 600 }}>{text("اختيار ←", "Select →")}</span>
                   </button>
                 ))
               )}
             </div>
-            <button onClick={() => setShowNew(true)} style={M.newBtn}>＋ إضافة عميل جديد</button>
+            <button onClick={() => setShowNew(true)} style={M.newBtn}>＋ {text("إضافة عميل جديد", "Add new customer")}</button>
           </>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: 16 }}>
             <div>
-              <label style={M.fieldLabel}>اسم العميل *</label>
+              <label style={M.fieldLabel}>{text("اسم العميل *", "Customer name *")}</label>
               <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} style={M.field} />
             </div>
             <div>
-              <label style={M.fieldLabel}>رقم الجوال</label>
+              <label style={M.fieldLabel}>{text("رقم الجوال", "Phone number")}</label>
               <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} style={M.field} placeholder="05XXXXXXXX" />
             </div>
             <div>
-              <label style={M.fieldLabel}>الرقم الضريبي (اختياري)</label>
+              <label style={M.fieldLabel}>{text("الرقم الضريبي (اختياري)", "Tax number (optional)")}</label>
               <input value={newVat} onChange={(e) => setNewVat(e.target.value)} style={M.field} placeholder="3xxxxxxxxxxxxx3" />
             </div>
             {err && <div style={M.err}>{err}</div>}
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
               <button onClick={handleCreate} disabled={saving} style={{ ...M.saveBtn, opacity: saving ? 0.6 : 1 }}>
-                {saving ? "..." : "💾 حفظ واختيار"}
+                {saving ? "..." : `💾 ${text("حفظ واختيار", "Save and select")}`}
               </button>
-              <button onClick={() => setShowNew(false)} style={M.backBtn}>← رجوع</button>
+              <button onClick={() => setShowNew(false)} style={M.backBtn}>← {text("رجوع", "Back")}</button>
             </div>
           </div>
         )}

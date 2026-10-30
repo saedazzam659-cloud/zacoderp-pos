@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listBranches, type Branch } from "../lib/branches";
 import { listCostCenters, type CostCenter } from "../lib/costCenters";
+import { uiText } from "../lib/appSettings";
 import { input, SearchCombobox } from "./_adminUi";
 
 /** Loads branches + cost centers once for the report filter bars. */
@@ -19,14 +20,14 @@ export function useDimensions() {
 
 export function branchOptions(branches: Branch[]) {
   return [
-    { value: "", label: "كل الفروع" },
+    { value: "", label: uiText("كل الفروع", "All branches") },
     ...branches.map((b) => ({ value: b.id, label: `${b.code} — ${b.nameAr}` })),
   ];
 }
 
 export function costCenterOptions(costCenters: CostCenter[]) {
   return [
-    { value: "", label: "كل مراكز التكلفة" },
+    { value: "", label: uiText("كل مراكز التكلفة", "All cost centers") },
     ...costCenters.map((c) => ({ value: c.id, label: `${c.code} — ${c.nameAr}` })),
   ];
 }
@@ -36,14 +37,14 @@ export function costCenterOptions(costCenters: CostCenter[]) {
  *  reads "بدون" (none) rather than "all". */
 export function branchPickerOptions(branches: Branch[]) {
   return [
-    { value: "", label: "— بدون فرع —" },
+    { value: "", label: uiText("— بدون فرع —", "— No branch —") },
     ...branches.filter((b) => b.isActive).map((b) => ({ value: b.id, label: `${b.code} — ${b.nameAr}` })),
   ];
 }
 
 export function costCenterPickerOptions(costCenters: CostCenter[]) {
   return [
-    { value: "", label: "— بدون مركز تكلفة —" },
+    { value: "", label: uiText("— بدون مركز تكلفة —", "— No cost center —") },
     ...costCenters.filter((c) => c.isActive && c.isPosting).map((c) => ({ value: c.id, label: `${c.code} — ${c.nameAr}` })),
   ];
 }
@@ -69,7 +70,7 @@ export function DateField({ label, value, onChange }: { label: string; value: st
 
 export function BranchField({ branches, value, onChange }: { branches: Branch[]; value: number | ""; onChange: (v: number | "") => void }) {
   return (
-    <FilterField label="الفرع">
+    <FilterField label={uiText("الفرع", "Branch")}>
       <SearchCombobox
         value={value}
         onChange={(v) => onChange(v === "" ? "" : Number(v))}
@@ -82,7 +83,7 @@ export function BranchField({ branches, value, onChange }: { branches: Branch[];
 
 export function CostCenterField({ costCenters, value, onChange }: { costCenters: CostCenter[]; value: number | ""; onChange: (v: number | "") => void }) {
   return (
-    <FilterField label="مركز التكلفة">
+    <FilterField label={uiText("مركز التكلفة", "Cost center")}>
       <SearchCombobox
         value={value}
         onChange={(v) => onChange(v === "" ? "" : Number(v))}

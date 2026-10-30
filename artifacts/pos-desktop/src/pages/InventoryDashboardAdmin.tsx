@@ -6,6 +6,7 @@
 // "أصناف تحت حد الطلب" tile stays consistent with that screen.
 
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listStockOnHand, listStockMovements, listWarehouses,
   type StockOnHand, type StockMovement, type Warehouse,
@@ -16,6 +17,7 @@ import { useCurrencySymbol } from "../lib/currency";
 import {
   Page, Card, Table, Th, Td, Empty, btnSecondary, fmt, fmtCurrency,
 } from "./_adminUi";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function Tile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
@@ -28,6 +30,8 @@ function Tile({ label, value, sub, accent }: { label: string; value: string; sub
 }
 
 export default function InventoryDashboardAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   useCurrencySymbol();
   const [items, setItems] = useState<LocalItem[]>([]);
   const [onHand, setOnHand] = useState<StockOnHand[]>([]);
@@ -56,6 +60,7 @@ export default function InventoryDashboardAdmin() {
     }
   }
   useEffect(() => { void refresh(); }, []);
+  useDataRefresh(["stock", "invoices", "items", "warehouses"], () => { void refresh(); });
 
   const stockValue = useMemo(
     () => onHand.reduce((s, r) => s + r.qty * r.last_cost, 0),
@@ -88,27 +93,44 @@ export default function InventoryDashboardAdmin() {
     }
     return [...m.values()].sort((a, b) => b.value - a.value);
   }, [onHand]);
+  const displayDate = (value: string) => {
+    const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+    return Number.isNaN(date.getTime())
+      ? value
+      : new Intl.DateTimeFormat(language === "en" ? "en-US" : "ar", { dateStyle: "medium" }).format(date);
+  };
+  const movementLabels: Record<string, [string, string]> = {
+    purchase: ["فاتورة شراء", "Purchase invoice"],
+    purchase_return: ["مرتجع شراء", "Purchase return"],
+    sale: ["فاتورة بيع", "Sales invoice"],
+    sale_return: ["مرتجع بيع", "Sales return"],
+    adjustment: ["تسوية", "Adjustment"],
+    stocktake: ["جرد", "Stocktake"],
+    transfer_in: ["تحويل وارد", "Transfer in"],
+    transfer_out: ["تحويل صادر", "Transfer out"],
+    opening: ["رصيد افتتاحي", "Opening balance"],
+  };
 
   return (
     <Page
-      title="لوحة المخزون"
-      subtitle="نظرة عامة على المخزون والحركة الأخيرة"
-      right={<button onClick={() => void refresh()} disabled={loading} style={btnSecondary}>{loading ? "..." : "تحديث"}</button>}
+      title={text("لوحة المخزون", "Inventory dashboard")}
+      subtitle={text("نظرة عامة على المخزون والحركة الأخيرة", "Stock overview and recent movements")}
+      right={<button onClick={() => void refresh()} disabled={loading} style={btnSecondary}>{loading ? "..." : text("تحديث", "Refresh")}</button>}
     >
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
-        <Tile label="عدد الأصناف" value={fmt(items.length)} sub={`${fmt(warehouses.length)} مستودع`} />
-        <Tile label="قيمة المخزون" value={fmtCurrency(stockValue)} sub={`إجمالي الكمية ${fmt(totalQty)}`} accent="#2563eb" />
-        <Tile label="أصناف تحت حد الطلب" value={fmt(belowReorder)} accent={belowReorder > 0 ? "#d97706" : "#0f172a"} />
-        <Tile label="أصناف نفدت" value={fmt(outOfStock)} accent={outOfStock > 0 ? "#dc2626" : "#0f172a"} />
+        <Tile label={text("عدد الأصناف", "Items")} value={fmt(items.length)} sub={`${fmt(warehouses.length)} ${text("مستودع", "warehouses")}`} />
+        <Tile label={text("قيمة المخزون", "Stock value")} value={fmtCurrency(stockValue)} sub={`${text("إجمالي الكمية", "Total quantity")} ${fmt(totalQty)}`} accent="#2563eb" />
+        <Tile label={text("أصناف تحت حد الطلب", "Below reorder point")} value={fmt(belowReorder)} accent={belowReorder > 0 ? "#d97706" : "#0f172a"} />
+        <Tile label={text("أصناف نفدت", "Out of stock")} value={fmt(outOfStock)} accent={outOfStock > 0 ? "#dc2626" : "#0f172a"} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 12, alignItems: "start" }}>
         <Card>
-          <div style={{ padding: "12px 16px", fontWeight: 700, borderBottom: "1px solid #e2e8f0" }}>المخزون حسب المستودع</div>
-          {byWarehouse.length === 0 ? <Empty text="لا توجد بيانات مخزون" /> : (
+          <div style={{ padding: "12px 16px", fontWeight: 700, borderBottom: "1px solid #e2e8f0" }}>{text("المخزون حسب المستودع", "Stock by warehouse")}</div>
+          {byWarehouse.length === 0 ? <Empty text={text("لا توجد بيانات مخزون", "No stock data")} /> : (
             <Table>
               <thead><tr>
-                <Th>المستودع</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>القيمة</Th>
+                <Th>{text("المستودع", "Warehouse")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الكمية", "Quantity")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("القيمة", "Value")}</Th>
               </tr></thead>
               <tbody>
                 {byWarehouse.map((w, i) => (
@@ -124,23 +146,23 @@ export default function InventoryDashboardAdmin() {
         </Card>
 
         <Card>
-          <div style={{ padding: "12px 16px", fontWeight: 700, borderBottom: "1px solid #e2e8f0" }}>آخر الحركات</div>
-          {moves.length === 0 ? <Empty text="لا توجد حركات مخزنية بعد" /> : (
+          <div style={{ padding: "12px 16px", fontWeight: 700, borderBottom: "1px solid #e2e8f0" }}>{text("آخر الحركات", "Recent movements")}</div>
+          {moves.length === 0 ? <Empty text={text("لا توجد حركات مخزنية بعد", "No stock movements yet")} /> : (
             <Table>
               <thead><tr>
-                <Th>التاريخ</Th><Th>الصنف</Th><Th>المستودع</Th>
-                <Th style={{ textAlign: "left" }}>الكمية</Th><Th>المرجع</Th>
+                <Th>{text("التاريخ", "Date")}</Th><Th>{text("الصنف", "Item")}</Th><Th>{text("المستودع", "Warehouse")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الكمية", "Quantity")}</Th><Th>{text("المرجع", "Reference")}</Th>
               </tr></thead>
               <tbody>
                 {moves.map((m) => (
                   <tr key={m.id}>
-                    <Td>{m.entry_date}</Td>
+                    <Td>{displayDate(m.entry_date)}</Td>
                     <Td>{m.item_name}</Td>
                     <Td>{m.warehouse_name}</Td>
                     <Td num style={{ color: m.qty_delta < 0 ? "#dc2626" : "#15803d", fontWeight: 600 }}>
                       {m.qty_delta > 0 ? "+" : ""}{fmt(m.qty_delta)}
                     </Td>
-                    <Td mono>{m.ref_type}{m.ref_id ? `#${m.ref_id}` : ""}</Td>
+                    <Td mono>{movementLabels[m.ref_type] ? uiText(...movementLabels[m.ref_type], language) : m.ref_type}{m.ref_id ? ` #${m.ref_id}` : ""}</Td>
                   </tr>
                 ))}
               </tbody>

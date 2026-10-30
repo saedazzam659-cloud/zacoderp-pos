@@ -11,6 +11,7 @@ import {
   type ParkedCart,
 } from "../lib/parkedCarts";
 import { useCurrencySymbol } from "../lib/currency";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type Props = {
   posSessionId: number;
@@ -18,6 +19,8 @@ type Props = {
 };
 
 export default function ParkedCarts({ posSessionId, onResume }: Props) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const sym = useCurrencySymbol();
   const [rows, setRows] = useState<ParkedCart[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +32,7 @@ export default function ParkedCarts({ posSessionId, onResume }: Props) {
       setRows(await listParkedCarts(posSessionId));
       setErr(null);
     } catch (e: any) {
-      setErr(e?.message ?? "تعذّر تحميل السلال المعلّقة");
+      setErr(e?.message ?? text("تعذّر تحميل السلال المعلّقة", "Could not load parked carts."));
     } finally { setLoading(false); }
   }, [posSessionId]);
 
@@ -41,21 +44,21 @@ export default function ParkedCarts({ posSessionId, onResume }: Props) {
   }
 
   async function remove(c: ParkedCart) {
-    if (!confirm(`حذف السلة "${c.label}"؟ لا يمكن التراجع.`)) return;
+    if (!confirm(`${text("حذف السلة", "Delete cart")} "${c.label}"? ${text("لا يمكن التراجع.", "This cannot be undone.")}`)) return;
     try {
       await deleteParkedCart(c.id);
       await refresh();
     } catch (e: any) {
-      setErr(e?.message ?? "تعذّر الحذف");
+      setErr(e?.message ?? text("تعذّر الحذف", "Could not delete the cart."));
     }
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.headerRow}>
-        <h2 style={S.h2}>السلال المعلّقة ({rows.length})</h2>
+        <h2 style={S.h2}>{text("السلال المعلّقة", "Parked carts")} ({rows.length})</h2>
         <button onClick={refresh} style={S.refresh} disabled={loading}>
-          {loading ? "..." : "🔄 تحديث"}
+          {loading ? "..." : `🔄 ${text("تحديث", "Refresh")}`}
         </button>
       </div>
 
@@ -64,8 +67,8 @@ export default function ParkedCarts({ posSessionId, onResume }: Props) {
       {!loading && rows.length === 0 && !err && (
         <div style={S.empty}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>📭</div>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>لا توجد سلال معلّقة</div>
-          <div style={{ fontSize: 13, color: "#94a3b8" }}>اضغط "تعليق السلة" في شاشة البيع لحفظ سلة جانباً والعودة إليها لاحقاً.</div>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>{text("لا توجد سلال معلّقة", "No parked carts")}</div>
+          <div style={{ fontSize: 13, color: "#94a3b8" }}>{text('اضغط "تعليق السلة" في شاشة البيع لحفظ سلة جانباً والعودة إليها لاحقاً.', 'Use "Park cart" on the sales screen to save a cart and resume it later.')}</div>
         </div>
       )}
 
@@ -76,8 +79,8 @@ export default function ParkedCarts({ posSessionId, onResume }: Props) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={S.cardLabel}>{c.label}</div>
                 <div style={S.cardMeta}>
-                  {c.lines.length} صنف · {c.grandTotal.toFixed(2)} {sym} ·{" "}
-                  {new Date(c.updatedAt).toLocaleString("ar-SA")}
+                  {c.lines.length} {text("صنف", "items")} · {c.grandTotal.toFixed(2)} {sym} ·{" "}
+                  {new Date(c.updatedAt).toLocaleString(language === "en" ? "en-GB" : "ar-SA")}
                 </div>
                 {c.customerNote && (
                   <div style={S.cardNote}>📝 {c.customerNote}</div>
@@ -89,13 +92,13 @@ export default function ParkedCarts({ posSessionId, onResume }: Props) {
                     </span>
                   ))}
                   {c.lines.length > 3 && (
-                    <span style={S.moreChip}>+{c.lines.length - 3} أخرى</span>
+                    <span style={S.moreChip}>+{c.lines.length - 3} {text("أخرى", "more")}</span>
                   )}
                 </div>
               </div>
               <div style={S.actions}>
-                <button onClick={() => resume(c)} style={S.btnResume}>▶️ استئناف</button>
-                <button onClick={() => remove(c)} style={S.btnDelete}>🗑️ حذف</button>
+                <button onClick={() => resume(c)} style={S.btnResume}>▶️ {text("استئناف", "Resume")}</button>
+                <button onClick={() => remove(c)} style={S.btnDelete}>🗑️ {text("حذف", "Delete")}</button>
               </div>
             </div>
           ))}
@@ -106,7 +109,7 @@ export default function ParkedCarts({ posSessionId, onResume }: Props) {
 }
 
 const S = {
-  wrap: { maxWidth: 980, margin: "0 auto", width: "100%" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const } as const,
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } as const,
   h2: { margin: 0, fontSize: 18, color: "#0f172a" } as const,
   refresh: { padding: "6px 12px", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 13 } as const,

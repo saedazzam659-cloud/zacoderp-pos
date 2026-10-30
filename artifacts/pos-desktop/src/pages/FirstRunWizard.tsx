@@ -19,11 +19,14 @@ import {
   generateLanToken, DEFAULT_LAN_PORT, type NetRole,
 } from "../lib/standalone";
 import { refreshBridge, pingHostAt } from "../lib/bridge";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type Step = "mode" | "role";
 type ConnState = "unknown" | "checking" | "ok" | "bad";
 
 export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [step, setStep] = useState<Step>("mode");
   const [mode, setMode] = useState<AppMode | null>(null);
   const [role, setRole] = useState<NetRole>("single");
@@ -51,10 +54,10 @@ export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) =>
   async function finish() {
     if (!mode) return;
     setErr(null);
-    if (role === "host" && !token.trim()) { setErr("أنشئ رمز إقران للفرع أولاً."); return; }
+    if (role === "host" && !token.trim()) { setErr(text("أنشئ رمز إقران للفرع أولاً.", "Create a branch pairing code first.")); return; }
     if (role === "client") {
-      if (!hostUrl.trim()) { setErr("أدخل عنوان الجهاز الرئيسي."); return; }
-      if (!token.trim()) { setErr("أدخل رمز الإقران."); return; }
+      if (!hostUrl.trim()) { setErr(text("أدخل عنوان الجهاز الرئيسي.", "Enter the host device address.")); return; }
+      if (!token.trim()) { setErr(text("أدخل رمز الإقران.", "Enter the pairing code.")); return; }
     }
     setBusy(true);
     try {
@@ -69,20 +72,20 @@ export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) =>
       await refreshBridge();
       onChosen(mode);
     } catch (e: any) {
-      setErr(e?.message ?? "تعذّر الحفظ");
+      setErr(e?.message ?? text("تعذّر الحفظ", "Could not save settings."));
       setBusy(false);
     }
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.card}>
         <div style={S.brand}>
           <div style={S.brandIcon}>zacode</div>
           <div>
-            <div style={S.brandName}>مرحباً بك في ZACOD POS</div>
+            <div style={S.brandName}>{text("مرحباً بك في ZACOD POS", "Welcome to ZACOD POS")}</div>
             <div style={S.brandTag}>
-              {step === "mode" ? "اختر طريقة التشغيل قبل المتابعة" : "اختر دور الجهاز في الشبكة"}
+              {step === "mode" ? text("اختر طريقة التشغيل قبل المتابعة", "Choose an operating mode to continue") : text("اختر دور الجهاز في الشبكة", "Choose this device’s network role")}
             </div>
           </div>
         </div>
@@ -90,40 +93,38 @@ export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) =>
         {step === "mode" && (
           <>
             <div style={S.grid}>
-              <button onClick={() => void pickMode("cloud")} style={S.option}>
+              <button onClick={() => void pickMode("cloud")} style={{ ...S.option, textAlign: language === "en" ? "left" : "right" }}>
                 <div style={S.optionIcon}>☁️</div>
-                <div style={S.optionTitle}>وضع السحابة</div>
+                <div style={S.optionTitle}>{text("وضع السحابة", "Cloud mode")}</div>
                 <div style={S.optionDesc}>
-                  متصل بـ <code>zacoderp.com</code> — مزامنة تلقائية للفواتير والعملاء،
-                  لوحة تحكم سحابية، تقارير مركزية، وإدارة عبر السوبر-أدمن.
+                  {text("متصل بـ", "Connects to")} <code>zacoderp.com</code>{text(" — مزامنة تلقائية للفواتير والعملاء، لوحة تحكم سحابية، تقارير مركزية، وإدارة عبر السوبر-أدمن.", " — automatically syncs invoices and customers, with a cloud dashboard, central reports, and Super Admin management.")}
                 </div>
                 <ul style={S.optionList}>
-                  <li>✅ مفتاح ترخيص + تفعيل سحابي</li>
-                  <li>✅ مزامنة دورية مع السحابة</li>
-                  <li>✅ دعم متعدد الأجهزة والفروع</li>
-                  <li>✅ نسخ احتياطي سحابي</li>
+                  <li>✅ {text("مفتاح ترخيص + تفعيل سحابي", "License key and cloud activation")}</li>
+                  <li>✅ {text("مزامنة دورية مع السحابة", "Scheduled cloud sync")}</li>
+                  <li>✅ {text("دعم متعدد الأجهزة والفروع", "Multiple devices and branches")}</li>
+                  <li>✅ {text("نسخ احتياطي سحابي", "Cloud backups")}</li>
                 </ul>
-                <div style={S.cta}>اختيار الوضع السحابي ←</div>
+                <div style={S.cta}>{text("اختيار الوضع السحابي", "Choose cloud mode")} {language === "en" ? "→" : "←"}</div>
               </button>
 
-              <button onClick={() => void pickMode("standalone")} style={{ ...S.option, borderColor: "#fbbf24", background: "#fffbeb" }}>
+              <button onClick={() => void pickMode("standalone")} style={{ ...S.option, textAlign: language === "en" ? "left" : "right", borderColor: "#fbbf24", background: "#fffbeb" }}>
                 <div style={S.optionIcon}>🖥️</div>
-                <div style={S.optionTitle}>وضع مستقل (بدون سحابة)</div>
+                <div style={S.optionTitle}>{text("وضع مستقل (بدون سحابة)", "Standalone mode (no cloud)")}</div>
                 <div style={S.optionDesc}>
-                  يعمل بالكامل محلياً بدون أي اتصال بالإنترنت. الترخيص ملف موقّع رقمياً تتسلّمه
-                  من مزوّد الخدمة. مناسب للمحلات التي لا تريد السحابة أو في مناطق بدون إنترنت موثوق.
+                  {text("يعمل بالكامل محلياً بدون أي اتصال بالإنترنت. الترخيص ملف موقّع رقمياً تتسلّمه من مزوّد الخدمة. مناسب للمحلات التي لا تريد السحابة أو في مناطق بدون إنترنت موثوق.", "Runs locally without an internet connection. The service provider supplies a digitally signed license file. Suitable for shops that prefer not to use cloud services or have unreliable internet.")}
                 </div>
                 <ul style={S.optionList}>
-                  <li>✅ ملف ترخيص محلي (.zacolic.json)</li>
-                  <li>✅ مستخدمون محليون (اسم وكلمة مرور)</li>
-                  <li>✅ بدون أي اتصال خارجي</li>
-                  <li>⚠️ لا مزامنة ولا نسخ احتياطي تلقائي</li>
+                  <li>✅ {text("ملف ترخيص محلي", "Local license file")} (.zacolic.json)</li>
+                  <li>✅ {text("مستخدمون محليون (اسم وكلمة مرور)", "Local users (username and password)")}</li>
+                  <li>✅ {text("بدون أي اتصال خارجي", "No external connection")}</li>
+                  <li>⚠️ {text("لا مزامنة ولا نسخ احتياطي تلقائي", "No sync or automatic backups")}</li>
                 </ul>
-                <div style={S.cta}>اختيار الوضع المستقل ←</div>
+                <div style={S.cta}>{text("اختيار الوضع المستقل", "Choose standalone mode")} {language === "en" ? "→" : "←"}</div>
               </button>
             </div>
             <div style={S.foot}>
-              يمكن تغيير الاختيار لاحقاً، لكن الانتقال يمحو كل البيانات المحلية في الجهاز.
+              {text("يمكن تغيير الاختيار لاحقاً، لكن الانتقال يمحو كل البيانات المحلية في الجهاز.", "You can change this choice later, but switching modes erases all local data on this device.")}
             </div>
           </>
         )}
@@ -131,55 +132,55 @@ export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) =>
         {step === "role" && (
           <>
             <div style={S.roleGrid}>
-              <RoleCard active={role === "single"} icon="🖥️" title="مستقل"
-                desc="جهاز واحد فقط بدون مشاركة عبر الشبكة. (الأنسب لمعظم المحلات)"
+              <RoleCard active={role === "single"} icon="🖥️" title={text("مستقل", "Standalone")}
+                desc={text("جهاز واحد فقط بدون مشاركة عبر الشبكة. (الأنسب لمعظم المحلات)", "One device with no network sharing. (Best for most shops)")} language={language}
                 onClick={() => { setRole("single"); setConn("unknown"); }} />
-              <RoleCard active={role === "host"} icon="🗄️" title="رئيسي (Host)"
-                desc="يبيع + يحتفظ بقاعدة البيانات + يشغّل خادم الشبكة لبقية الأجهزة."
+              <RoleCard active={role === "host"} icon="🗄️" title={text("رئيسي (Host)", "Host")}
+                desc={text("يبيع + يحتفظ بقاعدة البيانات + يشغّل خادم الشبكة لبقية الأجهزة.", "Processes sales, stores the shared database, and runs the network server for other devices.")} language={language}
                 onClick={() => { setRole("host"); if (!token) setToken(generateLanToken()); }} />
-              <RoleCard active={role === "client"} icon="📡" title="فرعي (Client)"
-                desc="يبيع، لكن يوجّه كل القراءة والكتابة للجهاز الرئيسي عبر الشبكة."
+              <RoleCard active={role === "client"} icon="📡" title={text("فرعي (Client)", "Client")}
+                desc={text("يبيع، لكن يوجّه كل القراءة والكتابة للجهاز الرئيسي عبر الشبكة.", "Processes sales but sends all reads and writes to the host over the network.")} language={language}
                 onClick={() => { setRole("client"); setConn("unknown"); }} />
             </div>
 
             {role === "host" && (
               <div style={S.panel}>
                 <div style={S.field}>
-                  <label style={S.label}>رمز إقران الفرع (أدخِله في كل جهاز فرعي)</label>
+                  <label style={S.label}>{text("رمز إقران الفرع (أدخِله في كل جهاز فرعي)", "Branch pairing code (enter it on each client device)")}</label>
                   <div style={{ display: "flex", gap: 8 }}>
                     <input style={S.input} value={token} readOnly />
-                    <button style={S.btn} onClick={() => setToken(generateLanToken())}>إنشاء رمز جديد</button>
+                    <button style={S.btn} onClick={() => setToken(generateLanToken())}>{text("إنشاء رمز جديد", "Generate new code")}</button>
                   </div>
                 </div>
                 <div style={S.field}>
-                  <label style={S.label}>المنفذ (Port)</label>
+                  <label style={S.label}>{text("المنفذ (Port)", "Port")}</label>
                   <input style={{ ...S.input, maxWidth: 160 }} type="number" value={port}
                     onChange={(e) => setPort(Number(e.target.value))} />
                 </div>
-                <div style={S.warnBox}>⚠️ بعد الإنهاء يجب إعادة تشغيل التطبيق حتى يبدأ خادم الشبكة.</div>
+                <div style={S.warnBox}>{text("⚠️ بعد الإنهاء يجب إعادة تشغيل التطبيق حتى يبدأ خادم الشبكة.", "⚠️ Restart the app after finishing to start the network server.")}</div>
               </div>
             )}
 
             {role === "client" && (
               <div style={S.panel}>
                 <div style={S.field}>
-                  <label style={S.label}>عنوان الجهاز الرئيسي</label>
+                  <label style={S.label}>{text("عنوان الجهاز الرئيسي", "Host device address")}</label>
                   <input style={S.input} value={hostUrl}
                     onChange={(e) => { setHostUrl(e.target.value); setConn("unknown"); }}
                     placeholder={`http://192.168.1.10:${DEFAULT_LAN_PORT}`} />
                 </div>
                 <div style={S.field}>
-                  <label style={S.label}>رمز الإقران</label>
+                  <label style={S.label}>{text("رمز الإقران", "Pairing code")}</label>
                   <input style={S.input} value={token}
                     onChange={(e) => { setToken(e.target.value); setConn("unknown"); }}
-                    placeholder="الرمز الظاهر على الجهاز الرئيسي" />
+                    placeholder={text("الرمز الظاهر على الجهاز الرئيسي", "Code shown on the host device")} />
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <button style={S.btn} onClick={() => void testConnection()} disabled={conn === "checking"}>
-                    {conn === "checking" ? "جارٍ الفحص…" : "اختبار الاتصال"}
+                    {conn === "checking" ? text("جارٍ الفحص…", "Checking…") : text("اختبار الاتصال", "Test connection")}
                   </button>
-                  {conn === "ok" && <span style={{ ...S.badge, background: "#dcfce7", color: "#166534" }}>✅ متصل</span>}
-                  {conn === "bad" && <span style={{ ...S.badge, background: "#fee2e2", color: "#991b1b" }}>❌ تعذّر الوصول</span>}
+                  {conn === "ok" && <span style={{ ...S.badge, background: "#dcfce7", color: "#166534" }}>✅ {text("متصل", "Connected")}</span>}
+                  {conn === "bad" && <span style={{ ...S.badge, background: "#fee2e2", color: "#991b1b" }}>❌ {text("تعذّر الوصول", "Could not reach host")}</span>}
                 </div>
               </div>
             )}
@@ -187,9 +188,9 @@ export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) =>
             {err && <div style={S.errBox}>{err}</div>}
 
             <div style={{ display: "flex", gap: 12, justifyContent: "space-between", marginTop: 20 }}>
-              <button style={S.btnGhost} onClick={() => setStep("mode")} disabled={busy}>→ رجوع</button>
+              <button style={S.btnGhost} onClick={() => setStep("mode")} disabled={busy}>{language === "en" ? "←" : "→"} {text("رجوع", "Back")}</button>
               <button style={S.btnPrimary} onClick={() => void finish()} disabled={busy}>
-                {busy ? "جارٍ الحفظ…" : "إنهاء والمتابعة ←"}
+                {busy ? text("جارٍ الحفظ…", "Saving…") : `${text("إنهاء والمتابعة", "Finish and continue")} ${language === "en" ? "→" : "←"}`}
               </button>
             </div>
           </>
@@ -199,11 +200,11 @@ export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) =>
   );
 }
 
-function RoleCard({ active, icon, title, desc, onClick }: {
-  active: boolean; icon: string; title: string; desc: string; onClick: () => void;
+function RoleCard({ active, icon, title, desc, onClick, language }: {
+  active: boolean; icon: string; title: string; desc: string; onClick: () => void; language: "ar" | "en";
 }) {
   return (
-    <button onClick={onClick} style={{ ...S.roleCard, ...(active ? S.roleCardActive : {}) }}>
+    <button onClick={onClick} style={{ ...S.roleCard, textAlign: language === "en" ? "left" : "right", ...(active ? S.roleCardActive : {}) }}>
       <div style={{ fontSize: 32 }}>{icon}</div>
       <div style={S.roleTitle}>{title}</div>
       <div style={S.roleDesc}>{desc}</div>

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listSalesReturns, getSalesReturn, createSalesReturn, listCashBoxes, listBanks,
   type SalesReturn, type SalesLine, type PaymentMethod, type CashBox, type Bank,
@@ -11,7 +12,9 @@ import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel, EmptyItemsRow,
+  docFormShell, linesPanel, linesScroll, docFormPinned, contentPanel,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -22,10 +25,13 @@ import {
   type DiscType, type DiscFields,
 } from "../lib/discount";
 import { takeSalesReturnPrefill, type SalesReturnPrefill } from "../lib/returnPrefill";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type FLine = SalesLine & DiscFields;
 
 export default function SalesReturnsAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<SalesReturn[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<SalesReturn | null>(null);
@@ -50,8 +56,10 @@ export default function SalesReturnsAdmin() {
 
   function closeForm() { setCreating(false); setPrefill(null); }
 
+  const sel = useRowSelect(rows);
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
+  useDataRefresh(["invoices"], refresh);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function toggleView(id: number) {
@@ -62,50 +70,53 @@ export default function SalesReturnsAdmin() {
   }
 
   return (
+    <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title="مرتجع المبيعات"
-      subtitle={`${rows.length} مرتجع — يتم عكس قيد المبيعات وإرجاع المخزون تلقائياً`}
+      title={text("مرتجع المبيعات", "Sales returns")}
+      subtitle={text(`${rows.length} مرتجع — يتم عكس قيد المبيعات وإرجاع المخزون تلقائياً`, `${rows.length} returns — the sales entry is reversed and stock is restored automatically`)}
       right={
         <button onClick={() => setCreating(true)} disabled={!deps || creating}
           style={{ ...btnPrimary, opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}>
-          + مرتجع مبيعات
+          + {text("مرتجع مبيعات", "Sales return")}
         </button>
       }
     >
       {creating && deps && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <CreateForm deps={deps} initial={prefill} onCancel={closeForm} onDone={() => { closeForm(); void refresh(); }} />
           </div>
         </Card>
       )}
-      <Card>
-        {rows.length === 0 && !creating ? <Empty text="لا توجد مرتجعات" /> : (
+      {rows.length > 0 && !creating && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.returnNo : null}>
+          <ActionBtn label={expandedId === sel.selectedId ? text("إخفاء", "Hide") : text("عرض", "View")} icon="▼" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+        </ActionBar>
+      )}
+      {!creating && <Card>
+        {rows.length === 0 && !creating ? <Empty text={text("لا توجد مرتجعات", "No sales returns")} /> : (
           <Table>
             <thead><tr>
-              <Th>رقم المرتجع</Th><Th>التاريخ</Th><Th>العميل</Th><Th>طريقة الدفع</Th>
-              <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
-              <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 100 }}></Th>
+              <SelectTh />
+              <Th>{text("رقم المرتجع", "Return number")}</Th><Th>{text("التاريخ", "Date")}</Th><Th>{text("العميل", "Customer")}</Th><Th>{text("طريقة الدفع", "Payment method")}</Th>
+              <Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المجموع", "Subtotal")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الضريبة", "Tax")}</Th>
+              <Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</Th>
             </tr></thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
-                    <Td mono>{p.returnNo}</Td><Td>{p.returnDate}</Td><Td>{p.customerName ?? "نقدي/بدون عميل"}</Td>
+                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
+                    <Td mono>{p.returnNo}</Td><Td>{p.returnDate}</Td><Td>{p.customerName ?? text("نقدي/بدون عميل", "Cash / no customer")}</Td>
                     <Td><PayBadge m={p.paymentMethod} /></Td>
                     <Td num>{fmt(p.subtotal)}</Td><Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
-                    <Td>
-                      <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
-                        style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                        {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                      </button>
-                    </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
                       <Td colSpan={8 as any}>
-                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
+                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>{text("... جاري التحميل", "Loading…")}</div> : (
                           <ReturnDetail r={expandedDetail} />
                         )}
                       </Td>
@@ -120,43 +131,51 @@ export default function SalesReturnsAdmin() {
           <Pagination total={rows.length} page={page} pageSize={pageSize}
             onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
         )}
-      </Card>
+      </Card>}
     </Page>
+    </div>
   );
 }
 
 function PayBadge({ m }: { m: PaymentMethod }) {
-  const map = { credit: { l: "آجل", c: "#9a3412" }, cash: { l: "نقدي", c: "#15803d" }, bank: { l: "بنك", c: "#1e40af" } } as const;
+  const language = useUiLanguage();
+  const map = {
+    credit: { ar: "آجل", en: "Credit", c: "#9a3412" },
+    cash: { ar: "نقدي", en: "Cash", c: "#15803d" },
+    bank: { ar: "بنك", en: "Bank", c: "#1e40af" },
+  } as const;
   const x = map[m];
-  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{x.l}</span>;
+  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{language === "en" ? x.en : x.ar}</span>;
 }
 
 function ReturnDetail({ r }: { r: SalesReturn }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const disc = getDocDiscount("sales_return", r.id);
   const discTotal = disc ? (disc.lineDiscountTotal + disc.headerDiscountValue) : 0;
   return (
     <div style={{ padding: 12 }}>
       <Table>
-        <thead><tr><Th>الصنف</Th><Th>الوحدة</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>سعر الوحدة</Th><Th style={{ textAlign: "left" }}>الإجمالي</Th></tr></thead>
+        <thead><tr><Th>{text("الصنف", "Item")}</Th><Th>{text("الوحدة", "Unit")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الكمية", "Quantity")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("سعر الوحدة", "Unit price")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</Th></tr></thead>
         <tbody>
           {r.lines.map((l, i) => (
             <tr key={l.id ?? i}><Td>{l.itemName}</Td><Td>{l.uomName ?? ""}</Td><Td num>{l.qty}</Td><Td num>{fmt(l.unitPrice)}</Td><Td num>{fmt(l.lineTotal)}</Td></tr>
           ))}
           {disc && discTotal > 0.00001 && (
             <>
-              <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={4 as any}>الإجمالي قبل الخصم</Td><Td num>{fmt(disc.grossSubtotal)}</Td></tr>
-              <tr style={{ background: "#fff", color: "#b45309" }}><Td colSpan={4 as any}>الخصم</Td><Td num>− {fmt(discTotal)}</Td></tr>
+              <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={4 as any}>{text("الإجمالي قبل الخصم", "Gross subtotal")}</Td><Td num>{fmt(disc.grossSubtotal)}</Td></tr>
+              <tr style={{ background: "#fff", color: "#b45309" }}><Td colSpan={4 as any}>{text("الخصم", "Discount")}</Td><Td num>− {fmt(discTotal)}</Td></tr>
             </>
           )}
           {disc?.currencyCode && disc.currencyCode !== baseCurrencyCode() && (
-            <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={4 as any}>العملة · سعر الصرف</Td><Td num>{disc.currencyCode} · {fmt(disc.exchangeRate ?? 1)}</Td></tr>
+            <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={4 as any}>{text("العملة · سعر الصرف", "Currency · exchange rate")}</Td><Td num>{disc.currencyCode} · {fmt(disc.exchangeRate ?? 1)}</Td></tr>
           )}
-          <tr style={{ background: "#f1f5f9", fontWeight: 700 }}><Td colSpan={4 as any}>الإجمالي</Td><Td num>{fmt(r.grandTotal)}</Td></tr>
+          <tr style={{ background: "#f1f5f9", fontWeight: 700 }}><Td colSpan={4 as any}>{text("الإجمالي", "Grand total")}</Td><Td num>{fmt(r.grandTotal)}</Td></tr>
         </tbody>
       </Table>
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button onClick={() => void printSalesDoc("a4", returnToPrintDoc(r))} style={btnSecondary}>🖨️ طباعة A4</button>
-        <button onClick={() => void printSalesDoc("thermal", returnToPrintDoc(r))} style={btnSecondary}>🧾 طباعة حرارية</button>
+        <button onClick={() => void printSalesDoc("a4", returnToPrintDoc(r))} style={btnSecondary}>🖨️ {text("طباعة A4", "Print A4")}</button>
+        <button onClick={() => void printSalesDoc("thermal", returnToPrintDoc(r))} style={btnSecondary}>🧾 {text("طباعة حرارية", "Thermal print")}</button>
       </div>
     </div>
   );
@@ -184,6 +203,9 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   initial?: SalesReturnPrefill | null;
   onCancel: () => void; onDone: () => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
+  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(todayStr());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "cash");
@@ -200,13 +222,13 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
-    itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
+    itemId: 0, qty: 1, unitPrice: 0, vatRate: 0, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
   const [lines, setLines] = useState<FLine[]>(() =>
     initial?.lines?.length
       ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
-      : [blankLine()],
+      : [],
   );
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
@@ -227,7 +249,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         const it = deps.items.find((x) => x.id === Number(patch.itemId));
         if (it) {
           if (!next.unitPrice) next.unitPrice = it.salePrice ?? 0;
-          next.vatRate = it.vatRate ?? next.vatRate;
+          next.vatRate = it.vatRate ?? 0;
           if (it.uomId != null) {
             const u = uoms.find((x) => x.id === it.uomId);
             if (u) { next.uomId = u.id; next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
@@ -277,15 +299,15 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
     setBusy(true); setErr(null); setIssues([]);
     try {
       const problems = collectDocIssues([
-        { label: "طريقة الدفع", ok: !!paymentMethod },
-        { label: "العميل", ok: paymentMethod !== "credit" || !!customerId },
-        { label: "العملة", ok: !!currency },
-        ...(branches.length ? [{ label: "الفرع", ok: branchId !== "" }] : []),
-        { label: "المستودع", ok: !!warehouseId },
-      ], lines.map((l) => ({ itemId: l.itemId, uomId: l.uomId ?? null, price: l.unitPrice, qty: l.qty })), "سعر البيع");
+        { label: text("طريقة الدفع", "Payment method"), ok: !!paymentMethod },
+        { label: text("العميل", "Customer"), ok: paymentMethod !== "credit" || !!customerId },
+        { label: text("العملة", "Currency"), ok: !!currency },
+        ...(branches.length ? [{ label: text("الفرع", "Branch"), ok: branchId !== "" }] : []),
+        { label: text("المستودع", "Warehouse"), ok: !!warehouseId },
+      ], lines.map((l) => ({ itemId: l.itemId, uomId: l.uomId ?? null, price: l.unitPrice, qty: l.qty })), text("سعر البيع", "Sales price"));
       if (problems.length) { setIssues(problems); setBusy(false); return; }
       const cleaned = lines.filter((l) => l.itemId && (l.qty || 0) > 0);
-      if (currency !== baseCurrencyCode() && !(exchangeRate > 0)) throw new Error("أدخل سعر صرف صحيح للعملة الأجنبية");
+      if (currency !== baseCurrencyCode() && !(exchangeRate > 0)) throw new Error(text("أدخل سعر صرف صحيح للعملة الأجنبية", "Enter a valid exchange rate for the foreign currency."));
       // Fold the discount into each unit price; Rust recomputes totals from
       // qty × unitPrice so VAT lands on the net base (ZATCA-correct).
       const r = computeDiscount(
@@ -315,88 +337,67 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         currencyCode: currency, exchangeRate: effRate,
       });
       onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save sales return.")); }
     finally { setBusy(false); }
   }
 
   return (
-    <div>
-      <h3 style={{ marginTop: 0 }}>مرتجع مبيعات جديد</h3>
+    <div style={docFormShell}>
+      <h3 style={{ marginTop: 0, flexShrink: 0 }}>{text("مرتجع مبيعات جديد", "New sales return")}</h3>
+      <style>{`.zlines-wrap thead th{position:sticky;top:0;z-index:2;}`}</style>
+      <FormTabs active={activeTab} onChange={setActiveTab} tabs={[
+        { key: "basic", label: text("البيانات الأساسية", "Basic information") },
+        { key: "lines", label: `${text("بنود الأصناف", "Items")}${lines.length ? ` (${lines.length})` : ""}` },
+        { key: "payments", label: text("المدفوعات", "Payments") },
+      ]} />
+
+      <div style={contentPanel(activeTab, "basic")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
-        <Field label="العميل *">
+        <Field label={text("العميل *", "Customer *")}>
           <SearchCombobox
             value={customerId}
             onChange={(v) => setCustomerId(Number(v))}
             style={input}
             options={[
-              { value: 0, label: "— بدون عميل —" },
+              { value: 0, label: text("— بدون عميل —", "— No customer —") },
               ...deps.customers.map((c) => ({ value: c.id, label: c.nameAr })),
             ]}
           />
         </Field>
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-        <Field label="طريقة الاسترداد">
-          <SearchCombobox
-            value={paymentMethod}
-            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
-            style={input}
-            options={[
-              { value: "cash", label: "نقدي" },
-              { value: "bank", label: "بنك" },
-              { value: "credit", label: "آجل (تخفيض الذمة)" },
-            ]}
-          />
-        </Field>
-        <Field label="المستودع">
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+        <Field label={text("المستودع", "Warehouse")}>
           <SearchCombobox
             value={warehouseId}
             onChange={(v) => setWarehouseId(Number(v))}
             style={input}
             options={[
-              { value: 0, label: "— المستودع الافتراضي —" },
+              { value: 0, label: text("— المستودع الافتراضي —", "— Default warehouse —") },
               ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
             ]}
           />
         </Field>
-        <Field label="الضريبة">
+        <Field label={text("الضريبة", "Tax")}>
           <SearchCombobox value={taxId} onChange={onSelectTax} options={taxOptions} style={input} />
         </Field>
-        <Field label="الفرع">
+        <Field label={text("الفرع", "Branch")}>
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
         </Field>
-        <Field label="مركز التكلفة">
+        <Field label={text("مركز التكلفة", "Cost center")}>
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
-        {paymentMethod === "cash" && (
-          <Field label="الخزينة">
-            <SearchCombobox
-              value={cashBoxId ?? ""}
-              onChange={(v) => setCashBoxId(Number(v) || null)}
-              style={input}
-              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
-            />
-          </Field>
-        )}
-        {paymentMethod === "bank" && (
-          <Field label="البنك">
-            <SearchCombobox
-              value={bankId ?? ""}
-              onChange={(v) => setBankId(Number(v) || null)}
-              style={input}
-              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
-            />
-          </Field>
-        )}
+      </div>
       </div>
 
-      <div style={{ overflowX: "auto" }}>
+      <div style={linesPanel(activeTab)}>
+      <div className="zlines-wrap" style={linesScroll}>
       <Table style={{ minWidth: 1250 }}>
         <thead><tr>
-          <Th style={{ minWidth: 240 }}>الصنف</Th><Th style={{ width: 130 }}>الوحدة</Th><Th style={{ width: 180 }}>الكمية</Th><Th style={{ width: 240 }}>سعر الوحدة</Th><Th style={{ width: 170 }}>الخصم</Th><Th style={{ width: 80 }}>ض. %</Th>
-          <Th style={{ width: 120, textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 40 }}></Th>
+          <Th style={{ minWidth: 240 }}>{text("الصنف", "Item")}</Th><Th style={{ width: 130 }}>{text("الوحدة", "Unit")}</Th><Th style={{ width: 180 }}>{text("الكمية", "Quantity")}</Th><Th style={{ width: 240 }}>{text("سعر الوحدة", "Unit price")}</Th><Th style={{ width: 170 }}>{text("الخصم", "Discount")}</Th><Th style={{ width: 80 }}>{text("ض. %", "Tax %")}</Th>
+          <Th style={{ width: 120, textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</Th><Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
+          {lines.length === 0 && <EmptyItemsRow colSpan={8} />}
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>
@@ -405,7 +406,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
                   onChange={(v) => setLine(i, { itemId: Number(v) })}
                   style={input}
                   options={[
-                    { value: 0, label: "— اختر —" },
+                    { value: 0, label: text("— اختر —", "— Select —") },
                     ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
                   ]}
                 />
@@ -429,15 +430,58 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         </tbody>
       </Table>
       </div>
-      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
+      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8, flexShrink: 0 }}>+ {text("سطر", "Line")}</button>
+      <div style={docFormPinned}>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
-      <Field label="ملاحظات" style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
+      </div>
+      </div>
+
+      <div style={contentPanel(activeTab, "payments")}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label={text("طريقة الاسترداد", "Refund method")}>
+          <SearchCombobox
+            value={paymentMethod}
+            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            style={input}
+            options={[
+              { value: "cash", label: text("نقدي", "Cash") },
+              { value: "bank", label: text("بنك", "Bank") },
+              { value: "credit", label: text("آجل (تخفيض الذمة)", "Credit (reduce receivable)") },
+            ]}
+          />
+        </Field>
+        {paymentMethod === "cash" && (
+          <Field label={text("الخزينة", "Cashbox")}>
+            <SearchCombobox
+              value={cashBoxId ?? ""}
+              onChange={(v) => setCashBoxId(Number(v) || null)}
+              style={input}
+              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Field>
+        )}
+        {paymentMethod === "bank" && (
+          <Field label={text("البنك", "Bank")}>
+            <SearchCombobox
+              value={bankId ?? ""}
+              onChange={(v) => setBankId(Number(v) || null)}
+              style={input}
+              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          </Field>
+        )}
+      </div>
+      <Field label={text("ملاحظات", "Notes")} style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
+      </div>
+
+      <div style={docFormPinned}>
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
+        <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
+        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : text("حفظ وترحيل", "Save and post")}</button>
       </Actions>
+      </div>
     </div>
   );
 }

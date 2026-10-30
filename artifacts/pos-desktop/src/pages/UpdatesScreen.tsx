@@ -207,6 +207,10 @@ export default function UpdatesScreen({ baseUrl }: Props) {
         <div>
           <h1 style={S.title}>التحديثات</h1>
           <p style={S.subtitle}>تحقّق من توفّر إصدار جديد من البرنامج وثبّته بضغطة واحدة</p>
+          <p style={S.subtitle}>
+            🛡️ تُؤخذ نسخة احتياطية تلقائية من بياناتك قبل كل تحديث، وبياناتك محفوظة في مجلد منفصل
+            لا يتأثر بالتثبيت أو إزالة النسخة القديمة.
+          </p>
         </div>
         <button style={S.refreshBtn} onClick={check} disabled={loading || installing}>
           {loading ? "⏳ جارٍ التحقق…" : "🔄 إعادة الفحص"}
@@ -380,8 +384,8 @@ export default function UpdatesScreen({ baseUrl }: Props) {
             <ol style={S.installList}>
               <li>يبدأ التنزيل داخل البرنامج مع شريط تقدّم مباشر</li>
               <li>يتم التحقّق من سلامة الملف (SHA-256)</li>
-              <li>يُغلق التطبيق ويبدأ معالج Windows في تثبيت الإصدار الجديد</li>
-              <li>افتح التطبيق من جديد — بياناتك المحلية محفوظة</li>
+              <li>يُغلق التطبيق ويُكمل معالج Windows التثبيت</li>
+              <li>يُفتح البرنامج تلقائيًا بعد نجاح التثبيت، وبياناتك المحلية محفوظة</li>
             </ol>
           </div>
         </section>
@@ -397,7 +401,7 @@ export default function UpdatesScreen({ baseUrl }: Props) {
 
 const S = {
   wrap: {
-    padding: 24, maxWidth: 1000, margin: "0 auto",
+    padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const,
     fontFamily: "'Segoe UI', 'Cairo', system-ui, sans-serif",
   } as React.CSSProperties,
   header: {

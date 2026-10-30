@@ -6,10 +6,12 @@ import {
 import { listBranches, type Branch } from "../lib/branches";
 import { listWarehouseGroups, type WarehouseGroup } from "../lib/warehouseGroups";
 import { listAccounts, type Account } from "../lib/accounting";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   Page, Card, Empty, SearchCombobox,
-  input, btnPrimary, btnSecondary,
+  input, btnPrimary, btnSecondary, ExportButtons,
 } from "./_adminUi";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 const emptyInput: WarehouseInput = {
   code: "", name: "", nameEn: null, address: null,
@@ -52,6 +54,8 @@ function nextWarehouseCode(rows: Warehouse[]): string {
 }
 
 export default function WarehousesAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<Warehouse[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [groups, setGroups] = useState<WarehouseGroup[]>([]);
@@ -62,6 +66,7 @@ export default function WarehousesAdmin() {
   const [err, setErr] = useState<string | null>(null);
 
   async function refresh() { setRows(await listWarehouses()); }
+  useDataRefresh(["warehouses"], refresh);
   useEffect(() => {
     void refresh();
     void (async () => {
@@ -72,22 +77,22 @@ export default function WarehousesAdmin() {
 
   // Dropdown option sets (built once per data refresh).
   const branchOptions = useMemo(
-    () => [{ value: "", label: "— بدون فرع —" },
+    () => [{ value: "", label: text("— بدون فرع —", "— No branch —") },
       ...branches.map((b) => ({ value: b.id, label: b.nameAr, hint: b.code }))],
-    [branches],
+    [branches, language],
   );
   const groupOptions = useMemo(
-    () => [{ value: "", label: "— بدون مجموعة —" },
+    () => [{ value: "", label: text("— بدون مجموعة —", "— No group —") },
       ...groups.map((g) => ({ value: g.id, label: g.nameAr, hint: g.code }))],
-    [groups],
+    [groups, language],
   );
   // Inventory GL account = leaf asset accounts (web filters filterTypes=["asset"]).
   const accountOptions = useMemo(
-    () => [{ value: "", label: "— بدون حساب —" },
+    () => [{ value: "", label: text("— بدون حساب —", "— No account —") },
       ...accounts
         .filter((a) => a.type === "asset" && a.isLeaf)
         .map((a) => ({ value: a.id, label: a.nameAr, hint: a.code }))],
-    [accounts],
+    [accounts, language],
   );
 
   const branchName = (id: number | null) => branches.find((b) => b.id === id)?.nameAr ?? null;
@@ -115,21 +120,21 @@ export default function WarehousesAdmin() {
   async function save() {
     if (!edit) return;
     const f = edit.data;
-    if (!f.code.trim() || !f.name.trim()) { setErr("الكود والاسم بالعربية مطلوبان"); setTab("basic"); return; }
+    if (!f.code.trim() || !f.name.trim()) { setErr(text("الكود والاسم بالعربية مطلوبان", "Code and Arabic name are required.")); setTab("basic"); return; }
     setBusy(true); setErr(null);
     try {
       if (edit.mode === "new") await createWarehouse(f);
       else await updateWarehouse(edit.id, f);
       setEdit(null);
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل الحفظ", "Could not save warehouse.")); }
     finally { setBusy(false); }
   }
 
   async function remove(w: Warehouse) {
-    if (!confirm(`حذف المخزن "${w.name}"؟`)) return;
+    if (!confirm(`${text("حذف المخزن", "Delete warehouse")} "${w.name}"?`)) return;
     try { await deleteWarehouse(w.id); await refresh(); }
-    catch (e: any) { alert(e?.message ?? "فشل الحذف"); }
+    catch (e: any) { alert(e?.message ?? text("فشل الحذف", "Could not delete warehouse.")); }
   }
 
   function setField<K extends keyof WarehouseInput>(k: K, v: WarehouseInput[K]) {
@@ -141,21 +146,36 @@ export default function WarehousesAdmin() {
 
   return (
     <Page
-      title="المخازن"
-      subtitle="إدارة مخازن المنشأة — الكود، الأسماء، المجموعة، الفرع، الموقع وسياسة الرصيد السالب والحساب المحاسبي."
+      title={text("المخازن", "Warehouses")}
+      subtitle={text("إدارة مخازن المنشأة — الكود، الأسماء، المجموعة، الفرع، الموقع وسياسة الرصيد السالب والحساب المحاسبي.", "Manage company warehouses, codes, names, groups, branches, locations, negative-stock policy, and ledger accounts.")}
       right={
-        <button
-          onClick={startNew}
-          disabled={!!edit}
-          style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}
-        >+ إضافة مخزن</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <ExportButtons<typeof rows[number]>
+            title={text("المخازن", "Warehouses")}
+            filenameBase="warehouses"
+            rows={rows}
+            columns={[
+              { header: text("الكود", "Code"), cell: (w) => w.code ?? "" },
+              { header: text("الاسم", "Name"), cell: (w) => w.name },
+              { header: text("المجموعة", "Group"), cell: (w) => groupName(w.groupId) ?? "" },
+              { header: text("الفرع", "Branch"), cell: (w) => branchName(w.branchId) ?? "" },
+              { header: text("الموقع", "Location"), cell: (w) => [w.city, w.region].filter(Boolean).join(" — ") || (w.address ?? "") },
+              { header: text("الحالة", "Status"), cell: (w) => (w.is_active ? text("نشط", "Active") : text("موقوف", "Inactive")) },
+            ]}
+          />
+          <button
+            onClick={startNew}
+            disabled={!!edit}
+            style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}
+          >+ {text("إضافة مخزن", "Add warehouse")}</button>
+        </div>
       }
     >
       {/* Summary strip */}
       <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-        <StatCard label="إجمالي المخازن" value={rows.length} accent="#2563eb" />
-        <StatCard label="نشط" value={activeCount} accent="#16a34a" />
-        <StatCard label="موقوف" value={rows.length - activeCount} accent="#94a3b8" />
+        <StatCard label={text("إجمالي المخازن", "Total warehouses")} value={rows.length} accent="#2563eb" />
+        <StatCard label={text("نشط", "Active")} value={activeCount} accent="#16a34a" />
+        <StatCard label={text("موقوف", "Inactive")} value={rows.length - activeCount} accent="#94a3b8" />
       </div>
 
       {edit?.mode === "new" && (
@@ -167,7 +187,7 @@ export default function WarehousesAdmin() {
       )}
 
       <Card>
-        {rows.length === 0 && !edit ? <Empty text="لا توجد مخازن بعد — ابدأ بإضافة مخزن." /> : (
+        {rows.length === 0 && !edit ? <Empty text={text("لا توجد مخازن بعد — ابدأ بإضافة مخزن.", "No warehouses yet — add one to get started.")} /> : (
           <div style={{ display: "grid", gap: 10 }}>
             {rows.map((w) => (
               edit?.mode === "edit" && edit.id === w.id ? (
@@ -179,11 +199,14 @@ export default function WarehousesAdmin() {
               ) : (
                 <div
                   key={w.id}
+                  onDoubleClick={() => { if (!edit) startEdit(w); }}
+                  title={edit ? undefined : text("نقر مزدوج للتعديل", "Double-click to edit")}
                   style={{
                     display: "flex", alignItems: "center", gap: 14,
                     padding: "12px 14px", borderRadius: 10,
                     border: "1px solid #e2e8f0", background: "#fff",
                     opacity: edit ? 0.55 : 1,
+                    cursor: edit ? "default" : "pointer",
                     transition: "border-color .15s, box-shadow .15s",
                   }}
                 >
@@ -202,10 +225,10 @@ export default function WarehousesAdmin() {
                         <span style={{ fontSize: 12.5, color: "#94a3b8" }}>{w.nameEn}</span>
                       )}
                       {w.is_default && (
-                        <span style={{ ...pill, background: "#fef3c7", color: "#92400e" }}>★ افتراضي</span>
+                        <span style={{ ...pill, background: "#fef3c7", color: "#92400e" }}>★ {text("افتراضي", "Default")}</span>
                       )}
                       {w.allowNegative && (
-                        <span style={{ ...pill, background: "#fef2f2", color: "#b91c1c" }}>رصيد سالب مسموح</span>
+                        <span style={{ ...pill, background: "#fef2f2", color: "#b91c1c" }}>{text("رصيد سالب مسموح", "Negative stock allowed")}</span>
                       )}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 5, flexWrap: "wrap" }}>
@@ -219,7 +242,7 @@ export default function WarehousesAdmin() {
                       <span style={{ fontSize: 13, color: "#64748b" }}>
                         {[w.city, w.region].filter(Boolean).join(" — ").trim()
                           ? `📍 ${[w.city, w.region].filter(Boolean).join(" — ")}`
-                          : (w.address?.trim() ? `📍 ${w.address}` : "بدون موقع")}
+                          : (w.address?.trim() ? `📍 ${w.address}` : text("بدون موقع", "No location"))}
                       </span>
                     </div>
                   </div>
@@ -234,7 +257,7 @@ export default function WarehousesAdmin() {
                       width: 7, height: 7, borderRadius: 999,
                       background: w.is_active ? "#22c55e" : "#cbd5e1",
                     }} />
-                    {w.is_active ? "نشط" : "موقوف"}
+                    {w.is_active ? text("نشط", "Active") : text("موقوف", "Inactive")}
                   </span>
 
                   {/* Actions */}
@@ -242,12 +265,12 @@ export default function WarehousesAdmin() {
                     <button
                       onClick={() => startEdit(w)} disabled={!!edit}
                       style={{ ...iconBtn, color: "#2563eb" }}
-                    >تعديل</button>
+                    >{text("تعديل", "Edit")}</button>
                     {!w.is_default && (
                       <button
                         onClick={() => remove(w)} disabled={!!edit}
                         style={{ ...iconBtn, color: "#dc2626" }}
-                      >حذف</button>
+                      >{text("حذف", "Delete")}</button>
                     )}
                   </div>
                 </div>
@@ -274,10 +297,10 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
   );
 }
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "basic", label: "أساسي" },
-  { key: "location", label: "الموقع والمخزون" },
-  { key: "accounts", label: "المحاسبة" },
+const TABS: { key: TabKey; labelAr: string; labelEn: string }[] = [
+  { key: "basic", labelAr: "أساسي", labelEn: "Basics" },
+  { key: "location", labelAr: "الموقع والمخزون", labelEn: "Location & stock" },
+  { key: "accounts", labelAr: "المحاسبة", labelEn: "Accounting" },
 ];
 
 function EditForm({
@@ -293,6 +316,8 @@ function EditForm({
   groupOptions: { value: string | number; label: string; hint?: string }[];
   accountOptions: { value: string | number; label: string; hint?: string }[];
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const field: CSSProperties = { ...input, padding: "9px 11px" };
   const lbl: CSSProperties = { fontSize: 12.5, fontWeight: 600, color: "#475569", marginBottom: 5, display: "block" };
   const check: CSSProperties = {
@@ -302,13 +327,13 @@ function EditForm({
   const grid: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 };
 
   return (
-    <div style={{
+    <div dir={language === "en" ? "ltr" : "rtl"} style={{
       marginBottom: 16, padding: 18, borderRadius: 12,
       border: `1px solid ${isNew ? "#bbf7d0" : "#bfdbfe"}`,
       background: isNew ? "#f0fdf4" : "#eff6ff",
     }}>
       <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 14, color: "#0f172a" }}>
-        {isNew ? "إضافة مخزن جديد" : "تعديل المخزن"}
+        {isNew ? text("إضافة مخزن جديد", "Add warehouse") : text("تعديل المخزن", "Edit warehouse")}
       </div>
 
       {/* Tabs */}
@@ -325,7 +350,7 @@ function EditForm({
               color: tab === t.key ? "#2563eb" : "#64748b",
               borderBottom: `2px solid ${tab === t.key ? "#2563eb" : "transparent"}`,
             }}
-          >{t.label}</button>
+          >{text(t.labelAr, t.labelEn)}</button>
         ))}
       </div>
 
@@ -333,44 +358,44 @@ function EditForm({
         <>
           <div style={grid}>
             <div>
-              <label style={lbl}>الكود *</label>
+              <label style={lbl}>{text("الكود *", "Code *")}</label>
               <input autoFocus value={data.code} onChange={(e) => setField("code", e.target.value)} style={field} placeholder="مثال: WH-001" />
             </div>
             <div>
-              <label style={lbl}>الاسم بالعربية *</label>
-              <input value={data.name} onChange={(e) => setField("name", e.target.value)} style={field} placeholder="اسم المخزن" />
+              <label style={lbl}>{text("الاسم بالعربية *", "Arabic name *")}</label>
+              <input value={data.name} onChange={(e) => setField("name", e.target.value)} style={field} placeholder={text("اسم المخزن", "Warehouse name")} />
             </div>
             <div>
-              <label style={lbl}>الاسم بالإنجليزية</label>
+              <label style={lbl}>{text("الاسم بالإنجليزية", "English name")}</label>
               <input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value || null)} style={field} placeholder="Warehouse name" dir="ltr" />
             </div>
             <div>
-              <label style={lbl}>المجموعة</label>
+              <label style={lbl}>{text("المجموعة", "Group")}</label>
               <SearchCombobox
                 value={data.groupId ?? ""}
                 onChange={(v) => setField("groupId", v === "" ? null : Number(v))}
                 options={groupOptions}
-                placeholder="— بدون مجموعة —"
+                placeholder={text("— بدون مجموعة —", "— No group —")}
               />
             </div>
             <div>
-              <label style={lbl}>الفرع</label>
+              <label style={lbl}>{text("الفرع", "Branch")}</label>
               <SearchCombobox
                 value={data.branchId ?? ""}
                 onChange={(v) => setField("branchId", v === "" ? null : Number(v))}
                 options={branchOptions}
-                placeholder="— بدون فرع —"
+                placeholder={text("— بدون فرع —", "— No branch —")}
               />
             </div>
           </div>
           <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
             <label style={check}>
               <input type="checkbox" checked={!!data.is_default} onChange={(e) => setField("is_default", e.target.checked)} style={{ width: 16, height: 16 }} />
-              مخزن افتراضي
+              {text("مخزن افتراضي", "Default warehouse")}
             </label>
             <label style={check}>
               <input type="checkbox" checked={data.is_active !== false} onChange={(e) => setField("is_active", e.target.checked)} style={{ width: 16, height: 16 }} />
-              نشط
+              {text("نشط", "Active")}
             </label>
           </div>
         </>
@@ -380,34 +405,34 @@ function EditForm({
         <>
           <div style={grid}>
             <div>
-              <label style={lbl}>المدينة</label>
-              <input value={data.city ?? ""} onChange={(e) => setField("city", e.target.value || null)} style={field} placeholder="المدينة" />
+              <label style={lbl}>{text("المدينة", "City")}</label>
+              <input value={data.city ?? ""} onChange={(e) => setField("city", e.target.value || null)} style={field} placeholder={text("المدينة", "City")} />
             </div>
             <div>
-              <label style={lbl}>المنطقة</label>
-              <input value={data.region ?? ""} onChange={(e) => setField("region", e.target.value || null)} style={field} placeholder="المنطقة" />
+              <label style={lbl}>{text("المنطقة", "Region")}</label>
+              <input value={data.region ?? ""} onChange={(e) => setField("region", e.target.value || null)} style={field} placeholder={text("المنطقة", "Region")} />
             </div>
             <div style={{ gridColumn: "1 / -1" }}>
-              <label style={lbl}>العنوان</label>
-              <input value={data.address ?? ""} onChange={(e) => setField("address", e.target.value || null)} style={field} placeholder="عنوان المخزن (اختياري)" />
+              <label style={lbl}>{text("العنوان", "Address")}</label>
+              <input value={data.address ?? ""} onChange={(e) => setField("address", e.target.value || null)} style={field} placeholder={text("عنوان المخزن (اختياري)", "Warehouse address (optional)")} />
             </div>
           </div>
           <div style={{ marginTop: 14 }}>
             <label style={{ ...check, display: "inline-flex" }}>
               <input type="checkbox" checked={!!data.allowNegative} onChange={(e) => setField("allowNegative", e.target.checked)} style={{ width: 16, height: 16 }} />
-              السماح بالرصيد السالب
+              {text("السماح بالرصيد السالب", "Allow negative stock")}
             </label>
           </div>
           {data.allowNegative && (
             <div style={{ ...grid, marginTop: 14 }}>
               <div>
-                <label style={lbl}>حد الرصيد السالب (اختياري)</label>
+                <label style={lbl}>{text("حد الرصيد السالب (اختياري)", "Negative stock limit (optional)")}</label>
                 <input
                   type="number" step="0.01"
                   value={data.negativeLimit ?? ""}
                   onChange={(e) => setField("negativeLimit", e.target.value === "" ? null : Number(e.target.value))}
                   style={field}
-                  placeholder="بدون حد"
+                  placeholder={text("بدون حد", "No limit")}
                 />
               </div>
             </div>
@@ -418,12 +443,12 @@ function EditForm({
       {tab === "accounts" && (
         <div style={grid}>
           <div>
-            <label style={lbl}>حساب المخزون (أصول)</label>
+            <label style={lbl}>{text("حساب المخزون (أصول)", "Inventory account (asset)")}</label>
             <SearchCombobox
               value={data.accountId ?? ""}
               onChange={(v) => setField("accountId", v === "" ? null : Number(v))}
               options={accountOptions}
-              placeholder="— بدون حساب —"
+              placeholder={text("— بدون حساب —", "— No account —")}
             />
           </div>
         </div>
@@ -435,8 +460,8 @@ function EditForm({
         </div>
       )}
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <button onClick={onSave} disabled={busy} style={btnPrimary}>{busy ? "جارٍ الحفظ..." : "حفظ"}</button>
-        <button onClick={onCancel} disabled={busy} style={btnSecondary}>إلغاء</button>
+        <button onClick={onSave} disabled={busy} style={btnPrimary}>{busy ? text("جارٍ الحفظ...", "Saving…") : text("حفظ", "Save")}</button>
+        <button onClick={onCancel} disabled={busy} style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
       </div>
     </div>
   );

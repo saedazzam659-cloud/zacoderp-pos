@@ -15,19 +15,22 @@ import { generateZatcaQr } from "../lib/zatca";
 import { isZatcaCountry } from "../lib/zatcaBridge";
 import { useTaxSettings, computeTotals } from "../lib/taxSettings";
 import { useCurrencySymbol } from "../lib/currency";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
 type Props = { companyName?: string; vatNumber?: string; cashierName?: string };
 
 export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", cashierName }: Props) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const sym = useCurrencySymbol();
   const [invoices, setInvoices] = useState<PendingInvoice[]>([]);
   const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<{ inv: PendingInvoice; payload: OfflineInvoicePayload } | null>(null);
   const [lines, setLines] = useState<Array<{ itemId: number; nameAr: string; unitPrice: number; vatRate: number; qty: number; refundQty: number }>>([]);
-  const DEFAULT_RETURN_REASON = "إرجاع من العميل";
-  const [reason, setReason] = useState(DEFAULT_RETURN_REASON);
+  const defaultReturnReason = text("إرجاع من العميل", "Customer return");
+  const [reason, setReason] = useState(defaultReturnReason);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [lastReturn, setLastReturn] = useState<string | null>(null);
@@ -48,7 +51,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
       // (e.g. a host build older than the one that exposes list_all_invoices).
       setToast({
         kind: "err",
-        text: `تعذّر تحميل الفواتير: ${e?.message ?? e}`,
+        text: `${text("تعذّر تحميل الفواتير:", "Could not load invoices:")} ${e?.message ?? e}`,
       });
     }
   }
@@ -96,13 +99,13 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
     setToast(null);
     // Guard #1: never let a credit note get a credit note.
     if (inv.invoiceNo.startsWith("RET-")) {
-      setToast({ kind: "err", text: "لا يمكن إرجاع فاتورة مرتجع" });
+      setToast({ kind: "err", text: text("لا يمكن إرجاع فاتورة مرتجع", "A return invoice cannot be returned again.") });
       return;
     }
     // Guard #2: one credit note per original invoice — re-check at click time
     // in case another tab/operation created one since the last refresh.
     if (returnedInvoiceNos.has(inv.invoiceNo)) {
-      setToast({ kind: "err", text: `سبق إرجاع الفاتورة ${inv.invoiceNo} — غير مسموح بمرتجع آخر عليها` });
+      setToast({ kind: "err", text: `${text("سبق إرجاع الفاتورة", "Invoice already returned")} ${inv.invoiceNo} — ${text("غير مسموح بمرتجع آخر عليها", "another return is not allowed")}` });
       return;
     }
     try {
@@ -116,10 +119,10 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
           payloadJson = arr.find((i) => i.id === inv.id)?.payloadJson;
         } catch { /* ignore */ }
       }
-      if (!payloadJson) throw new Error("لم يُعثر على بيانات الفاتورة");
+      if (!payloadJson) throw new Error(text("لم يُعثر على بيانات الفاتورة", "Invoice data was not found."));
       const payload = JSON.parse(payloadJson) as OfflineInvoicePayload;
       if ((payload as any).kind === "return") {
-        throw new Error("لا يمكن إرجاع فاتورة مرتجع");
+        throw new Error(text("لا يمكن إرجاع فاتورة مرتجع", "A return invoice cannot be returned again."));
       }
       setPicked({ inv, payload });
       setLines(payload.lines.map((l) => ({
@@ -127,7 +130,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
         qty: l.qty, refundQty: l.qty,
       })));
     } catch (e: any) {
-      setToast({ kind: "err", text: e?.message ?? "فشل تحميل الفاتورة" });
+      setToast({ kind: "err", text: e?.message ?? text("فشل تحميل الفاتورة", "Could not load invoice.") });
     }
   }
 
@@ -141,10 +144,10 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
   async function submitReturn() {
     if (!picked) return;
     const refundLines = lines.filter((l) => l.refundQty > 0);
-    if (refundLines.length === 0) { setToast({ kind: "err", text: "حدد كمية على الأقل لإرجاعها" }); return; }
+    if (refundLines.length === 0) { setToast({ kind: "err", text: text("حدد كمية على الأقل لإرجاعها", "Select at least one quantity to return.") }); return; }
     // Reason defaults to DEFAULT_RETURN_REASON on mount; only block if user
     // explicitly cleared it.
-    const finalReason = reason.trim() || DEFAULT_RETURN_REASON;
+    const finalReason = reason.trim() || defaultReturnReason;
     // Printer is OPTIONAL — record the return either way. We try to print
     // only if a printer is configured; failure to print does not roll back
     // the saved return.
@@ -159,7 +162,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
       const freshList = await listAllInvoices(100);
       const freshReturned = await computeReturnedSet(freshList);
       if (freshReturned.has(picked.inv.invoiceNo)) {
-        setToast({ kind: "err", text: `سبق إرجاع الفاتورة ${picked.inv.invoiceNo} — لا يمكن إنشاء مرتجع آخر` });
+        setToast({ kind: "err", text: `${text("سبق إرجاع الفاتورة", "Invoice already returned")} ${picked.inv.invoiceNo} — ${text("لا يمكن إنشاء مرتجع آخر", "another return cannot be created")}` });
         setReturnedInvoiceNos(freshReturned);
         setBusy(false);
         return;
@@ -214,11 +217,11 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
         body.push({ text: `${l.nameAr.padEnd(20, " ")} ×${l.refundQty}  ${(l.unitPrice * l.refundQty).toFixed(2)}` });
       }
       body.push({ text: "─".repeat(32) });
-      body.push({ text: `إجمالي المرتجع قبل الضريبة:  ${totals.sub.toFixed(2)}` });
-      body.push({ text: `الضريبة المسترجعة:           ${totals.vat.toFixed(2)}` });
-      body.push({ text: `الإجمالي المسترجع:            ${totals.grand.toFixed(2)}`, bold: true });
-      body.push({ text: `السبب: ${finalReason}` });
-      body.push({ text: `فاتورة أصلية: ${picked.inv.invoiceNo}` });
+      body.push({ text: `${text("إجمالي المرتجع قبل الضريبة", "Refund subtotal")}:  ${totals.sub.toFixed(2)}` });
+      body.push({ text: `${text("الضريبة المسترجعة", "Refunded tax")}:           ${totals.vat.toFixed(2)}` });
+      body.push({ text: `${text("الإجمالي المسترجع", "Refund total")}:            ${totals.grand.toFixed(2)}`, bold: true });
+      body.push({ text: `${text("السبب", "Reason")}: ${finalReason}` });
+      body.push({ text: `${text("فاتورة أصلية", "Original invoice")}: ${picked.inv.invoiceNo}` });
 
       // Print only when a printer is configured. Any print error is logged
       // to the toast but does NOT undo the saved return.
@@ -229,43 +232,43 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
             printerName: printer,
             header: [
               { text: companyName, bold: true, center: true },
-              { text: `الرقم الضريبي: ${vatNumber}`, center: true },
-              { text: `*** إشعار دائن — مرتجع ***`, bold: true, center: true },
-              { text: `رقم: ${saved.invoiceNo}`, center: true },
-              { text: new Date(ts).toLocaleString("ar-SA"), center: true },
-              ...(cashierName ? [{ text: `الكاشير: ${cashierName}`, center: true }] : []),
+              { text: `${text("الرقم الضريبي", "Tax number")}: ${vatNumber}`, center: true },
+              { text: text("*** إشعار دائن — مرتجع ***", "*** CREDIT NOTE — RETURN ***"), bold: true, center: true },
+              { text: `${text("رقم", "No.")}: ${saved.invoiceNo}`, center: true },
+              { text: new Date(ts).toLocaleString(language === "en" ? "en-GB" : "ar-SA"), center: true },
+              ...(cashierName ? [{ text: `${text("الكاشير", "Cashier")}: ${cashierName}`, center: true }] : []),
             ],
             body,
-            footer: [{ text: "شكراً لزيارتكم", center: true }],
+            footer: [{ text: text("شكراً لزيارتكم", "Thank you for your visit"), center: true }],
             qrData: isZatcaCountry() ? qr : undefined,
             cut: true,
             openDrawer: payload.paymentMethod === "cash",
           });
         } catch (pe: any) {
-          printWarn = `(تعذرت الطباعة: ${pe?.message ?? pe})`;
+          printWarn = `(${text("تعذرت الطباعة:", "Print failed:")} ${pe?.message ?? pe})`;
         }
       } else {
-        printWarn = "(لا توجد طابعة مهيأة — تم الحفظ بدون طباعة)";
+        printWarn = `(${text("لا توجد طابعة مهيأة — تم الحفظ بدون طباعة", "No printer configured; saved without printing")})`;
       }
 
       setLastReturn(saved.invoiceNo);
-      setPicked(null); setLines([]); setReason(DEFAULT_RETURN_REASON);
-      setToast({ kind: "ok", text: `✅ تم تسجيل المرتجع — ${saved.invoiceNo}${printWarn ? " " + printWarn : ""}` });
+      setPicked(null); setLines([]); setReason(defaultReturnReason);
+      setToast({ kind: "ok", text: `✅ ${text("تم تسجيل المرتجع", "Return saved")} — ${saved.invoiceNo}${printWarn ? " " + printWarn : ""}` });
       await refresh();
     } catch (e: any) {
-      setToast({ kind: "err", text: `فشل المرتجع: ${e?.message ?? e}` });
+      setToast({ kind: "err", text: `${text("فشل المرتجع:", "Return failed:")} ${e?.message ?? e}` });
     } finally { setBusy(false); }
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.headerRow}>
         <div>
-          <h2 style={S.h2}>مرتجع المبيعات</h2>
-          <div style={S.sub}>اختر فاتورة سابقة لإرجاع جزء أو كل أصنافها</div>
+          <h2 style={S.h2}>{text("مرتجع المبيعات", "Sales returns")}</h2>
+          <div style={S.sub}>{text("اختر فاتورة سابقة لإرجاع جزء أو كل أصنافها", "Choose a previous invoice and return some or all of its items.")}</div>
         </div>
         {lastReturn && (
-          <div style={S.lastChip}>آخر مرتجع: {lastReturn}</div>
+          <div style={S.lastChip}>{text("آخر مرتجع:", "Last return:")} {lastReturn}</div>
         )}
       </div>
 
@@ -276,18 +279,18 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="بحث برقم الفاتورة..."
+            placeholder={text("بحث برقم الفاتورة...", "Search by invoice number…")}
             style={S.search}
           />
           {filtered.length === 0 ? (
-            <div style={S.empty}>لا توجد فواتير سابقة لإرجاعها</div>
+            <div style={S.empty}>{text("لا توجد فواتير سابقة لإرجاعها", "No previous invoices available for return")}</div>
           ) : (
             <table style={S.table}>
               <thead><tr>
-                <th style={S.th}>رقم الفاتورة</th>
-                <th style={S.th}>التاريخ</th>
-                <th style={S.th}>الحالة</th>
-                <th style={S.thRight}>إجراء</th>
+                <th style={S.th}>{text("رقم الفاتورة", "Invoice number")}</th>
+                <th style={S.th}>{text("التاريخ", "Date")}</th>
+                <th style={S.th}>{text("الحالة", "Status")}</th>
+                <th style={S.thRight}>{text("إجراء", "Action")}</th>
               </tr></thead>
               <tbody>
                 {filtered.map((inv) => {
@@ -297,10 +300,10 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
                   return (
                     <tr key={inv.id} style={S.tr}>
                       <td style={S.tdMono}>{inv.invoiceNo}</td>
-                      <td style={S.td}>{new Date(inv.createdAt).toLocaleString("ar-SA")}</td>
+                      <td style={S.td}>{new Date(inv.createdAt).toLocaleString(language === "en" ? "en-GB" : "ar-SA")}</td>
                       <td style={S.td}>
                         <span style={isReturn ? S.badgeRet : alreadyReturned ? S.badgeRet : S.badgeOk}>
-                          {isReturn ? "مرتجع" : alreadyReturned ? "تم إرجاعها" : inv.syncStatus}
+                          {isReturn ? text("مرتجع", "Return") : alreadyReturned ? text("تم إرجاعها", "Returned") : inv.syncStatus === "synced" ? text("مرفوعة", "Uploaded") : inv.syncStatus === "pending" || inv.syncStatus === "queued" ? text("قيد المزامنة", "Queued") : inv.syncStatus}
                         </span>
                       </td>
                       <td style={S.tdRight}>
@@ -308,9 +311,9 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
                           onClick={() => pick(inv)}
                           style={blocked ? { ...S.btnPrimary, opacity: 0.45, cursor: "not-allowed" } : S.btnPrimary}
                           disabled={blocked}
-                          title={alreadyReturned ? "سبق إرجاع هذه الفاتورة — مرتجع واحد فقط مسموح" : isReturn ? "لا يمكن إرجاع فاتورة مرتجع" : "إرجاع"}
+                          title={alreadyReturned ? text("سبق إرجاع هذه الفاتورة — مرتجع واحد فقط مسموح", "This invoice was already returned. Only one return is allowed.") : isReturn ? text("لا يمكن إرجاع فاتورة مرتجع", "A return invoice cannot be returned again.") : text("إرجاع", "Return")}
                         >
-                          ↩️ إرجاع
+                          ↩️ {text("إرجاع", "Return")}
                         </button>
                       </td>
                     </tr>
@@ -325,24 +328,24 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
           {/* Header — gradient + invoice chip */}
           <div style={S.refundHeader}>
             <div>
-              <div style={S.refundEyebrow}>↩️ إرجاع للفاتورة</div>
+              <div style={S.refundEyebrow}>↩️ {text("إرجاع للفاتورة", "Return for invoice")}</div>
               <div style={S.refundInvNo}>{picked.inv.invoiceNo}</div>
               <div style={S.refundMeta}>
-                {lines.length} صنف · {lines.filter((l) => l.refundQty > 0).length} محدد للإرجاع
+                {lines.length} {text("صنف", "items")} · {lines.filter((l) => l.refundQty > 0).length} {text("محدد للإرجاع", "selected for return")}
               </div>
             </div>
-            <button onClick={() => setPicked(null)} style={S.btnGhost}>← اختر فاتورة أخرى</button>
+            <button onClick={() => setPicked(null)} style={S.btnGhost}>← {text("اختر فاتورة أخرى", "Choose another invoice")}</button>
           </div>
 
           {/* Scrollable lines area — internal scroll keeps totals + button always visible */}
           <div style={S.linesScroll}>
             <table style={S.tableLines}>
               <thead style={S.theadSticky}><tr>
-                <th style={S.th}>الصنف</th>
-                <th style={S.th}>السعر</th>
-                <th style={S.th}>الكمية الأصلية</th>
-                <th style={S.th}>كمية الإرجاع</th>
-                <th style={S.thRight}>الإجمالي</th>
+                <th style={S.th}>{text("الصنف", "Item")}</th>
+                <th style={S.th}>{text("السعر", "Price")}</th>
+                <th style={S.th}>{text("الكمية الأصلية", "Original quantity")}</th>
+                <th style={S.th}>{text("كمية الإرجاع", "Return quantity")}</th>
+                <th style={S.thRight}>{text("الإجمالي", "Total")}</th>
               </tr></thead>
               <tbody>
                 {lines.map((l, i) => {
@@ -362,7 +365,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
                             }}
                             style={S.stepBtn}
                             disabled={l.refundQty <= 0}
-                            title="إنقاص"
+                            title={text("إنقاص", "Decrease")}
                           >−</button>
                           <input
                             type="number"
@@ -382,7 +385,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
                             }}
                             style={S.stepBtn}
                             disabled={l.refundQty >= l.qty}
-                            title="زيادة"
+                            title={text("زيادة", "Increase")}
                           >+</button>
                         </div>
                       </td>
@@ -399,24 +402,24 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
           {/* Pinned bottom: totals + reason + actions — never hidden by long lists */}
           <div style={S.pinnedFooter}>
             <div style={S.totals}>
-              <Row k="إجمالي قبل الضريبة" v={totals.sub.toFixed(2)} />
-              <Row k={`ضريبة ${vatRatePct}%${taxMode === "inclusive" ? " (شاملة)" : ""}`} v={totals.vat.toFixed(2)} />
-              <Row k="إجمالي المرتجع" v={totals.grand.toFixed(2)} big />
+              <Row k={text("إجمالي قبل الضريبة", "Subtotal")} v={totals.sub.toFixed(2)} />
+              <Row k={`${text("ضريبة", "Tax")} ${vatRatePct}%${taxMode === "inclusive" ? ` (${text("شاملة", "inclusive")})` : ""}`} v={totals.vat.toFixed(2)} />
+              <Row k={text("إجمالي المرتجع", "Refund total")} v={totals.grand.toFixed(2)} big />
             </div>
 
             <label style={{ display: "block", marginTop: 8 }}>
               <div style={{ fontSize: 13, color: "#475569", marginBottom: 4, fontWeight: 600 }}>
-                سبب الإرجاع <span style={{ fontWeight: 400, color: "#94a3b8" }}>(يمكن تعديله)</span>
+                {text("سبب الإرجاع", "Return reason")} <span style={{ fontWeight: 400, color: "#94a3b8" }}>({text("يمكن تعديله", "editable")})</span>
               </div>
               <input value={reason} onChange={(e) => setReason(e.target.value)}
-                placeholder="مثلاً: عيب في المنتج، طلب العميل..." style={S.search} />
+                placeholder={text("مثلاً: عيب في المنتج، طلب العميل...", "e.g. Defective item, customer request…")} style={S.search} />
             </label>
 
             <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
               <button onClick={submitReturn} disabled={busy || totals.grand <= 0} style={{ ...S.btnDanger, opacity: (busy || totals.grand <= 0) ? 0.5 : 1, cursor: (busy || totals.grand <= 0) ? "not-allowed" : "pointer" }}>
-                {busy ? "..." : `↩️ تأكيد المرتجع (${totals.grand.toFixed(2)} ${sym})`}
+                {busy ? "..." : `↩️ ${text("تأكيد المرتجع", "Confirm return")} (${totals.grand.toFixed(2)} ${sym})`}
               </button>
-              <button onClick={() => setPicked(null)} style={S.btnGhost}>إلغاء</button>
+              <button onClick={() => setPicked(null)} style={S.btnGhost}>{text("إلغاء", "Cancel")}</button>
             </div>
           </div>
         </div>
@@ -434,7 +437,7 @@ function Row({ k, v, big }: { k: string; v: string; big?: boolean }) {
 }
 
 const S = {
-  wrap: { maxWidth: 1100, margin: "0 auto", width: "100%", padding: "8px 4px 24px" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, padding: 0, boxSizing: "border-box" as const } as const,
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, gap: 16 } as const,
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,

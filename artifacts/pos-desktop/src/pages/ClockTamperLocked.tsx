@@ -3,6 +3,18 @@ import { clockGuardUnlockOffline, clockGuardClearOnline, clockGuardCheck } from 
 import { createApi } from "../lib/api";
 import { revalidateLicense } from "../lib/standalone";
 import { getFingerprint } from "../lib/tauri-shim";
+import { uiText, useUiLanguage } from "../lib/appSettings";
+
+const offlineErrorEn: Record<string, string> = {
+  "أدخل رمز فك الحظر": "Enter an unlock code.",
+  "رمز غير صالح": "Invalid unlock code.",
+  "فشل التحقق من التوقيع": "Could not verify the signature.",
+  "توقيع غير صحيح — الرمز غير صادر من الجهة المصرّح لها": "Invalid signature — this code was not issued by an authorized administrator.",
+  "محتوى الرمز غير صالح": "The unlock code content is invalid.",
+  "نوع الرمز غير صحيح": "This is not a clock-unlock code.",
+  "هذا الرمز صادر لجهاز آخر": "This code was issued for a different device.",
+  "انتهت صلاحية هذا الرمز — اطلب رمزًا جديدًا بالرمز المعروض حاليًا": "This code has expired. Request a new code using the device code shown now.",
+};
 
 // Clock-rollback HARD-LOCK screen (Task #237).
 //
@@ -27,6 +39,8 @@ export default function ClockTamperLocked({
   standalone?: { licenseKey: string };
   onUnlocked: () => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +103,7 @@ export default function ClockTamperLocked({
     try {
       const r = await clockGuardUnlockOffline(code);
       if (r.ok) { onUnlockedRef.current(); return; }
-      setError(r.error);
+      setError(language === "en" ? offlineErrorEn[r.error] ?? r.error : r.error);
     } finally { setBusy(false); }
   }
 
@@ -115,59 +129,62 @@ export default function ClockTamperLocked({
         const g = await clockGuardCheck({ trustedNowMs: Number.isFinite(st) ? st : undefined });
         if (!g.locked) { onUnlockedRef.current(); return; }
       }
-      setError("لم يتم رصد فكّ حظر من المسؤول بعد. تأكد من الضغط على «فك الحظر» في لوحة التحكم ثم أعد المحاولة.");
+      setError(text("لم يتم رصد فكّ حظر من المسؤول بعد. تأكد من الضغط على «فك الحظر» في لوحة التحكم ثم أعد المحاولة.", "No administrator unlock was detected yet. Select “Unblock” for this device in the admin console, then try again."));
     } catch {
-      setError("تعذّر الاتصال بالخادم. استخدم رمز فكّ الحظر دون اتصال، أو تحقق من الإنترنت.");
+      setError(text("تعذّر الاتصال بالخادم. استخدم رمز فكّ الحظر دون اتصال، أو تحقق من الإنترنت.", "Could not connect to the server. Use the offline unlock code or check your internet connection."));
     } finally { setPolling(false); }
   }
 
   return (
-    <div dir="rtl" style={wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={wrap}>
       <div style={card}>
         <div style={{ fontSize: 48 }}>🔒</div>
         <h1 style={{ fontSize: 22, margin: 0, fontWeight: 800, color: "#b91c1c" }}>
-          تم قفل الجهاز — تم رصد تلاعب بساعة النظام
+          {text("تم قفل الجهاز — تم رصد تلاعب بساعة النظام", "Device locked — system clock tampering detected")}
         </h1>
         <p style={{ margin: 0, color: "#475569", lineHeight: 1.8, maxWidth: 560 }}>
-          رُصِد إرجاع ساعة الويندوز إلى الخلف، وهو إجراء يُستخدم لتمديد صلاحية الترخيص.
-          تم قفل التطبيق لحماية الاشتراك. يتطلب إلغاء القفل تدخّل المسؤول (KarmAzzam)
-          عبر أحد الخيارين أدناه.
+          {text(
+            "رُصِد إرجاع ساعة الويندوز إلى الخلف، وهو إجراء يُستخدم لتمديد صلاحية الترخيص. تم قفل التطبيق لحماية الاشتراك. يتطلب إلغاء القفل تدخّل المسؤول (KarmAzzam) عبر أحد الخيارين أدناه.",
+            "The Windows clock was moved backward, which can be used to extend a license. The app is locked to protect the subscription. An administrator (KarmAzzam) must unlock it using one of the options below.",
+          )}
         </p>
 
-        <div style={section}>
-          <div style={sectionTitle}>① فكّ الحظر دون اتصال (Offline)</div>
-          <p style={hint}>أرسل «رمز الجهاز» التالي للمسؤول ليُصدر لك رمز فكّ حظر موقّعًا:</p>
+        <div style={{ ...section, textAlign: language === "en" ? "left" : "right" }}>
+          <div style={sectionTitle}>{text("① فكّ الحظر دون اتصال (Offline)", "① Offline unlock")}</div>
+          <p style={hint}>{text("أرسل «رمز الجهاز» التالي للمسؤول ليُصدر لك رمز فكّ حظر موقّعًا:", "Send this device code to the administrator to receive a signed unlock code:")}</p>
           <div style={codeRow}>
             <code style={codeBox}>{deviceCode || "—"}</code>
-            <button onClick={() => void copyCode()} style={btnGhost}>{copied ? "تم النسخ ✓" : "نسخ"}</button>
+            <button onClick={() => void copyCode()} style={btnGhost}>{copied ? text("تم النسخ ✓", "Copied ✓") : text("نسخ", "Copy")}</button>
           </div>
           <textarea
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="ألصق رمز فكّ الحظر هنا…"
+            placeholder={text("ألصق رمز فكّ الحظر هنا…", "Paste the unlock code here…")}
             rows={3}
             style={textarea}
             dir="ltr"
           />
           <button onClick={() => void submitOffline()} disabled={busy || !code.trim()} style={btnPrimary}>
-            {busy ? "جارٍ التحقق…" : "فكّ الحظر بالرمز"}
+            {busy ? text("جارٍ التحقق…", "Checking…") : text("فكّ الحظر بالرمز", "Unlock with code")}
           </button>
         </div>
 
         {cloud || standalone ? (
-          <div style={section}>
-            <div style={sectionTitle}>② فكّ الحظر عبر الإنترنت (Online)</div>
+          <div style={{ ...section, textAlign: language === "en" ? "left" : "right" }}>
+            <div style={sectionTitle}>{text("② فكّ الحظر عبر الإنترنت (Online)", "② Online unlock")}</div>
             <p style={hint}>
-              يطلب من المسؤول الضغط على «فك الحظر» لهذا الجهاز في لوحة التحكم. سيتم
-              إلغاء القفل تلقائيًا خلال لحظات، أو اضغط للتحقق الآن:
+              {text(
+                "يطلب من المسؤول الضغط على «فك الحظر» لهذا الجهاز في لوحة التحكم. سيتم إلغاء القفل تلقائيًا خلال لحظات، أو اضغط للتحقق الآن:",
+                "Ask the administrator to select “Unblock” for this device in the admin console. It will unlock automatically shortly, or check now:",
+              )}
             </p>
             <button onClick={() => void checkOnlineNow()} disabled={polling} style={btnSecondary}>
-              {polling ? "جارٍ التحقق…" : "تحقق الآن"}
+              {polling ? text("جارٍ التحقق…", "Checking…") : text("تحقق الآن", "Check now")}
             </button>
           </div>
         ) : null}
 
-        {error ? <div style={errBox}>{error}</div> : null}
+        {error ? <div style={{ ...errBox, textAlign: language === "en" ? "left" : "right" }}>{error}</div> : null}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listSalesOrders, getSalesOrder, createSalesOrder, updateSalesOrder, deleteSalesOrder,
   setSalesOrderStatus, convertSalesOrderToInvoice,
@@ -13,7 +14,8 @@ import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, EmptyItemsRow,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -63,8 +65,10 @@ export default function SalesOrdersAdmin() {
     })();
   }, []);
 
+  const sel = useRowSelect(rows);
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
+  useDataRefresh(["invoices"], refresh);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function toggleView(id: number) {
@@ -119,7 +123,7 @@ export default function SalesOrdersAdmin() {
     >
       <ErrorMsg text={err} />
       {formOpen && deps && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc}
               onCancel={() => { setCreating(false); setEditDoc(null); }}
@@ -127,18 +131,47 @@ export default function SalesOrdersAdmin() {
           </div>
         </Card>
       )}
+      {rows.length > 0 && !formOpen && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.docNo : null}>
+          {(() => {
+            const s = sel.selected;
+            const busy = !s || busyId === s.id;
+            return (
+              <>
+                <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!s}
+                  onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+                <ActionBtn label="تأكيد" icon="✔" tone="success" disabled={busy || s?.status !== "draft"}
+                  onClick={() => { if (s) void changeStatus(s.id, "confirmed"); }} />
+                <ActionBtn label="إلغاء" icon="✖" tone="danger" disabled={busy || s?.status !== "draft"}
+                  onClick={() => { if (s) void changeStatus(s.id, "cancelled"); }} />
+                <ActionBtn label="إلى فاتورة" icon="↪" tone="purple" disabled={busy || s?.status !== "confirmed"}
+                  onClick={() => { if (s) void convert(s.id); }} />
+                <ActionBtn label="تعديل" icon="✎" disabled={busy || s?.status === "converted"}
+                  onClick={() => { if (s) void startEdit(s.id); }} />
+                <ActionBtn label="حذف" icon="🗑" tone="danger" disabled={busy || s?.status === "converted"}
+                  onClick={() => { if (s) void remove(s.id, s.docNo); }} />
+                {s?.status === "converted" && s.convertedInvoiceId && (
+                  <span style={{ fontSize: 12, color: "#7c3aed" }}>فاتورة #{s.convertedInvoiceId}</span>
+                )}
+              </>
+            );
+          })()}
+        </ActionBar>
+      )}
       <Card>
         {rows.length === 0 && !formOpen ? <Empty text="لا توجد أوامر بيع" /> : (
           <Table>
             <thead><tr>
+              <SelectTh />
               <Th>رقم الأمر</Th><Th>التاريخ</Th><Th>التسليم المتوقع</Th><Th>العميل</Th><Th>الدفع</Th><Th>الحالة</Th>
               <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
-              <Th style={{ textAlign: "left" }}>الإجمالي</Th><Th style={{ width: 280 }}></Th>
+              <Th style={{ textAlign: "left" }}>الإجمالي</Th>
             </tr></thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
+                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.docNo}</Td>
                     <Td>{p.orderDate}</Td>
                     <Td>{p.expectedDelivery ?? "—"}</Td>
@@ -148,32 +181,6 @@ export default function SalesOrdersAdmin() {
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
-                    <Td>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-                        <button onClick={() => void toggleView(p.id)} disabled={formOpen} aria-expanded={expandedId === p.id}
-                          style={{ ...btnLink, opacity: formOpen ? 0.5 : 1, cursor: formOpen ? "not-allowed" : "pointer" }}>
-                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                        </button>
-                        {p.status === "draft" && (
-                          <>
-                            <button onClick={() => void changeStatus(p.id, "confirmed")} disabled={busyId === p.id} style={{ ...btnLink, color: "#15803d" }}>تأكيد</button>
-                            <button onClick={() => void changeStatus(p.id, "cancelled")} disabled={busyId === p.id} style={{ ...btnLink, color: "#b91c1c" }}>إلغاء</button>
-                          </>
-                        )}
-                        {p.status === "confirmed" && (
-                          <button onClick={() => void convert(p.id)} disabled={busyId === p.id} style={{ ...btnPrimary, padding: "4px 10px", fontSize: 12 }}>↪ إلى فاتورة</button>
-                        )}
-                        {p.status !== "converted" && (
-                          <>
-                            <button onClick={() => void startEdit(p.id)} disabled={busyId === p.id || formOpen} style={btnLink}>تعديل</button>
-                            <button onClick={() => void remove(p.id, p.docNo)} disabled={busyId === p.id || formOpen} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                          </>
-                        )}
-                        {p.status === "converted" && p.convertedInvoiceId && (
-                          <span style={{ fontSize: 12, color: "#7c3aed" }}>فاتورة #{p.convertedInvoiceId}</span>
-                        )}
-                      </div>
-                    </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
@@ -249,13 +256,13 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
-    itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
+    itemId: 0, qty: 1, unitPrice: 0, vatRate: 0, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
   const [lines, setLines] = useState<FLine[]>(() =>
     initial && initial.lines.length
       ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
-      : [blankLine()],
+      : [],
   );
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
@@ -293,7 +300,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         const it = deps.items.find((x) => x.id === Number(patch.itemId));
         if (it) {
           if (!next.unitPrice) next.unitPrice = it.salePrice ?? 0;
-          next.vatRate = it.vatRate ?? next.vatRate;
+          next.vatRate = it.vatRate ?? 0;
           if (it.uomId != null) {
             const u = uoms.find((x) => x.id === it.uomId);
             if (u) { next.uomId = u.id; next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
@@ -517,6 +524,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           <Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
+          {lines.length === 0 && <EmptyItemsRow colSpan={10} />}
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>

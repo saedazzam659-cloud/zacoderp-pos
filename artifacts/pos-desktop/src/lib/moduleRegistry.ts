@@ -25,8 +25,8 @@
 
 export type WindowsView =
   | "sales" | "returns" | "pending" | "parked" | "daily"
-  | "customers" | "items" | "item_groups" | "uom" | "dashboard" | "updates" | "users"
-  | "expiry" | "scale" | "stock_import" | "low_stock" | "network"
+  | "customers" | "items" | "item_groups" | "brands" | "uom" | "dashboard" | "updates" | "users"
+  | "expiry" | "scale" | "stock_import" | "item_import" | "low_stock" | "network"
   | "suppliers" | "supplier_groups" | "supplier_settlement"
   | "purchases" | "purchase_orders" | "goods_receipts" | "purchase_returns" | "letters_of_credit"
   | "report_purchases_by_supplier" | "report_purchases_by_item" | "report_purchases_by_period"
@@ -45,7 +45,7 @@ export type WindowsView =
   | "report_account_statement" | "report_customer_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
   | "warehouses" | "stocktakes" | "stock_adjustments" | "stock_movements" | "stock_transfers"
-  | "item_card" | "stock_valuation" | "slow_moving" | "free_quantities" | "item_sales_valuation"
+  | "item_card" | "stock_valuation" | "warehouse_stock" | "slow_moving" | "free_quantities" | "item_sales_valuation"
   | "warehouse_groups" | "inventory_dashboard" | "smart_alerts" | "units" | "offers" | "goods_deliveries"
   | "number_series" | "settings_guide" | "zatca" | "pos_accounts" | "backup";
 
@@ -87,9 +87,11 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   customers:    { module: "customers", profile: "pos" },
   items:        { module: "inventory", profile: "pos" },
   item_groups:  { module: "inventory", profile: "pos" },
+  brands:       { module: "inventory", profile: "pos" },
   uom:          { module: "inventory", profile: "pos" },
   low_stock:    { module: "inventory", profile: "pos" },
   stock_import: { module: "inventory", profile: "pos" },
+  item_import:  { module: "inventory", profile: "pos" },
   invoice_import: { module: "pos", profile: "pos" },
   pos_invoices: { module: "pos", profile: "pos" },
   expiry:       { module: "inventory", profile: "pos" },
@@ -110,6 +112,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   stock_transfers:   { module: "inventory", profile: "erp" },
   item_card:         { module: "inventory", profile: "erp" },
   stock_valuation:   { module: "inventory", profile: "erp" },
+  warehouse_stock:   { module: "inventory", profile: "erp" },
   slow_moving:       { module: "inventory", profile: "erp" },
   free_quantities:   { module: "inventory", profile: "erp" },
   item_sales_valuation: { module: "inventory", profile: "erp" },

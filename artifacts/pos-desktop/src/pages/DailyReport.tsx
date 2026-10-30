@@ -14,10 +14,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { buildDailyReport, todayLocalYmd, type DailyReport } from "../lib/dailyReport";
 import { currencySymbol, useCurrencySymbol } from "../lib/currency";
+import { getUiLanguage, uiText, useUiLanguage } from "../lib/appSettings";
 
 type Props = { companyName?: string; cashierName?: string };
 
 export default function DailyReportPage({ companyName, cashierName }: Props) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   // Subscribe to country/currency changes so the (module-level) fmtSar
   // formatter re-reads the symbol on the next render when the country flips.
   useCurrencySymbol();
@@ -29,7 +32,7 @@ export default function DailyReportPage({ companyName, cashierName }: Props) {
   async function load(d: string) {
     setLoading(true); setErr(null);
     try { setData(await buildDailyReport(d)); }
-    catch (e: any) { setErr(e?.message ?? "فشل تحميل التقرير"); }
+    catch (e: any) { setErr(e?.message ?? text("فشل تحميل التقرير", "Could not load the report.")); }
     finally { setLoading(false); }
   }
 
@@ -38,22 +41,22 @@ export default function DailyReportPage({ companyName, cashierName }: Props) {
   const hasData = data && (data.invoiceCount + data.returnCount) > 0;
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <style>{PRINT_CSS}</style>
 
       {/* ── Header / controls ── */}
       <div style={S.header} className="no-print">
         <div>
-          <h1 style={S.h1}>📊 تقرير اليومية</h1>
+          <h1 style={S.h1}>📊 {text("تقرير اليومية", "Daily report")}</h1>
           <div style={S.sub}>
-            صافي المبيعات بعد المرتجعات — مصدر البيانات: قاعدة البيانات المحلية
+            {text("صافي المبيعات بعد المرتجعات — مصدر البيانات: قاعدة البيانات المحلية", "Net sales after returns — source: local database")}
           </div>
         </div>
         <div style={S.controls}>
-          <button onClick={() => setDate(todayLocalYmd())} style={S.btnGhost} title="اليوم">
-            اليوم
+          <button onClick={() => setDate(todayLocalYmd())} style={S.btnGhost} title={text("اليوم", "Today")}>
+            {text("اليوم", "Today")}
           </button>
-          <button onClick={() => shiftDate(date, -1, setDate)} style={S.btnGhost} title="اليوم السابق">
+          <button onClick={() => shiftDate(date, -1, setDate)} style={S.btnGhost} title={text("اليوم السابق", "Previous day")}>
             ◀
           </button>
           <input
@@ -62,40 +65,40 @@ export default function DailyReportPage({ companyName, cashierName }: Props) {
             onChange={(e) => setDate(e.target.value)}
             style={S.dateInput}
           />
-          <button onClick={() => shiftDate(date, 1, setDate)} style={S.btnGhost} title="اليوم التالي">
+          <button onClick={() => shiftDate(date, 1, setDate)} style={S.btnGhost} title={text("اليوم التالي", "Next day")}>
             ▶
           </button>
-          <button onClick={() => load(date)} style={S.btnGhost} title="تحديث" disabled={loading}>
+          <button onClick={() => load(date)} style={S.btnGhost} title={text("تحديث", "Refresh")} disabled={loading}>
             {loading ? "..." : "🔄"}
           </button>
           <button onClick={() => window.print()} style={S.btnPrimary} disabled={!hasData}>
-            🖨️ طباعة
+            🖨️ {text("طباعة", "Print")}
           </button>
         </div>
       </div>
 
       {/* ── Print header (only visible on print) ── */}
       <div className="print-only" style={S.printHeader}>
-        <div style={S.printTitle}>تقرير اليومية — Z Report</div>
+        <div style={S.printTitle}>{text("تقرير اليومية — Z Report", "Daily report — Z Report")}</div>
         <div style={S.printMeta}>
           {companyName && <div>{companyName}</div>}
-          <div>التاريخ: {formatArabicDate(date)}</div>
-          {cashierName && <div>الكاشير: {cashierName}</div>}
-          <div>وقت الطباعة: {new Date().toLocaleString("ar-SA")}</div>
+          <div>{text("التاريخ", "Date")}: {formatArabicDate(date, language)}</div>
+          {cashierName && <div>{text("الكاشير", "Cashier")}: {cashierName}</div>}
+          <div>{text("وقت الطباعة", "Printed at")}: {new Date().toLocaleString(language === "en" ? "en-GB" : "ar-SA")}</div>
         </div>
       </div>
 
       {err && <div style={S.errBox}>⚠️ {err}</div>}
 
-      {loading && !data && <div style={S.loadingBox}>جارٍ التحميل...</div>}
+      {loading && !data && <div style={S.loadingBox}>{text("جارٍ التحميل...", "Loading…")}</div>}
 
       {data && !hasData && (
         <div style={S.emptyBox}>
           <div style={{ fontSize: 56, marginBottom: 12 }}>📭</div>
           <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a" }}>
-            لا توجد فواتير في هذا اليوم
+            {text("لا توجد فواتير في هذا اليوم", "No invoices for this date")}
           </div>
-          <div style={S.sub}>جرّب تاريخاً آخر أو تأكد من سحب البيانات.</div>
+          <div style={S.sub}>{text("جرّب تاريخاً آخر أو تأكد من سحب البيانات.", "Try another date or make sure data has been synced.")}</div>
         </div>
       )}
 
@@ -105,70 +108,70 @@ export default function DailyReportPage({ companyName, cashierName }: Props) {
           <div style={S.kpiGrid}>
             <KpiTile
               icon="💰"
-              label="إجمالي المبيعات"
+              label={text("إجمالي المبيعات", "Gross sales")}
               value={fmtSar(data.salesGross)}
-              hint={`${data.invoiceCount} فاتورة`}
+              hint={`${data.invoiceCount} ${text("فاتورة", "invoices")}`}
               gradient="linear-gradient(135deg, #16a34a 0%, #15803d 100%)"
             />
             <KpiTile
               icon="↩️"
-              label="إجمالي المرتجعات"
+              label={text("إجمالي المرتجعات", "Gross returns")}
               value={fmtSar(data.returnsGross)}
-              hint={`${data.returnCount} مرتجع`}
+              hint={`${data.returnCount} ${text("مرتجع", "returns")}`}
               gradient="linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)"
             />
             <KpiTile
               icon="🎯"
-              label="صافي المبيعات"
+              label={text("صافي المبيعات", "Net sales")}
               value={fmtSar(data.net)}
-              hint="مبيعات − مرتجعات"
+              hint={text("مبيعات − مرتجعات", "Sales − returns")}
               gradient="linear-gradient(135deg, #2563eb 0%, #1e3a8a 100%)"
               big
             />
             <KpiTile
               icon="📈"
-              label="متوسط الفاتورة"
+              label={text("متوسط الفاتورة", "Average invoice")}
               value={fmtSar(data.averageInvoice)}
-              hint="على المبيعات فقط"
+              hint={text("على المبيعات فقط", "Sales only")}
               gradient="linear-gradient(135deg, #a855f7 0%, #6b21a8 100%)"
             />
           </div>
 
           {/* ── Breakdown row: VAT + payments + sync ── */}
           <div style={S.row2}>
-            <Panel title="ملخّص ضريبة القيمة المضافة">
-              <Row k="مبيعات بدون ضريبة" v={fmtSar(data.salesGross - data.salesVat)} />
-              <Row k="ضريبة المبيعات (15%)" v={fmtSar(data.salesVat)} />
-              <Row k="مرتجعات بدون ضريبة" v={fmtSar(data.returnsGross - data.returnsVat)} muted />
-              <Row k="ضريبة المرتجعات (15%)" v={fmtSar(data.returnsVat)} muted />
+            <Panel title={text("ملخّص ضريبة القيمة المضافة", "VAT summary")}>
+              <Row k={text("مبيعات بدون ضريبة", "Sales before tax")} v={fmtSar(data.salesGross - data.salesVat)} />
+              <Row k={text("ضريبة المبيعات (15%)", "Sales tax (15%)")} v={fmtSar(data.salesVat)} />
+              <Row k={text("مرتجعات بدون ضريبة", "Returns before tax")} v={fmtSar(data.returnsGross - data.returnsVat)} muted />
+              <Row k={text("ضريبة المرتجعات (15%)", "Returns tax (15%)")} v={fmtSar(data.returnsVat)} muted />
               <Divider />
-              <Row k="صافي الضريبة المستحقة" v={fmtSar(data.salesVat - data.returnsVat)} strong />
+              <Row k={text("صافي الضريبة المستحقة", "Net tax due")} v={fmtSar(data.salesVat - data.returnsVat)} strong />
             </Panel>
 
-            <Panel title="طُرق الدفع">
+            <Panel title={text("طُرق الدفع", "Payment methods")}>
               <PaymentBar
-                label="نقدي 💵"
+                label={text("نقدي 💵", "Cash 💵")}
                 sales={data.cashSales}
                 returns={data.cashReturns}
                 color="#16a34a"
               />
               <PaymentBar
-                label="بطاقة 💳"
+                label={text("بطاقة 💳", "Card 💳")}
                 sales={data.cardSales}
                 returns={data.cardReturns}
                 color="#2563eb"
               />
               <Divider />
               <Row
-                k="إجمالي النقد في الدُرج (تقديري)"
+                k={text("إجمالي النقد في الدُرج (تقديري)", "Estimated cash in drawer")}
                 v={fmtSar(data.cashSales - data.cashReturns)}
                 strong
               />
             </Panel>
 
-            <Panel title="حالة المزامنة مع السحابة">
-              <Row k="مُرفوعة إلى السحابة" v={String(data.syncedCount)} />
-              <Row k="قيد الرفع (محلياً فقط)" v={String(data.pendingCount)} muted />
+            <Panel title={text("حالة المزامنة مع السحابة", "Cloud sync status")}>
+              <Row k={text("مُرفوعة إلى السحابة", "Uploaded to cloud")} v={String(data.syncedCount)} />
+              <Row k={text("قيد الرفع (محلياً فقط)", "Pending upload (local only)")} v={String(data.pendingCount)} muted />
               <Divider />
               <div style={S.syncProgressOuter}>
                 <div
@@ -179,29 +182,29 @@ export default function DailyReportPage({ companyName, cashierName }: Props) {
                 />
               </div>
               <div style={{ ...S.sub, textAlign: "center", marginTop: 6 }}>
-                {syncPct(data)}% مكتمل
+                {syncPct(data)}% {text("مكتمل", "complete")}
               </div>
             </Panel>
           </div>
 
           {/* ── Hourly chart ── */}
-          <Panel title="المبيعات حسب الساعة">
+          <Panel title={text("المبيعات حسب الساعة", "Sales by hour")}>
             <HourlyChart hours={data.hours} />
           </Panel>
 
           {/* ── Top items + invoice list ── */}
           <div style={S.row2}>
-            <Panel title="أكثر الأصناف مبيعاً">
+            <Panel title={text("أكثر الأصناف مبيعاً", "Top-selling items")}>
               {data.topItems.length === 0 ? (
-                <div style={S.sub}>لا توجد أصناف.</div>
+                <div style={S.sub}>{text("لا توجد أصناف.", "No items.")}</div>
               ) : (
                 <table style={S.table}>
                   <thead>
                     <tr>
-                      <th style={S.thRight}>#</th>
-                      <th style={S.thRight}>الصنف</th>
-                      <th style={S.thLeft}>الكمية</th>
-                      <th style={S.thLeft}>القيمة</th>
+                      <th style={{ ...S.thRight, textAlign: language === "en" ? "left" : "right" }}>#</th>
+                      <th style={{ ...S.thRight, textAlign: language === "en" ? "left" : "right" }}>{text("الصنف", "Item")}</th>
+                      <th style={{ ...S.thLeft, textAlign: language === "en" ? "right" : "left" }}>{text("الكمية", "Quantity")}</th>
+                      <th style={{ ...S.thLeft, textAlign: language === "en" ? "right" : "left" }}>{text("القيمة", "Amount")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -209,8 +212,8 @@ export default function DailyReportPage({ companyName, cashierName }: Props) {
                       <tr key={it.itemId}>
                         <td style={S.td}>{idx + 1}</td>
                         <td style={S.td}>{it.nameAr}</td>
-                        <td style={{ ...S.td, textAlign: "left" }}>{fmtNum(it.qty)}</td>
-                        <td style={{ ...S.td, textAlign: "left", fontWeight: 600, color: it.amount < 0 ? "#dc2626" : "#0f172a" }}>
+                        <td style={{ ...S.td, textAlign: language === "en" ? "right" : "left" }}>{fmtNum(it.qty)}</td>
+                        <td style={{ ...S.td, textAlign: language === "en" ? "right" : "left", fontWeight: 600, color: it.amount < 0 ? "#dc2626" : "#0f172a" }}>
                           {fmtSar(it.amount)}
                         </td>
                       </tr>
@@ -220,16 +223,16 @@ export default function DailyReportPage({ companyName, cashierName }: Props) {
               )}
             </Panel>
 
-            <Panel title={`الفواتير (${data.invoices.length})`}>
+            <Panel title={`${text("الفواتير", "Invoices")} (${data.invoices.length})`}>
               <div style={{ maxHeight: 360, overflowY: "auto" }}>
                 <table style={S.table}>
                   <thead>
                     <tr>
-                      <th style={S.thRight}>الرقم</th>
-                      <th style={S.thRight}>الوقت</th>
-                      <th style={S.thRight}>النوع</th>
-                      <th style={S.thRight}>الدفع</th>
-                      <th style={S.thLeft}>المبلغ</th>
+                      <th style={{ ...S.thRight, textAlign: language === "en" ? "left" : "right" }}>{text("الرقم", "Number")}</th>
+                      <th style={{ ...S.thRight, textAlign: language === "en" ? "left" : "right" }}>{text("الوقت", "Time")}</th>
+                      <th style={{ ...S.thRight, textAlign: language === "en" ? "left" : "right" }}>{text("النوع", "Type")}</th>
+                      <th style={{ ...S.thRight, textAlign: language === "en" ? "left" : "right" }}>{text("الدفع", "Payment")}</th>
+                      <th style={{ ...S.thLeft, textAlign: language === "en" ? "right" : "left" }}>{text("المبلغ", "Amount")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -243,16 +246,16 @@ export default function DailyReportPage({ companyName, cashierName }: Props) {
                         </td>
                         <td style={S.td}>
                           {inv.kind === "return" ? (
-                            <span style={S.tagReturn}>مرتجع</span>
+                            <span style={S.tagReturn}>{text("مرتجع", "Return")}</span>
                           ) : (
-                            <span style={S.tagSale}>بيع</span>
+                            <span style={S.tagSale}>{text("بيع", "Sale")}</span>
                           )}
                         </td>
                         <td style={{ ...S.td, fontSize: 11 }}>
-                          {inv.paymentMethod === "cash" ? "نقدي" : inv.paymentMethod === "card" ? "بطاقة" : "—"}
+                          {inv.paymentMethod === "cash" ? text("نقدي", "Cash") : inv.paymentMethod === "card" ? text("بطاقة", "Card") : "—"}
                         </td>
                         <td style={{
-                          ...S.td, textAlign: "left", fontWeight: 600,
+                          ...S.td, textAlign: language === "en" ? "right" : "left", fontWeight: 600,
                           color: inv.kind === "return" ? "#dc2626" : "#0f172a",
                         }}>
                           {inv.kind === "return" ? "−" : ""}{fmtSar(inv.grandTotal)}
@@ -268,10 +271,10 @@ export default function DailyReportPage({ companyName, cashierName }: Props) {
           {/* ── Print footer signatures ── */}
           <div className="print-only" style={S.printFooter}>
             <div style={S.sigBox}>
-              <div style={S.sigLabel}>توقيع الكاشير</div>
+              <div style={S.sigLabel}>{text("توقيع الكاشير", "Cashier signature")}</div>
             </div>
             <div style={S.sigBox}>
-              <div style={S.sigLabel}>توقيع المسؤول</div>
+              <div style={S.sigLabel}>{text("توقيع المسؤول", "Manager signature")}</div>
             </div>
           </div>
         </>
@@ -330,6 +333,7 @@ function Divider() {
 }
 
 function PaymentBar({ label, sales, returns, color }: { label: string; sales: number; returns: number; color: string }) {
+  const text = (ar: string, en: string) => uiText(ar, en);
   const net = sales - returns;
   const max = Math.max(sales, 1);
   const pct = Math.min(100, (net / max) * 100);
@@ -345,13 +349,14 @@ function PaymentBar({ label, sales, returns, color }: { label: string; sales: nu
         <div style={{ ...S.barInner, width: `${pct}%`, background: color }} />
       </div>
       <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
-        بيع: {fmtSar(sales)} · مرتجع: {fmtSar(returns)}
+        {text("بيع", "Sales")}: {fmtSar(sales)} · {text("مرتجع", "Returns")}: {fmtSar(returns)}
       </div>
     </div>
   );
 }
 
 function HourlyChart({ hours }: { hours: { hour: number; sales: number; returns: number; count: number }[] }) {
+  const text = (ar: string, en: string) => uiText(ar, en);
   const max = Math.max(1, ...hours.map((h) => h.sales));
   // Trim outer empty hours for compactness — show from first activity to last.
   const first = hours.findIndex((h) => h.count > 0);
@@ -373,14 +378,14 @@ function HourlyChart({ hours }: { hours: { hour: number; sales: number; returns:
               gap: 2, position: "relative",
             }}>
               {h.sales > 0 && (
-                <div title={`بيع: ${fmtSar(h.sales)}`} style={{
+                <div title={`${text("بيع", "Sales")}: ${fmtSar(h.sales)}`} style={{
                   height: `${Math.max(2, ph)}%`,
                   background: "linear-gradient(180deg, #22c55e 0%, #15803d 100%)",
                   borderRadius: "6px 6px 0 0",
                 }} />
               )}
               {h.returns > 0 && (
-                <div title={`مرتجع: ${fmtSar(h.returns)}`} style={{
+                <div title={`${text("مرتجع", "Returns")}: ${fmtSar(h.returns)}`} style={{
                   height: `${Math.max(2, rh)}%`,
                   background: "linear-gradient(180deg, #f87171 0%, #b91c1c 100%)",
                   borderRadius: "6px 6px 0 0",
@@ -401,18 +406,18 @@ function HourlyChart({ hours }: { hours: { hour: number; sales: number; returns:
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function fmtSar(n: number): string {
-  const v = Math.abs(n).toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const v = Math.abs(n).toLocaleString(getUiLanguage() === "en" ? "en-GB" : "ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `${n < 0 ? "−" : ""}${v} ${currencySymbol()}`;
 }
 function fmtNum(n: number): string {
-  return n.toLocaleString("ar-EG", { maximumFractionDigits: 3 });
+  return n.toLocaleString(getUiLanguage() === "en" ? "en-GB" : "ar-EG", { maximumFractionDigits: 3 });
 }
 function formatTime(iso: string): string {
-  try { return new Date(iso).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }); }
+  try { return new Date(iso).toLocaleTimeString(getUiLanguage() === "en" ? "en-GB" : "ar-SA", { hour: "2-digit", minute: "2-digit" }); }
   catch { return iso; }
 }
-function formatArabicDate(ymd: string): string {
-  try { return new Date(`${ymd}T00:00:00`).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric", weekday: "long" }); }
+function formatArabicDate(ymd: string, language = getUiLanguage()): string {
+  try { return new Date(`${ymd}T00:00:00`).toLocaleDateString(language === "en" ? "en-GB" : "ar-SA", { year: "numeric", month: "long", day: "numeric", weekday: "long" }); }
   catch { return ymd; }
 }
 function shiftDate(ymd: string, deltaDays: number, set: (s: string) => void) {
@@ -442,7 +447,7 @@ const PRINT_CSS = `
 `;
 
 const S = {
-  wrap: { maxWidth: 1400, margin: "0 auto", width: "100%", padding: "8px 4px 24px" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, padding: 0, boxSizing: "border-box" as const } as const,
 
   header: {
     display: "flex", justifyContent: "space-between", alignItems: "flex-end",

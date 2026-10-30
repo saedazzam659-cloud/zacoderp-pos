@@ -1,20 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listSalesInvoices, getSalesInvoice, createSalesInvoice, updateSalesInvoice, deleteSalesInvoice,
   unpostSalesInvoice, postSalesInvoice, listCashBoxes, listBanks, listFinancialTx,
   type SalesInvoice, type SalesLine, type PaymentMethod, type CashBox, type Bank,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
+import { emitData } from "../lib/dataBus";
 import { listItems, type LocalItem } from "../lib/items";
+import {
+  listItemBrands, itemHasBrands, saveInvoiceLineBrands, getInvoiceLineBrands, dropInvoiceLineBrands,
+} from "../lib/brands";
 import { listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
+import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
+import { getCompanyProfile, useHideZeros, blankIfZero, uiText, useUiLanguage } from "../lib/appSettings";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel, EmptyItemsRow,
+  docFormShell, linesPanel, linesScroll, docFormPinned, contentPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
+  ExportButtons, gridToExportCols,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -28,9 +38,11 @@ import { isZatcaCountry, bridgeSalesInvoiceToZatca } from "../lib/zatcaBridge";
 import { setSalesReturnPrefill } from "../lib/returnPrefill";
 import { type WindowsView } from "../lib/moduleRegistry";
 
-type FLine = SalesLine & DiscFields;
+type FLine = SalesLine & DiscFields & { unitKey?: string; brandId?: number | null; brandName?: string | null };
 
 export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: WindowsView) => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<SalesInvoice[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<SalesInvoice | null>(null);
@@ -61,7 +73,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   // the user to a credit-note return instead. `zatcaStatus` is the linked
   // offline_invoices sync state; any non-null value means it reached the bridge.
   function bridgedMsg(): string {
-    return "هذه الفاتورة مرتبطة بزاتكا ولا يمكن تعديلها أو حذفها قانونياً. استخدم زر «إرجاع» لإنشاء إشعار دائن.";
+    return text("هذه الفاتورة مرتبطة بزاتكا ولا يمكن تعديلها أو حذفها قانونياً. استخدم زر «إرجاع» لإنشاء إشعار دائن.", "This invoice is linked to ZATCA and cannot legally be edited or deleted. Use “Return” to create a credit note.");
   }
 
   async function startEdit(id: number) {
@@ -72,20 +84,21 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
       if (inv.zatcaStatus) { setErr(bridgedMsg()); return; }
       setCreating(false);
       setEditDoc(inv);
-    } catch (e: any) { setErr(e?.message ?? "تعذّر تحميل الفاتورة"); }
+    } catch (e: any) { setErr(e?.message ?? text("تعذّر تحميل الفاتورة", "Could not load invoice.")); }
     finally { setBusyId(null); }
   }
 
   async function remove(id: number, invoiceNo: string, zatcaStatus?: string | null) {
     setErr(null);
     if (zatcaStatus) { setErr(bridgedMsg()); return; }
-    if (!confirm(`حذف الفاتورة ${invoiceNo}؟`)) return;
+    if (!confirm(`${text("حذف الفاتورة", "Delete invoice")} ${invoiceNo}?`)) return;
     setBusyId(id);
     try {
       await deleteSalesInvoice(id);
+      dropInvoiceLineBrands(id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? "تعذّر حذف الفاتورة"); }
+    } catch (e: any) { setErr(e?.message ?? text("تعذّر حذف الفاتورة", "Could not delete invoice.")); }
     finally { setBusyId(null); }
   }
 
@@ -93,53 +106,69 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   // editable draft. ترحيل: re-apply a draft's impact. Both refresh the list.
   async function unpost(id: number, invoiceNo: string) {
     setErr(null);
-    if (!confirm(`فك ترحيل الفاتورة ${invoiceNo}؟ سيتم عكس القيد المحاسبي والمخزون وتتحول إلى مسودة قابلة للتعديل.`)) return;
+    if (!confirm(text(`فك ترحيل الفاتورة ${invoiceNo}؟ سيتم عكس القيد المحاسبي والمخزون وتتحول إلى مسودة قابلة للتعديل.`, `Unpost invoice ${invoiceNo}? Its journal and stock effects will be reversed and it will become an editable draft.`))) return;
     setBusyId(id);
     try {
       await unpostSalesInvoice(id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? "تعذّر فك الترحيل"); }
+    } catch (e: any) { setErr(e?.message ?? text("تعذّر فك الترحيل", "Could not unpost invoice.")); }
     finally { setBusyId(null); }
   }
   async function post(id: number, invoiceNo: string) {
     setErr(null);
-    if (!confirm(`ترحيل الفاتورة ${invoiceNo}؟ سيتم توليد القيد المحاسبي وخصم المخزون.`)) return;
+    if (!confirm(text(`ترحيل الفاتورة ${invoiceNo}؟ سيتم توليد القيد المحاسبي وخصم المخزون.`, `Post invoice ${invoiceNo}? This will create the journal entry and deduct stock.`))) return;
     setBusyId(id);
     try {
       await postSalesInvoice(id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? "تعذّر الترحيل"); }
+    } catch (e: any) { setErr(e?.message ?? text("تعذّر الترحيل", "Could not post invoice.")); }
     finally { setBusyId(null); }
+  }
+  // Per-row A4 print: list rows don't carry lines, so load the full invoice first.
+  async function printRow(id: number) {
+    setErr(null);
+    setBusyId(id);
+    try {
+      const inv = await getSalesInvoice(id);
+      await printSalesDoc("a4", invoiceToPrintDoc(inv));
+    } catch (e: any) { setErr(e?.message ?? text("تعذّر طباعة الفاتورة", "Could not print invoice.")); }
+    finally { setBusyId(null); }
+  }
+  async function reloadDeps() {
+    const [customers, cashBoxes, banks, items, warehouses, salespersons] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses(), listSalespersons(false)]);
+    setDeps({ customers, cashBoxes, banks, items, warehouses, salespersons });
   }
   useEffect(() => {
     void refresh();
-    void (async () => {
-      const [customers, cashBoxes, banks, items, warehouses, salespersons] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses(), listSalespersons(false)]);
-      setDeps({ customers, cashBoxes, banks, items, warehouses, salespersons });
-    })();
+    void reloadDeps();
   }, []);
+  useDataRefresh(["invoices", "vouchers"], refresh);
+  // Keep the item/customer pickers live: another tab adding an item or customer
+  // emits on these channels, so reload deps without a manual app refresh.
+  useDataRefresh(["items", "customers"], reloadDeps);
 
   const zatca = isZatcaCountry();
   const columns = useMemo<GridColumn<SalesInvoice>[]>(() => {
     const base: GridColumn<SalesInvoice>[] = [
-      { key: "invoiceNo", label: "رقم الفاتورة", value: (p) => p.invoiceNo },
-      { key: "date", label: "التاريخ", value: (p) => p.invoiceDate },
-      { key: "customer", label: "العميل", value: (p) => p.customerName ?? "نقدي/بدون عميل" },
-      { key: "payment", label: "طريقة الدفع", value: (p) => p.paymentMethod },
-      { key: "status", label: "الحالة", value: (p) => p.status ?? "" },
+      { key: "invoiceNo", label: text("رقم الفاتورة", "Invoice number"), value: (p) => p.invoiceNo },
+      { key: "date", label: text("التاريخ", "Date"), value: (p) => p.invoiceDate },
+      { key: "customer", label: text("العميل", "Customer"), value: (p) => p.customerName ?? text("نقدي/بدون عميل", "Cash / no customer") },
+      { key: "payment", label: text("طريقة الدفع", "Payment method"), value: (p) => p.paymentMethod },
+      { key: "status", label: text("الحالة", "Status"), value: (p) => p.status ?? "" },
     ];
-    if (zatca) base.push({ key: "zatca", label: "زاتكا", value: (p) => p.zatcaStatus ?? "" });
+    if (zatca) base.push({ key: "zatca", label: "ZATCA", value: (p) => p.zatcaStatus ?? "" });
     base.push(
-      { key: "subtotal", label: "المجموع", type: "number", value: (p) => p.subtotal },
-      { key: "vat", label: "الضريبة", type: "number", value: (p) => p.vatTotal },
-      { key: "grand", label: "الإجمالي", type: "number", value: (p) => p.grandTotal },
-      { key: "paid", label: "المسدّد", type: "number", value: (p) => paidByInvoice.get(p.id) ?? 0 },
+      { key: "subtotal", label: text("المجموع", "Subtotal"), type: "number", value: (p) => p.subtotal },
+      { key: "vat", label: text("الضريبة", "Tax"), type: "number", value: (p) => p.vatTotal },
+      { key: "grand", label: text("الإجمالي", "Total"), type: "number", value: (p) => p.grandTotal },
+      { key: "paid", label: text("المسدّد", "Paid"), type: "number", value: (p) => paidByInvoice.get(p.id) ?? 0 },
     );
     return base;
-  }, [zatca, paidByInvoice]);
+  }, [zatca, paidByInvoice, language]);
   const grid = useGridFilter(rows, columns);
+  const sel = useRowSelect(grid.view);
 
   const { start, end, page: clampedPage } = pageSlice(grid.view.length, page, pageSize);
   const pageRows = grid.view.slice(start, end);
@@ -173,19 +202,20 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   }
 
   return (
+    <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title="فواتير المبيعات"
-      subtitle={`${rows.length} فاتورة — يتم ترحيل قيد المبيعات وتكلفة البضاعة المباعة تلقائياً عند الحفظ`}
+      title={text("فواتير المبيعات", "Sales invoices")}
+      subtitle={text(`${rows.length} فاتورة — يتم ترحيل قيد المبيعات وتكلفة البضاعة المباعة تلقائياً عند الحفظ`, `${rows.length} invoices — sales and cost-of-goods-sold entries post automatically when saved`)}
       right={
         <button onClick={() => setCreating(true)} disabled={!deps || formOpen}
           style={{ ...btnPrimary, opacity: (!deps || formOpen) ? 0.5 : 1, cursor: (!deps || formOpen) ? "not-allowed" : "pointer" }}>
-          + فاتورة مبيعات
+          + {text("فاتورة مبيعات", "Sales invoice")}
         </button>
       }
     >
       <ErrorMsg text={err} />
       {formOpen && deps && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc}
               onCancel={() => { setCreating(false); setEditDoc(null); }}
@@ -193,70 +223,73 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
           </div>
         </Card>
       )}
-      {rows.length > 0 && !formOpen && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير المبيعات…" />}
-      <Card>
-        {rows.length === 0 && !formOpen ? <Empty text="لا توجد فواتير مبيعات" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
+      {!formOpen && rows.length > 0 && <GridToolbar grid={grid} placeholder={text("🔍 بحث في فواتير المبيعات…", "🔍 Search sales invoices…")} extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="sales-invoices" title={text("فواتير المبيعات", "Sales invoices")} />} />}
+      {rows.length > 0 && !formOpen && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.invoiceNo : null}>
+          <ActionBtn label={expandedId === sel.selectedId ? text("إخفاء", "Hide") : text("عرض", "View")} icon="▼" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+          <ActionBtn label={text("طباعة الفاتورة", "Print invoice")} icon="🖨️" tone="primary" disabled={!sel.selected || busyId === sel.selectedId}
+            onClick={() => { if (sel.selectedId != null) void printRow(sel.selectedId); }} />
+          {onNavigate && (
+            <ActionBtn label={text("إرجاع", "Return")} icon="↩" tone="warn" disabled={!sel.selected}
+              onClick={() => { if (sel.selectedId != null) void startReturn(sel.selectedId); }} />
+          )}
+          {sel.selected?.zatcaStatus ? (
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>🔒 {text("مُرحّلة لزاتكا", "ZATCA-linked")}</span>
+          ) : (() => {
+            const s = sel.selected;
+            const busy = !s || busyId === s.id;
+            const isDraft = s?.status === "draft";
+            return (
+              <>
+                <ActionBtn label={text("ترحيل", "Post")} icon="✔" tone="success" disabled={busy || !isDraft} onClick={() => { if (s) void post(s.id, s.invoiceNo); }} />
+                <ActionBtn label={text("تعديل", "Edit")} icon="✎" disabled={busy || !isDraft} onClick={() => { if (s) void startEdit(s.id); }} />
+                <ActionBtn label={text("حذف", "Delete")} icon="🗑" tone="danger" disabled={busy || !isDraft} onClick={() => { if (s) void remove(s.id, s.invoiceNo, s.zatcaStatus); }} />
+                <ActionBtn label={text("فك الترحيل", "Unpost")} icon="↺" tone="warn" disabled={busy || isDraft} onClick={() => { if (s) void unpost(s.id, s.invoiceNo); }} />
+              </>
+            );
+          })()}
+        </ActionBar>
+      )}
+      {!formOpen && <Card>
+        {rows.length === 0 && !formOpen ? <Empty text={text("لا توجد فواتير مبيعات", "No sales invoices")} /> : grid.view.length === 0 ? <Empty text={text("لا نتائج مطابقة للبحث", "No matching results")} /> : (
           <Table>
             <thead>
               <tr>
-                <SortableTh grid={grid} colKey="invoiceNo">رقم الفاتورة</SortableTh>
-                <SortableTh grid={grid} colKey="date">التاريخ</SortableTh>
-                <SortableTh grid={grid} colKey="customer">العميل</SortableTh>
-                <SortableTh grid={grid} colKey="payment">طريقة الدفع</SortableTh>
-                <SortableTh grid={grid} colKey="status">الحالة</SortableTh>
-                {zatca && <SortableTh grid={grid} colKey="zatca">زاتكا</SortableTh>}
-                <SortableTh grid={grid} colKey="subtotal" style={{ textAlign: "left" }}>المجموع</SortableTh>
-                <SortableTh grid={grid} colKey="vat" style={{ textAlign: "left" }}>الضريبة</SortableTh>
-                <SortableTh grid={grid} colKey="grand" style={{ textAlign: "left" }}>الإجمالي</SortableTh>
-                <SortableTh grid={grid} colKey="paid" style={{ textAlign: "left" }}>المسدّد / المتبقّي</SortableTh>
-                <Th style={{ width: 100 }}></Th>
+                <SelectTh />
+                <SortableTh grid={grid} colKey="invoiceNo">{text("رقم الفاتورة", "Invoice number")}</SortableTh>
+                <SortableTh grid={grid} colKey="date">{text("التاريخ", "Date")}</SortableTh>
+                <SortableTh grid={grid} colKey="customer">{text("العميل", "Customer")}</SortableTh>
+                <SortableTh grid={grid} colKey="payment">{text("طريقة الدفع", "Payment method")}</SortableTh>
+                <SortableTh grid={grid} colKey="status">{text("الحالة", "Status")}</SortableTh>
+                {zatca && <SortableTh grid={grid} colKey="zatca">ZATCA</SortableTh>}
+                <SortableTh grid={grid} colKey="subtotal" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المجموع", "Subtotal")}</SortableTh>
+                <SortableTh grid={grid} colKey="vat" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الضريبة", "Tax")}</SortableTh>
+                <SortableTh grid={grid} colKey="grand" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</SortableTh>
+                <SortableTh grid={grid} colKey="paid" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المسدّد / المتبقّي", "Paid / remaining")}</SortableTh>
               </tr>
-              <GridFilterRow grid={grid} columns={columns} trailing={1} />
+              <GridFilterRow grid={grid} columns={columns} leading={1} />
             </thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
+                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.invoiceNo}</Td>
                     <Td>{p.invoiceDate}</Td>
-                    <Td>{p.customerName ?? "نقدي/بدون عميل"}</Td>
+                    <Td>{p.customerName ?? text("نقدي/بدون عميل", "Cash / no customer")}</Td>
                     <Td><PayBadge m={p.paymentMethod} /></Td>
                     <Td><StatusBadge status={p.status} /></Td>
                     {isZatcaCountry() && <Td><ZatcaBadge status={p.zatcaStatus} /></Td>}
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
-                    <Td num>{paidCell(p, paidByInvoice.get(p.id) ?? 0)}</Td>
-                    <Td>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-                        <button onClick={() => void toggleView(p.id)} disabled={formOpen} aria-expanded={expandedId === p.id}
-                          style={{ ...btnLink, opacity: formOpen ? 0.5 : 1, cursor: formOpen ? "not-allowed" : "pointer" }}>
-                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                        </button>
-                        {onNavigate && (
-                          <button onClick={() => void startReturn(p.id)} disabled={formOpen} title="إنشاء مرتجع من هذه الفاتورة"
-                            style={{ ...btnLink, color: "#b45309", opacity: formOpen ? 0.5 : 1, cursor: formOpen ? "not-allowed" : "pointer" }}>
-                            ↩ إرجاع
-                          </button>
-                        )}
-                        {p.zatcaStatus ? (
-                          <span title={bridgedMsg()} style={{ fontSize: 12, color: "#94a3b8" }}>🔒 مُرحّلة لزاتكا</span>
-                        ) : p.status === "draft" ? (
-                          <>
-                            <button onClick={() => void post(p.id, p.invoiceNo)} disabled={busyId === p.id || formOpen} style={{ ...btnLink, color: "#15803d" }}>ترحيل</button>
-                            <button onClick={() => void startEdit(p.id)} disabled={busyId === p.id || formOpen} style={btnLink}>تعديل</button>
-                            <button onClick={() => void remove(p.id, p.invoiceNo, p.zatcaStatus)} disabled={busyId === p.id || formOpen} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
-                          </>
-                        ) : (
-                          <button onClick={() => void unpost(p.id, p.invoiceNo)} disabled={busyId === p.id || formOpen} title="فك الترحيل لتعديل أو حذف الفاتورة" style={{ ...btnLink, color: "#b45309" }}>فك الترحيل</button>
-                        )}
-                      </div>
-                    </Td>
+                    <Td num><PaidCell invoice={p} paid={paidByInvoice.get(p.id) ?? 0} /></Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
                       <Td colSpan={11 as any}>
-                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
+                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>{text("... جاري التحميل", "Loading…")}</div> : (
                           <SalesDetail p={expandedDetail} />
                         )}
                       </Td>
@@ -271,17 +304,20 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
           <Pagination total={grid.view.length} page={page} pageSize={pageSize}
             onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
         )}
-      </Card>
+      </Card>}
     </Page>
+    </div>
   );
 }
 
 // المسدّد / المتبقّي cell: cash/bank invoices are settled at sale → "مدفوعة".
 // Credit invoices show Σ collected (تحصيل) and the outstanding remainder.
-function paidCell(p: SalesInvoice, paid: number) {
-  if (p.paymentMethod !== "credit") return <span style={{ color: "#15803d" }}>مدفوعة</span>;
+function PaidCell({ invoice: p, paid }: { invoice: SalesInvoice; paid: number }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
+  if (p.paymentMethod !== "credit") return <span style={{ color: "#15803d" }}>{text("مدفوعة", "Paid")}</span>;
   const remaining = p.grandTotal - paid;
-  if (paid <= 0.005) return <span style={{ color: "#b45309" }}>غير مسدّدة</span>;
+  if (paid <= 0.005) return <span style={{ color: "#b45309" }}>{text("غير مسدّدة", "Unpaid")}</span>;
   return (
     <span>
       <span style={{ color: "#15803d", fontWeight: 600 }}>{fmt(paid)}</span>
@@ -292,36 +328,45 @@ function paidCell(p: SalesInvoice, paid: number) {
 }
 
 function PayBadge({ m }: { m: PaymentMethod }) {
-  const map = { credit: { l: "آجل", c: "#9a3412" }, cash: { l: "نقدي", c: "#15803d" }, bank: { l: "بنك", c: "#1e40af" } } as const;
+  const language = useUiLanguage();
+  const map = {
+    credit: { ar: "آجل", en: "Credit", c: "#9a3412" },
+    cash: { ar: "نقدي", en: "Cash", c: "#15803d" },
+    bank: { ar: "بنك", en: "Bank", c: "#1e40af" },
+  } as const;
   const x = map[m];
-  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{x.l}</span>;
+  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{language === "en" ? x.en : x.ar}</span>;
 }
 
 // Posting state badge: a draft has its impact reversed (no GL/stock effect) and
 // is editable; posted is the normal, locked state. Absent status ⇒ posted.
 function StatusBadge({ status }: { status?: string }) {
+  const language = useUiLanguage();
   const draft = status === "draft";
   const c = draft ? "#b45309" : "#15803d";
-  return <span style={{ background: c + "20", color: c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{draft ? "مسودة" : "مُرحّلة"}</span>;
+  return <span style={{ background: c + "20", color: c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{draft ? uiText("مسودة", "Draft", language) : uiText("مُرحّلة", "Posted", language)}</span>;
 }
 
 // ZATCA sync state of the linked offline_invoices row. `null` = not bridged
 // (non-Saudi installs, or the bridge hasn't run yet).
 function ZatcaBadge({ status }: { status?: string | null }) {
+  const language = useUiLanguage();
   if (!status) return <span style={{ color: "#94a3b8", fontSize: 12 }}>—</span>;
   const synced = status === "synced" || status === "submitted" || status === "cleared" || status === "reported";
   const c = synced ? "#15803d" : "#b45309";
-  const label = synced ? "مُرسلة" : "بانتظار الرفع";
+  const label = synced ? uiText("مُرسلة", "Submitted", language) : uiText("بانتظار الرفع", "Awaiting upload", language);
   return <span style={{ background: c + "20", color: c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{label}</span>;
 }
 
 function SalesDetail({ p }: { p: SalesInvoice }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const disc = getDocDiscount("sales_invoice", p.id);
   const discTotal = disc ? (disc.lineDiscountTotal + disc.headerDiscountValue) : 0;
   return (
     <div style={{ padding: 12 }}>
       <Table>
-        <thead><tr><Th>الصنف</Th><Th>الوحدة</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>سعر الوحدة</Th><Th style={{ textAlign: "left" }}>الضريبة %</Th><Th style={{ textAlign: "left" }}>الإجمالي</Th></tr></thead>
+        <thead><tr><Th>{text("الصنف", "Item")}</Th><Th>{text("الوحدة", "Unit")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الكمية", "Quantity")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("سعر الوحدة", "Unit price")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الضريبة %", "Tax %")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</Th></tr></thead>
         <tbody>
           {p.lines.map((l, i) => (
             <tr key={l.id ?? i}>
@@ -330,26 +375,26 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
           ))}
           {disc && discTotal > 0.00001 && (
             <>
-              <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={5 as any}>الإجمالي قبل الخصم</Td><Td num>{fmt(disc.grossSubtotal)}</Td></tr>
-              <tr style={{ background: "#fff", color: "#b45309" }}><Td colSpan={5 as any}>الخصم</Td><Td num>− {fmt(discTotal)}</Td></tr>
+              <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={5 as any}>{text("الإجمالي قبل الخصم", "Gross subtotal")}</Td><Td num>{fmt(disc.grossSubtotal)}</Td></tr>
+              <tr style={{ background: "#fff", color: "#b45309" }}><Td colSpan={5 as any}>{text("الخصم", "Discount")}</Td><Td num>− {fmt(discTotal)}</Td></tr>
             </>
           )}
           {disc?.currencyCode && disc.currencyCode !== baseCurrencyCode() && (
-            <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={5 as any}>العملة · سعر الصرف</Td><Td num>{disc.currencyCode} · {fmt(disc.exchangeRate ?? 1)}</Td></tr>
+            <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={5 as any}>{text("العملة · سعر الصرف", "Currency · exchange rate")}</Td><Td num>{disc.currencyCode} · {fmt(disc.exchangeRate ?? 1)}</Td></tr>
           )}
           <tr style={{ background: "#fff", fontWeight: 700 }}>
-            <Td colSpan={5 as any}>الإجمالي قبل الضريبة</Td><Td num>{fmt(p.subtotal)}</Td>
+            <Td colSpan={5 as any}>{text("الإجمالي قبل الضريبة", "Subtotal")}</Td><Td num>{fmt(p.subtotal)}</Td>
           </tr>
-          <tr style={{ background: "#fff" }}><Td colSpan={5 as any}>ضريبة القيمة المضافة</Td><Td num>{fmt(p.vatTotal)}</Td></tr>
-          <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 16 }}><Td colSpan={5 as any}>الإجمالي النهائي</Td><Td num>{fmt(p.grandTotal)}</Td></tr>
-          <tr style={{ background: "#fff", color: "#64748b" }}><Td colSpan={5 as any}>تكلفة البضاعة المباعة</Td><Td num>{fmt(p.cogsTotal)}</Td></tr>
+          <tr style={{ background: "#fff" }}><Td colSpan={5 as any}>{text("ضريبة القيمة المضافة", "VAT")}</Td><Td num>{fmt(p.vatTotal)}</Td></tr>
+          <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 16 }}><Td colSpan={5 as any}>{text("الإجمالي النهائي", "Grand total")}</Td><Td num>{fmt(p.grandTotal)}</Td></tr>
+          <tr style={{ background: "#fff", color: "#64748b" }}><Td colSpan={5 as any}>{text("تكلفة البضاعة المباعة", "Cost of goods sold")}</Td><Td num>{fmt(p.cogsTotal)}</Td></tr>
           {isZatcaCountry() && p.zatcaQrBase64 && (
             <tr style={{ background: "#fff" }}>
-              <Td colSpan={5 as any}>زاتكا</Td>
+              <Td colSpan={5 as any}>ZATCA</Td>
               <Td>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   <ZatcaBadge status={p.zatcaStatus ?? "pending"} />
-                  <span style={{ color: "#15803d", fontSize: 12 }}>✓ تم توليد رمز QR وإدراج الفاتورة في طابور الإرسال لزاتكا</span>
+                  <span style={{ color: "#15803d", fontSize: 12 }}>✓ {text("تم توليد رمز QR وإدراج الفاتورة في طابور الإرسال لزاتكا", "QR code generated and invoice added to the ZATCA submission queue")}</span>
                 </span>
               </Td>
             </tr>
@@ -357,8 +402,9 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
         </tbody>
       </Table>
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button onClick={() => void printSalesDoc("a4", invoiceToPrintDoc(p))} style={btnSecondary}>🖨️ طباعة A4</button>
-        <button onClick={() => void printSalesDoc("thermal", invoiceToPrintDoc(p))} style={btnSecondary}>🧾 طباعة حرارية</button>
+        <button onClick={() => void printSalesDoc("a4", invoiceToPrintDoc(p))} style={btnSecondary}>🖨️ {text("طباعة A4", "Print A4")}</button>
+        <button onClick={() => void printSalesDoc("thermal", invoiceToPrintDoc(p))} style={btnSecondary}>🧾 {text("طباعة حرارية", "Thermal print")}</button>
+        <button onClick={() => openWhatsApp(buildDocWhatsAppText({ kind: "invoice", companyName: getCompanyProfile().name, docNo: p.invoiceNo, date: p.invoiceDate, grandTotal: p.grandTotal, customerName: p.buyerName ?? p.customerName }))} style={{ ...btnSecondary, color: "#075e54", borderColor: "#25d366" }}>💬 WhatsApp</button>
       </div>
     </div>
   );
@@ -376,7 +422,11 @@ function invoiceToPrintDoc(p: SalesInvoice): PrintDoc {
     vatTotal: p.vatTotal,
     grandTotal: p.grandTotal,
     notes: p.notes,
-    lines: p.lines,
+    // Merge the print-only brand snapshot by index (persisted-line order).
+    lines: (() => {
+      const bl = getInvoiceLineBrands(p.id);
+      return p.lines.map((l, i) => ({ ...l, brandName: bl[i]?.brandName ?? null }));
+    })(),
     qrBase64: p.zatcaQrBase64 ?? null,
   };
 }
@@ -386,7 +436,11 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   initial?: SalesInvoice | null;
   onCancel: () => void; onDone: () => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const isEdit = !!initial;
+  const hideZeros = useHideZeros();
+  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.invoiceDate ?? todayStr());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "cash");
@@ -415,16 +469,29 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
-    itemId: 0, qty: 1, unitPrice: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
+    itemId: 0, qty: 1, unitPrice: 0, vatRate: 0, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
+    unitKey: "base",
   });
   // Stored line unitPrice is already NET (discount baked in at create) — the
   // pre-discount breakdown isn't round-tripped, so edit re-opens with disc=0.
-  const [lines, setLines] = useState<FLine[]>(() =>
-    initial && initial.lines.length
-      ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
-      : [blankLine()],
-  );
+  const [lines, setLines] = useState<FLine[]>(() => {
+    if (initial && initial.lines.length) {
+      // Re-hydrate the print-only brand snapshot (indexed in persisted-line order).
+      const bl = getInvoiceLineBrands(initial.id);
+      return initial.lines.map((l, i) => ({
+        ...l, disc: 0, discType: "percent" as DiscType,
+        brandId: bl[i]?.brandId ?? null, brandName: bl[i]?.brandName ?? null,
+      }));
+    }
+    return [];
+  });
+  const [expandedLineIndices, setExpandedLineIndices] = useState<Set<number>>(() => {
+    const savedBrands = initial ? getInvoiceLineBrands(initial.id) : [];
+    return new Set(initial?.lines.flatMap((line, index) =>
+      line.note?.trim() || savedBrands[index]?.brandId ? [index] : [],
+    ) ?? []);
+  });
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -468,6 +535,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const navCombo = { navAttr: "1", inputClassName: "zfield", onEnterNavigate: (el: HTMLElement | null) => advanceFrom(el) } as const;
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
+  const selectedLineCount = lines.filter((line) => Number(line.itemId) > 0).length;
 
   // In edit mode the first customerId effect would clobber the persisted buyer
   // snapshot / invoiceType with the live customer record — skip exactly once.
@@ -489,25 +557,53 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   }, [customerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function setLine(i: number, patch: Partial<FLine>) {
+    if (patch.itemId && itemHasBrands(patch.itemId)) {
+      setExpandedLineIndices((current) => new Set(current).add(i));
+    }
     setLines((ls) => ls.map((l, k) => {
       if (k !== i) return l;
       const next = { ...l, ...patch };
-      // Auto-fill sale price + vat from the chosen item, and default its unit.
+      // Auto-fill sale price + vat from the chosen item, and reset to its BASE
+      // unit (the item's own additional units appear in the unit picker below).
       if (patch.itemId !== undefined) {
         const it = deps.items.find((x) => x.id === Number(patch.itemId));
         if (it) {
-          if (!next.unitPrice) next.unitPrice = it.salePrice ?? 0;
-          next.vatRate = it.vatRate ?? next.vatRate;
-          if (it.uomId != null) {
-            const u = uoms.find((x) => x.id === it.uomId);
-            if (u) { next.uomId = u.id; next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
+          next.unitKey = "base";
+          next.unitPrice = it.salePrice ?? 0;
+          next.vatRate = it.vatRate ?? 0;
+          const bu = it.uomId != null ? uoms.find((x) => x.id === it.uomId) : defUom;
+          next.uomId = bu?.id ?? null; next.uomName = bu?.nameAr ?? null; next.conversionFactor = bu?.baseQty ?? 1;
+        }
+        // A different item carries different brands — clear any prior pick.
+        next.brandId = null; next.brandName = null;
+      }
+      // Brand pick (PRINT-ONLY, back-office only). Loads the brand's own sale
+      // price into unitPrice and snapshots the brand name for the printed
+      // invoice. NEVER enters the ZATCA UBL/hash/signature/QR/ICV-PIH.
+      if (patch.brandId !== undefined) {
+        const bid = patch.brandId;
+        if (bid) {
+          const link = listItemBrands(Number(next.itemId)).find((b) => b.brandId === bid);
+          if (link) {
+            next.brandName = link.brandNameAr;
+            if ((link.salePrice1 ?? 0) > 0) next.unitPrice = link.salePrice1 as number;
           }
+        } else {
+          next.brandName = null;
         }
       }
-      // Unit change: price stays per SELECTED unit; factor only affects stock/COGS.
-      if (patch.uomId !== undefined) {
-        const u = uoms.find((x) => x.id === Number(patch.uomId));
-        if (u) { next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
+      // Unit change via the per-item picker. Picking an ADDITIONAL unit auto-fills
+      // its own price + conversion factor; the BASE unit restores the base price.
+      if (patch.unitKey !== undefined) {
+        const it = deps.items.find((x) => x.id === Number(next.itemId));
+        if (patch.unitKey.startsWith("add:") && it) {
+          const u = it.units?.find((x) => x.id === patch.unitKey!.slice(4));
+          if (u) { next.uomId = null; next.uomName = u.name; next.conversionFactor = u.factor; next.unitPrice = u.price; }
+        } else {
+          const bu = it?.uomId != null ? uoms.find((x) => x.id === it.uomId) : defUom;
+          next.uomId = bu?.id ?? null; next.uomName = bu?.nameAr ?? null; next.conversionFactor = bu?.baseQty ?? 1;
+          if (it) next.unitPrice = it.salePrice ?? 0;
+        }
       }
       // A selected header tax overrides any per-item/per-line rate so one tax
       // applies to the whole invoice.
@@ -526,7 +622,12 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       return [...ls, nl];
     });
   }
-  function removeLine(i: number) { setLines((ls) => ls.filter((_, k) => k !== i)); }
+  function removeLine(i: number) {
+    setLines((ls) => ls.filter((_, k) => k !== i));
+    setExpandedLineIndices((current) => new Set(
+      [...current].flatMap((index) => index === i ? [] : [index > i ? index - 1 : index]),
+    ));
+  }
   function onSelectTax(v: string | number) {
     const id = v === "" ? "" : Number(v);
     setTaxId(id);
@@ -548,15 +649,17 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
     setBusy(true); setErr(null); setIssues([]);
     try {
       const problems = collectDocIssues([
-        { label: "طريقة الدفع", ok: !!paymentMethod },
-        { label: "العميل", ok: paymentMethod !== "credit" || !!customerId },
-        { label: "العملة", ok: !!currency },
-        ...(branches.length ? [{ label: "الفرع", ok: branchId !== "" }] : []),
-        { label: "المستودع", ok: !!warehouseId },
-      ], lines.map((l) => ({ itemId: l.itemId, uomId: l.uomId ?? null, price: l.unitPrice, qty: l.qty })), "سعر البيع");
+        { label: text("طريقة الدفع", "Payment method"), ok: !!paymentMethod },
+        { label: text("العميل", "Customer"), ok: paymentMethod !== "credit" || !!customerId },
+        { label: text("العملة", "Currency"), ok: !!currency },
+        ...(branches.length ? [{ label: text("الفرع", "Branch"), ok: branchId !== "" }] : []),
+        { label: text("المستودع", "Warehouse"), ok: !!warehouseId },
+      ], lines.map((l) => ({ itemId: l.itemId, uomId: l.uomId ?? null, price: l.unitPrice, qty: l.qty })), text("سعر البيع", "Sales price"));
       if (problems.length) { setIssues(problems); setBusy(false); return; }
       const cleaned = lines.filter((l) => l.itemId && (l.qty || 0) > 0);
-      if (currency !== baseCurrencyCode() && !(exchangeRate > 0)) throw new Error("أدخل سعر صرف صحيح للعملة الأجنبية");
+      // Print-only per-line brand snapshot, aligned to the persisted (cleaned) order.
+      const brandSnapshot = cleaned.map((l) => ({ brandId: l.brandId ?? null, brandName: l.brandName ?? null }));
+      if (currency !== baseCurrencyCode() && !(exchangeRate > 0)) throw new Error(text("أدخل سعر صرف صحيح للعملة الأجنبية", "Enter a valid exchange rate for the foreign currency."));
       // Fold the discount into each unit price; Rust recomputes totals from
       // qty × unitPrice so VAT lands on the net base (ZATCA-correct).
       const r = computeDiscount(
@@ -602,6 +705,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       if (isEdit && initial) {
         await updateSalesInvoice(initial.id, payload);
         saveDocDiscount("sales_invoice", initial.id, discOverlay);
+        saveInvoiceLineBrands(initial.id, brandSnapshot);
         onDone();
         return;
       }
@@ -613,6 +717,8 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         id = await createSalesInvoice(payload);
         setSavedId(id);
         saveDocDiscount("sales_invoice", id, discOverlay);
+        saveInvoiceLineBrands(id, brandSnapshot);
+        emitData("invoices", "journal", "stock", "customers", "cashboxes", "banks");
       }
       // ZATCA bridge (Saudi installs only): generate the TLV QR and enqueue the
       // invoice into the existing offline_invoices → cloud-sync submission path.
@@ -629,100 +735,270 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
             customerVat: selectedCustomer?.vatNumber ?? null,
           });
         } catch (e: any) {
-          setErr(`تم حفظ الفاتورة لكن تعذّر ربطها بزاتكا. اضغط «حفظ» مرة أخرى لإعادة المحاولة. (${e?.message ?? "خطأ"})`);
+          setErr(text(`تم حفظ الفاتورة لكن تعذّر ربطها بزاتكا. اضغط «حفظ» مرة أخرى لإعادة المحاولة. (${e?.message ?? "خطأ"})`, `Invoice saved, but the ZATCA link failed. Select “Save” again to retry. (${e?.message ?? "Error"})`));
           return;
         }
       }
       onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save invoice.")); }
     finally { setBusy(false); }
   }
 
   return (
-    <div ref={formRef}>
+    <div ref={formRef} style={docFormShell}>
       <style>{`
         .zfield{transition:border-color .12s ease, box-shadow .12s ease;}
         .zfield:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.18);}
         .zrow:hover td{background:#eff6ff !important;}
+        .zlines-wrap thead th{position:sticky;top:0;z-index:2;}
+        .zlines-wrap thead th{padding:8px 5px !important;font-size:11px !important;white-space:nowrap;}
+        .zlines-wrap tbody td{padding:5px !important;vertical-align:middle;}
+        .zlines-wrap .zfield{height:32px !important;padding:4px 6px !important;font-size:12px !important;}
+        .zline-details td{background:#f2faf7 !important;border-top:0 !important;padding:10px 14px !important;}
+        .zline-details-panel{display:grid;grid-template-columns:minmax(220px,1fr) minmax(280px,2fr);gap:12px;align-items:end;}
+        .zline-detail-label{display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:5px;}
+        .zsales-totals-grid{grid-template-columns:repeat(6,minmax(0,1fr)) !important;}
+        @media(max-width:1100px){.zsales-totals-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important;}}
+        @media(max-width:700px){.zsales-totals-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}}
+        @media(max-width:700px){.zline-details-panel{grid-template-columns:1fr;}}
       `}</style>
-      <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل الفاتورة ${initial?.invoiceNo ?? ""}` : "فاتورة مبيعات جديدة"}</h3>
+      <h3 style={{ marginTop: 0 }}>{isEdit ? `${text("تعديل الفاتورة", "Edit invoice")} ${initial?.invoiceNo ?? ""}` : text("فاتورة مبيعات جديدة", "New sales invoice")}</h3>
+      <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
+        { key: "basic", label: text("البيانات الأساسية", "Basic information") },
+        { key: "lines", label: `${text("بنود الأصناف", "Items")} (${selectedLineCount})` },
+        { key: "payments", label: text("المدفوعات", "Payments") },
+      ]} />
+
+      <div style={contentPanel(activeTab, "basic")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
-        <Field label="العميل *">
+        <Field label={text("العميل *", "Customer *")}>
           <SearchCombobox
             value={customerId}
             onChange={(v) => setCustomerId(Number(v))}
             {...navCombo}
             style={input}
             options={[
-              { value: 0, label: "— بدون عميل —" },
+              { value: 0, label: text("— بدون عميل —", "— No customer —") },
               ...deps.customers.map((c) => ({ value: c.id, label: c.nameAr })),
             ]}
           />
         </Field>
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} {...navInput} /></Field>
-        <Field label="طريقة الدفع">
-          <SearchCombobox
-            value={paymentMethod}
-            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
-            {...navCombo}
-            style={input}
-            options={[
-              { value: "cash", label: "نقدي" },
-              { value: "bank", label: "بنك" },
-              { value: "credit", label: "آجل (على الحساب)" },
-            ]}
-          />
-        </Field>
-        <Field label="المستودع">
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} {...navInput} /></Field>
+        <Field label={text("المستودع", "Warehouse")}>
           <SearchCombobox
             value={warehouseId}
             onChange={(v) => setWarehouseId(Number(v))}
             {...navCombo}
             style={input}
             options={[
-              { value: 0, label: "— المستودع الافتراضي —" },
+              { value: 0, label: text("— المستودع الافتراضي —", "— Default warehouse —") },
               ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
             ]}
           />
         </Field>
-        <Field label="الضريبة">
+        <Field label={text("الضريبة", "Tax")}>
           <SearchCombobox value={taxId} onChange={onSelectTax} {...navCombo} options={taxOptions} style={input} />
         </Field>
-        <Field label="الفرع">
+        <Field label={text("الفرع", "Branch")}>
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} {...navCombo} options={branchPickerOptions(branches)} style={input} />
         </Field>
-        <Field label="مركز التكلفة">
+        <Field label={text("مركز التكلفة", "Cost center")}>
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} {...navCombo} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
-        <Field label="مندوب المبيعات">
+        <Field label={text("مندوب المبيعات", "Sales representative")}>
           <SearchCombobox
             value={salesRepId}
             onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
             {...navCombo}
             style={input}
             options={[
-              { value: "", label: "— بدون —" },
+              { value: "", label: text("— بدون —", "— None —") },
               ...deps.salespersons.map((s) => ({ value: s.id, label: s.nameAr })),
             ]}
           />
         </Field>
         {isZatcaCountry() && (
-        <Field label="نوع الفاتورة (زاتكا)">
+        <Field label={text("نوع الفاتورة (زاتكا)", "Invoice type (ZATCA)")}>
           <SearchCombobox
             value={invoiceType}
             onChange={(v) => setInvoiceType(v as "simplified" | "standard")}
             {...navCombo}
             style={input}
             options={[
-              { value: "simplified", label: "مبسّطة (B2C)" },
-              { value: "standard", label: "ضريبية (B2B)" },
+              { value: "simplified", label: text("مبسّطة (B2C)", "Simplified (B2C)") },
+              { value: "standard", label: text("ضريبية (B2B)", "Standard tax (B2B)") },
             ]}
           />
         </Field>
         )}
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
+        {invoiceType === "standard" && (
+          <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{text("بيانات المشتري (للفاتورة الضريبية)", "Buyer details (for tax invoices)")}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px" }}>
+              <Field label={text("اسم المشتري", "Buyer name")}>
+                <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} {...navInput} />
+              </Field>
+              <Field label={text("الرقم الضريبي للمشتري", "Buyer tax number")}>
+                <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} {...navInput} />
+              </Field>
+              <Field label={text("عنوان المشتري", "Buyer address")}>
+                <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} {...navInput} />
+              </Field>
+            </div>
+          </div>
+        )}
+      </div>
+      </div>
+
+      <div style={linesPanel(activeTab)}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
+        <strong style={{ fontSize: 15 }}>{text("بنود الأصناف", "Invoice items")}</strong>
+        <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>
+          {selectedLineCount} {text("صنف", "items")}
+        </span>
+      </div>
+      <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 8 }}>
+      <Table style={{ width: "100%", minWidth: 900, tableLayout: "fixed" }}>
+        <thead><tr>
+          <Th style={{ width: "3%", textAlign: "center" }}>#</Th>
+          <Th style={{ width: "23%" }}>{text("الصنف", "Item")}</Th>
+          <Th style={{ width: "10%" }}>{text("الوحدة", "Unit")}</Th>
+          <Th style={{ width: "8%", textAlign: "center" }}>{text("الكمية", "Quantity")}</Th>
+          <Th style={{ width: "6%", textAlign: "center" }}>{text("مجاني", "Free")}</Th>
+          <Th style={{ width: "13%", textAlign: "center" }}>{text("سعر الوحدة", "Unit price")}</Th>
+          <Th style={{ width: "12%" }}>{text("الخصم", "Discount")}</Th>
+          <Th style={{ width: "6%", textAlign: "center" }}>{text("ض. %", "Tax %")}</Th>
+          <Th style={{ width: "12%", textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</Th>
+          <Th style={{ width: "7%", textAlign: "center" }}>{text("إجراءات", "Actions")}</Th>
+        </tr></thead>
+        <tbody>
+          {lines.length === 0 && <EmptyItemsRow colSpan={10} />}
+          {lines.map((l, i) => {
+            const expanded = expandedLineIndices.has(i);
+            return (
+              <React.Fragment key={`line-${i}`}>
+                <tr className="zrow" style={{ background: i % 2 ? "#fbfdff" : "#fff" }}>
+                  <Td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</Td>
+                  <Td>
+                    <SearchCombobox
+                      value={l.itemId}
+                      onChange={(v) => setLine(i, { itemId: Number(v) })}
+                      {...navCombo}
+                      style={input}
+                      options={[
+                        { value: 0, label: text("— اختر —", "— Select —") },
+                        ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
+                      ]}
+                    />
+                  </Td>
+                  <Td>
+                    {(() => {
+                      const selItem = deps.items.find((x) => x.id === l.itemId);
+                      const baseName = selItem?.uomId != null
+                        ? (uoms.find((u) => u.id === selItem.uomId)?.nameAr ?? "")
+                        : (defUom?.nameAr ?? "");
+                      const unitOpts = selItem
+                        ? [
+                            { value: "base", label: baseName || text("أساسي", "Base") },
+                            ...((selItem.units ?? []).map((u) => ({ value: `add:${u.id}`, label: `${u.name} (×${u.factor})` }))),
+                          ]
+                        : [{ value: "base", label: defUom?.nameAr ?? "" }];
+                      return (
+                        <SearchCombobox
+                          value={l.unitKey ?? "base"}
+                          onChange={(v) => setLine(i, { unitKey: String(v) })}
+                          {...navCombo}
+                          style={input}
+                          options={unitOpts}
+                        />
+                      );
+                    })()}
+                  </Td>
+                  <Td><input type="number" step="0.001" value={blankIfZero(l.qty, hideZeros)} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
+                  <Td><input type="number" step="0.001" value={blankIfZero(l.freeQty ?? 0, hideZeros)} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
+                  <Td><input type="number" step="0.01" value={blankIfZero(l.unitPrice, hideZeros)} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
+                  <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} navAttr="1" inputClassName="zfield" onEnterNavigate={(el) => advanceFrom(el)} /></Td>
+                  <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
+                  <Td num style={{ fontWeight: 700, color: "#0f172a" }}>{docSym} {fmt(l.lineTotal)}</Td>
+                  <Td>
+                    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedLineIndices((current) => {
+                          const next = new Set(current);
+                          if (next.has(i)) next.delete(i); else next.add(i);
+                          return next;
+                        })}
+                        aria-label={expanded ? text("إخفاء تفاصيل السطر", "Hide line details") : text("فتح تفاصيل السطر", "Open line details")}
+                        title={expanded ? text("إخفاء التفاصيل", "Hide details") : text("ملاحظة وبيانات إضافية", "Note and additional information")}
+                        style={{ ...btnLink, color: expanded ? "#087f69" : "#64748b", fontSize: 16, padding: "2px 5px" }}
+                      >
+                        {expanded ? "⌄" : "⋯"}
+                      </button>
+                      <button type="button" onClick={() => removeLine(i)} aria-label={text("حذف السطر", "Remove line")} title={text("حذف السطر", "Remove line")} style={{ ...btnLink, color: "#dc2626", fontSize: 17, padding: "2px 5px" }}>×</button>
+                    </div>
+                  </Td>
+                </tr>
+                {expanded && (
+                  <tr className="zline-details">
+                    <Td colSpan={10}>
+                      <div className="zline-details-panel">
+                        {itemHasBrands(l.itemId) && (
+                          <div>
+                            <label className="zline-detail-label">{text("العلامة التجارية", "Brand")}</label>
+                            <SearchCombobox
+                              value={l.brandId ?? ""}
+                              onChange={(v) => setLine(i, { brandId: v === "" ? null : Number(v) })}
+                              style={input}
+                              options={[
+                                { value: "", label: text("بدون علامة تجارية", "No brand") },
+                                ...listItemBrands(l.itemId).map((b) => ({ value: b.brandId, label: b.brandNameAr })),
+                              ]}
+                            />
+                          </div>
+                        )}
+                        <div style={{ gridColumn: itemHasBrands(l.itemId) ? undefined : "1 / -1" }}>
+                          <label className="zline-detail-label">{text("ملاحظة السطر", "Line note")}</label>
+                          <input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} {...navInput} />
+                        </div>
+                      </div>
+                    </Td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </Table>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-start", marginTop: 8 }}>
+        <button onClick={addLine} type="button" style={{ padding: "7px 14px", background: "#fff", color: "#087f69", border: "1px solid #9bd6c9", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
+          + {text("إضافة صنف", "Add item")}
+        </button>
+      </div>
+      <div style={docFormPinned}>
+      <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      </div>
+      </div>
+
+      <div style={contentPanel(activeTab, "payments")}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label={text("طريقة الدفع", "Payment method")}>
+          <SearchCombobox
+            value={paymentMethod}
+            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            {...navCombo}
+            style={input}
+            options={[
+              { value: "cash", label: text("نقدي", "Cash") },
+              { value: "bank", label: text("بنك", "Bank") },
+              { value: "credit", label: text("آجل (على الحساب)", "Credit (on account)") },
+            ]}
+          />
+        </Field>
         {paymentMethod === "cash" && (
-          <Field label="الخزينة">
+          <Field label={text("الخزينة", "Cashbox")}>
             <SearchCombobox
               value={cashBoxId ?? ""}
               onChange={(v) => setCashBoxId(Number(v) || null)}
@@ -733,7 +1009,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           </Field>
         )}
         {paymentMethod === "bank" && (
-          <Field label="البنك">
+          <Field label={text("البنك", "Bank")}>
             <SearchCombobox
               value={bankId ?? ""}
               onChange={(v) => setBankId(Number(v) || null)}
@@ -743,98 +1019,28 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
             />
           </Field>
         )}
-        {invoiceType === "standard" && (
-          <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري (للفاتورة الضريبية)</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px" }}>
-              <Field label="اسم المشتري">
-                <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} {...navInput} />
-              </Field>
-              <Field label="الرقم الضريبي للمشتري">
-                <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} {...navInput} />
-              </Field>
-              <Field label="عنوان المشتري">
-                <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} {...navInput} />
-              </Field>
-            </div>
-          </div>
-        )}
-        {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
-          <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
-            الرصيد الحالي: <b>{fmt(selectedCustomer.balance ?? 0)}</b>
-            {(selectedCustomer.creditLimit ?? 0) > 0 && <> · حد الائتمان: <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
-            {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · مدة الاستحقاق: <b>{selectedCustomer.paymentTermsDays} يوم</b></>}
-            {selectedCustomer.enforceCreditLimit && <> · <b>المنع مُفعّل</b></>}
-          </div>
-        )}
       </div>
-
-      <div style={{ marginTop: 16, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>بنود الفاتورة</div>
-      <div style={{ overflowX: "auto", marginTop: 8, border: "1px solid #e2e8f0", borderRadius: 10 }}>
-      <Table style={{ minWidth: 1290 }}>
-        <thead><tr>
-          <Th style={{ width: 44, textAlign: "center" }}>#</Th>
-          <Th style={{ minWidth: 240 }}>الصنف</Th>
-          <Th style={{ width: 130 }}>الوحدة</Th>
-          <Th style={{ width: 180, textAlign: "center" }}>الكمية</Th>
-          <Th style={{ width: 80, textAlign: "center" }}>مجاني</Th>
-          <Th style={{ width: 240, textAlign: "center" }}>سعر الوحدة</Th>
-          <Th style={{ width: 170 }}>الخصم</Th>
-          <Th style={{ width: 80, textAlign: "center" }}>ض. %</Th>
-          <Th style={{ width: 150 }}>ملاحظة</Th>
-          <Th style={{ width: 130, textAlign: "left" }}>الإجمالي</Th>
-          <Th style={{ width: 40 }}></Th>
-        </tr></thead>
-        <tbody>
-          {lines.map((l, i) => (
-            <tr key={i} className="zrow" style={{ background: i % 2 ? "#fbfdff" : "#fff" }}>
-              <Td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</Td>
-              <Td>
-                <SearchCombobox
-                  value={l.itemId}
-                  onChange={(v) => setLine(i, { itemId: Number(v) })}
-                  {...navCombo}
-                  style={input}
-                  options={[
-                    { value: 0, label: "— اختر —" },
-                    ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
-                  ]}
-                />
-              </Td>
-              <Td>
-                <SearchCombobox
-                  value={l.uomId ?? 0}
-                  onChange={(v) => setLine(i, { uomId: Number(v) })}
-                  {...navCombo}
-                  style={input}
-                  options={uoms.map((u) => ({ value: u.id, label: u.baseQty !== 1 ? `${u.nameAr} (×${u.baseQty})` : u.nameAr }))}
-                />
-              </Td>
-              <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
-              <Td><input type="number" step="0.001" value={l.freeQty ?? 0} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
-              <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
-              <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} navAttr="1" inputClassName="zfield" onEnterNavigate={(el) => advanceFrom(el)} /></Td>
-              <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
-              <Td><input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} {...navInput} /></Td>
-              <Td num style={{ fontWeight: 700, color: "#0f172a" }}>{docSym} {fmt(l.lineTotal)}</Td>
-              <Td><button onClick={() => removeLine(i)} style={{ ...btnLink, color: "#dc2626", fontSize: 18 }}>×</button></Td>
-            </tr>
-          ))}
-        </tbody>
-      </Table>
-      </div>
-      <button onClick={addLine} type="button" style={{ width: "100%", marginTop: 8, padding: "10px 16px", background: "#f8fafc", color: "#2563eb", border: "1px dashed #93c5fd", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600 }}>+ إضافة سطر</button>
-      <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
-
-      <Field label="ملاحظات" style={{ marginTop: 12 }}>
+      {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
+        <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
+          {text("الرصيد الحالي:", "Current balance:")} <b>{fmt(selectedCustomer.balance ?? 0)}</b>
+          {(selectedCustomer.creditLimit ?? 0) > 0 && <> · {text("حد الائتمان:", "Credit limit:")} <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
+          {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · {text("مدة الاستحقاق:", "Payment terms:")} <b>{selectedCustomer.paymentTermsDays} {text("يوم", "days")}</b></>}
+          {selectedCustomer.enforceCreditLimit && <> · <b>{text("المنع مُفعّل", "Credit limit enforced")}</b></>}
+        </div>
+      )}
+      <Field label={text("ملاحظات", "Notes")} style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
+      </div>
+
+      <div style={docFormPinned}>
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : (isEdit ? "حفظ التعديل" : "حفظ وترحيل")}</button>
+        <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
+        <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : (isEdit ? text("حفظ التعديل", "Save changes") : text("حفظ وترحيل", "Save and post"))}</button>
       </Actions>
+      </div>
     </div>
   );
 }

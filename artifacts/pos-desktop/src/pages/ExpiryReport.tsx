@@ -1,3 +1,4 @@
+import { saveText } from "../lib/saveFile";
 // Expiry report — pharmacy-vertical only (Task #200).
 //
 // Lists every item whose `expiry_date` is non-null and within the chosen
@@ -15,31 +16,43 @@
 import { useEffect, useMemo, useState } from "react";
 import { listExpiringItems, daysUntilExpiry, type LocalItem } from "../lib/items";
 import { SearchCombobox } from "./_adminUi";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type Props = { onJumpToItems?: () => void };
 
-function exportCsv(rows: LocalItem[]) {
+function exportCsv(rows: LocalItem[], language: "ar" | "en") {
   const esc = (v: any) => {
     const s = v == null ? "" : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const headers = ["nameAr", "nameEn", "barcode", "expiryDate", "daysLeft", "batchNo", "activeIngredient", "dosageForm", "strength", "manufacturer", "salePrice"];
+  const headers = [
+    uiText("اسم الصنف بالعربية", "Item name (Arabic)", language),
+    uiText("اسم الصنف بالإنجليزية", "Item name (English)", language),
+    uiText("الباركود", "Barcode", language),
+    uiText("تاريخ الصلاحية", "Expiry date", language),
+    uiText("الأيام المتبقية", "Days left", language),
+    uiText("رقم التشغيلة", "Batch number", language),
+    uiText("المادة الفعالة", "Active ingredient", language),
+    uiText("الشكل الدوائي", "Dosage form", language),
+    uiText("التركيز", "Strength", language),
+    uiText("الشركة المصنعة", "Manufacturer", language),
+    uiText("سعر البيع", "Sale price", language),
+  ];
   const lines = [headers.join(",")];
   for (const r of rows) {
     lines.push([r.nameAr, r.nameEn, r.barcode, r.expiryDate, daysUntilExpiry(r), r.batchNo, r.activeIngredient, r.dosageForm, r.strength, r.manufacturer, r.salePrice].map(esc).join(","));
   }
-  const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `expiry-report-${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  void saveText(
+    "\uFEFF" + lines.join("\n"),
+    `expiry-report-${new Date().toISOString().slice(0, 10)}.csv`,
+  );
 }
 
 const HORIZONS = [30, 60, 90, 180, 365];
 
 export default function ExpiryReport({ onJumpToItems }: Props = {}) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [horizon, setHorizon] = useState<number>(90);
   const [rows, setRows] = useState<LocalItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +66,7 @@ export default function ExpiryReport({ onJumpToItems }: Props = {}) {
         const r = await listExpiringItems(horizon);
         if (!cancelled) setRows(r);
       } catch (e: any) {
-        if (!cancelled) setErr(e?.message ?? "تعذّر تحميل التقرير");
+        if (!cancelled) setErr(e?.message ?? text("تعذّر تحميل التقرير", "Could not load the report."));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -78,22 +91,22 @@ export default function ExpiryReport({ onJumpToItems }: Props = {}) {
   }, [rows]);
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.header}>
         <div>
-          <h2 style={S.h2}>تقرير الصلاحية ({rows.length})</h2>
-          <div style={S.sub}>أصناف ستنتهي صلاحيتها خلال {horizon} يومًا — مرتبة من الأقرب انتهاءً</div>
+          <h2 style={S.h2}>{text("تقرير الصلاحية", "Expiry report")} ({rows.length})</h2>
+          <div style={S.sub}>{text("أصناف ستنتهي صلاحيتها خلال", "Items expiring within")} {horizon} {text("يومًا — مرتبة من الأقرب انتهاءً", "days, sorted by nearest expiry.")}</div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button disabled={rows.length === 0} onClick={() => exportCsv(rows)} style={S.exportBtn} title="تصدير الجدول كملف CSV">
-            ⬇️ تصدير CSV
+          <button disabled={rows.length === 0} onClick={() => exportCsv(rows, language)} style={S.exportBtn} title={text("تصدير الجدول كملف CSV", "Export table as CSV")}>
+            ⬇️ {text("تصدير CSV", "Export CSV")}
           </button>
-          <span style={{ fontSize: 13, color: "#475569" }}>الأفق الزمني:</span>
+          <span style={{ fontSize: 13, color: "#475569" }}>{text("الأفق الزمني:", "Time horizon:")}</span>
           <div style={{ minWidth: 140 }}>
             <SearchCombobox
               value={horizon}
               onChange={(v) => setHorizon(Number(v))}
-              options={HORIZONS.map((h) => ({ value: h, label: `${h} يوم` }))}
+              options={HORIZONS.map((h) => ({ value: h, label: `${h} ${text("يوم", "days")}` }))}
               style={S.select}
             />
           </div>
@@ -101,27 +114,27 @@ export default function ExpiryReport({ onJumpToItems }: Props = {}) {
       </div>
 
       <div style={S.summary}>
-        <Card label="منتهية الصلاحية" count={buckets.expired.length} color="#dc2626" bg="#fef2f2" />
-        <Card label="حرج (< 30 يوم)" count={buckets.critical.length} color="#dc2626" bg="#fef2f2" />
-        <Card label={`تحذير (30 – < 90 يوم)`} count={buckets.warning.length} color="#ca8a04" bg="#fefce8" />
+        <Card label={text("منتهية الصلاحية", "Expired")} count={buckets.expired.length} color="#dc2626" bg="#fef2f2" />
+        <Card label={text("حرج (< 30 يوم)", "Critical (< 30 days)")} count={buckets.critical.length} color="#dc2626" bg="#fef2f2" />
+        <Card label={text("تحذير (30 – < 90 يوم)", "Warning (30–<90 days)")} count={buckets.warning.length} color="#ca8a04" bg="#fefce8" />
       </div>
 
       {err && <div style={S.err}>{err}</div>}
       {loading ? (
-        <div style={S.empty}>... جاري التحميل</div>
+        <div style={S.empty}>{text("... جاري التحميل", "Loading…")}</div>
       ) : rows.length === 0 ? (
-        <div style={S.empty}>ممتاز! ما فيش أصناف ستنتهي صلاحيتها خلال {horizon} يومًا.</div>
+        <div style={S.empty}>{text("ممتاز! ما فيش أصناف ستنتهي صلاحيتها خلال", "Great! No items will expire within")} {horizon} {text("يومًا.", "days.")}</div>
       ) : (
         <table style={S.table}>
           <thead><tr>
-            <th style={S.th}>الحالة</th>
-            <th style={S.th}>تاريخ الصلاحية</th>
-            <th style={S.th}>الأيام المتبقية</th>
-            <th style={S.th}>الاسم</th>
-            <th style={S.th}>المادة الفعّالة</th>
-            <th style={S.th}>الجرعة</th>
-            <th style={S.th}>التشغيلة</th>
-            <th style={S.th}>الباركود</th>
+            <th style={S.th}>{text("الحالة", "Status")}</th>
+            <th style={S.th}>{text("تاريخ الصلاحية", "Expiry date")}</th>
+            <th style={S.th}>{text("الأيام المتبقية", "Days left")}</th>
+            <th style={S.th}>{text("الاسم", "Name")}</th>
+            <th style={S.th}>{text("المادة الفعّالة", "Active ingredient")}</th>
+            <th style={S.th}>{text("الجرعة", "Dosage")}</th>
+            <th style={S.th}>{text("التشغيلة", "Batch")}</th>
+            <th style={S.th}>{text("الباركود", "Barcode")}</th>
           </tr></thead>
           <tbody>
             {rows.map((it) => {
@@ -132,12 +145,12 @@ export default function ExpiryReport({ onJumpToItems }: Props = {}) {
                 onJumpToItems?.();
               };
               return (
-                <tr key={it.id} style={{ ...S.tr, cursor: onJumpToItems ? "pointer" : "default" }} onClick={onJumpToItems ? handleJump : undefined} title={onJumpToItems ? "افتح في شاشة الأصناف للتعديل" : undefined}>
+                <tr key={it.id} style={{ ...S.tr, cursor: onJumpToItems ? "pointer" : "default" }} onClick={onJumpToItems ? handleJump : undefined} title={onJumpToItems ? text("افتح في شاشة الأصناف للتعديل", "Open in items to edit") : undefined}>
                   <td style={S.td}><span style={sev === "expired" ? S.badgeExp : sev === "critical" ? S.badgeExp : S.badgeSoon}>
-                    {sev === "expired" ? "منتهية" : sev === "critical" ? "حرج" : "تحذير"}
+                    {sev === "expired" ? text("منتهية", "Expired") : sev === "critical" ? text("حرج", "Critical") : text("تحذير", "Warning")}
                   </span></td>
                   <td style={S.tdMono}>{it.expiryDate ?? "—"}</td>
-                  <td style={S.tdMono}>{d === null ? "—" : d < 0 ? `${Math.abs(d)}- ` : d}</td>
+                  <td style={S.tdMono}>{d === null ? "—" : d < 0 ? `−${Math.abs(d)}` : d}</td>
                   <td style={S.td}>
                     <div style={{ fontWeight: 600 }}>{it.nameAr}</div>
                     {it.nameEn && <div style={S.muted}>{it.nameEn}</div>}
@@ -166,7 +179,7 @@ function Card({ label, count, color, bg }: { label: string; count: number; color
 }
 
 const S = {
-  wrap: { maxWidth: 1200, margin: "0 auto", width: "100%" } as const,
+  wrap: { width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" as const } as const,
   header: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 16 } as const,
   h2: { margin: 0, fontSize: 22, color: "#0f172a" } as const,
   sub: { fontSize: 13, color: "#64748b", marginTop: 4 } as const,

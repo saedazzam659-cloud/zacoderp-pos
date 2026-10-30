@@ -230,6 +230,14 @@ export function createApi(opts: {
     push: (items: PushItem[]) => call<PushResponse>("POST", "/api/sync/push", { items }),
     status: () => call<SyncStatus>("GET", "/api/sync/status"),
 
+    // ── Hybrid OCR (item import) ─────────────────────────────────────
+    // Send raw base64 + mime as SEPARATE fields (never a data: URI — the prod
+    // edge WAF 403s data: base64 URIs). Device-token auth is enough (extractAuth
+    // maps the kiosk token to a synthetic user). Use a long timeoutMs on the
+    // client instance for this call (vision can take tens of seconds).
+    ocrExtract: (imageBase64: string, mime: string) =>
+      call<{ ok: boolean; rows?: string[][]; error?: string }>("POST", "/api/ocr/extract", { imageBase64, mime }),
+
     safeValidate: async (): Promise<ValidateResponse | null> => {
       try { return await call<ValidateResponse>("POST", "/api/device-licenses/validate", {}); }
       catch (e) { if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return null; throw e; }

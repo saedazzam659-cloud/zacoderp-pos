@@ -24,8 +24,10 @@ import {
   Page, Card, Table, Th, Td, Modal, ErrorMsg, Empty,
   input, btnSecondary, fmt,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
+  ExportButtons, gridToExportCols,
 } from "./_adminUi";
 import { currencySymbol } from "../lib/currency";
+import { getUiLanguage, uiText, useUiLanguage } from "../lib/appSettings";
 
 type FilterKind = "all" | "sales" | "returns";
 
@@ -46,28 +48,29 @@ function docKindOf(r: { invoiceNo: string; docType?: string | null }): "sale" | 
   return r.invoiceNo.startsWith("RET") ? "return" : "sale";
 }
 
-function typeLabel(kind: "sale" | "return"): string {
-  return kind === "return" ? "مرتجع" : "بيع";
+function typeLabel(kind: "sale" | "return", language = getUiLanguage()): string {
+  return kind === "return" ? uiText("مرتجع", "Return", language) : uiText("بيع", "Sale", language);
 }
 
-function paymentMethodLabel(m: string | undefined): string {
-  if (m === "cash") return "نقداً";
-  if (m === "card") return "بطاقة";
+function paymentMethodLabel(m: string | undefined, language = getUiLanguage()): string {
+  if (m === "cash") return uiText("نقداً", "Cash", language);
+  if (m === "card") return uiText("بطاقة", "Card", language);
   return m ?? "—";
 }
 
 // sync_status → coloured badge. pending/queued are amber (not yet uploaded),
 // synced/submitted are green (accepted by ZATCA / cloud), error is red.
 function SyncBadge({ status }: { status: string }) {
+  const language = useUiLanguage();
   const s = (status || "").toLowerCase();
   let bg = "#fffbeb", color = "#92400e", border = "#fde68a", text = status || "—";
   if (s === "pending" || s === "queued") {
     bg = "#fffbeb"; color = "#92400e"; border = "#fde68a";
-    text = s === "queued" ? "قيد المزامنة" : "غير مرفوعة";
+    text = s === "queued" ? uiText("قيد المزامنة", "Queued", language) : uiText("غير مرفوعة", "Not uploaded", language);
   } else if (s === "synced" || s === "submitted") {
-    bg = "#f0fdf4"; color = "#166534"; border = "#bbf7d0"; text = "مرفوعة";
+    bg = "#f0fdf4"; color = "#166534"; border = "#bbf7d0"; text = uiText("مرفوعة", "Uploaded", language);
   } else if (s === "error" || s === "failed") {
-    bg = "#fef2f2"; color = "#991b1b"; border = "#fecaca"; text = "خطأ";
+    bg = "#fef2f2"; color = "#991b1b"; border = "#fecaca"; text = uiText("خطأ", "Error", language);
   }
   return (
     <span style={{
@@ -77,16 +80,18 @@ function SyncBadge({ status }: { status: string }) {
   );
 }
 
-function fmtDate(iso: string): string {
+function fmtDate(iso: string, language = getUiLanguage()): string {
   if (!iso) return "—";
   // Local SQLite timestamps are stored without a timezone suffix; treat them
   // as UTC so they render in the cashier's local time consistently.
   const d = new Date(/Z|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + "Z");
   if (isNaN(d.getTime())) return iso;
-  return d.toLocaleString("ar-SA");
+  return d.toLocaleString(language === "en" ? "en-GB" : "ar-SA");
 }
 
 export default function PosInvoices({ companyName, cashierName, onReuse }: { companyName?: string; cashierName?: string; onReuse?: (id: number) => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const sym = currencySymbol();
   const [rows, setRows] = useState<PendingInvoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -187,16 +192,17 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
     setDetailErr(null);
   }
 
-  const subtitle = [cashierName ? `الكاشير: ${cashierName}` : null, companyName]
+  const subtitle = [cashierName ? `${text("الكاشير", "Cashier")}: ${cashierName}` : null, companyName]
     .filter(Boolean).join(" · ");
 
   return (
+    <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title="فواتير نقطة البيع"
+      title={text("فواتير نقطة البيع", "POS invoices")}
       subtitle={subtitle}
       right={
         <button onClick={() => void refresh()} style={btnSecondary} disabled={loading}>
-          {loading ? "..." : "🔄 تحديث"}
+          {loading ? "..." : `🔄 ${text("تحديث", "Refresh")}`}
         </button>
       }
     >
@@ -215,7 +221,7 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                 fontWeight: active ? 600 : 400,
               }}
             >
-              {f.label}
+              {f.value === "all" ? text("الكل", "All") : f.value === "sales" ? text("مبيعات", "Sales") : text("مرتجعات", "Returns")}
             </button>
           );
         })}
@@ -223,24 +229,24 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
 
       <ErrorMsg text={err} />
 
-      {filtered.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في الفواتير…" />}
+      {filtered.length > 0 && <GridToolbar grid={grid} placeholder={text("🔍 بحث في الفواتير…", "🔍 Search invoices…")} extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase={language === "en" ? "pos-invoices" : "فواتير-نقاط-البيع"} title={text("فواتير نقاط البيع", "POS invoices")} />} />}
 
       <Card style={{ marginTop: 8 }}>
         {loading ? (
-          <Empty text="جارٍ التحميل…" />
+          <Empty text={text("جارٍ التحميل…", "Loading…")} />
         ) : filtered.length === 0 ? (
-          <Empty text="لا توجد فواتير" />
+          <Empty text={text("لا توجد فواتير", "No invoices found")} />
         ) : grid.view.length === 0 ? (
-          <Empty text="لا نتائج مطابقة للبحث" />
+          <Empty text={text("لا نتائج مطابقة للبحث", "No matching results")} />
         ) : (
           <Table>
             <thead>
               <tr>
-                <SortableTh grid={grid} colKey="invoiceNo">رقم الفاتورة</SortableTh>
-                <SortableTh grid={grid} colKey="date">التاريخ</SortableTh>
-                <SortableTh grid={grid} colKey="type">النوع</SortableTh>
-                <SortableTh grid={grid} colKey="sync">حالة المزامنة</SortableTh>
-                <Th>إجراءات</Th>
+                <SortableTh grid={grid} colKey="invoiceNo">{text("رقم الفاتورة", "Invoice number")}</SortableTh>
+                <SortableTh grid={grid} colKey="date">{text("التاريخ", "Date")}</SortableTh>
+                <SortableTh grid={grid} colKey="type">{text("النوع", "Type")}</SortableTh>
+                <SortableTh grid={grid} colKey="sync">{text("حالة المزامنة", "Sync status")}</SortableTh>
+                <Th>{text("إجراءات", "Actions")}</Th>
               </tr>
               <GridFilterRow grid={grid} columns={columns} trailing={1} />
             </thead>
@@ -252,8 +258,8 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                   style={{ cursor: "pointer" }}
                 >
                   <Td mono>{r.invoiceNo}</Td>
-                  <Td>{fmtDate(r.createdAt)}</Td>
-                  <Td>{typeLabel(docKindOf(r))}</Td>
+                  <Td>{fmtDate(r.createdAt, language)}</Td>
+                  <Td>{typeLabel(docKindOf(r), language)}</Td>
                   <Td><SyncBadge status={r.syncStatus} /></Td>
                   <Td>
                     <div style={{ display: "flex", gap: 6 }}>
@@ -264,9 +270,9 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                             ...btnSecondary, padding: "4px 12px", fontSize: 13,
                             background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe",
                           }}
-                          title="تحميل أصناف الفاتورة في سلة جديدة"
+                          title={text("تحميل أصناف الفاتورة في سلة جديدة", "Load invoice items into a new cart")}
                         >
-                          استخدام
+                          {text("استخدام", "Reuse")}
                         </button>
                       )}
                       <button
@@ -277,9 +283,9 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                           background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca",
                           opacity: deletingId === r.id ? 0.6 : 1,
                         }}
-                        title="حذف السجل المحلي للفاتورة"
+                        title={text("حذف السجل المحلي للفاتورة", "Delete the local invoice record")}
                       >
-                        {deletingId === r.id ? "..." : "حذف"}
+                        {deletingId === r.id ? "..." : text("حذف", "Delete")}
                       </button>
                     </div>
                   </Td>
@@ -291,9 +297,9 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
       </Card>
 
       {detail && (
-        <Modal title={`تفاصيل الفاتورة — ${detail.invoiceNo}`} onCancel={closeDetail} wide>
+        <Modal title={`${text("تفاصيل الفاتورة", "Invoice details")} — ${detail.invoiceNo}`} onCancel={closeDetail} wide>
           {detailLoading ? (
-            <Empty text="جارٍ التحميل…" />
+            <Empty text={text("جارٍ التحميل…", "Loading…")} />
           ) : (
             <>
               <div style={{
@@ -301,13 +307,13 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                 background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10,
                 padding: "12px 16px", marginBottom: 12, fontSize: 14,
               }}>
-                <DetailRow k="رقم الفاتورة" v={detail.invoiceNo} mono />
-                <DetailRow k="النوع" v={typeLabel(((detailPayload as any)?.kind === "return" || detail.invoiceNo.startsWith("RET")) ? "return" : "sale")} />
-                <DetailRow k="التاريخ" v={fmtDate(detailPayload?.timestamp || detail.createdAt)} />
-                <DetailRow k="حالة المزامنة" node={<SyncBadge status={detail.syncStatus} />} />
-                <DetailRow k="العميل" v={detailPayload?.customerName || "—"} />
-                <DetailRow k="الرقم الضريبي" v={detailPayload?.vatNumber || "—"} />
-                <DetailRow k="طريقة الدفع" v={paymentMethodLabel(detailPayload?.paymentMethod)} />
+                <DetailRow k={text("رقم الفاتورة", "Invoice number")} v={detail.invoiceNo} mono />
+                <DetailRow k={text("النوع", "Type")} v={typeLabel(((detailPayload as any)?.kind === "return" || detail.invoiceNo.startsWith("RET")) ? "return" : "sale", language)} />
+                <DetailRow k={text("التاريخ", "Date")} v={fmtDate(detailPayload?.timestamp || detail.createdAt, language)} />
+                <DetailRow k={text("حالة المزامنة", "Sync status")} node={<SyncBadge status={detail.syncStatus} />} />
+                <DetailRow k={text("العميل", "Customer")} v={detailPayload?.customerName || "—"} />
+                <DetailRow k={text("الرقم الضريبي", "Tax number")} v={detailPayload?.vatNumber || "—"} />
+                <DetailRow k={text("طريقة الدفع", "Payment method")} v={paymentMethodLabel(detailPayload?.paymentMethod, language)} />
               </div>
 
               <ErrorMsg text={detailErr} />
@@ -317,11 +323,11 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                   <Table>
                     <thead>
                       <tr>
-                        <Th>الصنف</Th>
-                        <Th>الكمية</Th>
-                        <Th>السعر</Th>
-                        <Th>الضريبة</Th>
-                        <Th>الإجمالي</Th>
+                        <Th>{text("الصنف", "Item")}</Th>
+                        <Th>{text("الكمية", "Quantity")}</Th>
+                        <Th>{text("السعر", "Price")}</Th>
+                        <Th>{text("الضريبة", "Tax")}</Th>
+                        <Th>{text("الإجمالي", "Total")}</Th>
                       </tr>
                     </thead>
                     <tbody>
@@ -342,9 +348,9 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                     background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10,
                     padding: "12px 16px",
                   }}>
-                    <TotalRow k="الإجمالي قبل الضريبة" v={`${fmt(detailPayload.subtotal)} ${sym}`} />
-                    <TotalRow k="ضريبة القيمة المضافة" v={`${fmt(detailPayload.vat)} ${sym}`} />
-                    <TotalRow k="الإجمالي النهائي" v={`${fmt(detailPayload.grandTotal)} ${sym}`} big />
+                    <TotalRow k={text("الإجمالي قبل الضريبة", "Subtotal")} v={`${fmt(detailPayload.subtotal)} ${sym}`} />
+                    <TotalRow k={text("ضريبة القيمة المضافة", "VAT")} v={`${fmt(detailPayload.vat)} ${sym}`} />
+                    <TotalRow k={text("الإجمالي النهائي", "Grand total")} v={`${fmt(detailPayload.grandTotal)} ${sym}`} big />
                   </div>
                 </>
               )}
@@ -353,13 +359,14 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                 marginTop: 12, fontSize: 13,
                 color: detail.qrBase64 ? "#166534" : "#94a3b8",
               }}>
-                {detail.qrBase64 ? "✅ يوجد رمز QR ضريبي" : "لا يوجد رمز QR ضريبي"}
+                {detail.qrBase64 ? `✅ ${text("يوجد رمز QR ضريبي", "Tax QR code available")}` : text("لا يوجد رمز QR ضريبي", "No tax QR code")}
               </div>
             </>
           )}
         </Modal>
       )}
     </Page>
+    </div>
   );
 }
 

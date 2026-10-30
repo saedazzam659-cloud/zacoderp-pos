@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDataRefresh } from "../lib/dataBus";
 import {
   listPurchases, getPurchase, createPurchase, updatePurchase, deletePurchase,
   unpostPurchase, postPurchase, listFinancialTx,
@@ -8,12 +9,16 @@ import {
 } from "../lib/accounting";
 import { listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
+import { emitData } from "../lib/dataBus";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel, EmptyItemsRow,
+  docFormShell, linesPanel, linesScroll, docFormPinned, contentPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
+  ExportButtons, gridToExportCols,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -83,9 +88,11 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
     { key: "paid", label: "المدفوع", type: "number", value: (p) => paidByPurchase.get(p.id) ?? 0 },
   ], [paidByPurchase]);
   const grid = useGridFilter(rows, columns);
+  const sel = useRowSelect(grid.view);
 
   const { start, end, page: clampedPage } = pageSlice(grid.view.length, page, pageSize);
   const pageRows = grid.view.slice(start, end);
+  useDataRefresh(["invoices", "vouchers"], refresh);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
   useEffect(() => { setPage(1); }, [grid.search, grid.columnFilters, grid.sort]);
 
@@ -242,18 +249,55 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
       }
     >
       {creating && deps && form && (
-        <Card style={{ marginBottom: 12, border: "2px solid #2563eb" }}>
+        <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <CreateForm deps={deps} seed={form} onCancel={() => setForm(null)} onDone={() => { setForm(null); void refresh(); }} />
           </div>
         </Card>
       )}
-      {rows.length > 0 && !creating && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير الشراء…" />}
-      <Card>
+      {rows.length > 0 && !creating && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير الشراء…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="فواتير-الشراء" title="فواتير الشراء" />} />}
+      {rows.length > 0 && !creating && (
+        <ActionBar selectedLabel={sel.selected ? sel.selected.invoiceNo : null}>
+          <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+          <ActionBtn label="نسخ" icon="⧉" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void duplicate(sel.selectedId); }} />
+          <ActionBtn label="طباعة" icon="🖶" tone="primary" disabled={!sel.selected}
+            onClick={() => { if (sel.selectedId != null) void printDoc(sel.selectedId, "a4"); }} />
+          {onNavigate && (
+            <ActionBtn label="إرجاع" icon="↩" tone="warn" disabled={!sel.selected}
+              onClick={() => { if (sel.selectedId != null) void startReturn(sel.selectedId); }} />
+          )}
+          {(() => {
+            const s = sel.selected;
+            if (!s) return null;
+            if (s.sourceGoodsReceiptId != null) {
+              return (
+                <>
+                  <span title="ناتجة عن سند استلام — تُدار من شاشة سندات الاستلام" style={{ fontSize: 12, color: "#94a3b8" }}>🔒 من سند استلام</span>
+                  <ActionBtn label="حذف" icon="🗑" tone="danger" onClick={() => void remove(s.id)} />
+                </>
+              );
+            }
+            if (s.status === "draft") {
+              return (
+                <>
+                  <ActionBtn label="ترحيل" icon="✔" tone="success" onClick={() => void post(s.id)} />
+                  <ActionBtn label="تعديل" icon="✎" onClick={() => void startEdit(s.id)} />
+                  <ActionBtn label="حذف" icon="🗑" tone="danger" onClick={() => void remove(s.id)} />
+                </>
+              );
+            }
+            return <ActionBtn label="فك الترحيل" icon="↺" tone="warn" onClick={() => void unpost(s.id)} />;
+          })()}
+        </ActionBar>
+      )}
+      {!creating && <Card>
         {rows.length === 0 && !creating ? <Empty text="لا توجد فواتير شراء" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
           <Table>
             <thead>
               <tr>
+                <SelectTh />
                 <SortableTh grid={grid} colKey="invoiceNo">رقم الفاتورة</SortableTh>
                 <SortableTh grid={grid} colKey="date">التاريخ</SortableTh>
                 <SortableTh grid={grid} colKey="supplier">المورد</SortableTh>
@@ -263,14 +307,14 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
                 <SortableTh grid={grid} colKey="vat" style={{ textAlign: "left" }}>الضريبة</SortableTh>
                 <SortableTh grid={grid} colKey="grand" style={{ textAlign: "left" }}>الإجمالي</SortableTh>
                 <SortableTh grid={grid} colKey="paid" style={{ textAlign: "left" }}>المدفوع / المتبقّي</SortableTh>
-                <Th style={{ width: 100 }}></Th>
               </tr>
-              <GridFilterRow grid={grid} columns={columns} trailing={1} />
+              <GridFilterRow grid={grid} columns={columns} leading={1} />
             </thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
+                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.invoiceNo}</Td>
                     <Td>{p.invoiceDate}</Td>
                     <Td>{p.supplierName}</Td>
@@ -280,59 +324,6 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
                     <Td num>{paidCell(p, paidByPurchase.get(p.id) ?? 0)}</Td>
-                    <Td>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                        <button onClick={() => void toggleView(p.id)} disabled={creating} aria-expanded={expandedId === p.id}
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          {expandedId === p.id ? "▲ إخفاء" : "▼ عرض"}
-                        </button>
-                        <button onClick={() => void duplicate(p.id)} disabled={creating} title="نسخ كفاتورة جديدة"
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          ⧉ نسخ
-                        </button>
-                        <button onClick={() => void printDoc(p.id, "a4")} disabled={creating} title="طباعة A4"
-                          style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                          🖶 طباعة
-                        </button>
-                        {onNavigate && (
-                          <button onClick={() => void startReturn(p.id)} disabled={creating} title="إنشاء مرتجع من هذه الفاتورة"
-                            style={{ ...btnLink, color: "#b45309", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                            ↩ إرجاع
-                          </button>
-                        )}
-                        {p.sourceGoodsReceiptId != null ? (
-                          // GR-sourced: legacy lifecycle (always posted, managed from
-                          // goods-receipts) — no draft cycle, edit blocked at the Rust layer.
-                          <>
-                            <span title="ناتجة عن سند استلام — تُدار من شاشة سندات الاستلام" style={{ fontSize: 12, color: "#94a3b8" }}>🔒 من سند استلام</span>
-                            <button onClick={() => void remove(p.id)} disabled={creating} title="حذف الفاتورة"
-                              style={{ ...btnLink, color: "#dc2626", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                              حذف
-                            </button>
-                          </>
-                        ) : p.status === "draft" ? (
-                          <>
-                            <button onClick={() => void post(p.id)} disabled={creating} title="ترحيل الفاتورة"
-                              style={{ ...btnLink, color: "#15803d", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                              ترحيل
-                            </button>
-                            <button onClick={() => void startEdit(p.id)} disabled={creating} title="تعديل الفاتورة"
-                              style={{ ...btnLink, opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                              ✎ تعديل
-                            </button>
-                            <button onClick={() => void remove(p.id)} disabled={creating} title="حذف الفاتورة"
-                              style={{ ...btnLink, color: "#dc2626", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                              حذف
-                            </button>
-                          </>
-                        ) : (
-                          <button onClick={() => void unpost(p.id)} disabled={creating} title="فك الترحيل لتعديل أو حذف الفاتورة"
-                            style={{ ...btnLink, color: "#b45309", opacity: creating ? 0.5 : 1, cursor: creating ? "not-allowed" : "pointer" }}>
-                            فك الترحيل
-                          </button>
-                        )}
-                      </div>
-                    </Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
@@ -352,7 +343,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
           <Pagination total={grid.view.length} page={page} pageSize={pageSize}
             onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
         )}
-      </Card>
+      </Card>}
     </Page>
   );
 }
@@ -426,6 +417,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
   onCancel: () => void; onDone: () => void;
 }) {
   const isEdit = seed.editId != null;
+  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [supplierId, setSupplierId] = useState<number>(seed.supplierId || deps.suppliers[0]?.id || 0);
   const [date, setDate] = useState(seed.invoiceDate || todayStr());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(seed.paymentMethod);
@@ -450,10 +442,10 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
   const [uoms] = useState<Uom[]>(() => listUom());
   const defUom = uoms.find((u) => u.isDefault) ?? uoms[0];
   const blankLine = (): FLine => ({
-    itemId: 0, qty: 1, unitCost: 0, vatRate: 15, lineTotal: 0, disc: 0, discType: "percent",
+    itemId: 0, qty: 1, unitCost: 0, vatRate: 0, lineTotal: 0, disc: 0, discType: "percent",
     uomId: defUom?.id ?? null, uomName: defUom?.nameAr ?? null, conversionFactor: defUom?.baseQty ?? 1,
   });
-  const [lines, setLines] = useState<FLine[]>(() => seed.lines.length ? seed.lines : [blankLine()]);
+  const [lines, setLines] = useState<FLine[]>(() => seed.lines.length ? seed.lines : []);
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -472,6 +464,8 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
       // Default the line's unit from the chosen item.
       if (patch.itemId !== undefined) {
         const it = deps.items.find((x) => x.id === Number(patch.itemId));
+        // VAT comes ONLY from the picked item (0 if it has no registered rate).
+        if (it) next.vatRate = it.vatRate ?? 0;
         if (it && it.uomId != null) {
           const u = uoms.find((x) => x.id === it.uomId);
           if (u) { next.uomId = u.id; next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
@@ -556,6 +550,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
         notes: notes || null, lines: payloadLines,
       };
       const id = isEdit ? (await updatePurchase(seed.editId!, payload), seed.editId!) : await createPurchase(payload);
+      emitData("invoices", "journal", "stock", "suppliers", "cashboxes", "banks");
       // Refresh the discount overlay for this invoice (clear stale, then save).
       clearDocDiscount("purchase", id);
       saveDocDiscount("purchase", id, {
@@ -568,8 +563,16 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
   }
 
   return (
-    <div>
-      <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل فاتورة الشراء` : "فاتورة شراء جديدة"}</h3>
+    <div style={docFormShell}>
+      <h3 style={{ marginTop: 0, flexShrink: 0 }}>{isEdit ? `تعديل فاتورة الشراء` : "فاتورة شراء جديدة"}</h3>
+      <style>{`.zlines-wrap thead th{position:sticky;top:0;z-index:2;}`}</style>
+      <FormTabs active={activeTab} onChange={setActiveTab} tabs={[
+        { key: "basic", label: "البيانات الأساسية" },
+        { key: "lines", label: `بنود الأصناف${lines.length ? ` (${lines.length})` : ""}` },
+        { key: "payments", label: "المدفوعات" },
+      ]} />
+
+      <div style={contentPanel(activeTab, "basic")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="المورد *">
           <SearchCombobox
@@ -585,18 +588,6 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="رقم فاتورة المورد">
           <input value={supplierInvoiceNo} onChange={(e) => setSupplierInvoiceNo(e.target.value)} style={input} placeholder="مرجع المورد" />
-        </Field>
-        <Field label="طريقة الدفع">
-          <SearchCombobox
-            value={paymentMethod}
-            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
-            style={input}
-            options={[
-              { value: "credit", label: "آجل (على الحساب)" },
-              { value: "cash", label: "نقدي" },
-              { value: "bank", label: "بنك" },
-            ]}
-          />
         </Field>
         <Field label="المستودع">
           <SearchCombobox
@@ -632,29 +623,11 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
           />
         </Field>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
-        {paymentMethod === "cash" && (
-          <Field label="الخزينة">
-            <SearchCombobox
-              value={cashBoxId ?? ""}
-              onChange={(v) => setCashBoxId(Number(v) || null)}
-              style={input}
-              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
-            />
-          </Field>
-        )}
-        {paymentMethod === "bank" && (
-          <Field label="البنك">
-            <SearchCombobox
-              value={bankId ?? ""}
-              onChange={(v) => setBankId(Number(v) || null)}
-              style={input}
-              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
-            />
-          </Field>
-        )}
+      </div>
       </div>
 
-      <div style={{ overflowX: "auto", marginTop: 10 }}>
+      <div style={linesPanel(activeTab)}>
+      <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 10 }}>
       <Table style={{ minWidth: 1250 }}>
         <thead><tr>
           <Th style={{ minWidth: 240 }}>الصنف</Th>
@@ -667,6 +640,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
           <Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
+          {lines.length === 0 && <EmptyItemsRow colSpan={8} />}
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>
@@ -699,18 +673,60 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
         </tbody>
       </Table>
       </div>
-      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
+      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8, flexShrink: 0 }}>+ سطر</button>
+      <div style={docFormPinned}>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      </div>
+      </div>
 
+      <div style={contentPanel(activeTab, "payments")}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label="طريقة الدفع">
+          <SearchCombobox
+            value={paymentMethod}
+            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            style={input}
+            options={[
+              { value: "credit", label: "آجل (على الحساب)" },
+              { value: "cash", label: "نقدي" },
+              { value: "bank", label: "بنك" },
+            ]}
+          />
+        </Field>
+        {paymentMethod === "cash" && (
+          <Field label="الخزينة">
+            <SearchCombobox
+              value={cashBoxId ?? ""}
+              onChange={(v) => setCashBoxId(Number(v) || null)}
+              style={input}
+              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Field>
+        )}
+        {paymentMethod === "bank" && (
+          <Field label="البنك">
+            <SearchCombobox
+              value={bankId ?? ""}
+              onChange={(v) => setBankId(Number(v) || null)}
+              style={input}
+              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          </Field>
+        )}
+      </div>
       <Field label="ملاحظات" style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
+      </div>
+
+      <div style={docFormPinned}>
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
         <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : (isEdit ? "حفظ التعديلات" : "حفظ وترحيل")}</button>
       </Actions>
+      </div>
     </div>
   );
 }

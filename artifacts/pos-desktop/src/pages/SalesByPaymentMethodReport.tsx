@@ -2,19 +2,24 @@ import { useState } from "react";
 import { reportSalesInvoices } from "../lib/salesReports";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
 const METHODS = ["cash", "bank", "credit"] as const;
 type Method = string;
 
-function payLabel(m: Method): string {
-  return m === "cash" ? "نقدي" : m === "bank" ? "بنك / شبكة" : m === "credit" ? "آجل" : m;
+function payLabel(m: Method, language: "ar" | "en"): string {
+  return m === "cash" ? uiText("نقدي", "Cash", language)
+    : m === "bank" ? uiText("بنك / شبكة", "Bank / card", language)
+    : m === "credit" ? uiText("آجل", "Credit", language) : m;
 }
 
 type Bucket = { key: Method; count: number; sub: number; vat: number; total: number };
 
 export default function SalesByPaymentMethodReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const { branches } = useDimensions();
   const [fromDate, setFromDate] = useState(firstOfYear());
   const [toDate, setToDate] = useState(todayStr());
@@ -24,7 +29,7 @@ export default function SalesByPaymentMethodReport() {
   const [err, setErr] = useState<string | null>(null);
 
   async function run() {
-    if (fromDate > toDate) { setErr("تاريخ البداية يجب أن يكون قبل تاريخ النهاية"); return; }
+    if (fromDate > toDate) { setErr(text("تاريخ البداية يجب أن يكون قبل تاريخ النهاية", "Start date must be on or before end date.")); return; }
     setErr(null); setLoading(true);
     try {
       const invs = await reportSalesInvoices({ fromDate, toDate, branchId: branchId === "" ? null : branchId });
@@ -46,13 +51,13 @@ export default function SalesByPaymentMethodReport() {
   );
 
   return (
-    <Page title="المبيعات حسب طريقة الدفع" subtitle="توزيع المبيعات والتحصيل على طرق الدفع (نقدي / بنك / آجل) خلال الفترة.">
+    <Page title={text("المبيعات حسب طريقة الدفع", "Sales by payment method")} subtitle={text("توزيع المبيعات والتحصيل على طرق الدفع (نقدي / بنك / آجل) خلال الفترة.", "Sales and collections by payment method for the selected period.")}>
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <DateField label="من تاريخ" value={fromDate} onChange={setFromDate} />
-          <DateField label="إلى تاريخ" value={toDate} onChange={setToDate} />
+          <DateField label={text("من تاريخ", "From date")} value={fromDate} onChange={setFromDate} />
+          <DateField label={text("إلى تاريخ", "To date")} value={toDate} onChange={setToDate} />
           <BranchField branches={branches} value={branchId} onChange={setBranchId} />
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : text("عرض", "Run report")}</button>
         </div>
         {err && <div style={{ marginTop: 8, color: "#991b1b", fontSize: 13 }}>⚠️ {err}</div>}
       </Card>
@@ -62,21 +67,21 @@ export default function SalesByPaymentMethodReport() {
           <Table>
             <thead>
               <tr>
-                <Th>طريقة الدفع</Th>
-                <Th style={{ width: 90, textAlign: "center" }}>الفواتير</Th>
-                <Th style={{ textAlign: "left", width: 130 }}>الصافي</Th>
-                <Th style={{ textAlign: "left", width: 120 }}>الضريبة</Th>
-                <Th style={{ textAlign: "left", width: 140 }}>الإجمالي</Th>
-                <Th style={{ textAlign: "left", width: 100 }}>النسبة</Th>
+                <Th>{text("طريقة الدفع", "Payment method")}</Th>
+                <Th style={{ width: 90, textAlign: "center" }}>{text("الفواتير", "Invoices")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 130 }}>{text("الصافي", "Net")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 120 }}>{text("الضريبة", "Tax")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 140 }}>{text("الإجمالي", "Total")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 100 }}>{text("النسبة", "Share")}</Th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><Td colSpan={6}><Empty text="لا توجد فواتير في الفترة المحددة" /></Td></tr>
+                <tr><Td colSpan={6}><Empty text={text("لا توجد فواتير في الفترة المحددة", "No invoices for this period")} /></Td></tr>
               )}
               {rows.map((r) => (
                 <tr key={r.key}>
-                  <Td>{payLabel(r.key)}</Td>
+                  <Td>{payLabel(r.key, language)}</Td>
                   <Td style={{ textAlign: "center" }}>{r.count}</Td>
                   <Td num>{fmt(r.sub)}</Td>
                   <Td num>{fmt(r.vat)}</Td>
@@ -86,7 +91,7 @@ export default function SalesByPaymentMethodReport() {
               ))}
               {rows.length > 0 && (
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
-                  <Td>الإجمالي</Td>
+                  <Td>{text("الإجمالي", "Total")}</Td>
                   <Td style={{ textAlign: "center" }}>{totals.count}</Td>
                   <Td num>{fmt(totals.sub)}</Td>
                   <Td num>{fmt(totals.vat)}</Td>
