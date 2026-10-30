@@ -121,7 +121,7 @@ export default function SimpleManufacturing() {
     if (!silent) setBusy(true);
     try {
       const [nextCatalog, nextOrders, executionCatalog] = await Promise.all([
-        request("/api/simple-manufacturing/catalog", { signal: controller.signal }),
+        request("/api/simple-manufacturing/catalog?includeItems=0", { signal: controller.signal }),
         request("/api/simple-manufacturing/orders", { signal: controller.signal }),
         request("/api/simple-manufacturing/execution-catalog", { signal: controller.signal }),
       ]);

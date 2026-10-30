@@ -1659,10 +1659,18 @@ router.get("/items/search", async (req, res) => {
   // while SuperAdmins without an acting company may search across companies.
   const cid = getCompanyId(req);
   const query = String(req.query.q ?? "").trim().slice(0, 128);
+  const allowedItemNatures = ["raw", "semi", "finished", "consumable", "merchandise"] as const;
+  const itemNatures = String(req.query.itemNatures ?? "")
+    .split(",")
+    .map(value => value.trim())
+    .filter((value): value is typeof allowedItemNatures[number] =>
+      allowedItemNatures.includes(value as typeof allowedItemNatures[number]),
+    );
 
   const includeHidden = String(req.query.includeHidden ?? "") === "1"
     || String(req.query.includeHidden ?? "").toLowerCase() === "true";
   const clauses: any[] = cid ? [eq(itemsTable.companyId, cid)] : [];
+  if (itemNatures.length) clauses.push(inArray(itemsTable.itemNature, itemNatures));
   if (query) {
     const pattern = `%${query}%`;
     clauses.push(or(

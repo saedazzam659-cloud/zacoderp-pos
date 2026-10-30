@@ -1850,12 +1850,14 @@ const extraSharedLabels: Record<string, string> = {
 for (const [arabic, english] of Object.entries(extraSharedLabels)) translations.set(arabic, english);
 const printPrefixTranslations = [...translations.entries()].sort((a, b) => b[0].length - a[0].length);
 
-export function localizeUiText(value: string): string {
+export function localizeUiText(value: string | null | undefined): string {
+  if (typeof value !== "string") return "";
   if (!i18n.language?.startsWith("en")) return value;
   return localizeUiTextForLanguage(value, i18n.language);
 }
 
-export function localizeUiTextForLanguage(value: string, language: string): string {
+export function localizeUiTextForLanguage(value: string | null | undefined, language: string): string {
+  if (typeof value !== "string") return "";
   if (!language?.toLowerCase().startsWith("en")) return value;
   const trimmed = value.trim();
   const translated = translations.get(trimmed);

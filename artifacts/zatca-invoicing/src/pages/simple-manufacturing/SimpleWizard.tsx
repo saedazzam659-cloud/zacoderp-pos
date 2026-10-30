@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { manufacturingProducts } from "./productOptions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePermission } from "@/hooks/usePermission";
 import { useAuth } from "@/contexts/AuthContext";
 import { useFmt } from "@/hooks/use-fmt";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { saveUiPrefs } from "@/lib/uiPrefsApi";
 import {
   DEFAULT_SIMPLE_MANUFACTURING_COST_MODES,
@@ -146,6 +147,86 @@ export function SimpleWizard({
   // Inline BOM creation
   const [creatingBom, setCreatingBom] = useState(false);
   const [newBomLines, setNewBomLines] = useState<Array<{ itemId: string; quantity: string; unitCode: string }>>([]);
+  const inventoryCompanyId = actingCompanyId ?? user?.companyId ?? undefined;
+  const itemPickerHeaders = useMemo(() => ({
+    Authorization: `Bearer ${token}`,
+    ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+  }), [token, actingCompanyId]);
+  const productItemSearch = useInventoryItemSearch(
+    inventoryCompanyId, itemPickerHeaders, [form.productItemId], Boolean(token),
+  );
+  const materialItemSearch = useInventoryItemSearch(
+    inventoryCompanyId,
+    itemPickerHeaders,
+    newBomLines.map(line => line.itemId),
+    Boolean(token),
+    ["raw", "semi", "consumable"],
+  );
+  const selectedItemIds = useMemo(
+    () => [...new Set([form.productItemId, ...newBomLines.map(line => line.itemId)]
+      .filter(id => /^\d+$/.test(id)))],
+    [form.productItemId, newBomLines],
+  );
+  const selectedItemKey = selectedItemIds.join(",");
+  const [unitOptionsByItem, setUnitOptionsByItem] = useState<Record<string, any[]>>({});
+
+  useEffect(() => {
+    if (!token || !selectedItemIds.length) return;
+    let active = true;
+    const uncached = selectedItemIds.filter(id =>
+      !Object.prototype.hasOwnProperty.call(unitOptionsByItem, `${inventoryCompanyId ?? ""}:${id}`),
+    );
+    if (!uncached.length) return;
+    void Promise.all(uncached.map(async id => {
+      const response = await fetch(`${API}/api/inventory/items/${id}/units`, {
+        headers: itemPickerHeaders,
+      });
+      if (!response.ok) throw new Error(`تعذر تحميل وحدات الصنف ${id}`);
+      const rows = await response.json();
+      if (!Array.isArray(rows)) throw new Error(`استجابة وحدات الصنف ${id} غير صالحة`);
+      return [`${inventoryCompanyId ?? ""}:${id}`, rows.map((row: any) => ({
+        unitId: row.unitId ?? row.unit?.id,
+        code: row.unit?.code ?? row.code ?? "",
+        nameAr: row.unit?.nameAr ?? row.unit?.code ?? row.code ?? "",
+        nameEn: row.unit?.nameEn ?? null,
+        isBase: String(row.unitId ?? row.unit?.id) === String(
+          productItemSearch.items.find(item => String(item.id) === id)?.unitId
+            ?? materialItemSearch.items.find(item => String(item.id) === id)?.unitId,
+        ),
+        factor: row.factor ?? row.conversionFactor,
+      }))] as const;
+    })).then(entries => {
+      if (active) setUnitOptionsByItem(previous => ({
+        ...previous,
+        ...Object.fromEntries(entries),
+      }));
+    }).catch(error => {
+      if (active) toast({ title: error instanceof Error ? error.message : "تعذر تحميل وحدات الصنف", variant: "destructive" });
+    });
+    return () => { active = false; };
+  }, [token, inventoryCompanyId, selectedItemKey, unitOptionsByItem, itemPickerHeaders, productItemSearch.items, materialItemSearch.items, selectedItemIds, toast]);
+
+  const pickerItems = useMemo<Catalog["items"]>(() => {
+    const byId = new Map<string, Catalog["items"][number]>();
+    for (const item of [...catalog.items, ...productItemSearch.items, ...materialItemSearch.items]) {
+      byId.set(String(item.id), item as Catalog["items"][number]);
+    }
+    return [...byId.values()].map((item): Catalog["items"][number] => {
+      const key = `${inventoryCompanyId ?? ""}:${item.id}`;
+      const options = unitOptionsByItem[key] ?? item.unitOptions ?? [];
+      const unitCode = item.unitCode ?? (item as any).unit?.code ?? "";
+      const hasBase = options.some((unit: any) =>
+        unit.isBase || (unitCode && unit.code === unitCode),
+      );
+      return {
+        ...item,
+        unitCode,
+        unitOptions: hasBase || !unitCode
+          ? options
+          : [{ code: unitCode, nameAr: unitCode, isBase: true, factor: 1 }, ...options],
+      };
+    });
+  }, [catalog.items, productItemSearch.items, materialItemSearch.items, inventoryCompanyId, unitOptionsByItem]);
 
   // The facade keys wizard creation by this stable id. If a draft was created
   // and only the following start transition failed, retrying the footer action
@@ -373,15 +454,15 @@ export function SimpleWizard({
   }, [token, actingCompanyId]);
 
   // Include configured BOM/routing/template outputs, not just nature labels.
-  const fgItems = manufacturingProducts(catalog, form.productItemId);
+  const fgItems = manufacturingProducts({ ...catalog, items: pickerItems }, form.productItemId);
   const fgComboItems = [
     { value: "", label: "—" },
     ...fgItems.map(i => ({ value: String(i.id), code: i.code, label: i.nameAr }))
   ];
-  const materialItems = catalog.items.filter(i =>
+  const materialItems = pickerItems.filter(i =>
     !i.itemNature || ["raw", "semi", "consumable"].includes(i.itemNature),
   );
-  const selectedProduct = catalog.items.find(i => String(i.id) === form.productItemId);
+  const selectedProduct = pickerItems.find(i => String(i.id) === form.productItemId);
   const routingUsesStageResources = (routingPreview?.stages ?? []).some((stage: any) =>
     stage?.resourceMode === "labor" || stage?.resourceMode === "machine" || stage?.resourceMode === "both",
   );
@@ -586,12 +667,12 @@ export function SimpleWizard({
         method: "POST",
         body: JSON.stringify({
           productItemId: Number(form.productItemId),
-          nameAr: `وصفة ${catalog.items.find(i => String(i.id) === form.productItemId)?.nameAr || "جديدة"}`,
+          nameAr: `وصفة ${pickerItems.find(i => String(i.id) === form.productItemId)?.nameAr || "جديدة"}`,
           outputQty: 1,
           lines: newBomLines.filter(l => l.itemId && Number(l.quantity) > 0).map(l => ({
             itemId: Number(l.itemId),
             quantity: Number(l.quantity),
-            description: catalog.items.find(i => String(i.id) === l.itemId)?.nameAr || "مادة خام",
+            description: pickerItems.find(i => String(i.id) === l.itemId)?.nameAr || "مادة خام",
             ...(l.unitCode ? { unitCode: l.unitCode } : {})
           }))
         })
@@ -616,7 +697,7 @@ export function SimpleWizard({
     }
     const chosen = catalog.templates.find(t => String(t.id) === val);
     const conf = chosen?.configuration || {};
-    const it = catalog.items.find(x => String(x.id) === String(conf.productItemId));
+    const it = pickerItems.find(x => String(x.id) === String(conf.productItemId));
     const nextPlannedQty = conf.plannedQty ? String(conf.plannedQty) : form.plannedQty;
     const templateCosts = conf.costConfiguration && typeof conf.costConfiguration === "object"
       ? conf.costConfiguration as Partial<ManufacturingCostConfiguration> : {};
@@ -1062,8 +1143,9 @@ export function SimpleWizard({
                   <SearchCombobox
                     value={form.productItemId}
                     items={fgComboItems}
+                    onSearchChange={productItemSearch.setSearch}
                     onValueChange={v => {
-                      const it = catalog.items.find(x => String(x.id) === v);
+                      const it = pickerItems.find(x => String(x.id) === v);
                        setForm(f => ({
                          ...f,
                          productItemId: v,
@@ -1142,7 +1224,7 @@ export function SimpleWizard({
                     </Button>
                   ) : (
                     <div className="max-w-xl mx-auto bg-white border shadow-sm rounded-lg p-4 text-right space-y-3">
-                      <h4 className="font-semibold border-b pb-2 mb-3">وصفة جديدة لـ {catalog.items.find(i=>String(i.id)===form.productItemId)?.nameAr}</h4>
+                      <h4 className="font-semibold border-b pb-2 mb-3">وصفة جديدة لـ {pickerItems.find(i=>String(i.id)===form.productItemId)?.nameAr}</h4>
                       {newBomLines.map((line, i) => (
                         <div key={i} className="flex gap-2 items-end">
                           <div className="flex-[2] space-y-1">
@@ -1152,6 +1234,7 @@ export function SimpleWizard({
                               className="h-9"
                               placeholder="اختر مادة..."
                               searchPlaceholder="ابحث بالرمز أو الاسم..."
+                              onSearchChange={materialItemSearch.setSearch}
                               items={[
                                 { value: "", label: "اختر مادة..." },
                                 ...materialItems.map(it => ({
@@ -1162,7 +1245,7 @@ export function SimpleWizard({
                                 })),
                               ]}
                               onValueChange={value => {
-                                 const selected = catalog.items.find(item => String(item.id) === value);
+                                 const selected = pickerItems.find(item => String(item.id) === value);
                                  const baseCode = selected?.unitOptions?.find(unit => unit.isBase)?.code
                                    || selected?.unitCode || "";
                                  setNewBomLines(lines => lines.map((line, index) => index === i
@@ -1188,7 +1271,7 @@ export function SimpleWizard({
                               searchPlaceholder="ابحث عن الوحدة..."
                               items={[
                                 { value: "", label: "(افتراضي)" },
-                                ...((catalog.items.find(item => String(item.id) === line.itemId)?.unitOptions
+                                ...((pickerItems.find(item => String(item.id) === line.itemId)?.unitOptions
                                   ?? []).map(u => ({
                                     value: u.code,
                                     code: u.code,
@@ -1948,7 +2031,7 @@ export function SimpleWizard({
               <div className="bg-slate-50 rounded-xl p-6 border text-center space-y-2">
                 <h3 className="text-xl font-bold text-slate-800">{form.title || "بدون عنوان"}</h3>
                 <p className="text-slate-500">
-                  سيتم تصنيع <strong className="text-slate-900">{fmtQty(form.plannedQty)} {form.unitCode}</strong> من <strong className="text-slate-900">{catalog.items.find(i=>String(i.id)===form.productItemId)?.nameAr || "—"}</strong>
+                  سيتم تصنيع <strong className="text-slate-900">{fmtQty(form.plannedQty)} {form.unitCode}</strong> من <strong className="text-slate-900">{pickerItems.find(i=>String(i.id)===form.productItemId)?.nameAr || "—"}</strong>
                 </p>
               </div>
 

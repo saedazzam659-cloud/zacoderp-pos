@@ -12,3 +12,9 @@ Print and report exports follow the active interface language, including browser
 **Why:** Mixed-language screens have been observed after switching to English, including Arabic UI fallbacks and RTL-only containers. Users distinguish interface labels from the business records they enter.
 
 **How to apply:** When auditing a screen, printer, or export renderer, check labels and direction as well as locale coverage. Select English values only from corresponding English fields; do not translate or alter stored values.
+
+Shared localized-text helpers must guard missing or non-string values before trimming or translating them.
+
+**Why:** Tenant-specific data can contain optional labels; an English-only transformation must not turn a blank display value into a screen crash.
+
+**How to apply:** Make localization utilities safe at their boundary, and use UI-only placeholders where a missing business label needs explanation.

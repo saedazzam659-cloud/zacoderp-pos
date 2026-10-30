@@ -136,6 +136,7 @@ router.get("/resource-costing-readiness", view, (_req, res) => {
 router.get("/catalog", view, async (req, res) => {
   const cid = companyId(req, res);
   if (!cid) return;
+  const includeItems = String(req.query.includeItems ?? "1") !== "0";
   try {
     const branchResult = effectiveBranchCondition(req, warehousesTable.branchId, req.query.branchId);
     if ("deny" in branchResult) return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
@@ -149,7 +150,7 @@ router.get("/catalog", view, async (req, res) => {
       ? and(eq(warehousesTable.companyId, cid), eq(warehousesTable.isActive, true), branch)
       : and(eq(warehousesTable.companyId, cid), eq(warehousesTable.isActive, true));
     const [items, warehouses, templates, bomTemplates, routings, units, accountingSettings, accounts] = await Promise.all([
-      db.select({
+      includeItems ? db.select({
         id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr,
         nameEn: itemsTable.nameEn, itemNature: itemsTable.itemNature,
         unitId: itemsTable.unitId,
@@ -160,7 +161,7 @@ router.get("/catalog", view, async (req, res) => {
           eq(unitsTable.companyId, cid),
         ))
         .where(and(eq(itemsTable.companyId, cid), eq(itemsTable.status, "active")))
-        .orderBy(asc(itemsTable.nameAr)).limit(5000),
+        .orderBy(asc(itemsTable.nameAr)).limit(5000) : Promise.resolve([]),
       db.select({
         id: warehousesTable.id, code: warehousesTable.code, nameAr: warehousesTable.nameAr,
         branchId: warehousesTable.branchId, isDefault: warehousesTable.isDefault,
@@ -286,10 +287,10 @@ router.get("/catalog", view, async (req, res) => {
         : productNameById.get(routing.productItemId) ?? null,
       stages: stagesByRouting.get(routing.id) ?? [],
     }));
-    const itemsWithUnitOptions = await Promise.all(items.map(async (item) => ({
+    const itemsWithUnitOptions = includeItems ? await Promise.all(items.map(async (item) => ({
       ...item,
       unitOptions: await loadItemUnitOptions(cid, item.id),
-    })));
+    }))) : [];
     res.json({
       items: itemsWithUnitOptions,
       warehouses,

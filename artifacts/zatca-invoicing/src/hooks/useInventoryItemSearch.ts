@@ -13,6 +13,7 @@ export function useInventoryItemSearch(
   headers: HeadersInit,
   selectedIds: Array<string | number | null | undefined>,
   enabled = true,
+  itemNatures: string[] = [],
 ) {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -30,6 +31,9 @@ export function useInventoryItemSearch(
     [selectedIds],
   );
   const companyQuery = companyId ? `companyId=${companyId}&` : "";
+  const itemNatureQuery = itemNatures.length
+    ? `&itemNatures=${encodeURIComponent([...itemNatures].sort().join(","))}`
+    : "";
 
   const selectedQuery = useQuery<any[]>({
     queryKey: ["inventory-items", companyId, "selected", selectedKey],
@@ -43,9 +47,9 @@ export function useInventoryItemSearch(
   });
 
   const searchQuery = useQuery<any[]>({
-    queryKey: ["inventory-items", companyId, "search", debouncedSearch],
+    queryKey: ["inventory-items", companyId, "search", debouncedSearch, [...itemNatures].sort().join(",")],
     queryFn: () => fetchJsonArray(
-      `${API}/api/inventory/items/search?${companyQuery}includeHidden=1&q=${encodeURIComponent(debouncedSearch)}&limit=50`,
+      `${API}/api/inventory/items/search?${companyQuery}includeHidden=1&q=${encodeURIComponent(debouncedSearch)}&limit=50${itemNatureQuery}`,
       headers,
     ),
     enabled,
