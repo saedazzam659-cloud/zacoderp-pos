@@ -6,7 +6,7 @@
 // ZATCA QR is rendered from the stored TLV (base64) via the `qrcode` lib, the
 // same way the web builds it.
 import QRCode from "qrcode";
-import { getCompanyProfile, getDecimals, getUiLanguage, uiText, type CompanyProfile } from "./appSettings";
+import { formatUiDate, getCompanyProfile, getDecimals, getUiLanguage, uiText, type CompanyProfile } from "./appSettings";
 import { currencySymbol, baseCurrencyCode, currencyByCode } from "./currency";
 import { isZatcaCountry } from "./zatcaBridge";
 import { applyNumberSystemToDocument } from "./numberDisplay";
@@ -436,21 +436,70 @@ function amountInWords(amount: number, dp: number): string {
   return out + " لا غير";
 }
 
+function integerToWordsEnglish(value: number): string {
+  const ones = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+  const teens = ["ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+  const tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+  const scales = ["", "thousand", "million", "billion", "trillion"];
+  const chunkWords = (n: number): string => {
+    const words: string[] = [];
+    if (n >= 100) {
+      words.push(ones[Math.floor(n / 100)], "hundred");
+      n %= 100;
+    }
+    if (n >= 20) {
+      const ten = tens[Math.floor(n / 10)];
+      const one = n % 10;
+      words.push(one ? `${ten}-${ones[one]}` : ten);
+    } else if (n >= 10) words.push(teens[n - 10]);
+    else if (n > 0) words.push(ones[n]);
+    return words.join(" ");
+  };
+  let n = Math.floor(Math.abs(value));
+  if (!Number.isFinite(n)) return "zero";
+  if (n === 0) return "zero";
+  const groups: string[] = [];
+  let scale = 0;
+  while (n > 0 && scale < scales.length) {
+    const chunk = n % 1000;
+    if (chunk) groups.unshift(`${chunkWords(chunk)}${scales[scale] ? ` ${scales[scale]}` : ""}`);
+    n = Math.floor(n / 1000);
+    scale++;
+  }
+  return groups.join(" ");
+}
+
+function amountInWordsEnglish(amount: number, dp: number): string {
+  const places = Math.min(2, Math.max(0, dp || 0)) || 2;
+  const factor = Math.pow(10, places);
+  const abs = Math.abs(amount);
+  let integer = Math.floor(abs);
+  let fraction = Math.round((abs - integer) * factor);
+  if (fraction >= factor) { integer += 1; fraction = 0; }
+  const prefix = amount < 0 ? "Minus " : "";
+  return `Only ${prefix}${integerToWordsEnglish(integer)} and ${String(fraction).padStart(places, "0")}/${factor} ${baseCurrencyCode()} only`;
+}
+
 function buildVoucherHtml(v: VoucherDoc, co: CompanyProfile, zatca: boolean): string {
   const dp = co.decimals ?? 2;
   const sym = currencySymbol();
+  const language = getUiLanguage();
+  const english = language === "en";
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const isReceipt = v.kind === "receipt";
   const accent = isReceipt ? "#15803d" : "#b45309";      // green for in, amber for out
   const accentBg = isReceipt ? "#f0fdf4" : "#fffbeb";
-  const partyLabel = isReceipt ? "استلمنا من السيد / السادة" : "صرفنا إلى السيد / السادة";
-  const walletLabel = v.walletKind === "bank" ? "البنك" : "الصندوق";
-  return `<!DOCTYPE html><html dir="rtl" lang="ar">
+  const partyLabel = isReceipt ? text("استلمنا من السيد / السادة", "Received from") : text("صرفنا إلى السيد / السادة", "Paid to");
+  const walletLabel = v.walletKind === "bank" ? text("البنك", "Bank") : text("الصندوق", "Cashbox");
+  const dateLabel = formatUiDate(v.date, language);
+  const words = english ? amountInWordsEnglish(v.amount, dp) : amountInWords(v.amount, dp);
+  return `<!DOCTYPE html><html dir="${english ? "ltr" : "rtl"}" lang="${english ? "en" : "ar"}">
 <head><meta charset="UTF-8"><title>${esc(v.title)} ${esc(v.docNo)}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root { --accent: ${accent}; --ink: #0f172a; --muted: #64748b; --line: #e2e8f0; }
   @page { size: A4; margin: 14mm; }
-  body { font-family: 'Tahoma', 'Segoe UI', Arial, sans-serif; direction: rtl; color: var(--ink); background: #fff; }
+  body { font-family: 'Tahoma', 'Segoe UI', Arial, sans-serif; direction: ${english ? "ltr" : "rtl"}; color: var(--ink); background: #fff; }
   .sheet { max-width: 760px; margin: 0 auto; }
   .top { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid var(--accent); padding-bottom: 12px; }
   .co .nm { font-size: 20px; font-weight: 800; }
@@ -481,38 +530,38 @@ function buildVoucherHtml(v: VoucherDoc, co: CompanyProfile, zatca: boolean): st
   <div class="top">
     <div class="co">
       <div class="nm">${esc(co.name) || "—"}</div>
-      ${co.cr ? `<div class="row"><b>س.ت:</b> ${esc(co.cr)}</div>` : ""}
-      ${zatca && co.vat ? `<div class="row"><b>الرقم الضريبي:</b> ${esc(co.vat)}</div>` : ""}
-      ${co.phone ? `<div class="row"><b>الهاتف:</b> ${esc(co.phone)}</div>` : ""}
+      ${co.cr ? `<div class="row"><b>${text("س.ت:", "C.R.:")}</b> ${esc(co.cr)}</div>` : ""}
+      ${zatca && co.vat ? `<div class="row"><b>${text("الرقم الضريبي:", "VAT number:")}</b> ${esc(co.vat)}</div>` : ""}
+      ${co.phone ? `<div class="row"><b>${text("الهاتف:", "Phone:")}</b> ${esc(co.phone)}</div>` : ""}
     </div>
     ${co.logo ? `<div class="logo"><img src="${esc(co.logo)}" alt="logo" /></div>` : ""}
   </div>
 
   <div class="title-pill"><span class="main">${esc(v.title)}</span></div>
-  <div class="docmeta"><span>رقم السند: <b>${esc(v.docNo)}</b></span><span>التاريخ: <b>${esc(v.date)}</b></span></div>
+  <div class="docmeta"><span>${text("رقم السند:", "Voucher no.:")} <b>${esc(v.docNo)}</b></span><span>${text("التاريخ:", "Date:")} <b>${esc(dateLabel)}</b></span></div>
 
   <div class="amount-box">
-    <span class="lbl">المبلغ</span>
+    <span class="lbl">${text("المبلغ", "Amount")}</span>
     <span class="val">${fmt(v.amount, dp)} ${esc(sym)}</span>
   </div>
-  <div class="words">${esc(amountInWords(v.amount, dp))}</div>
+  <div class="words">${esc(words)}</div>
 
   <div class="grid">
     <div class="r"><div class="k">${partyLabel}</div><div class="v">${esc(v.partyName || "—")}</div></div>
     <div class="r"><div class="k">${walletLabel}</div><div class="v">${esc(v.walletName || "—")}</div></div>
-    ${v.linkedDocNo ? `<div class="r"><div class="k">المستند المرتبط</div><div class="v">${esc(v.linkedDocNo)}</div></div>` : ""}
-    <div class="r"><div class="k">وذلك عن / البيان</div><div class="v">${esc(v.description || "—")}</div></div>
+    ${v.linkedDocNo ? `<div class="r"><div class="k">${text("المستند المرتبط", "Linked document")}</div><div class="v">${esc(v.linkedDocNo)}</div></div>` : ""}
+    <div class="r"><div class="k">${text("وذلك عن / البيان", "Description")}</div><div class="v">${esc(v.description || "—")}</div></div>
   </div>
 
   <div class="sign">
-    <div class="cell"><div class="line"></div><div class="cap">${isReceipt ? "المُستلِم" : "المُستلِم"}</div></div>
-    <div class="cell"><div class="line"></div><div class="cap">المحاسب</div></div>
-    <div class="cell"><div class="line"></div><div class="cap">المدير</div></div>
+    <div class="cell"><div class="line"></div><div class="cap">${text("المُستلِم", isReceipt ? "Received by" : "Paid by")}</div></div>
+    <div class="cell"><div class="line"></div><div class="cap">${text("المحاسب", "Accountant")}</div></div>
+    <div class="cell"><div class="line"></div><div class="cap">${text("المدير", "Manager")}</div></div>
   </div>
 
   <div class="ftr">
     <span>${esc(v.title)} — ${esc(co.name)}</span>
-    <span>تاريخ الطباعة: ${esc(new Date().toLocaleString("en-GB"))}</span>
+    <span>${text("تاريخ الطباعة:", "Printed:")} ${esc(new Date().toLocaleString(english ? "en-GB" : "ar-SA"))}</span>
   </div>
 </div></body></html>`;
 }

@@ -14,7 +14,7 @@ import {
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { printVoucher } from "../lib/invoicePrint";
-import { uiText, useUiLanguage } from "../lib/appSettings";
+import { formatUiDate, uiText, useUiLanguage } from "../lib/appSettings";
 
 // تحصيل من العملاء — a customer-scoped سند قبض. Reuses the shared
 // financial_tx pipeline (DR cash/bank, CR AR 1500, decrements customer balance),
@@ -134,7 +134,7 @@ export default function CustomerCollectionAdmin() {
                 return (
                   <tr key={f.id}>
                     <SelectCell id={f.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
-                    <Td mono>{f.txNo}</Td><Td>{f.txDate}</Td>
+                    <Td mono>{f.txNo}</Td><Td>{formatUiDate(f.txDate, language)}</Td>
                     <Td>{f.partyName ?? "—"}</Td>
                     <Td mono>{inv ? inv.invoiceNo : "—"}</Td>
                     <Td>{f.description ?? "—"}</Td>

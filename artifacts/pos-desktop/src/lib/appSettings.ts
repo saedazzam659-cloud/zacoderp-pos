@@ -129,6 +129,16 @@ export function uiText(arabic: string, english: string, language = getUiLanguage
   return language === "en" ? english : arabic;
 }
 
+/** Format stored date values for the active interface language without shifting date-only values across time zones. */
+export function formatUiDate(value: string, language = getUiLanguage()): string {
+  const input = value.trim();
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(input) ? `${input}T00:00:00` : input);
+  if (!Number.isFinite(date.getTime())) return value;
+  return date.toLocaleDateString(language === "en" ? "en-GB" : "ar-SA", {
+    year: "numeric", month: "short", day: "numeric",
+  });
+}
+
 /** Only allow data:image/* or https:// logo sources (anti-XSS, mirrors web safeLogoSrc). */
 export function safeLogoSrc(s: string | null | undefined): string {
   if (!s) return "";

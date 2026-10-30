@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listCashBoxes, createCashBox, updateCashBox, deleteCashBox, listCurrencies, type CashBox, type Currency } from "../lib/accounting";
 import { Page, Card, Table, Th, Td, Empty, input, btnPrimary, btnSecondary, btnLink, fmtCurrency, SearchCombobox } from "./_adminUi";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type EditData = { name: string; currencyCode: string };
 type EditState =
@@ -9,6 +10,8 @@ type EditState =
   | null;
 
 export default function CashBoxesAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<CashBox[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [edit, setEdit] = useState<EditState>(null);
@@ -30,34 +33,35 @@ export default function CashBoxesAdmin() {
   function setField<K extends keyof EditData>(k: K, v: EditData[K]) { if (edit) setEdit({ ...edit, data: { ...edit.data, [k]: v } }); }
   async function save() {
     if (!edit) return;
-    if (!edit.data.name.trim()) { setErr("الاسم مطلوب"); return; }
+    if (!edit.data.name.trim()) { setErr(text("الاسم مطلوب", "Name is required.")); return; }
     setBusy(true); setErr(null);
     try {
       if (edit.mode === "new") await createCashBox(edit.data.name, edit.data.currencyCode);
       else await updateCashBox(edit.id, edit.data.name, edit.data.currencyCode);
       setEdit(null); await refresh();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save cashbox.")); }
     finally { setBusy(false); }
   }
   async function remove(b: CashBox) {
-    if (!confirm(`حذف الخزينة ${b.name}؟`)) return;
-    try { await deleteCashBox(b.id); await refresh(); } catch (e: any) { alert(e?.message ?? "فشل"); }
+    if (!confirm(text(`حذف الخزينة ${b.name}؟`, `Delete cashbox “${b.name}”?`))) return;
+    try { await deleteCashBox(b.id); await refresh(); } catch (e: any) { alert(e?.message ?? text("فشل", "Could not delete cashbox.")); }
   }
 
   const currencyOpts = currencies.length > 0
-    ? currencies.map(c => ({ value: c.code, label: `${c.code} — ${c.nameAr}`, hint: c.symbol ?? undefined }))
-    : [{ value: "SAR", label: "SAR — ريال سعودي" }];
+    ? currencies.map(c => ({ value: c.code, label: `${c.code} — ${language === "en" ? c.nameEn || c.code : c.nameAr}`, hint: c.symbol ?? undefined }))
+    : [{ value: "SAR", label: text("SAR — ريال سعودي", "SAR — Saudi riyal") }];
 
   return (
+    <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title="الخزن"
-      subtitle={`${rows.length} خزينة — يتم إنشاء حساب فرعي تحت 1100 تلقائياً. لا يمكن تغيير العملة بعد دخول الرصيد.`}
-      right={<button onClick={startNew} disabled={!!edit} style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>+ إضافة خزينة</button>}
+      title={text("الخزن", "Cashboxes")}
+      subtitle={text(`${rows.length} خزينة — يتم إنشاء حساب فرعي تحت 1100 تلقائياً. لا يمكن تغيير العملة بعد دخول الرصيد.`, `${rows.length} cashboxes — a subaccount under 1100 is created automatically. Currency cannot be changed after the account has a balance.`)}
+      right={<button onClick={startNew} disabled={!!edit} style={{ ...btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>+ {text("إضافة خزينة", "Add cashbox")}</button>}
     >
       <Card>
-        {rows.length === 0 && !edit ? <Empty text="لا توجد خزن" /> : (
+        {rows.length === 0 && !edit ? <Empty text={text("لا توجد خزن", "No cashboxes yet")} /> : (
           <Table>
-            <thead><tr><Th>اسم الخزينة</Th><Th style={{ width: 160 }}>العملة</Th><Th style={{ textAlign: "left" }}>الرصيد</Th><Th style={{ width: 220 }}>إجراءات</Th></tr></thead>
+            <thead><tr><Th>{text("اسم الخزينة", "Cashbox name")}</Th><Th style={{ width: 160 }}>{text("العملة", "Currency")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الرصيد", "Balance")}</Th><Th style={{ width: 220 }}>{text("إجراءات", "Actions")}</Th></tr></thead>
             <tbody>
               {edit?.mode === "new" && (
                 <EditRow data={edit.data} setField={setField} onSave={save} onCancel={cancel} busy={busy} err={err} isNew currencyOpts={currencyOpts} currencyLocked={false} />
@@ -71,9 +75,9 @@ export default function CashBoxesAdmin() {
                     <Td><span style={{ background: "#eff6ff", color: "#1e40af", padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600 }}>{b.currencyCode || "SAR"}</span></Td>
                     <Td num style={{ fontWeight: 600 }}>{fmtCurrency(b.balance, b.currencyCode || "SAR")}</Td>
                     <Td>
-                      <button onClick={() => startEdit(b)} disabled={!!edit} style={btnLink}>تعديل</button>
+                      <button onClick={() => startEdit(b)} disabled={!!edit} style={btnLink}>{text("تعديل", "Edit")}</button>
                       {" · "}
-                      <button onClick={() => remove(b)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                      <button onClick={() => remove(b)} disabled={!!edit} style={{ ...btnLink, color: "#dc2626" }}>{text("حذف", "Delete")}</button>
                     </Td>
                   </tr>
                 )
@@ -83,6 +87,7 @@ export default function CashBoxesAdmin() {
         )}
       </Card>
     </Page>
+    </div>
   );
 }
 
@@ -92,11 +97,13 @@ function EditRow({ data, setField, onSave, onCancel, busy, err, isNew, balance, 
   isNew?: boolean; balance?: number; currency?: string;
   currencyOpts: { value: string | number; label: string; hint?: string }[]; currencyLocked: boolean;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const ci: React.CSSProperties = { ...input, padding: "6px 8px", fontSize: 13 };
   return (
     <>
       <tr style={{ background: isNew ? "#f0fdf4" : "#eff6ff" }}>
-        <Td><input autoFocus value={data.name} onChange={(e) => setField("name", e.target.value)} style={ci} placeholder="اسم الخزينة *" /></Td>
+        <Td><input autoFocus value={data.name} onChange={(e) => setField("name", e.target.value)} style={ci} placeholder={text("اسم الخزينة *", "Cashbox name *")} /></Td>
         <Td>
           <SearchCombobox
             value={data.currencyCode}
@@ -108,12 +115,12 @@ function EditRow({ data, setField, onSave, onCancel, busy, err, isNew, balance, 
         </Td>
         <Td num>{balance !== undefined ? fmtCurrency(balance, currency || "SAR") : "—"}</Td>
         <Td>
-          <button onClick={onSave} disabled={busy} style={{ ...btnPrimary, padding: "4px 10px", fontSize: 12 }}>{busy ? "..." : "حفظ"}</button>
+          <button onClick={onSave} disabled={busy} style={{ ...btnPrimary, padding: "4px 10px", fontSize: 12 }}>{busy ? "..." : text("حفظ", "Save")}</button>
           {" "}
-          <button onClick={onCancel} disabled={busy} style={{ ...btnSecondary, padding: "4px 10px", fontSize: 12 }}>إلغاء</button>
+          <button onClick={onCancel} disabled={busy} style={{ ...btnSecondary, padding: "4px 10px", fontSize: 12 }}>{text("إلغاء", "Cancel")}</button>
         </Td>
       </tr>
-      {currencyLocked && <tr><Td colSpan={4} style={{ background: "#fffbeb", color: "#92400e", fontSize: 12 }}>⚠️ لا يمكن تغيير عملة خزينة لديها رصيد. أصدر تحويل خزينة لتفريغها أولاً.</Td></tr>}
+      {currencyLocked && <tr><Td colSpan={4} style={{ background: "#fffbeb", color: "#92400e", fontSize: 12 }}>⚠️ {text("لا يمكن تغيير عملة خزينة لديها رصيد. أصدر تحويل خزينة لتفريغها أولاً.", "The currency cannot be changed while the cashbox has a balance. Transfer the funds out first.")}</Td></tr>}
       {err && <tr><Td colSpan={4} style={{ background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>⚠️ {err}</Td></tr>}
     </>
   );
