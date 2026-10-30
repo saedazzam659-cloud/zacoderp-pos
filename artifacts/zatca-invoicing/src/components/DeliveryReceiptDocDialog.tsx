@@ -35,6 +35,18 @@ import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+function displayText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const row = value as Record<string, unknown>;
+  for (const key of ["nameAr", "name", "nameEn", "label", "ar", "en", "value", "code", "id"]) {
+    const text = displayText(row[key]);
+    if (text.trim()) return text;
+  }
+  return "";
+}
+
 export type DRKind = "receipt" | "delivery";
 
 interface LineRow {
@@ -157,21 +169,22 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
   const { items: inventoryItems, setSearch: setItemSearch, isSearching: isSearchingItems } =
     useInventoryItemSearch(companyId, authH, lines.map(line => line.itemId), !!token);
   const partyOptions = parties.map((party: any) => ({
-    value: String(party.id), label: party.nameAr || party.name || party.nameEn || `#${party.id}`,
-    code: party.code, description: party.phone,
+    value: String(party.id), label: displayText(party.nameAr) || displayText(party.name) || displayText(party.nameEn) || `#${party.id}`,
+    code: displayText(party.code), description: displayText(party.phone),
   }));
   const itemOptions = inventoryItems.map((item: any) => ({
-    value: String(item.id), label: item.nameAr || item.name || item.nameEn || `#${item.id}`,
-    code: item.code, barcode: item.barcode, description: item.unitName || item.unit,
+    value: String(item.id), label: displayText(item.nameAr) || displayText(item.name) || displayText(item.nameEn) || `#${item.id}`,
+    code: displayText(item.code), barcode: displayText(item.barcode),
+    description: displayText(item.unitName) || displayText(item.unit) || displayText(item.baseUnitName),
     rawItem: item,
   }));
-  const branchOptions = branches.map((branch: any) => ({ value: String(branch.id), label: branch.nameAr || branch.name || `#${branch.id}` }));
+  const branchOptions = branches.map((branch: any) => ({ value: String(branch.id), label: displayText(branch.nameAr) || displayText(branch.name) || `#${branch.id}` }));
   const warehouseOptions = warehouses
     .filter((warehouse: any) => !branchId || !warehouse.branchId || Number(warehouse.branchId) === branchId)
-    .map((warehouse: any) => ({ value: String(warehouse.id), label: warehouse.nameAr || warehouse.name || `#${warehouse.id}` }));
+    .map((warehouse: any) => ({ value: String(warehouse.id), label: displayText(warehouse.nameAr) || displayText(warehouse.name) || `#${warehouse.id}` }));
   const currencyOptions = currencies.map((currency: any) => ({
-    value: String(currency.code ?? currency.currencyCode ?? currency.id),
-    label: currency.nameAr || currency.name || currency.code || currency.currencyCode || `#${currency.id}`,
+    value: displayText(currency.code) || displayText(currency.currencyCode) || String(currency.id),
+    label: displayText(currency.nameAr) || displayText(currency.name) || displayText(currency.code) || displayText(currency.currencyCode) || `#${currency.id}`,
   }));
 
   // Signature: either drawn (pad) or an uploaded image. `sigDataUrl` holds the
@@ -193,12 +206,13 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
     setCurrencyCode("");
     setExchangeRate("1");
     setWarehouseName(s?.warehouseName ?? null);
-    setPartyName(s?.partyName ?? null);
+    setPartyName(displayText(s?.partyName) || null);
     setRecipientName(""); setRecipientJob(""); setRecipientIdNumber(""); setRecipientPhone("");
     setNotes(""); setAudit([]); setApprovedByName(null); setCreatedByName(null);
     setIsApproved(false); setShowAudit(false);
     setSigMode("draw"); setSigDataUrl(null); setSigObjectPath(null);
-    setLines((s?.lines?.length ? s.lines : [{ itemName: "", orderedQty: 0, actualQty: 0 }]).map(l => ({ ...l })));
+    setLines((s?.lines?.length ? s.lines : [{ itemName: "", orderedQty: 0, actualQty: 0 }])
+      .map(l => ({ ...l, itemName: displayText(l.itemName), unit: displayText(l.unit) || null })));
     setSavedId(null);
   }, []);
 
@@ -212,7 +226,7 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
       const d = await r.json();
       setSavedId(d.id); setStatus(d.status ?? "full");
       setDocNumber(d.docNumber ?? ""); setDocDate(d.docDate ?? todayIso());
-      setInvoiceNumber(d.invoiceNumber ?? null); setPartyName(d.partyName ?? null);
+      setInvoiceNumber(d.invoiceNumber ?? null); setPartyName(displayText(d.partyName) || null);
       setPartyId(d.partyId ?? null); setBranchId(d.branchId ?? null); setWarehouseId(d.warehouseId ?? null);
       setCurrencyCode(d.currencyCode ?? ""); setExchangeRate(String(d.exchangeRate ?? 1));
       setRecipientName(d.recipientName ?? ""); setRecipientJob(d.recipientJob ?? "");
@@ -226,7 +240,7 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
       setAudit(Array.isArray(d.audit) ? d.audit : []);
       setLines((Array.isArray(d.lines) && d.lines.length ? d.lines : [{ itemName: "", orderedQty: 0, actualQty: 0 }])
         .map((l: any) => ({
-          itemId: l.itemId ?? null, itemName: l.itemName ?? "", unit: l.unit ?? null,
+          itemId: l.itemId ?? null, itemName: displayText(l.itemName), unit: displayText(l.unit) || null,
           orderedQty: Number(l.orderedQty ?? 0), actualQty: Number(l.actualQty ?? 0), notes: l.notes ?? null,
         })));
     } catch (e: any) {
@@ -388,10 +402,10 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
   function toPrintDoc(sigUrl: string | null): DRPrintDoc {
     return {
       kind, docNumber, docDate, invoiceNumber, partyName,
-      branchName: branches.find((branch: any) => Number(branch.id) === branchId)?.nameAr
-        || branches.find((branch: any) => Number(branch.id) === branchId)?.name,
-      warehouseName: warehouses.find((warehouse: any) => Number(warehouse.id) === warehouseId)?.nameAr
-        || warehouses.find((warehouse: any) => Number(warehouse.id) === warehouseId)?.name
+      branchName: displayText(branches.find((branch: any) => Number(branch.id) === branchId)?.nameAr)
+        || displayText(branches.find((branch: any) => Number(branch.id) === branchId)?.name),
+      warehouseName: displayText(warehouses.find((warehouse: any) => Number(warehouse.id) === warehouseId)?.nameAr)
+        || displayText(warehouses.find((warehouse: any) => Number(warehouse.id) === warehouseId)?.name)
         || warehouseName,
       currencyCode, exchangeRate, status, notes,
       recipientName, recipientJob, recipientIdNumber, recipientPhone,
@@ -470,7 +484,7 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
 
   return (
     <div className="min-h-screen bg-slate-50/70 p-3 sm:p-6" dir="rtl">
-      <div className="mx-auto max-w-7xl space-y-5">
+      <div className="mx-0 w-full max-w-none space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white p-4 shadow-sm">
           <div className="flex items-center gap-3">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>عودة للسندات</Button>
@@ -513,8 +527,8 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
                 onValueChange={value => {
                   const party = parties.find((row: any) => String(row.id) === value);
                   setPartyId(value ? Number(value) : null);
-                  setPartyName(party ? (party.nameAr || party.name || party.nameEn) : null);
-                  if (party?.phone) setRecipientPhone(String(party.phone));
+                  setPartyName(party ? (displayText(party.nameAr) || displayText(party.name) || displayText(party.nameEn)) : null);
+                  if (party?.phone) setRecipientPhone(displayText(party.phone));
                 }}
                 placeholder={`اختر ${isReceipt ? "المورد" : "العميل"} (اختياري)`}
                 searchPlaceholder="ابحث بالاسم أو الكود..." disabled={!canWrite} clearable testId="drdoc-party-picker" />
@@ -533,7 +547,7 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
                 onValueChange={value => {
                   setWarehouseId(value ? Number(value) : null);
                   const selected = warehouses.find((row: any) => String(row.id) === value);
-                  setWarehouseName(selected?.nameAr || selected?.name || null);
+                  setWarehouseName(selected ? displayText(selected.nameAr) || displayText(selected.name) || null : null);
                 }}
                 placeholder="اختر المخزن" disabled={!canWrite} clearable testId="drdoc-warehouse-picker" />
             </div>
@@ -588,8 +602,8 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
                           const item = inventoryItems.find((row: any) => String(row.id) === value);
                           updateLine(i, {
                             itemId: value ? Number(value) : null,
-                            itemName: item ? (item.nameAr || item.name || item.nameEn || "") : "",
-                            unit: item ? (item.unitName || item.unit || item.baseUnitName || "") : "",
+                            itemName: item ? (displayText(item.nameAr) || displayText(item.name) || displayText(item.nameEn)) : "",
+                            unit: item ? (displayText(item.unitName) || displayText(item.unit) || displayText(item.baseUnitName)) : "",
                           });
                         }}
                         onSearchChange={setItemSearch} loading={isSearchingItems}
