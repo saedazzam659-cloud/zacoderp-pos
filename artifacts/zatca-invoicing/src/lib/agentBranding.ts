@@ -223,6 +223,19 @@ export function useAgentUserGuideEnabled(): boolean | null {
   return enabled;
 }
 
+/** Server opt-in for the horizontal dropdown navigation; off on ordinary domains. */
+export function useAgentMainNavDropdowns(): boolean {
+  const [enabled, setEnabled] = useState(
+    cache?.isAgentDomain === true && cache.agentUiSettings.mainNavDropdowns === true,
+  );
+  useEffect(() => {
+    fetchBranding().then(b => {
+      setEnabled(b.isAgentDomain && b.agentUiSettings.mainNavDropdowns === true);
+    });
+  }, []);
+  return enabled;
+}
+
 /** Null means the central platform/default policy: every SA screen is allowed. */
 export function useLocalSuperadminScreens(): string[] | null {
   const [v, setV] = useState<string[] | null>(cache?.localSuperadminScreens ?? null);

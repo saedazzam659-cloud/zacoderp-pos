@@ -236,6 +236,38 @@ export default function Login() {
   const [demoTransferError, setDemoTransferError] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const [agentCaptcha, setAgentCaptcha] = useState<{ image: string; token: string } | null>(null);
+  const [agentCaptchaAnswer, setAgentCaptchaAnswer] = useState("");
+  const [agentCaptchaError, setAgentCaptchaError] = useState("");
+  const [agentCaptchaLoading, setAgentCaptchaLoading] = useState(false);
+
+  const refreshAgentCaptcha = async () => {
+    setAgentCaptchaLoading(true);
+    setAgentCaptchaError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/login-captcha`, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.enabled !== true || !data.image || !data.token) {
+        throw new Error("تعذر تحميل رمز التحقق");
+      }
+      setAgentCaptcha({ image: data.image, token: data.token });
+      setAgentCaptchaAnswer("");
+    } catch {
+      setAgentCaptcha(null);
+      setAgentCaptchaError("تعذر تحميل رمز التحقق. حاول تحديثه.");
+    } finally {
+      setAgentCaptchaLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAgentDomain && loginPageSettings?.captchaEnabled === true) {
+      void refreshAgentCaptcha();
+    } else {
+      setAgentCaptcha(null);
+      setAgentCaptchaAnswer("");
+    }
+  }, [isAgentDomain, loginPageSettings?.captchaEnabled]);
 
   // Flow state
   const [step, setStep] = useState<Step>("creds");
@@ -472,6 +504,8 @@ export default function Login() {
       await login(cleanUsername, password, cleanCompanyCode, {
         confirmDemoSessionTransfer: true,
         demoPhone,
+        captchaToken: agentCaptcha?.token,
+        captchaAnswer: agentCaptchaAnswer,
       });
       rememberCompanyCode(cleanCompanyCode);
       setShowDemoTransfer(false);
@@ -512,7 +546,9 @@ export default function Login() {
         setDemoPreparationProgress(0);
         setShowDemoPreparation(true);
       }
-      await login(cleanUsername, password, cleanCompanyCode, { demoPhone: phone });
+      await login(cleanUsername, password, cleanCompanyCode, {
+        demoPhone: phone, captchaToken: agentCaptcha?.token, captchaAnswer: agentCaptchaAnswer,
+      });
       rememberCompanyCode(cleanCompanyCode);
       setDemoPreparationProgress(100);
       setShowDemoPhoneConfirm(false);
@@ -575,7 +611,9 @@ export default function Login() {
           setShowDemoPreparation(true);
         }
 
-        await login(trimmedUsername, password, trimmedCode, { demoPhone });
+        await login(trimmedUsername, password, trimmedCode, {
+          demoPhone, captchaToken: agentCaptcha?.token, captchaAnswer: agentCaptchaAnswer,
+        });
         rememberCompanyCode(trimmedCode);
         if (preparationShownForAttempt) {
           setDemoPreparationProgress(100);
@@ -1176,7 +1214,30 @@ export default function Login() {
               </div>
 
               {/* Turnstile widget — only shown for SA flow when site key configured */}
-              {isSuperAdminFlow && TURNSTILE_SITE_KEY && (
+                {isAgentDomain && loginPageSettings?.captchaEnabled === true && !isSuperAdminFlow && (
+                  <div className="rounded-lg border p-3 space-y-2"
+                    style={{
+                      backgroundColor: loginPageSettings.captchaBackgroundColor ?? "#ffffff",
+                      borderColor: loginPageSettings.captchaBorderColor ?? "#cbd5e1",
+                    }}>
+                    <div className="flex items-center justify-center gap-3">
+                      {agentCaptcha?.image
+                        ? <img src={agentCaptcha.image} alt="رمز التحقق" className="h-12 w-[150px] rounded" />
+                        : <span className="h-12 w-[150px] grid place-items-center text-xs text-muted-foreground">{agentCaptchaLoading ? "جارٍ التحميل…" : "تعذر تحميل الصورة"}</span>}
+                      <button type="button" className="rounded border px-3 py-2 text-xs"
+                        onClick={() => void refreshAgentCaptcha()} disabled={agentCaptchaLoading}>
+                        تحديث الرمز
+                      </button>
+                    </div>
+                    <Input value={agentCaptchaAnswer} onChange={event => setAgentCaptchaAnswer(event.target.value)}
+                      placeholder="اكتب رمز التحقق" autoComplete="off" dir="ltr" className="text-center tracking-widest"
+                      style={{ color: loginPageSettings.captchaTextColor ?? undefined }}
+                      required disabled={step === "blocked"} data-testid="agent-login-captcha-answer" />
+                    {agentCaptchaError && <p role="alert" className="text-xs text-destructive">{agentCaptchaError}</p>}
+                  </div>
+                )}
+
+                {isSuperAdminFlow && TURNSTILE_SITE_KEY && (
                 <div className="flex justify-center"><div ref={turnstileMountRef} /></div>
               )}
               {isSuperAdminFlow && !TURNSTILE_SITE_KEY && (

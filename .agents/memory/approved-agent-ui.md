@@ -26,3 +26,9 @@ Agent login customization is presentation-only. Keep required credential inputs 
 **Why:** The user wants independent login-page controls and colors for each agent without changing the central platform or weakening the login flow.
 
 **How to apply:** Resolve settings only for a verified agent domain, sanitize style values, and require an agent display name before showing optional branded marketing content.
+
+For agent navigation, the per-server dropdown opt-in controls whether users may newly select the top-navigation layout. It must not override an already-saved company layout; keep existing sidebar or top-navigation behavior unchanged while the feature is off.
+
+**Why:** The user requires the options to default off while preserving icons and the current layout unless the user explicitly chooses another display method.
+
+**How to apply:** Gate the top-navigation choice in General Settings, not the layout renderer. Keep layout rendering driven by the saved company preference.

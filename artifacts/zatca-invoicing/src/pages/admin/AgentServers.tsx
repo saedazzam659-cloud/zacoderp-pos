@@ -2567,6 +2567,24 @@ export default function AgentServers() {
 
                   <section className="border-t pt-4 space-y-3">
                     <div>
+                      <h3 className="text-sm font-semibold">القوائم المنسدلة في التنقل الرئيسي</h3>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        تتيح هذا النمط لهذا السيرفر فقط؛ تظل أيقونات القائمة الجانبية كما هي، ويختار المستخدم طريقة العرض من إعداداته.
+                      </p>
+                    </div>
+                    <label className="flex cursor-pointer items-start gap-2 text-sm">
+                      <input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary"
+                        checked={form.agentUiSettings.mainNavDropdowns}
+                        disabled={busy === `save-agent-ui-${form.id}`}
+                        onChange={event => set("agentUiSettings", normalizeAgentUiSettings({
+                          ...form.agentUiSettings, mainNavDropdowns: event.target.checked,
+                        }))}
+                        data-testid="checkbox-agent-main-nav-dropdowns" />
+                      <span>إتاحة شريط التنقل العلوي ذي القوائم المنسدلة لهذا السيرفر</span>
+                    </label>
+                  </section>
+                  <section className="border-t pt-4 space-y-3">
+                    <div>
                       <h3 className="text-sm font-semibold">صفحة دخول هذا الوكيل</h3>
                       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                         هذه الإعدادات تخص دومين هذا الوكيل فقط. تظل حقول الدخول الأساسية ظاهرة، ولا تتغير صفحة الدخول المركزية.
@@ -2617,12 +2635,29 @@ export default function AgentServers() {
                         />
                         <span>إخفاء الاختيار بين حساب الشركة والتدريب</span>
                       </label>
+                      <label className="flex cursor-pointer items-start gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-primary"
+                          checked={form.agentUiSettings.loginPage.captchaEnabled}
+                          disabled={busy === `save-agent-ui-${form.id}`}
+                          onChange={event => set("agentUiSettings", normalizeAgentUiSettings({
+                            ...form.agentUiSettings,
+                            loginPage: { ...form.agentUiSettings.loginPage, captchaEnabled: event.target.checked },
+                          }))}
+                          data-testid="checkbox-agent-login-captcha"
+                        />
+                        <span>تفعيل CAPTCHA لتسجيل الدخول لهذا السيرفر</span>
+                      </label>
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                       {([
                         { key: "backgroundColor", label: "خلفية صفحة الدخول", sample: "#f8fafc" },
                         { key: "cardColor", label: "خلفية بطاقة الدخول", sample: "#ffffff" },
                         { key: "accentColor", label: "اللون الأساسي والأزرار", sample: "#0f766e" },
+                        { key: "captchaTextColor", label: "لون أرقام CAPTCHA", sample: "#0f766e" },
+                        { key: "captchaBackgroundColor", label: "خلفية CAPTCHA", sample: "#ffffff" },
+                        { key: "captchaBorderColor", label: "إطار CAPTCHA", sample: "#cbd5e1" },
                       ] as const).map(({ key, label, sample }) => (
                         <div key={key} className="rounded-md border p-3">
                           <label className="mb-2 block text-xs font-medium">{label}</label>

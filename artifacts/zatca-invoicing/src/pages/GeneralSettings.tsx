@@ -38,7 +38,7 @@ import InputHintColorsTab from "./settings/InputHintColorsTab";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
-import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
+import { useAgentMainNavDropdowns, useAgentModuleShortcutIcons, useIsAgentDomain } from "@/lib/agentBranding";
 import {
   readThermalPrintScale,
   saveThermalPrintScale,
@@ -319,6 +319,8 @@ function splitDataUrl(dataUrl: string): { b64: string; mime: string } | null {
 
 export default function GeneralSettings() {
   const agentShortcutIcons = useAgentModuleShortcutIcons() === true;
+  const isAgentDomain = useIsAgentDomain();
+  const agentMainNavDropdowns = useAgentMainNavDropdowns();
   const [activeAgentGeneralSection, setActiveAgentGeneralSection] =
     useState<AgentGeneralSettingsSectionId>("document-options");
   const gate = useDemoActionGate();
@@ -4315,7 +4317,7 @@ export default function GeneralSettings() {
                     {/* TOPNAV card */}
                     <button
                       type="button"
-                      disabled={postingSaving}
+                      disabled={postingSaving || (isAgentDomain && !agentMainNavDropdowns && isSidebar)}
                       onClick={() => togglePostingMode({ menuLayout: "topnav" })}
                       className={cn(
                         "flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-right transition-all",
@@ -4349,6 +4351,11 @@ export default function GeneralSettings() {
                     <p className="text-xs text-muted-foreground flex items-center gap-2">
                       <Loader2 className="h-3 w-3 animate-spin" />
                       جارٍ الحفظ…
+                    </p>
+                  )}
+                  {isAgentDomain && !agentMainNavDropdowns && isSidebar && (
+                    <p className="text-xs text-muted-foreground">
+                      لتفعيل اختيار الشريط العلوي لهذا السيرفر، فعّل القوائم المنسدلة من «تخصيص الواجهة» في إعدادات السيرفر.
                     </p>
                   )}
                 </>

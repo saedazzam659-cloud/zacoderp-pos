@@ -23,6 +23,7 @@ export type AgentModuleScreenTileId = typeof AGENT_MODULE_SCREEN_TILE_OPTIONS[nu
 
 export type AgentUiSettings = {
   moduleScreensAsTiles: AgentModuleScreenTileId[];
+  mainNavDropdowns: boolean;
   compactInvoiceTypeSelector: boolean;
   colorfulInvoiceTabs: boolean;
   userGuideEnabled: boolean;
@@ -33,11 +34,16 @@ export type AgentUiSettings = {
     backgroundColor: string | null;
     cardColor: string | null;
     accentColor: string | null;
+    captchaEnabled: boolean;
+    captchaTextColor: string | null;
+    captchaBackgroundColor: string | null;
+    captchaBorderColor: string | null;
   };
 };
 
 export const DEFAULT_AGENT_UI_SETTINGS: AgentUiSettings = {
   moduleScreensAsTiles: [],
+  mainNavDropdowns: false,
   compactInvoiceTypeSelector: false,
   colorfulInvoiceTabs: false,
   userGuideEnabled: false,
@@ -48,6 +54,10 @@ export const DEFAULT_AGENT_UI_SETTINGS: AgentUiSettings = {
     backgroundColor: null,
     cardColor: null,
     accentColor: null,
+    captchaEnabled: false,
+    captchaTextColor: null,
+    captchaBackgroundColor: null,
+    captchaBorderColor: null,
   },
 };
 
@@ -79,6 +89,11 @@ export function normalizeAgentUiSettings(value: unknown): AgentUiSettings {
       backgroundColor: safeColor(rawLogin.backgroundColor),
       cardColor: safeColor(rawLogin.cardColor),
       accentColor: safeColor(rawLogin.accentColor),
+      captchaEnabled: rawLogin.captchaEnabled === true,
+      captchaTextColor: safeColor(rawLogin.captchaTextColor),
+      captchaBackgroundColor: safeColor(rawLogin.captchaBackgroundColor),
+      captchaBorderColor: safeColor(rawLogin.captchaBorderColor),
     },
+    mainNavDropdowns: source.mainNavDropdowns === true,
   };
 }

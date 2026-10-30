@@ -1141,6 +1141,7 @@ const upsertSchema = z.object({
   moduleReportsUnifiedModules: z.array(z.enum(AGENT_REPORT_MODULE_IDS))
     .max(AGENT_REPORT_MODULE_IDS.length).optional(),
   agentUiSettings: z.object({
+    mainNavDropdowns: z.boolean().optional(),
     moduleScreensAsTiles: z.array(z.enum(AGENT_MODULE_SCREEN_TILE_IDS))
       .max(AGENT_MODULE_SCREEN_TILE_IDS.length).optional(),
     compactInvoiceTypeSelector: z.boolean().optional(),
@@ -1153,6 +1154,10 @@ const upsertSchema = z.object({
       backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
       cardColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
       accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+      captchaEnabled: z.boolean().optional(),
+      captchaTextColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+      captchaBackgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+      captchaBorderColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
     }).strict().optional(),
   }).strict().optional(),
   notes: z.string().max(2000).nullish(),
