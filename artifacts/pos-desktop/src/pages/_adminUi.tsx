@@ -84,8 +84,9 @@ export function EmptyItemsRow({ colSpan }: { colSpan: number }) {
 }
 
 export function Modal({ title, children, onCancel, wide }: { title: string; children: ReactNode; onCancel: () => void; wide?: boolean }) {
+  const language = useUiLanguage();
   return (
-    <div dir="rtl" onClick={onCancel}
+    <div dir={language === "en" ? "ltr" : "rtl"} onClick={onCancel}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
       <div onClick={(e) => e.stopPropagation()}
         style={{ background: "#fff", borderRadius: 12, padding: 24, width: wide ? 880 : 480, maxWidth: "94vw", maxHeight: "92vh", overflowY: "auto" }}>

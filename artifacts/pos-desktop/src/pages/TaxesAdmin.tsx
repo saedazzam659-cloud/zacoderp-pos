@@ -9,6 +9,7 @@ import {
   Page, Card, Table, Th, Td, Empty, Modal, Field, Row, ErrorMsg, Actions,
   SearchCombobox, input, btnPrimary, btnSecondary, btnLink, fmt,
 } from "./_adminUi";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type Tab = "basic" | "account" | "direction";
 
@@ -53,12 +54,9 @@ const fromTax = (t: Tax): EditData => ({
   isDefault: t.isDefault, isActive: t.isActive,
 });
 
-const NATURE_OPTS = [
-  { value: "debit", label: "مدين" },
-  { value: "credit", label: "دائن" },
-];
-
 export default function TaxesAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<Tax[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -67,6 +65,10 @@ export default function TaxesAdmin() {
   const [tab, setTab] = useState<Tab>("basic");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const natureOptions = [
+    { value: "debit", label: text("مدين", "Debit") },
+    { value: "credit", label: text("دائن", "Credit") },
+  ];
 
   async function refresh() { setRows(await listTaxes()); }
   useEffect(() => {
@@ -85,19 +87,19 @@ export default function TaxesAdmin() {
   }, [accounts]);
 
   const accountOptions = useMemo(() => [
-    { value: "", label: "— اختر حساب —" },
+    { value: "", label: text("— اختر حساب —", "— Select account —") },
     ...accounts.filter((a) => a.isLeaf).map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` })),
-  ], [accounts]);
+  ], [accounts, language]);
 
   const currencyOptions = useMemo(() => [
-    { value: "", label: "— العملة الأساسية —" },
-    ...currencies.map((c) => ({ value: c.code, label: `${c.code} — ${c.nameAr}` })),
-  ], [currencies]);
+    { value: "", label: text("— العملة الأساسية —", "— Base currency —") },
+    ...currencies.map((c) => ({ value: c.code, label: `${c.code} — ${language === "en" ? c.nameEn || c.code : c.nameAr}` })),
+  ], [currencies, language]);
 
   const branchOptions = useMemo(() => [
-    { value: "", label: "— بدون فرع —" },
+    { value: "", label: text("— بدون فرع —", "— No branch —") },
     ...branches.filter((b) => b.isActive).map((b) => ({ value: b.id, label: `${b.code} — ${b.nameAr}` })),
-  ], [branches]);
+  ], [branches, language]);
 
   function startNew() { setErr(null); setTab("basic"); setEdit({ mode: "new", data: emptyData() }); }
   function startEdit(t: Tax) { setErr(null); setTab("basic"); setEdit({ mode: "edit", id: t.id, data: fromTax(t) }); }
@@ -109,12 +111,12 @@ export default function TaxesAdmin() {
   async function save() {
     if (!edit) return;
     const d = edit.data;
-    if (!d.code.trim()) { setTab("basic"); setErr("كود الضريبة مطلوب"); return; }
-    if (!d.nameAr.trim()) { setTab("basic"); setErr("اسم الضريبة مطلوب"); return; }
+    if (!d.code.trim()) { setTab("basic"); setErr(text("كود الضريبة مطلوب", "Tax code is required.")); return; }
+    if (!d.nameAr.trim()) { setTab("basic"); setErr(text("اسم الضريبة مطلوب", "Tax name in Arabic is required.")); return; }
     const rate = Number(d.rateValue);
-    if (!Number.isFinite(rate) || rate < 0) { setTab("basic"); setErr("قيمة الضريبة غير صحيحة"); return; }
-    if (d.rateType === "percent" && rate > 100) { setTab("basic"); setErr("النسبة لا تتجاوز 100%"); return; }
-    if (d.accountId === "") { setTab("account"); setErr("اختر حساب الضريبة من شجرة الحسابات"); return; }
+    if (!Number.isFinite(rate) || rate < 0) { setTab("basic"); setErr(text("قيمة الضريبة غير صحيحة", "Enter a valid tax amount.")); return; }
+    if (d.rateType === "percent" && rate > 100) { setTab("basic"); setErr(text("النسبة لا تتجاوز 100%", "The percentage cannot exceed 100%.")); return; }
+    if (d.accountId === "") { setTab("account"); setErr(text("اختر حساب الضريبة من شجرة الحسابات", "Select the tax account from the chart of accounts.")); return; }
     setBusy(true); setErr(null);
     try {
       const payload: TaxInput = {
@@ -132,21 +134,21 @@ export default function TaxesAdmin() {
       if (edit.mode === "new") await createTax(payload);
       else await updateTax(edit.id, payload);
       setEdit(null); await refresh();
-    } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل الحفظ", "Could not save tax.")); }
     finally { setBusy(false); }
   }
 
   async function remove(t: Tax) {
-    if (!confirm(`حذف الضريبة «${t.nameAr}»؟`)) return;
-    try { await deleteTax(t.id); await refresh(); } catch (e: any) { alert(e?.message ?? "فشل الحذف"); }
+    const taxName = language === "en" ? t.nameEn || t.nameAr : t.nameAr;
+    if (!confirm(text(`حذف الضريبة «${taxName}»؟`, `Delete tax “${taxName}”?`))) return;
+    try { await deleteTax(t.id); await refresh(); } catch (e: any) { alert(e?.message ?? text("فشل الحذف", "Could not delete tax.")); }
   }
   async function makeDefault(t: Tax) {
-    try { await setDefaultTax(t.id); await refresh(); } catch (e: any) { alert(e?.message ?? "فشل"); }
+    try { await setDefaultTax(t.id); await refresh(); } catch (e: any) { alert(e?.message ?? text("فشل", "Could not set default tax.")); }
   }
 
-  function rateLabel(t: Tax): string {
-    return t.rateType === "percent" ? `${fmt(t.rateValue)}%` : `${fmt(t.rateValue)} (قيمة ثابتة)`;
-  }
+  const rateLabel = (t: Tax): string =>
+    t.rateType === "percent" ? `${fmt(t.rateValue)}%` : `${fmt(t.rateValue)} (${text("قيمة ثابتة", "fixed amount")})`;
   function accountLabel(t: Tax): string {
     if (t.accountId == null) return "—";
     const a = accountById.get(t.accountId);
@@ -155,44 +157,44 @@ export default function TaxesAdmin() {
 
   return (
     <Page
-      title="الضرائب"
-      subtitle={`${rows.length} ضريبة — أضف ضرائب متعددة (مدخلات/مخرجات)، كل ضريبة بحسابها ونسبتها. الضريبة الافتراضية تتحكم في نسبة شاشة القيود اليومية.`}
-      right={<button onClick={startNew} style={btnPrimary}>+ إضافة ضريبة</button>}
+      title={text("الضرائب", "Taxes")}
+      subtitle={text(`${rows.length} ضريبة — أضف ضرائب متعددة (مدخلات/مخرجات)، كل ضريبة بحسابها ونسبتها. الضريبة الافتراضية تتحكم في نسبة شاشة القيود اليومية.`, `${rows.length} taxes — configure input and output taxes with their own accounts and rates. The default tax sets the rate used on journal entries.`)}
+      right={<button onClick={startNew} style={btnPrimary}>+ {text("إضافة ضريبة", "Add tax")}</button>}
     >
       <Card>
-        {rows.length === 0 ? <Empty text="لا توجد ضرائب — اضغط «إضافة ضريبة» للبدء" /> : (
+        {rows.length === 0 ? <Empty text={text("لا توجد ضرائب — اضغط «إضافة ضريبة» للبدء", "No taxes yet — select “Add tax” to get started.")} /> : (
           <Table>
             <thead><tr>
-              <Th style={{ width: 110 }}>الكود</Th>
-              <Th>الاسم</Th>
-              <Th style={{ width: 130 }}>النسبة/القيمة</Th>
-              <Th>الحساب</Th>
-              <Th style={{ width: 90 }}>افتراضية</Th>
-              <Th style={{ width: 90 }}>الحالة</Th>
-              <Th style={{ width: 230 }}>إجراءات</Th>
+              <Th style={{ width: 110 }}>{text("الكود", "Code")}</Th>
+              <Th>{text("الاسم", "Name")}</Th>
+              <Th style={{ width: 130 }}>{text("النسبة/القيمة", "Rate / amount")}</Th>
+              <Th>{text("الحساب", "Account")}</Th>
+              <Th style={{ width: 90 }}>{text("افتراضية", "Default")}</Th>
+              <Th style={{ width: 90 }}>{text("الحالة", "Status")}</Th>
+              <Th style={{ width: 230 }}>{text("إجراءات", "Actions")}</Th>
             </tr></thead>
             <tbody>
               {rows.map((t) => (
                 <tr key={t.id}>
                   <Td mono>{t.code}</Td>
-                  <Td style={{ fontWeight: 600 }}>{t.nameAr}{t.nameEn ? <span style={{ color: "#94a3b8", fontWeight: 400 }}> · {t.nameEn}</span> : null}</Td>
+                  <Td style={{ fontWeight: 600 }}>{language === "en" ? t.nameEn || t.nameAr : t.nameAr}{(language === "en" ? t.nameEn && t.nameAr : t.nameEn) ? <span style={{ color: "#94a3b8", fontWeight: 400 }}> · {language === "en" ? t.nameAr : t.nameEn}</span> : null}</Td>
                   <Td num>{rateLabel(t)}</Td>
                   <Td style={{ color: "#475569", fontSize: 13 }}>{accountLabel(t)}</Td>
                   <Td>
                     {t.isDefault
-                      ? <span style={{ background: "#1d4ed820", color: "#1d4ed8", padding: "2px 8px", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>★ افتراضية</span>
+                      ? <span style={{ background: "#1d4ed820", color: "#1d4ed8", padding: "2px 8px", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>★ {text("افتراضية", "Default")}</span>
                       : <span style={{ color: "#cbd5e1" }}>—</span>}
                   </Td>
                   <Td>
                     <span style={{ background: (t.isActive ? "#15803d" : "#b91c1c") + "20", color: t.isActive ? "#15803d" : "#b91c1c", padding: "2px 8px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
-                      {t.isActive ? "نشطة" : "متوقفة"}
+                      {t.isActive ? text("نشطة", "Active") : text("متوقفة", "Inactive")}
                     </span>
                   </Td>
                   <Td>
-                    <button onClick={() => startEdit(t)} style={btnLink}>تعديل</button>
-                    {!t.isDefault && <>{" · "}<button onClick={() => makeDefault(t)} style={btnLink}>تعيين كافتراضية</button></>}
+                    <button onClick={() => startEdit(t)} style={btnLink}>{text("تعديل", "Edit")}</button>
+                    {!t.isDefault && <>{" · "}<button onClick={() => makeDefault(t)} style={btnLink}>{text("تعيين كافتراضية", "Set as default")}</button></>}
                     {" · "}
-                    <button onClick={() => remove(t)} style={{ ...btnLink, color: "#dc2626" }}>حذف</button>
+                    <button onClick={() => remove(t)} style={{ ...btnLink, color: "#dc2626" }}>{text("حذف", "Delete")}</button>
                   </Td>
                 </tr>
               ))}
@@ -202,9 +204,9 @@ export default function TaxesAdmin() {
       </Card>
 
       {edit && (
-        <Modal title={edit.mode === "new" ? "إضافة ضريبة" : "تعديل ضريبة"} onCancel={cancel} wide>
+        <Modal title={edit.mode === "new" ? text("إضافة ضريبة", "Add tax") : text("تعديل ضريبة", "Edit tax")} onCancel={cancel} wide>
           <div style={{ display: "flex", gap: 6, borderBottom: "1px solid #e2e8f0", marginBottom: 16 }}>
-            {([["basic", "1 · أساسي"], ["account", "2 · الحساب"], ["direction", "3 · التوجيه"]] as [Tab, string][]).map(([k, label]) => (
+            {([["basic", text("1 · أساسي", "1 · Basics")], ["account", text("2 · الحساب", "2 · Account")], ["direction", text("3 · التوجيه", "3 · Directions")]] as [Tab, string][]).map(([k, label]) => (
               <button key={k} onClick={() => setTab(k)}
                 style={{
                   padding: "8px 16px", border: "none", background: "none", cursor: "pointer",
@@ -218,50 +220,50 @@ export default function TaxesAdmin() {
           {tab === "basic" && (
             <div>
               <Row>
-                <Field label="كود الضريبة *"><input autoFocus value={edit.data.code} onChange={(e) => setField("code", e.target.value)} style={input} placeholder="مثال: VAT15" /></Field>
-                <Field label="نوع الضريبة">
+                <Field label={text("كود الضريبة *", "Tax code *")}><input autoFocus value={edit.data.code} onChange={(e) => setField("code", e.target.value)} style={input} placeholder="VAT15" /></Field>
+                <Field label={text("نوع الضريبة", "Tax type")}>
                   <SearchCombobox
                     value={edit.data.rateType}
                     onChange={(v) => setField("rateType", v as TaxRateType)}
-                    options={[{ value: "percent", label: "نسبة مئوية %" }, { value: "value", label: "قيمة ثابتة" }]}
+                    options={[{ value: "percent", label: text("نسبة مئوية %", "Percentage %") }, { value: "value", label: text("قيمة ثابتة", "Fixed amount") }]}
                     style={input}
                   />
                 </Field>
               </Row>
               <Row>
-                <Field label="الاسم بالعربية *"><input value={edit.data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={input} placeholder="ضريبة القيمة المضافة" /></Field>
-                <Field label="الاسم بالإنجليزية"><input value={edit.data.nameEn} onChange={(e) => setField("nameEn", e.target.value)} style={input} placeholder="VAT (اختياري)" /></Field>
+                <Field label={text("الاسم بالعربية *", "Arabic name *")}><input value={edit.data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={input} placeholder={text("ضريبة القيمة المضافة", "Arabic tax name")} /></Field>
+                <Field label={text("الاسم بالإنجليزية", "English name")}><input value={edit.data.nameEn} onChange={(e) => setField("nameEn", e.target.value)} style={input} placeholder={text("VAT (اختياري)", "VAT (optional)")} /></Field>
               </Row>
               <Row>
-                <Field label={edit.data.rateType === "percent" ? "النسبة (%)" : "القيمة الثابتة"}>
+                <Field label={edit.data.rateType === "percent" ? text("النسبة (%)", "Rate (%)") : text("القيمة الثابتة", "Fixed amount")}>
                   <input type="number" step="0.01" min={0} value={edit.data.rateValue} onChange={(e) => setField("rateValue", e.target.value)} style={input} placeholder={edit.data.rateType === "percent" ? "15" : "0.00"} />
                 </Field>
-                <Field label="العملة">
+                <Field label={text("العملة", "Currency")}>
                   <SearchCombobox value={edit.data.currencyCode} onChange={(v) => setField("currencyCode", String(v))} options={currencyOptions} style={input} />
                 </Field>
               </Row>
               <Row>
-                <Field label="الفرع">
+                <Field label={text("الفرع", "Branch")}>
                   <SearchCombobox value={edit.data.branchId} onChange={(v) => setField("branchId", v === "" ? "" : Number(v))} options={branchOptions} style={input} />
                 </Field>
-                <Field label="الحالة">
-                  <SearchCombobox value={edit.data.isActive ? "1" : "0"} onChange={(v) => setField("isActive", v === "1")} options={[{ value: "1", label: "نشطة" }, { value: "0", label: "متوقفة" }]} style={input} />
+                <Field label={text("الحالة", "Status")}>
+                  <SearchCombobox value={edit.data.isActive ? "1" : "0"} onChange={(v) => setField("isActive", v === "1")} options={[{ value: "1", label: text("نشطة", "Active") }, { value: "0", label: text("متوقفة", "Inactive") }]} style={input} />
                 </Field>
               </Row>
               <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, fontSize: 14, cursor: "pointer" }}>
                 <input type="checkbox" checked={edit.data.isDefault} onChange={(e) => setField("isDefault", e.target.checked)} />
-                <span>اجعلها الضريبة الافتراضية للنظام (نسبتها تتحكم في شاشة القيود اليومية وتُختار تلقائياً في الفواتير)</span>
+                <span>{text("اجعلها الضريبة الافتراضية للنظام (نسبتها تتحكم في شاشة القيود اليومية وتُختار تلقائياً في الفواتير)", "Set as the system default tax. Its rate is used on journal entries and selected automatically on invoices.")}</span>
               </label>
             </div>
           )}
 
           {tab === "account" && (
             <div>
-              <Field label="حساب الضريبة (من شجرة الحسابات) *">
+              <Field label={text("حساب الضريبة (من شجرة الحسابات) *", "Tax account (from chart of accounts) *")}>
                 <SearchCombobox value={edit.data.accountId} onChange={(v) => setField("accountId", v === "" ? "" : Number(v))} options={accountOptions} style={input} />
               </Field>
               <div style={{ fontSize: 13, color: "#64748b", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", marginTop: 8 }}>
-                هذا الحساب الوحيد يُستخدم لكل اتجاهات الضريبة. لفصل ضريبة المدخلات عن المخرجات، أنشئ ضريبتين منفصلتين — كل واحدة بحسابها الخاص (مثلاً ضريبة مخرجات على حساب التزام، وضريبة مدخلات على حساب أصل).
+                {text("هذا الحساب الوحيد يُستخدم لكل اتجاهات الضريبة. لفصل ضريبة المدخلات عن المخرجات، أنشئ ضريبتين منفصلتين — كل واحدة بحسابها الخاص (مثلاً ضريبة مخرجات على حساب التزام، وضريبة مدخلات على حساب أصل).", "This account is used for all tax directions. To separate input and output tax, create two taxes and assign separate accounts—for example, an output-tax liability account and an input-tax asset account.")}
               </div>
             </div>
           )}
@@ -269,23 +271,23 @@ export default function TaxesAdmin() {
           {tab === "direction" && (
             <div>
               <div style={{ fontSize: 13, color: "#64748b", marginBottom: 12 }}>
-                حدّد في أي أنواع الفواتير تظهر هذه الضريبة، وطبيعتها (مدين/دائن) في القيد المحاسبي لكل نوع.
+                {text("حدّد في أي أنواع الفواتير تظهر هذه الضريبة، وطبيعتها (مدين/دائن) في القيد المحاسبي لكل نوع.", "Choose which invoice types use this tax and whether each posting is a debit or credit.")}
               </div>
-              <DirectionRow label="فواتير المبيعات" enabled={edit.data.salesEnabled} nature={edit.data.salesNature}
+              <DirectionRow label={text("فواتير المبيعات", "Sales invoices")} natureOptions={natureOptions} enabled={edit.data.salesEnabled} nature={edit.data.salesNature}
                 onEnabled={(v) => setField("salesEnabled", v)} onNature={(v) => setField("salesNature", v)} />
-              <DirectionRow label="مرتجع المبيعات" enabled={edit.data.salesReturnEnabled} nature={edit.data.salesReturnNature}
+              <DirectionRow label={text("مرتجع المبيعات", "Sales returns")} natureOptions={natureOptions} enabled={edit.data.salesReturnEnabled} nature={edit.data.salesReturnNature}
                 onEnabled={(v) => setField("salesReturnEnabled", v)} onNature={(v) => setField("salesReturnNature", v)} />
-              <DirectionRow label="فواتير المشتريات" enabled={edit.data.purchaseEnabled} nature={edit.data.purchaseNature}
+              <DirectionRow label={text("فواتير المشتريات", "Purchase invoices")} natureOptions={natureOptions} enabled={edit.data.purchaseEnabled} nature={edit.data.purchaseNature}
                 onEnabled={(v) => setField("purchaseEnabled", v)} onNature={(v) => setField("purchaseNature", v)} />
-              <DirectionRow label="مرتجع المشتريات" enabled={edit.data.purchaseReturnEnabled} nature={edit.data.purchaseReturnNature}
+              <DirectionRow label={text("مرتجع المشتريات", "Purchase returns")} natureOptions={natureOptions} enabled={edit.data.purchaseReturnEnabled} nature={edit.data.purchaseReturnNature}
                 onEnabled={(v) => setField("purchaseReturnEnabled", v)} onNature={(v) => setField("purchaseReturnNature", v)} />
             </div>
           )}
 
           <ErrorMsg text={err} />
           <Actions>
-            <button onClick={cancel} disabled={busy} style={btnSecondary}>إلغاء</button>
-            <button onClick={save} disabled={busy} style={btnPrimary}>{busy ? "..." : "حفظ"}</button>
+            <button onClick={cancel} disabled={busy} style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
+            <button onClick={save} disabled={busy} style={btnPrimary}>{busy ? "..." : text("حفظ", "Save")}</button>
           </Actions>
         </Modal>
       )}
@@ -293,8 +295,8 @@ export default function TaxesAdmin() {
   );
 }
 
-function DirectionRow({ label, enabled, nature, onEnabled, onNature }: {
-  label: string; enabled: boolean; nature: TaxNature;
+function DirectionRow({ label, enabled, nature, natureOptions, onEnabled, onNature }: {
+  label: string; enabled: boolean; nature: TaxNature; natureOptions: { value: string; label: string }[];
   onEnabled: (v: boolean) => void; onNature: (v: TaxNature) => void;
 }) {
   return (
@@ -306,7 +308,7 @@ function DirectionRow({ label, enabled, nature, onEnabled, onNature }: {
       <SearchCombobox
         value={nature}
         onChange={(v) => onNature(v as TaxNature)}
-        options={NATURE_OPTS}
+        options={natureOptions}
         disabled={!enabled}
         style={{ ...input, opacity: enabled ? 1 : 0.5 }}
       />

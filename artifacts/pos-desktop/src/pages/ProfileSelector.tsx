@@ -14,8 +14,11 @@
 
 import { useState } from "react";
 import { setAppProfile } from "../lib/standalone";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 export default function ProfileSelector({ onChosen }: { onChosen: (p: "pos" | "erp") => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [saving, setSaving] = useState(false);
   const [picked, setPicked] = useState<"pos" | "erp" | null>(null);
 
@@ -32,28 +35,31 @@ export default function ProfileSelector({ onChosen }: { onChosen: (p: "pos" | "e
     })();
   }
 
-  const opts: { key: "pos" | "erp"; icon: string; title: string; desc: string }[] = [
+  const opts: { key: "pos" | "erp"; icon: string; titleAr: string; titleEn: string; descAr: string; descEn: string }[] = [
     {
       key: "pos",
       icon: "🛒",
-      title: "نقطة بيع فقط",
-      desc: "شاشة كاشير سريعة ومركّزة: بيع، مرتجعات، تقرير يومي، عملاء والأصناف الأساسية. تُخفى شاشات الإدارة الخلفية.",
+      titleAr: "نقطة بيع فقط",
+      titleEn: "Point of sale only",
+      descAr: "شاشة كاشير سريعة ومركّزة: بيع، مرتجعات، تقرير يومي، عملاء والأصناف الأساسية. تُخفى شاشات الإدارة الخلفية.",
+      descEn: "A focused cashier screen for sales, returns, daily reports, customers, and core items. Back-office screens stay hidden.",
     },
     {
       key: "erp",
       icon: "🏢",
-      title: "النظام الكامل (ERP)",
-      desc: "كل الشاشات: مشتريات، حسابات، مخازن، تقارير… (تظل خاضعة لصلاحيات المستخدم وتفعيل الوحدات من الإدارة).",
+      titleAr: "النظام الكامل (ERP)",
+      titleEn: "Full system (ERP)",
+      descAr: "كل الشاشات: مشتريات، حسابات، مخازن، تقارير… (تظل خاضعة لصلاحيات المستخدم وتفعيل الوحدات من الإدارة).",
+      descEn: "All screens, including purchasing, accounting, warehouses, and reports, subject to user permissions and enabled modules.",
     },
   ];
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.card}>
-        <h1 style={S.title}>اختر طريقة استخدام البرنامج</h1>
+        <h1 style={S.title}>{text("اختر طريقة استخدام البرنامج", "Choose how to use the app")}</h1>
         <p style={S.sub}>
-          حدد هل ستستخدم هذا الجهاز كنقطة بيع فقط أم كنظام محاسبي متكامل. تقدر
-          تغيّرها لاحقًا من الإعدادات.
+          {text("حدد هل ستستخدم هذا الجهاز كنقطة بيع فقط أم كنظام محاسبي متكامل. تقدر تغيّرها لاحقًا من الإعدادات.", "Choose whether this device will run as a point of sale or as the full accounting system. You can change this later in Settings.")}
         </p>
 
         <div style={S.grid}>
@@ -69,13 +75,13 @@ export default function ProfileSelector({ onChosen }: { onChosen: (p: "pos" | "e
               }}
             >
               <div style={S.icon}>{o.icon}</div>
-              <div style={S.name}>{o.title}</div>
-              <div style={S.desc}>{o.desc}</div>
+              <div style={S.name}>{language === "en" ? o.titleEn : o.titleAr}</div>
+              <div style={S.desc}>{language === "en" ? o.descEn : o.descAr}</div>
             </button>
           ))}
         </div>
 
-        {saving && <div style={S.savingMsg}>جاري الحفظ...</div>}
+        {saving && <div style={S.savingMsg}>{text("جاري الحفظ...", "Saving…")}</div>}
       </div>
     </div>
   );
