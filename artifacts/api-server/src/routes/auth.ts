@@ -93,13 +93,29 @@ const captchaB64 = (value: string) => Buffer.from(value).toString("base64url");
 
 async function getAgentCaptchaConfig(req: any) {
   const { resolveAgentRequestHost, lookupAgentByHost } = await import("./agentInstances.js");
-  const host = await resolveAgentRequestHost(req);
-  if (!host) return null;
-  const agent = await lookupAgentByHost(host);
-  if (!agent) return null;
-  const settings = sanitizeAgentUiSettings(agent.agentUiSettings).loginPage;
-  if (!settings?.captchaEnabled) return null;
-  return { host, settings };
+  const hostFromUrl = (value: unknown): string | null => {
+    if (typeof value !== "string" || !value) return null;
+    try { return normalizeHost(new URL(value).hostname); } catch { return null; }
+  };
+  const originHost = hostFromUrl(req.headers.origin);
+  const refererHost = hostFromUrl(req.headers.referer);
+  const pageHost = originHost ?? refererHost;
+  const requestedHost = typeof req.query?.host === "string"
+    ? normalizeHost(req.query.host)
+    : null;
+  const resolvedHost = await resolveAgentRequestHost(req);
+  const candidates = [
+    ...(requestedHost && (!pageHost || requestedHost === pageHost) ? [requestedHost] : []),
+    ...(pageHost ? [pageHost] : []),
+    ...(resolvedHost ? [resolvedHost] : []),
+  ];
+  for (const host of [...new Set(candidates)]) {
+    const agent = await lookupAgentByHost(host);
+    if (!agent) continue;
+    const settings = sanitizeAgentUiSettings(agent.agentUiSettings).loginPage;
+    return settings?.captchaEnabled ? { host, settings } : null;
+  }
+  return null;
 }
 
 function verifyAgentCaptchaToken(token: unknown, answer: unknown, host: string): boolean {

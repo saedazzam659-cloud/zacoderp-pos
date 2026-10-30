@@ -245,7 +245,10 @@ export default function Login() {
     setAgentCaptchaLoading(true);
     setAgentCaptchaError("");
     try {
-      const response = await fetch(`${API_BASE}/api/auth/login-captcha`, { cache: "no-store" });
+      const response = await fetch(
+        `${API_BASE}/api/auth/login-captcha?host=${encodeURIComponent(window.location.hostname)}`,
+        { cache: "no-store", credentials: "same-origin" },
+      );
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.enabled !== true || !data.image || !data.token) {
         throw new Error("تعذر تحميل رمز التحقق");
