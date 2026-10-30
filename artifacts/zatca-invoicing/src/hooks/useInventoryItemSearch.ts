@@ -14,6 +14,7 @@ export function useInventoryItemSearch(
   selectedIds: Array<string | number | null | undefined>,
   enabled = true,
   itemNatures: string[] = [],
+  natureOptions: { includeUnclassified?: boolean; onlyWhenEmpty?: boolean } = {},
 ) {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -31,9 +32,12 @@ export function useInventoryItemSearch(
     [selectedIds],
   );
   const companyQuery = companyId ? `companyId=${companyId}&` : "";
-  const itemNatureQuery = itemNatures.length
-    ? `&itemNatures=${encodeURIComponent([...itemNatures].sort().join(","))}`
+  const applyNatureFilter = itemNatures.length > 0 &&
+    (!natureOptions.onlyWhenEmpty || !debouncedSearch);
+  const itemNatureQuery = applyNatureFilter
+    ? `&itemNatures=${encodeURIComponent([...itemNatures].sort().join(","))}${natureOptions.includeUnclassified ? "&includeUnclassified=1" : ""}`
     : "";
+  const natureFilterKey = applyNatureFilter ? [...itemNatures].sort().join(",") : "";
 
   const selectedQuery = useQuery<any[]>({
     queryKey: ["inventory-items", companyId, "selected", selectedKey],
@@ -47,7 +51,7 @@ export function useInventoryItemSearch(
   });
 
   const searchQuery = useQuery<any[]>({
-    queryKey: ["inventory-items", companyId, "search", debouncedSearch, [...itemNatures].sort().join(",")],
+    queryKey: ["inventory-items", companyId, "search", debouncedSearch, natureFilterKey, Boolean(natureOptions.includeUnclassified && applyNatureFilter)],
     queryFn: () => fetchJsonArray(
       `${API}/api/inventory/items/search?${companyQuery}includeHidden=1&q=${encodeURIComponent(debouncedSearch)}&limit=50${itemNatureQuery}`,
       headers,

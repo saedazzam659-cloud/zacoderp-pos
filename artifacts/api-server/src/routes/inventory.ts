@@ -1666,11 +1666,17 @@ router.get("/items/search", async (req, res) => {
     .filter((value): value is typeof allowedItemNatures[number] =>
       allowedItemNatures.includes(value as typeof allowedItemNatures[number]),
     );
+  const includeUnclassified = String(req.query.includeUnclassified ?? "") === "1";
 
   const includeHidden = String(req.query.includeHidden ?? "") === "1"
     || String(req.query.includeHidden ?? "").toLowerCase() === "true";
   const clauses: any[] = cid ? [eq(itemsTable.companyId, cid)] : [];
-  if (itemNatures.length) clauses.push(inArray(itemsTable.itemNature, itemNatures));
+  if (itemNatures.length) {
+    const matchingNature = inArray(itemsTable.itemNature, itemNatures);
+    clauses.push(includeUnclassified
+      ? or(matchingNature, isNull(itemsTable.itemNature))!
+      : matchingNature);
+  }
   if (query) {
     const pattern = `%${query}%`;
     clauses.push(or(

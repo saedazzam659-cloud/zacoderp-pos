@@ -152,8 +152,22 @@ export function SimpleWizard({
     Authorization: `Bearer ${token}`,
     ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
   }), [token, actingCompanyId]);
+  const configuredProductIds = useMemo(() => [...new Set([
+    ...(catalog.bomTemplates ?? []).map(row => String(row.productItemId)),
+    ...catalog.routings
+      .map(row => row.productItemId == null ? "" : String(row.productItemId))
+      .filter(Boolean),
+    ...catalog.templates
+      .map(row => String(row.configuration?.productItemId ?? ""))
+      .filter(Boolean),
+  ])], [catalog.bomTemplates, catalog.routings, catalog.templates]);
+  const productSelectionIds = useMemo(
+    () => [form.productItemId, ...configuredProductIds],
+    [form.productItemId, configuredProductIds],
+  );
   const productItemSearch = useInventoryItemSearch(
-    inventoryCompanyId, itemPickerHeaders, [form.productItemId], Boolean(token),
+    inventoryCompanyId, itemPickerHeaders, productSelectionIds, Boolean(token),
+    ["finished", "semi"], { includeUnclassified: true, onlyWhenEmpty: true },
   );
   const materialItemSearch = useInventoryItemSearch(
     inventoryCompanyId,
@@ -161,6 +175,7 @@ export function SimpleWizard({
     newBomLines.map(line => line.itemId),
     Boolean(token),
     ["raw", "semi", "consumable"],
+    { includeUnclassified: true },
   );
   const selectedItemIds = useMemo(
     () => [...new Set([form.productItemId, ...newBomLines.map(line => line.itemId)]
