@@ -345,6 +345,7 @@ export const companiesTable = pgTable("companies", {
     showCompanyDetails: boolean;
     showSupplierDetails: boolean;
     showDeliveryDate: boolean;
+    showReceiverDetails: boolean;
     showItemCode: boolean;
     showTaxBreakdown: boolean;
     showNotes: boolean;

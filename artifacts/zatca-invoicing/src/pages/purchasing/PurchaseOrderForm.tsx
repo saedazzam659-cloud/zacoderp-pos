@@ -155,6 +155,10 @@ export default function PurchaseOrderForm() {
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
   const [orderDate,    setOrderDate]    = useState(today());
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [receiverName, setReceiverName] = useState("");
+  const [receiverEmail, setReceiverEmail] = useState("");
+  const [receiverPhone, setReceiverPhone] = useState("");
   const [supplierId,   setSupplierId]   = useState("");
   const [branchId,     setBranchId]     = useState("");
 
@@ -362,6 +366,10 @@ export default function PurchaseOrderForm() {
     setSupplierInvoiceNumber(existing.supplierInvoiceNumber ?? "");
     setOrderDate(existing.orderDate ?? today());
     setExpectedDeliveryDate(existing.expectedDeliveryDate ?? "");
+    setDeliveryAddress(existing.deliveryAddress ?? "");
+    setReceiverName(existing.receiverName ?? "");
+    setReceiverEmail(existing.receiverEmail ?? "");
+    setReceiverPhone(existing.receiverPhone ?? "");
     setSupplierId(existing.supplierId ? String(existing.supplierId) : "");
     setBranchId(existing.branchId ? String(existing.branchId) : "");
     setPaymentType(existing.paymentType ?? "credit");
@@ -418,6 +426,10 @@ export default function PurchaseOrderForm() {
         // header content + lines.
         setSupplierId(src.supplierId ? String(src.supplierId) : "");
         setBranchId(src.branchId ? String(src.branchId) : "");
+        setDeliveryAddress(src.deliveryAddress ?? "");
+        setReceiverName(src.receiverName ?? "");
+        setReceiverEmail(src.receiverEmail ?? "");
+        setReceiverPhone(src.receiverPhone ?? "");
         setPaymentType(src.paymentType ?? "credit");
         setCurrencyCode(src.currencyCode ?? "SAR");
         setExchangeRate(String(src.exchangeRate ?? "1"));
@@ -730,6 +742,10 @@ export default function PurchaseOrderForm() {
       docNumber: docNumber || null,
       supplierInvoiceNumber: supplierInvoiceNumber || null,
       orderDate, expectedDeliveryDate: expectedDeliveryDate || null,
+      deliveryAddress: deliveryAddress.trim() || null,
+      receiverName: receiverName.trim() || null,
+      receiverEmail: receiverEmail.trim() || null,
+      receiverPhone: receiverPhone.trim() || null,
       supplierId: supplierId || null, paymentType,
       currencyCode, exchangeRate,
       taxId: headerTaxId ? Number(headerTaxId) : null,
@@ -1147,6 +1163,22 @@ export default function PurchaseOrderForm() {
                 <div hidden={!fieldPolicy.isVisible("dueDate")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("dueDate") && "pointer-events-none opacity-70")}>
                   <Label className="text-xs">{tr("fields.expectedDeliveryDate")}</Label>
                   <DateField className="h-9 text-sm" value={expectedDeliveryDate} onChange={e => setExpectedDeliveryDate(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{localizeUiText("عنوان التسليم (اختياري)")}</Label>
+                  <Input maxLength={500} className="h-9 text-sm" value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{localizeUiText("اسم المستلم (اختياري)")}</Label>
+                  <Input maxLength={160} className="h-9 text-sm" value={receiverName} onChange={e => setReceiverName(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{localizeUiText("بريد المستلم (اختياري)")}</Label>
+                  <Input type="email" maxLength={254} className="h-9 text-sm" value={receiverEmail} onChange={e => setReceiverEmail(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{localizeUiText("هاتف المستلم (اختياري)")}</Label>
+                  <Input type="tel" maxLength={40} className="h-9 text-sm" value={receiverPhone} onChange={e => setReceiverPhone(e.target.value)} />
                 </div>
                 <div hidden={!fieldPolicy.isVisible("supplier")} className={cn("space-y-1.5", fieldPolicy.isReadOnly("supplier") && "pointer-events-none opacity-70")}>
                   <div className="flex items-center justify-between gap-2">

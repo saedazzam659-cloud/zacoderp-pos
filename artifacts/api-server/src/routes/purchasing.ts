@@ -681,6 +681,36 @@ function deferredLineFields(l: any) {
 
 const router = Router();
 const HISTORICAL_IMPORT_MODES = new Set(["financial_inventory", "financial_only", "inventory_only", "archive_only"]);
+
+function purchaseOrderDeliveryFields(body: any) {
+  const optionalText = (key: string, maxLength: number, label: string): string | null | undefined => {
+    const raw = body?.[key];
+    if (raw === undefined) return undefined;
+    if (raw === null) return null;
+    if (typeof raw !== "string") {
+      const error: any = new Error(`${label} غير صالح`);
+      error.status = 400;
+      throw error;
+    }
+    const value = raw.trim();
+    if (value.length > maxLength) {
+      const error: any = new Error(`${label} يجب ألا يتجاوز ${maxLength} حرفًا`);
+      error.status = 400;
+      throw error;
+    }
+    return value || null;
+  };
+  const deliveryAddress = optionalText("deliveryAddress", 500, "عنوان التسليم");
+  const receiverName = optionalText("receiverName", 160, "اسم المستلم");
+  const receiverEmail = optionalText("receiverEmail", 254, "بريد المستلم");
+  const receiverPhone = optionalText("receiverPhone", 40, "هاتف المستلم");
+  if (receiverEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(receiverEmail)) {
+    const error: any = new Error("بريد المستلم غير صالح");
+    error.status = 400;
+    throw error;
+  }
+  return { deliveryAddress, receiverName, receiverEmail, receiverPhone };
+}
 function normalizeHistoricalImportMode(value: unknown, user: any): string | null {
   if (value == null || value === "") return null;
   if (user?.role !== "admin" && user?.role !== "superadmin") {
@@ -3675,6 +3705,7 @@ router.get("/purchase-orders/:id", async (req, res) => {
 router.post("/purchase-orders", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    const deliveryFields = purchaseOrderDeliveryFields(req.body);
     const { docNumber, supplierInvoiceNumber, orderDate, expectedDeliveryDate,
             supplierId, branchId, paymentType, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount,
@@ -3711,6 +3742,10 @@ router.post("/purchase-orders", async (req, res) => {
       supplierInvoiceNumber: supplierInvoiceNumber || null,
       orderDate,
       expectedDeliveryDate: expectedDeliveryDate || null,
+      deliveryAddress: deliveryFields.deliveryAddress ?? null,
+      receiverName: deliveryFields.receiverName ?? null,
+      receiverEmail: deliveryFields.receiverEmail ?? null,
+      receiverPhone: deliveryFields.receiverPhone ?? null,
       supplierId: Number(supplierId),
       paymentType: paymentType || "credit",
       currencyCode: currencyCode || "SAR",
@@ -3754,6 +3789,7 @@ router.post("/purchase-orders", async (req, res) => {
 router.put("/purchase-orders/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    const deliveryFields = purchaseOrderDeliveryFields(req.body);
     const id = Number(req.params.id);
     const [existing] = await db.select({ status: purchaseOrdersTable.status })
       .from(purchaseOrdersTable)
@@ -3775,6 +3811,10 @@ router.put("/purchase-orders/:id", async (req, res) => {
       supplierInvoiceNumber: supplierInvoiceNumber || null,
       orderDate,
       expectedDeliveryDate: expectedDeliveryDate || null,
+      deliveryAddress: deliveryFields.deliveryAddress,
+      receiverName: deliveryFields.receiverName,
+      receiverEmail: deliveryFields.receiverEmail,
+      receiverPhone: deliveryFields.receiverPhone,
       supplierId: Number(supplierId),
       paymentType: paymentType || "credit",
       currencyCode: currencyCode || "SAR",

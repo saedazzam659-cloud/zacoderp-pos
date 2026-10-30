@@ -40,7 +40,7 @@ import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const DEFAULT_PO_PRINT_OPTIONS = {
   showCompanyDetails: true, showSupplierDetails: true, showDeliveryDate: true,
-  showItemCode: true, showTaxBreakdown: true, showNotes: true, showTerms: false,
+  showReceiverDetails: true, showItemCode: true, showTaxBreakdown: true, showNotes: true, showTerms: false,
   termsAr: "", termsEn: "",
 };
 
@@ -431,6 +431,11 @@ ${sections}
         ? [supplier.vatNumber && `الرقم الضريبي: ${supplier.vatNumber}`, supplier.phone, supplier.email, supplier.address, supplier.city]
             .filter(Boolean).map((x: string) => `<span>${escapeHtml(x)}</span>`).join("")
         : "";
+      const deliveryInfo = poPrintOptions.showReceiverDetails
+        ? [doc.deliveryAddress, doc.receiverName && `المستلم: ${doc.receiverName}`,
+            doc.receiverEmail, doc.receiverPhone]
+            .filter(Boolean).map((x: string) => `<span>${escapeHtml(x)}</span>`).join("")
+        : "";
       const lines = (doc.lines ?? []).map((line: any, index: number) => `
         <tr><td>${index + 1}</td>
         ${poPrintOptions.showItemCode ? `<td class="code">${escapeHtml(line.itemCode ?? "")}</td>` : ""}
@@ -453,6 +458,7 @@ ${sections}
         <div class="meta"><div><span>المورد / Supplier</span><strong>${escapeHtml(supMap[doc.supplierId] ?? "")}</strong>${supplierInfo}</div>
           <div><span>تاريخ الأمر / Order date</span><strong>${escapeHtml(doc.orderDate ?? "—")}</strong>
           ${poPrintOptions.showDeliveryDate && doc.expectedDeliveryDate ? `<span>التسليم المتوقع / Expected delivery</span><strong>${escapeHtml(doc.expectedDeliveryDate)}</strong>` : ""}</div>
+          <div><span>التسليم والمستلم / Delivery</span>${deliveryInfo || "<strong>—</strong>"}</div>
           <div><span>الحالة / Status</span><strong>${escapeHtml(statusLabel(doc.status))}</strong><span>العملة / Currency</span><strong>${currency}</strong></div></div>
         <table><thead><tr><th>#</th>${poPrintOptions.showItemCode ? "<th>الكود</th>" : ""}<th>الصنف / Description</th><th>الكمية / Qty</th><th>سعر الوحدة / Unit price</th>${poPrintOptions.showTaxBreakdown ? "<th>الضريبة / VAT</th>" : ""}<th>الإجمالي / Total</th></tr></thead><tbody>${lines}</tbody></table>
         <div class="totals"><div>الإجمالي الفرعي <b>${fmt(Number(doc.subtotal ?? 0))} ${currency}</b></div>
@@ -469,7 +475,7 @@ ${sections}
       .brand{display:flex;gap:12px;align-items:center}.brand img{max-width:90px;max-height:55px;object-fit:contain}.brand strong{font-size:17px;color:#0f766e}
       .muted{font-size:10px;color:#64748b;display:grid;gap:3px;margin-top:4px}.title{text-align:left}.title span{color:#64748b;font-size:11px}
       h1{font-size:22px;margin:2px 0;color:#0f172a}h1 small{font-size:13px;color:#64748b} .title>b{color:#0f766e;font:700 17px monospace}
-      .meta{display:grid;grid-template-columns:1.3fr 1fr .8fr;gap:10px;margin:14px 0 20px}.meta>div{background:#f1f5f9;border:1px solid #dbe4ec;border-radius:8px;padding:10px;display:grid;gap:5px}
+       .meta{display:grid;grid-template-columns:1.3fr 1fr 1fr .8fr;gap:10px;margin:14px 0 20px}.meta>div{background:#f1f5f9;border:1px solid #dbe4ec;border-radius:8px;padding:10px;display:grid;gap:5px}
       .meta span{font-size:10px;color:#64748b}.meta strong{font-size:12px}.meta>div:first-child span:not(:first-child){padding-top:4px}
       table{width:100%;border-collapse:collapse;font-size:10.5px}thead{background:#0f766e;color:white}th{padding:8px 6px;text-align:right}
       td{padding:8px 6px;border-bottom:1px solid #e2e8f0}tbody tr:nth-child(even){background:#f8fafc}
@@ -1085,6 +1091,7 @@ ${sections}
               ["showCompanyDetails", "بيانات الشركة ورقمها الضريبي"],
               ["showSupplierDetails", "بيانات المورد ووسائل التواصل"],
               ["showDeliveryDate", "تاريخ التسليم المتوقع"],
+              ["showReceiverDetails", "عنوان التسليم وبيانات المستلم"],
               ["showItemCode", "كود الصنف"],
               ["showTaxBreakdown", "تفصيل الضريبة"],
               ["showNotes", "ملاحظات أمر الشراء"],

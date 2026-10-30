@@ -538,6 +538,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       showCompanyDetails: boolean;
       showSupplierDetails: boolean;
       showDeliveryDate: boolean;
+      showReceiverDetails: boolean;
       showItemCode: boolean;
       showTaxBreakdown: boolean;
       showNotes: boolean;
@@ -799,7 +800,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   if (purchaseOrderPrintOptions !== undefined) {
     const optionKeys = [
       "showCompanyDetails", "showSupplierDetails", "showDeliveryDate",
-      "showItemCode", "showTaxBreakdown", "showNotes", "showTerms",
+      "showReceiverDetails", "showItemCode", "showTaxBreakdown", "showNotes", "showTerms",
       "termsAr", "termsEn",
     ] as const;
     if (
@@ -807,7 +808,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       typeof purchaseOrderPrintOptions !== "object" ||
       Array.isArray(purchaseOrderPrintOptions) ||
       Object.keys(purchaseOrderPrintOptions).some(key => !optionKeys.includes(key as typeof optionKeys[number])) ||
-      optionKeys.slice(0, 7).some(key => typeof purchaseOrderPrintOptions[key] !== "boolean") ||
+      optionKeys.slice(0, 8).some(key => typeof purchaseOrderPrintOptions[key] !== "boolean") ||
       typeof purchaseOrderPrintOptions.termsAr !== "string" ||
       typeof purchaseOrderPrintOptions.termsEn !== "string" ||
       purchaseOrderPrintOptions.termsAr.length > 8000 ||

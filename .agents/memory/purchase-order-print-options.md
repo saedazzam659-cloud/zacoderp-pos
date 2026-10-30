@@ -7,4 +7,4 @@ Keep the existing purchase-order print layout available. The additional professi
 
 **Why:** The user chose saved company settings so all staff print orders consistently, while preserving the familiar layout.
 
-**How to apply:** Treat missing legacy settings as defaults, never infer or invent delivery/recipient information that the order does not store, and keep purchase-order settings separate from invoice print preferences.
+**How to apply:** Treat missing legacy settings as defaults. Delivery address and receiver details are optional per-order fields; print them only when the company setting allows it, and keep purchase-order settings separate from invoice print preferences.
