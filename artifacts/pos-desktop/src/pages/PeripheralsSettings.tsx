@@ -19,6 +19,7 @@ import {
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { TAURI_MODE } from "../lib/tauri-shim";
 import { SearchCombobox } from "./_adminUi";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 const LS_SERIAL = "pos_desktop_peripherals_serial_port";
@@ -27,6 +28,8 @@ const LS_BAUD = "pos_desktop_peripherals_serial_baud";
 type Props = { onClose: () => void };
 
 export default function PeripheralsSettings({ onClose }: Props) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
   const [serialPorts, setSerialPorts] = useState<string[]>([]);
   const [printer, setPrinter] = useState<string>(() => localStorage.getItem(LS_PRINTER) ?? "");
@@ -60,7 +63,7 @@ export default function PeripheralsSettings({ onClose }: Props) {
           }
         }
       } catch (e: any) {
-        setMsg({ kind: "err", text: `تعذّر قراءة الأجهزة: ${e?.message ?? e}` });
+        setMsg({ kind: "err", text: `${text("تعذّر قراءة الأجهزة:", "Could not read devices:")} ${e?.message ?? e}` });
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -71,80 +74,80 @@ export default function PeripheralsSettings({ onClose }: Props) {
   function persistBaud(v: number) { setBaud(v); localStorage.setItem(LS_BAUD, String(v)); }
 
   async function doTestPrint() {
-    if (!printer) { setMsg({ kind: "err", text: "اختر طابعة أولاً" }); return; }
+    if (!printer) { setMsg({ kind: "err", text: text("اختر طابعة أولاً", "Select a printer first.") }); return; }
     setBusy("print"); setMsg(null);
     try {
       await printReceipt({
         printerName: printer,
         header: [
           { text: "ZACOD POS", bold: true, center: true },
-          { text: "اختبار الطباعة", center: true },
+          { text: text("اختبار الطباعة", "Print test"), center: true },
         ],
         body: [
-          { text: "صنف تجريبي ×1     10.00" },
-          { text: "ضريبة (15%)        1.50" },
+          { text: text("صنف تجريبي ×1     10.00", "Demo item ×1     10.00") },
+          { text: text("ضريبة (15%)        1.50", "Tax (15%)        1.50") },
           { text: "─────────────────────" },
-          { text: "الإجمالي           11.50", bold: true },
+          { text: text("الإجمالي           11.50", "Total             11.50"), bold: true },
         ],
         footer: [
-          { text: new Date().toLocaleString("ar-SA"), center: true },
-          { text: "شكراً لزيارتكم", center: true },
+          { text: new Date().toLocaleString(language === "en" ? "en-GB" : "ar-SA"), center: true },
+          { text: text("شكراً لزيارتكم", "Thank you for visiting"), center: true },
         ],
         qrData: "https://zacoderp.com",
         cut: true,
         openDrawer: false,
       });
-      setMsg({ kind: "ok", text: "✅ تم إرسال إيصال اختبار للطابعة" });
+      setMsg({ kind: "ok", text: `✅ ${text("تم إرسال إيصال اختبار للطابعة", "Test receipt sent to the printer.")}` });
     } catch (e: any) {
-      setMsg({ kind: "err", text: `فشل الطباعة: ${e?.message ?? e}` });
+      setMsg({ kind: "err", text: `${text("فشل الطباعة:", "Print failed:")} ${e?.message ?? e}` });
     } finally { setBusy(null); }
   }
 
   async function doKickDrawer() {
-    if (!printer) { setMsg({ kind: "err", text: "اختر طابعة أولاً (الدرج يفتح عبرها)" }); return; }
+    if (!printer) { setMsg({ kind: "err", text: text("اختر طابعة أولاً (الدرج يفتح عبرها)", "Select a printer first (the cash drawer opens through it).") }); return; }
     setBusy("drawer"); setMsg(null);
     try {
       await openCashDrawer(printer);
-      setMsg({ kind: "ok", text: "✅ تم إرسال أمر فتح الدرج" });
+      setMsg({ kind: "ok", text: `✅ ${text("تم إرسال أمر فتح الدرج", "Cash drawer open command sent.")}` });
     } catch (e: any) {
-      setMsg({ kind: "err", text: `فشل فتح الدرج: ${e?.message ?? e}` });
+      setMsg({ kind: "err", text: `${text("فشل فتح الدرج:", "Could not open cash drawer:")} ${e?.message ?? e}` });
     } finally { setBusy(null); }
   }
 
   return (
-    <div dir="rtl" style={S.overlay} onClick={onClose}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.overlay} onClick={onClose}>
       <div style={S.modal} onClick={(e) => e.stopPropagation()}>
         <header style={S.header}>
-          <h2 style={S.title}>إعدادات الأجهزة الطرفية</h2>
+          <h2 style={S.title}>{text("إعدادات الأجهزة الطرفية", "Peripheral settings")}</h2>
           <button style={S.close} onClick={onClose}>×</button>
         </header>
 
         {TAURI_MODE !== "tauri" && (
           <div style={S.warn}>
-            🌐 وضع المتصفح — تعداد الطابعات والمنافذ معطّل. سيعمل فعلياً داخل التطبيق على Windows فقط.
+            🌐 {text("وضع المتصفح — تعداد الطابعات والمنافذ معطّل. سيعمل فعلياً داخل التطبيق على Windows فقط.", "Browser preview — printer and port discovery is disabled. It works inside the Windows app only.")}
           </div>
         )}
 
         <section style={S.section}>
-          <label style={S.label}>الطابعة (Windows spooler)</label>
+          <label style={S.label}>{text("الطابعة (Windows spooler)", "Printer (Windows spooler)")}</label>
           <SearchCombobox
             value={printer}
             onChange={(v) => persistPrinter(String(v))}
             disabled={TAURI_MODE !== "tauri"}
             style={S.input}
-            placeholder="— لم يتم الاختيار —"
+            placeholder={text("— لم يتم الاختيار —", "— Not selected —")}
             options={[
-              { value: "", label: "— لم يتم الاختيار —" },
+              { value: "", label: text("— لم يتم الاختيار —", "— Not selected —") },
               ...printers.map((p) => ({
                 value: p.name,
-                label: `${p.name}${p.isDefault ? " (افتراضية)" : ""} — ${p.state}`,
+                label: `${p.name}${p.isDefault ? ` (${text("افتراضية", "default")})` : ""} — ${p.state}`,
               })),
             ]}
           />
         </section>
 
         <section style={S.section}>
-          <label style={S.label}>منفذ تسلسلي (COM) — اختياري للطابعات القديمة</label>
+          <label style={S.label}>{text("منفذ تسلسلي (COM) — اختياري للطابعات القديمة", "Serial port (COM) — optional for older printers")}</label>
           <div style={{ display: "flex", gap: 8 }}>
             <div style={{ flex: 1 }}>
               <SearchCombobox
@@ -152,9 +155,9 @@ export default function PeripheralsSettings({ onClose }: Props) {
                 onChange={(v) => persistSerial(String(v))}
                 disabled={TAURI_MODE !== "tauri"}
                 style={S.input}
-                placeholder="— بدون —"
+                placeholder={text("— بدون —", "— None —")}
                 options={[
-                  { value: "", label: "— بدون —" },
+                  { value: "", label: text("— بدون —", "— None —") },
                   ...serialPorts.map((p) => ({ value: p, label: p })),
                 ]}
               />
@@ -172,10 +175,10 @@ export default function PeripheralsSettings({ onClose }: Props) {
         <section style={S.section}>
           <div style={S.btnRow}>
             <button onClick={doTestPrint} disabled={!!busy || TAURI_MODE !== "tauri"} style={S.btnPrimary}>
-              {busy === "print" ? "جارٍ الطباعة..." : "🖨️ طباعة إيصال اختبار"}
+              {busy === "print" ? text("جارٍ الطباعة...", "Printing...") : `🖨️ ${text("طباعة إيصال اختبار", "Print test receipt")}`}
             </button>
             <button onClick={doKickDrawer} disabled={!!busy || TAURI_MODE !== "tauri"} style={S.btnSecondary}>
-              {busy === "drawer" ? "جارٍ الفتح..." : "💵 فتح درج النقود"}
+              {busy === "drawer" ? text("جارٍ الفتح...", "Opening...") : `💵 ${text("فتح درج النقود", "Open cash drawer")}`}
             </button>
           </div>
           {msg && (
@@ -184,16 +187,16 @@ export default function PeripheralsSettings({ onClose }: Props) {
         </section>
 
         <section style={S.section}>
-          <label style={S.label}>اختبار قارئ الباركود</label>
+          <label style={S.label}>{text("اختبار قارئ الباركود", "Barcode scanner test")}</label>
           <div style={S.scanBox}>
             <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
-              امسح أي باركود الآن — التركيز ليس مهماً (المستمع عام).
+              {text("امسح أي باركود الآن — التركيز ليس مهماً (المستمع عام).", "Scan any barcode now. Focus does not matter; the listener is global.")}
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 18, color: "#0f172a" }}>
+              <span dir="ltr" style={{ fontFamily: "ui-monospace, monospace", fontSize: 18, color: "#0f172a" }}>
                 {lastScan || "—"}
               </span>
-              <span style={{ fontSize: 12, color: "#94a3b8" }}>عدد المسحات: {scanCount}</span>
+              <span style={{ fontSize: 12, color: "#94a3b8" }}>{text("عدد المسحات:", "Scans:")} {scanCount}</span>
             </div>
           </div>
         </section>
