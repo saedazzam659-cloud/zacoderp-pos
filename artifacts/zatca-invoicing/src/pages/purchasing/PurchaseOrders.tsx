@@ -9,9 +9,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useFormatters, fmt2 } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Plus, ClipboardList, Eye, Trash2, CheckCircle, XCircle, FileCheck2, Printer, Copy, Pencil,
-  FileSpreadsheet, FileDown, X, Loader2, RotateCcw,
+  FileSpreadsheet, FileDown, X, Loader2, RotateCcw, Settings2, Save, FileText,
 } from "lucide-react";
 import { BulkPrintMenu } from "@/lib/bulkPrint";
 import * as XLSX from "xlsx";
@@ -35,6 +38,11 @@ import { safeLogoSrc } from "@/lib/export";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+const DEFAULT_PO_PRINT_OPTIONS = {
+  showCompanyDetails: true, showSupplierDetails: true, showDeliveryDate: true,
+  showItemCode: true, showTaxBreakdown: true, showNotes: true, showTerms: false,
+  termsAr: "", termsEn: "",
+};
 
 const STATUS: Record<string, { labelKey: string; cls: string }> = {
   draft:     { labelKey: "status.draft",     cls: "bg-amber-50 text-amber-700 border-amber-200" },
@@ -48,7 +56,7 @@ export default function PurchaseOrders() {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === "ar";
   const { fmt } = useFormatters();
-  const { user, token } = useAuth() as any;
+  const { user, token, setUser } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
   const [, navigate] = useLocation();
@@ -59,6 +67,12 @@ export default function PurchaseOrders() {
   const [tableSearch, setTableSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "confirmed" | "converted" | "cancelled">("all");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [poPrintOptions, setPoPrintOptions] = useState({ ...DEFAULT_PO_PRINT_OPTIONS });
+  const [poPrintSettingsOpen, setPoPrintSettingsOpen] = useState(false);
+  const [poPrintSaving, setPoPrintSaving] = useState(false);
+  useEffect(() => {
+    setPoPrintOptions({ ...DEFAULT_PO_PRINT_OPTIONS, ...(user?.company?.purchaseOrderPrintOptions ?? {}) });
+  }, [user?.company?.id, user?.company?.purchaseOrderPrintOptions]);
 
   const { data: orders = [], isLoading } = useQuery<any[]>({
     queryKey: ["purchase-orders", cid],
@@ -405,6 +419,105 @@ ${sections}
 <script>setTimeout(()=>window.print(),350);</script></body></html>`;
   };
 
+  const buildProfessionalHtml = (docs: any[]) => {
+    const company = user?.company ?? {};
+    const companyDetails = poPrintOptions.showCompanyDetails
+      ? [company.vatNumber && `الرقم الضريبي: ${company.vatNumber}`, company.phone, [company.street, company.city].filter(Boolean).join("، ")]
+          .filter(Boolean).map((x: string) => `<span>${escapeHtml(x)}</span>`).join("")
+      : "";
+    const pages = docs.map((doc: any, pageIndex: number) => {
+      const supplier = (suppliers as any[]).find((row: any) => Number(row.id) === Number(doc.supplierId)) ?? {};
+      const supplierInfo = poPrintOptions.showSupplierDetails
+        ? [supplier.vatNumber && `الرقم الضريبي: ${supplier.vatNumber}`, supplier.phone, supplier.email, supplier.address, supplier.city]
+            .filter(Boolean).map((x: string) => `<span>${escapeHtml(x)}</span>`).join("")
+        : "";
+      const lines = (doc.lines ?? []).map((line: any, index: number) => `
+        <tr><td>${index + 1}</td>
+        ${poPrintOptions.showItemCode ? `<td class="code">${escapeHtml(line.itemCode ?? "")}</td>` : ""}
+        <td>${escapeHtml(line.itemName ?? line.description ?? `#${line.itemId ?? ""}`)}</td>
+        <td class="num">${fmt(Number(line.qty ?? line.quantity ?? 0))} ${escapeHtml(line.unit ?? "")}</td>
+        <td class="num">${fmt(Number(line.unitPrice ?? 0))}</td>
+        ${poPrintOptions.showTaxBreakdown ? `<td class="num">${fmt(Number(line.vatAmount ?? 0))}</td>` : ""}
+        <td class="num">${fmt(Number(line.totalAmount ?? line.lineTotal ?? 0))}</td></tr>`).join("");
+      const currency = escapeHtml(doc.currencyCode ?? "");
+      const terms = poPrintOptions.showTerms && (poPrintOptions.termsAr || poPrintOptions.termsEn)
+        ? `<section class="terms"><h2>الشروط والأحكام <small>Terms &amp; Conditions</small></h2>
+          ${poPrintOptions.termsAr ? `<p dir="rtl">${escapeHtml(poPrintOptions.termsAr).replace(/\n/g, "<br>")}</p>` : ""}
+          ${poPrintOptions.termsEn ? `<p dir="ltr">${escapeHtml(poPrintOptions.termsEn).replace(/\n/g, "<br>")}</p>` : ""}</section>`
+        : "";
+      return `<article class="page">
+        <header><div class="brand">${safeLogo ? `<img src="${safeLogo}" alt="">` : ""}
+          <div><strong>${escapeHtml(company.nameAr ?? "")}</strong><div class="muted">${companyDetails}</div></div></div>
+          <div class="title"><span>مستند مشتريات</span><h1>أمر شراء <small>Purchase Order</small></h1>
+          <b>${escapeHtml(doc.docNumber ?? `PO-${doc.id}`)}</b></div></header>
+        <div class="meta"><div><span>المورد / Supplier</span><strong>${escapeHtml(supMap[doc.supplierId] ?? "")}</strong>${supplierInfo}</div>
+          <div><span>تاريخ الأمر / Order date</span><strong>${escapeHtml(doc.orderDate ?? "—")}</strong>
+          ${poPrintOptions.showDeliveryDate && doc.expectedDeliveryDate ? `<span>التسليم المتوقع / Expected delivery</span><strong>${escapeHtml(doc.expectedDeliveryDate)}</strong>` : ""}</div>
+          <div><span>الحالة / Status</span><strong>${escapeHtml(statusLabel(doc.status))}</strong><span>العملة / Currency</span><strong>${currency}</strong></div></div>
+        <table><thead><tr><th>#</th>${poPrintOptions.showItemCode ? "<th>الكود</th>" : ""}<th>الصنف / Description</th><th>الكمية / Qty</th><th>سعر الوحدة / Unit price</th>${poPrintOptions.showTaxBreakdown ? "<th>الضريبة / VAT</th>" : ""}<th>الإجمالي / Total</th></tr></thead><tbody>${lines}</tbody></table>
+        <div class="totals"><div>الإجمالي الفرعي <b>${fmt(Number(doc.subtotal ?? 0))} ${currency}</b></div>
+          ${poPrintOptions.showTaxBreakdown ? `<div>الضريبة <b>${fmt(Number(doc.vatAmount ?? 0))} ${currency}</b></div>` : ""}
+          <div class="grand">الإجمالي الكلي <b>${fmt(Number(doc.totalAmount ?? 0))} ${currency}</b></div></div>
+        ${poPrintOptions.showNotes && doc.notes ? `<section class="notes"><b>ملاحظات / Notes</b><p>${escapeHtml(doc.notes)}</p></section>` : ""}
+        ${terms}<footer>${escapeHtml(company.nameAr ?? "")} · ${escapeHtml(company.vatNumber ?? "")}<span>${pageIndex + 1} / ${docs.length}</span></footer>
+      </article>`;
+    }).join("");
+    return `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>أوامر الشراء</title><style>
+      @page{size:A4;margin:12mm}*{box-sizing:border-box}body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:#172033;margin:0}
+      .page{min-height:265mm;position:relative;padding:0 0 16mm;page-break-after:always}.page:last-child{page-break-after:auto}
+      header{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #0f766e;padding:0 0 14px;margin-bottom:18px}
+      .brand{display:flex;gap:12px;align-items:center}.brand img{max-width:90px;max-height:55px;object-fit:contain}.brand strong{font-size:17px;color:#0f766e}
+      .muted{font-size:10px;color:#64748b;display:grid;gap:3px;margin-top:4px}.title{text-align:left}.title span{color:#64748b;font-size:11px}
+      h1{font-size:22px;margin:2px 0;color:#0f172a}h1 small{font-size:13px;color:#64748b} .title>b{color:#0f766e;font:700 17px monospace}
+      .meta{display:grid;grid-template-columns:1.3fr 1fr .8fr;gap:10px;margin:14px 0 20px}.meta>div{background:#f1f5f9;border:1px solid #dbe4ec;border-radius:8px;padding:10px;display:grid;gap:5px}
+      .meta span{font-size:10px;color:#64748b}.meta strong{font-size:12px}.meta>div:first-child span:not(:first-child){padding-top:4px}
+      table{width:100%;border-collapse:collapse;font-size:10.5px}thead{background:#0f766e;color:white}th{padding:8px 6px;text-align:right}
+      td{padding:8px 6px;border-bottom:1px solid #e2e8f0}tbody tr:nth-child(even){background:#f8fafc}
+      .num{text-align:right;font-variant-numeric:tabular-nums;direction:ltr;white-space:nowrap}.code{font-family:monospace}
+      .totals{width:52%;margin:18px 0 0 auto;border:1px solid #dbe4ec;border-radius:8px;overflow:hidden}.totals>div{display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:11px}
+      .totals .grand{background:#0f766e;color:white;font-weight:700;font-size:14px}.notes,.terms{border:1px solid #dbe4ec;border-radius:8px;padding:12px;margin-top:18px;font-size:11px}
+      .terms h2{font-size:13px;color:#0f766e;margin:0 0 8px}.terms small{font-weight:400;color:#64748b}.terms p{line-height:1.65;white-space:normal}
+      footer{position:absolute;bottom:0;right:0;left:0;border-top:1px solid #cbd5e1;padding-top:6px;color:#64748b;font-size:9px;display:flex;justify-content:space-between}
+      @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+    </style><body>${pages}<script>setTimeout(()=>window.print(),350)</script></body></html>`;
+  };
+
+  const handleProfessionalPrint = async () => {
+    if (!(await gate("print"))) return;
+    const ids = Array.from(layout.selected).map(Number).filter(id => Number.isInteger(id) && id > 0);
+    if (!ids.length) { toast({ title: "حدد أمر شراء واحدًا على الأقل", variant: "destructive" }); return; }
+    try {
+      const docs = await Promise.all(ids.map(async id => {
+        const res = await fetch(`${API}/api/purchasing/purchase-orders/${id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
+        if (!res.ok) throw new Error(`تعذر تحميل أمر الشراء ${id}`);
+        return res.json();
+      }));
+      openPrintWindow(buildProfessionalHtml(docs));
+    } catch (error: any) {
+      toast({ title: error?.message ?? "تعذر تجهيز نموذج الطباعة", variant: "destructive" });
+    }
+  };
+
+  const savePoPrintOptions = async () => {
+    const companyId = user?.company?.id;
+    if (!companyId) return;
+    setPoPrintSaving(true);
+    try {
+      const res = await fetch(`${API}/api/companies/${companyId}/general-settings`, {
+        method: "PATCH", headers, body: JSON.stringify({ purchaseOrderPrintOptions: poPrintOptions }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? "تعذر حفظ الإعدادات");
+      setUser?.((current: any) => current ? { ...current, company: { ...current.company, purchaseOrderPrintOptions: data.purchaseOrderPrintOptions } } : current);
+      toast({ title: "تم حفظ إعدادات قالب أوامر الشراء" });
+      setPoPrintSettingsOpen(false);
+    } catch (error: any) {
+      toast({ title: error?.message ?? "تعذر حفظ الإعدادات", variant: "destructive" });
+    } finally {
+      setPoPrintSaving(false);
+    }
+  };
+
   const handleExportPDF = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildListHtml()); };
   const handlePrint    = async () => { if (!(await gate('print'))) return; return openPrintWindow(buildListHtml()); };
   const handleExportExcel = async () => {
@@ -545,6 +658,17 @@ ${sections}
             <Plus className="h-4 w-4" />
             {t("purchasingPages.purchaseOrders.newOrder")}
           </Button>
+          <Button type="button" variant="outline" onClick={handleProfessionalPrint}
+            disabled={layout.selected.size === 0}
+            data-testid="button-print-purchase-order-professional">
+            <FileText className="h-4 w-4 me-1.5" />{localizeUiText("النموذج الاحترافي")}
+          </Button>
+          {(user?.role === "admin" || user?.role === "superadmin") && user?.company?.id && (
+            <Button type="button" variant="outline" onClick={() => setPoPrintSettingsOpen(true)}
+              data-testid="button-settings-purchase-order-print">
+              <Settings2 className="h-4 w-4 me-1.5" />{localizeUiText("إعدادات النموذج")}
+            </Button>
+          )}
           <div className="inline-flex items-stretch rounded-md border border-slate-300 bg-white shadow-sm overflow-hidden">
             <Button variant="ghost" size="sm" onClick={handleExportPDF}
               className="h-9 rounded-none gap-1.5 text-red-700 hover:bg-red-50 hover:text-red-700 px-3">
@@ -950,6 +1074,51 @@ ${sections}
           unitLabel="أمر"
         />
       </div>
+      <Dialog open={poPrintSettingsOpen} onOpenChange={setPoPrintSettingsOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir={isRtl ? "rtl" : "ltr"}>
+          <DialogHeader>
+            <DialogTitle>{localizeUiText("إعدادات النموذج الاحترافي لأوامر الشراء")}</DialogTitle>
+            <DialogDescription>{localizeUiText("هذه الاختيارات محفوظة للشركة وتظهر للمستخدمين عند الطباعة.")}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([
+              ["showCompanyDetails", "بيانات الشركة ورقمها الضريبي"],
+              ["showSupplierDetails", "بيانات المورد ووسائل التواصل"],
+              ["showDeliveryDate", "تاريخ التسليم المتوقع"],
+              ["showItemCode", "كود الصنف"],
+              ["showTaxBreakdown", "تفصيل الضريبة"],
+              ["showNotes", "ملاحظات أمر الشراء"],
+              ["showTerms", "الشروط والأحكام"],
+            ] as const).map(([key, label]) => (
+              <label key={key} className="flex items-center gap-2 rounded-lg border p-3 text-sm">
+                <input type="checkbox" data-testid={`checkbox-po-print-${key}`}
+                  checked={poPrintOptions[key]}
+                  onChange={event => setPoPrintOptions(current => ({ ...current, [key]: event.target.checked }))} />
+                {localizeUiText(label)}
+              </label>
+            ))}
+          </div>
+          {poPrintOptions.showTerms && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2"><Label htmlFor="po-terms-ar">{localizeUiText("الشروط بالعربية")}</Label>
+                <Textarea id="po-terms-ar" data-testid="textarea-po-terms-ar" maxLength={8000} rows={6}
+                  value={poPrintOptions.termsAr} onChange={event => setPoPrintOptions(current => ({ ...current, termsAr: event.target.value }))} />
+              </div>
+              <div className="space-y-2"><Label htmlFor="po-terms-en">{localizeUiText("الشروط بالإنجليزية")}</Label>
+                <Textarea id="po-terms-en" data-testid="textarea-po-terms-en" maxLength={8000} rows={6} dir="ltr"
+                  value={poPrintOptions.termsEn} onChange={event => setPoPrintOptions(current => ({ ...current, termsEn: event.target.value }))} />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPoPrintSettingsOpen(false)}>{localizeUiText("إغلاق")}</Button>
+            <Button type="button" onClick={savePoPrintOptions} disabled={poPrintSaving} data-testid="button-save-po-print-settings">
+              {poPrintSaving ? <Loader2 className="h-4 w-4 animate-spin me-1" /> : <Save className="h-4 w-4 me-1" />}
+              {localizeUiText("حفظ إعدادات الشركة")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

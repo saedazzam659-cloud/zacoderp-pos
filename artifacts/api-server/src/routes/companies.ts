@@ -461,6 +461,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     faDisposalGainAccountId, faDisposalLossAccountId,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     printQuotationShowQr, printQuotationShowCurrencyName, printQuotationShowCustomerAddress,
+    purchaseOrderPrintOptions,
     bankAccountText, printCustomNotes, printCustomNotesOnSales, printCustomNotesOnQuotation,
     printShowItemsSummary,
     printT14ShowEnSubtitle, printT14ShowAccountCode, printT14ShowAuditFooter,
@@ -533,6 +534,17 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     printQuotationShowQr?: boolean;
     printQuotationShowCurrencyName?: boolean;
     printQuotationShowCustomerAddress?: boolean;
+    purchaseOrderPrintOptions?: {
+      showCompanyDetails: boolean;
+      showSupplierDetails: boolean;
+      showDeliveryDate: boolean;
+      showItemCode: boolean;
+      showTaxBreakdown: boolean;
+      showNotes: boolean;
+      showTerms: boolean;
+      termsAr: string;
+      termsEn: string;
+    };
     bankAccountText?: string | null; printCustomNotes?: string;
     printCustomNotesOnSales?: boolean; printCustomNotesOnQuotation?: boolean;
     printShowItemsSummary?: boolean;
@@ -784,6 +796,31 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   if (printQuotationShowQr !== undefined) updates.printQuotationShowQr = !!printQuotationShowQr;
   if (printQuotationShowCurrencyName !== undefined) updates.printQuotationShowCurrencyName = !!printQuotationShowCurrencyName;
   if (printQuotationShowCustomerAddress !== undefined) updates.printQuotationShowCustomerAddress = !!printQuotationShowCustomerAddress;
+  if (purchaseOrderPrintOptions !== undefined) {
+    const optionKeys = [
+      "showCompanyDetails", "showSupplierDetails", "showDeliveryDate",
+      "showItemCode", "showTaxBreakdown", "showNotes", "showTerms",
+      "termsAr", "termsEn",
+    ] as const;
+    if (
+      !purchaseOrderPrintOptions ||
+      typeof purchaseOrderPrintOptions !== "object" ||
+      Array.isArray(purchaseOrderPrintOptions) ||
+      Object.keys(purchaseOrderPrintOptions).some(key => !optionKeys.includes(key as typeof optionKeys[number])) ||
+      optionKeys.slice(0, 7).some(key => typeof purchaseOrderPrintOptions[key] !== "boolean") ||
+      typeof purchaseOrderPrintOptions.termsAr !== "string" ||
+      typeof purchaseOrderPrintOptions.termsEn !== "string" ||
+      purchaseOrderPrintOptions.termsAr.length > 8000 ||
+      purchaseOrderPrintOptions.termsEn.length > 8000
+    ) {
+      res.status(400).json({ error: "إعدادات نموذج أمر الشراء غير صالحة" }); return;
+    }
+    updates.purchaseOrderPrintOptions = {
+      ...purchaseOrderPrintOptions,
+      termsAr: purchaseOrderPrintOptions.termsAr.trim(),
+      termsEn: purchaseOrderPrintOptions.termsEn.trim(),
+    };
+  }
   if (bankAccountText !== undefined) {
     const bt = bankAccountText === null ? "" : String(bankAccountText).trim().slice(0, 500);
     updates.bankAccountText = bt === "" ? null : bt;

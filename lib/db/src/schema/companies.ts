@@ -339,6 +339,19 @@ export const companiesTable = pgTable("companies", {
   // honoured by template 14 («الأصلي») only; the per-print toggle in
   // SalesPrintModal can override it for a single print job.
   invoicePrintLanguage:  text("invoice_print_language").notNull().default("ar"),
+  // Optional content and visibility choices for the second purchase-order
+  // print layout. Nullable for legacy companies; callers normalize defaults.
+  purchaseOrderPrintOptions: jsonb("purchase_order_print_options").$type<{
+    showCompanyDetails: boolean;
+    showSupplierDetails: boolean;
+    showDeliveryDate: boolean;
+    showItemCode: boolean;
+    showTaxBreakdown: boolean;
+    showNotes: boolean;
+    showTerms: boolean;
+    termsAr: string;
+    termsEn: string;
+  }>(),
   // Which date the `{MM}`/`{YY}`/`{YYYY}` tokens in a document-number
   // sequence pattern should read from:
   //   - "system"   = today's date at the moment of issuance (default,
