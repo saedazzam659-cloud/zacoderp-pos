@@ -9,11 +9,11 @@ Keep both POS Desktop installer variants. The small online MSI remains the sourc
 
 **How to apply:** When changing release selection or synchronization, preserve `win-x64` for the in-app/web path and `win-x64-exe` for the full offline installer.
 
-Tag pushes to the current POS Desktop workflow publish a public GitHub Release; do not assume the release is a draft.
+Tag pushes create a draft GitHub Release containing both online and offline installer assets. The release sync ignores drafts; after publication it mirrors both platforms automatically.
 
-**Why:** The workflow run created a non-draft release even though the intended outcome was a build-only draft.
+**Why:** The current workflow sets `draft: true`, while the server sync selects only non-draft releases and mirrors both installer channels.
 
-**How to apply:** Before pushing a version tag, inspect the release action's draft/publish settings and get explicit approval before making assets public.
+**How to apply:** Before releasing only one channel, ensure the published release contains only the intended asset or confirm both channels should advance. Publishing makes the release public; use the workflow's version-matching tag and confirm before public release.
 
 Windows Installer can return success while doing no update when the MSI enters maintenance mode and selects no features.
 
