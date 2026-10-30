@@ -1,4 +1,5 @@
 import { applyNumberSystemToDocument } from "./numberDisplay";
+import { getUiLanguage, uiText } from "./appSettings";
 
 // Reusable offline export helpers for list/report screens.
 //   • exportToExcel — real .xlsx via SheetJS (RTL sheet, Arabic-safe).
@@ -33,7 +34,7 @@ export function exportToExcel<T>(filenameBase: string, columns: ExportColumn<T>[
   const wb = XLSX.utils.book_new();
   // Right-to-left sheet so Arabic columns read naturally in Excel.
   wb.Workbook = { Views: [{ RTL: true }] };
-  XLSX.utils.book_append_sheet(wb, ws, "البيانات");
+  XLSX.utils.book_append_sheet(wb, ws, uiText("البيانات", "Data"));
   saveWorkbook(wb, `${filenameBase}-${stamp()}.xlsx`);
 }
 
@@ -98,10 +99,10 @@ export function exportToPdf<T>(title: string, columns: ExportColumn<T>[], rows: 
 <body>
   <div class="hd">
     <h1>${escHtml(title)}</h1>
-    <div class="meta">عدد السجلات: ${rows.length} — تاريخ الطباعة: ${escHtml(new Date().toLocaleString("en-GB"))}</div>
+    <div class="meta">${uiText("عدد السجلات", "Records")}: ${rows.length} — ${uiText("تاريخ الطباعة", "Printed at")}: ${escHtml(new Date().toLocaleString(getUiLanguage() === "en" ? "en-GB" : "ar-SA"))}</div>
   </div>
   <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
-  <div class="ft">تم التصدير من نظام نقاط البيع</div>
+  <div class="ft">${uiText("تم التصدير من نظام نقاط البيع", "Exported from POS Desktop")}</div>
 </body></html>`;
   printDocHtml(html);
 }

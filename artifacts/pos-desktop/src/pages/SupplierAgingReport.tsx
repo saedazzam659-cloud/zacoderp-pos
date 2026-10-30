@@ -7,6 +7,7 @@ import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButt
 import { DateField } from "./_reportFilters";
 import { useDataRefresh } from "../lib/dataBus";
 import type { ExportColumn } from "../lib/exporters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 // Flat row mirroring the on-screen aging table (per-supplier buckets + totals row).
 type AgeExportRow = {
@@ -34,6 +35,8 @@ function daysBetween(a: string, b: string): number {
 }
 
 export default function SupplierAgingReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [asOf, setAsOf] = useState(todayStr());
   const [rows, setRows] = useState<AgeRow[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -118,25 +121,25 @@ export default function SupplierAgingReport() {
   }));
   if (rows && rows.length > 0) {
     exportRows.push({
-      name: `الإجمالي (${rows.length} مورد)`,
+      name: `${text("الإجمالي", "Total")} (${rows.length} ${text("مورد", "suppliers")})`,
       b0: totals.b0, b30: totals.b30, b60: totals.b60, b90: totals.b90, total: totals.total,
     });
   }
   const exportCols: ExportColumn<AgeExportRow>[] = [
-    { header: "المورد", cell: (r) => r.name },
-    { header: "0 - 30 يوم", cell: (r) => r.b0 },
-    { header: "31 - 60 يوم", cell: (r) => r.b30 },
-    { header: "61 - 90 يوم", cell: (r) => r.b60 },
-    { header: "أكثر من 90", cell: (r) => r.b90 },
-    { header: "الإجمالي", cell: (r) => r.total },
+    { header: text("المورد", "Supplier"), cell: (r) => r.name },
+    { header: text("0 - 30 يوم", "0–30 days"), cell: (r) => r.b0 },
+    { header: text("31 - 60 يوم", "31–60 days"), cell: (r) => r.b30 },
+    { header: text("61 - 90 يوم", "61–90 days"), cell: (r) => r.b60 },
+    { header: text("أكثر من 90", "Over 90 days"), cell: (r) => r.b90 },
+    { header: text("الإجمالي", "Total"), cell: (r) => r.total },
   ];
 
   return (
-    <Page title="أعمار ديون الموردين" subtitle="توزيع المستحق لكل مورد على فترات تقادم الفواتير الآجلة (تطبيق الدفعات والمرتجعات على الأقدم أولاً).">
+    <Page title={text("أعمار ديون الموردين", "Supplier aging")} subtitle={text("توزيع المستحق لكل مورد على فترات تقادم الفواتير الآجلة (تطبيق الدفعات والمرتجعات على الأقدم أولاً).", "Payables by invoice age. Payments and returns are applied to the oldest invoices first.")}>
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <DateField label="حتى تاريخ" value={asOf} onChange={setAsOf} />
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <DateField label={text("حتى تاريخ", "As of date")} value={asOf} onChange={setAsOf} />
+          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : text("عرض", "Run report")}</button>
         </div>
       </Card>
 
@@ -147,25 +150,25 @@ export default function SupplierAgingReport() {
               <ExportButtons
                 columns={exportCols}
                 rows={exportRows}
-                filenameBase="أعمار-ديون-الموردين"
-                title={`أعمار ديون الموردين — حتى ${asOf}`}
+                filenameBase={text("أعمار-ديون-الموردين", "supplier-aging")}
+                title={`${text("أعمار ديون الموردين", "Supplier aging")} — ${text("حتى", "as of")} ${asOf}`}
               />
             </div>
           )}
           <Table>
             <thead>
               <tr>
-                <Th>المورد</Th>
-                <Th style={{ textAlign: "left", width: 120 }}>0 - 30 يوم</Th>
-                <Th style={{ textAlign: "left", width: 120 }}>31 - 60 يوم</Th>
-                <Th style={{ textAlign: "left", width: 120 }}>61 - 90 يوم</Th>
-                <Th style={{ textAlign: "left", width: 120 }}>أكثر من 90</Th>
-                <Th style={{ textAlign: "left", width: 150 }}>الإجمالي</Th>
+                <Th>{text("المورد", "Supplier")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 120 }}>{text("0 - 30 يوم", "0–30 days")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 120 }}>{text("31 - 60 يوم", "31–60 days")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 120 }}>{text("61 - 90 يوم", "61–90 days")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 120 }}>{text("أكثر من 90", "Over 90 days")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 150 }}>{text("الإجمالي", "Total")}</Th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><Td colSpan={6}><Empty text="لا توجد ديون مستحقة حتى التاريخ المحدد" /></Td></tr>
+                <tr><Td colSpan={6}><Empty text={text("لا توجد ديون مستحقة حتى التاريخ المحدد", "No payables due by this date")} /></Td></tr>
               )}
               {rows.map((r) => (
                 <tr key={r.supplierId}>
@@ -179,7 +182,7 @@ export default function SupplierAgingReport() {
               ))}
               {rows.length > 0 && (
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
-                  <Td>الإجمالي ({rows.length} مورد)</Td>
+                  <Td>{text("الإجمالي", "Total")} ({rows.length} {text("مورد", "suppliers")})</Td>
                   <Td num>{fmt(totals.b0)}</Td>
                   <Td num>{fmt(totals.b30)}</Td>
                   <Td num>{fmt(totals.b60)}</Td>

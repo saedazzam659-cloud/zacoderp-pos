@@ -10,6 +10,7 @@ import {
   type Brand, type BrandInput, type BrandStatus,
 } from "../lib/brands";
 import { useDataRefresh } from "../lib/dataBus";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 const emptyInput: BrandInput = {
   code: "", nameAr: "", nameEn: "", manufacturerName: "", supplierName: "",
@@ -22,6 +23,8 @@ type EditState =
   | null;
 
 export default function BrandsAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<Brand[]>(() => listBrands());
   const [usage, setUsage] = useState<Record<number, number>>(() => brandUsageCounts());
   const [search, setSearch] = useState("");
@@ -55,29 +58,29 @@ export default function BrandsAdmin() {
   function save() {
     if (!edit) return;
     const f = edit.data;
-    if (!f.nameAr.trim()) { setErr("الاسم بالعربية مطلوب"); return; }
+    if (!f.nameAr.trim()) { setErr(text("الاسم بالعربية مطلوب", "Arabic name is required.")); return; }
     if (edit.mode === "new") createBrand(f); else updateBrand(edit.id, f);
     setEdit(null); setErr(null); refresh();
-    setToast({ kind: "ok", text: edit.mode === "new" ? "تمت إضافة العلامة" : "تم تعديل العلامة" });
+    setToast({ kind: "ok", text: edit.mode === "new" ? text("تمت إضافة العلامة", "Brand added.") : text("تم تعديل العلامة", "Brand updated.") });
   }
 
   function handleDelete(b: Brand) {
     const used = usage[b.id] ?? 0;
-    const extra = used > 0 ? `\nمربوطة بـ ${used} صنف — سيتم فك الارتباط.` : "";
-    if (!confirm(`حذف العلامة «${b.nameAr}»؟${extra}`)) return;
-    deleteBrand(b.id); refresh(); setToast({ kind: "ok", text: "تم حذف العلامة" });
+    const extra = used > 0 ? `\n${text("مربوطة بـ", "Linked to")} ${used} ${text("صنف — سيتم فك الارتباط.", "items; these links will be removed.")}` : "";
+    if (!confirm(`${text("حذف العلامة", "Delete brand")} «${b.nameAr}»?${extra}`)) return;
+    deleteBrand(b.id); refresh(); setToast({ kind: "ok", text: text("تم حذف العلامة", "Brand deleted.") });
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.headerRow}>
         <div>
-          <h2 style={S.h2}>العلامات التجارية ({rows.length})</h2>
-          <div style={S.sub}>علامة واحدة لعدة أصناف — كل علامة لها سعرها وباركودها ورقم قطعتها الخاص</div>
+          <h2 style={S.h2}>{text("العلامات التجارية", "Brands")} ({rows.length})</h2>
+          <div style={S.sub}>{text("علامة واحدة لعدة أصناف — كل علامة لها سعرها وباركودها ورقم قطعتها الخاص", "A brand can be linked to multiple items, each with its own price, barcode, and part number.")}</div>
         </div>
         <button onClick={startNew} disabled={!!edit}
           style={{ ...S.btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
-          + علامة جديدة
+          + {text("علامة جديدة", "New brand")}
         </button>
       </div>
 
@@ -86,20 +89,20 @@ export default function BrandsAdmin() {
       <input
         value={search}
         onChange={(e) => onSearch(e.target.value)}
-        placeholder="بحث بالاسم / الكود / الشركة المصنّعة…"
+        placeholder={text("بحث بالاسم / الكود / الشركة المصنّعة…", "Search name, code, or manufacturer…")}
         style={{ ...S.input, maxWidth: 360, marginBottom: 12 }}
       />
 
       <table style={S.table}>
         <thead><tr>
-          <th style={S.th}>الكود</th>
-          <th style={S.th}>الاسم بالعربية</th>
-          <th style={S.th}>بالإنجليزية</th>
-          <th style={S.th}>الشركة المصنّعة</th>
-          <th style={S.th}>بلد المنشأ</th>
-          <th style={S.thCenter}>الأصناف</th>
-          <th style={S.thCenter}>الحالة</th>
-          <th style={S.thRight}>إجراء</th>
+          <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("الكود", "Code")}</th>
+          <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("الاسم بالعربية", "Arabic name")}</th>
+          <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("بالإنجليزية", "English name")}</th>
+          <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("الشركة المصنّعة", "Manufacturer")}</th>
+          <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("بلد المنشأ", "Country of origin")}</th>
+          <th style={S.thCenter}>{text("الأصناف", "Items")}</th>
+          <th style={S.thCenter}>{text("الحالة", "Status")}</th>
+          <th style={{ ...S.thRight, textAlign: language === "en" ? "right" : "left" }}>{text("إجراء", "Actions")}</th>
         </tr></thead>
         <tbody>
           {rows.map((b) => (
@@ -112,17 +115,17 @@ export default function BrandsAdmin() {
               <td style={S.tdCenter}>{usage[b.id] ?? 0}</td>
               <td style={S.tdCenter}>
                 <span style={b.status === "active" ? S.badgeOn : S.badgeOff}>
-                  {b.status === "active" ? "نشطة" : "غير نشطة"}
+                  {b.status === "active" ? text("نشطة", "Active") : text("غير نشطة", "Inactive")}
                 </span>
               </td>
               <td style={S.tdRight}>
-                <button onClick={() => startEdit(b)} disabled={!!edit} style={S.btnEdit}>تعديل</button>
-                <button onClick={() => handleDelete(b)} disabled={!!edit} style={S.btnDel}>حذف</button>
+                <button onClick={() => startEdit(b)} disabled={!!edit} style={S.btnEdit}>{text("تعديل", "Edit")}</button>
+                <button onClick={() => handleDelete(b)} disabled={!!edit} style={S.btnDel}>{text("حذف", "Delete")}</button>
               </td>
             </tr>
           ))}
           {rows.length === 0 && (
-            <tr><td colSpan={8} style={S.empty}>لا توجد علامات تجارية بعد — أضف أول علامة.</td></tr>
+            <tr><td colSpan={8} style={S.empty}>{text("لا توجد علامات تجارية بعد — أضف أول علامة.", "No brands yet — add the first one.")}</td></tr>
           )}
         </tbody>
       </table>
@@ -130,43 +133,43 @@ export default function BrandsAdmin() {
       {edit && (
         <div style={S.modalOverlay} onClick={cancel}>
           <div style={S.modal} onClick={(e) => e.stopPropagation()}>
-            <h3 style={S.modalH3}>{edit.mode === "new" ? "علامة تجارية جديدة" : "تعديل العلامة"}</h3>
+            <h3 style={S.modalH3}>{edit.mode === "new" ? text("علامة تجارية جديدة", "New brand") : text("تعديل العلامة", "Edit brand")}</h3>
             {err && <div style={S.err}>⚠️ {err}</div>}
             <div style={S.grid2}>
-              <Field label="الكود">
-                <input value={edit.data.code ?? ""} onChange={(e) => setField("code", e.target.value)} style={S.input} placeholder="تلقائي BR-0001" />
+              <Field label={text("الكود", "Code")}>
+                <input value={edit.data.code ?? ""} onChange={(e) => setField("code", e.target.value)} style={S.input} placeholder={text("تلقائي BR-0001", "Auto-generated BR-0001")} />
               </Field>
-              <Field label="الحالة">
+              <Field label={text("الحالة", "Status")}>
                 <select value={edit.data.status ?? "active"} onChange={(e) => setField("status", e.target.value as BrandStatus)} style={S.input}>
-                  <option value="active">نشطة</option>
-                  <option value="inactive">غير نشطة</option>
+                  <option value="active">{text("نشطة", "Active")}</option>
+                  <option value="inactive">{text("غير نشطة", "Inactive")}</option>
                 </select>
               </Field>
-              <Field label="الاسم بالعربية *">
-                <input autoFocus value={edit.data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={S.input} placeholder="مثال: الشريف" />
+              <Field label={text("الاسم بالعربية *", "Arabic name *")}>
+                <input autoFocus value={edit.data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={S.input} placeholder={text("مثال: الشريف", "e.g. Al Sharif")} />
               </Field>
-              <Field label="الاسم بالإنجليزية">
+              <Field label={text("الاسم بالإنجليزية", "English name")}>
                 <input value={edit.data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value)} style={S.input} placeholder="Al Sharif" />
               </Field>
-              <Field label="الشركة المصنّعة">
+              <Field label={text("الشركة المصنّعة", "Manufacturer")}>
                 <input value={edit.data.manufacturerName ?? ""} onChange={(e) => setField("manufacturerName", e.target.value)} style={S.input} />
               </Field>
-              <Field label="المورّد (اختياري)">
+              <Field label={text("المورّد (اختياري)", "Supplier (optional)")}>
                 <input value={edit.data.supplierName ?? ""} onChange={(e) => setField("supplierName", e.target.value)} style={S.input} />
               </Field>
-              <Field label="بلد المنشأ">
-                <input value={edit.data.countryOfOrigin ?? ""} onChange={(e) => setField("countryOfOrigin", e.target.value)} style={S.input} placeholder="السعودية" />
+              <Field label={text("بلد المنشأ", "Country of origin")}>
+                <input value={edit.data.countryOfOrigin ?? ""} onChange={(e) => setField("countryOfOrigin", e.target.value)} style={S.input} placeholder={text("السعودية", "Saudi Arabia")} />
               </Field>
-              <Field label="رابط الشعار (اختياري)">
+              <Field label={text("رابط الشعار (اختياري)", "Logo URL (optional)")}>
                 <input value={edit.data.logoUrl ?? ""} onChange={(e) => setField("logoUrl", e.target.value)} style={S.input} placeholder="https://…" />
               </Field>
             </div>
-            <Field label="ملاحظات">
+            <Field label={text("ملاحظات", "Notes")}>
               <textarea value={edit.data.notes ?? ""} onChange={(e) => setField("notes", e.target.value)} style={{ ...S.input, minHeight: 60, resize: "vertical" }} />
             </Field>
             <div style={S.modalActions}>
-              <button onClick={save} style={S.btnPrimary}>حفظ</button>
-              <button onClick={cancel} style={S.btnCancel}>إلغاء</button>
+              <button onClick={save} style={S.btnPrimary}>{text("حفظ", "Save")}</button>
+              <button onClick={cancel} style={S.btnCancel}>{text("إلغاء", "Cancel")}</button>
             </div>
           </div>
         </div>

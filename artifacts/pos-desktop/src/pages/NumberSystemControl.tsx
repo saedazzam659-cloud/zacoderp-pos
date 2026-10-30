@@ -1,14 +1,23 @@
-import { setNumberSystem, useNumberSystem } from "../lib/appSettings";
+import { setNumberSystem, uiText, useNumberSystem, useUiLanguage } from "../lib/appSettings";
 
 export default function NumberSystemControl({ compact = false }: { compact?: boolean }) {
   const system = useNumberSystem();
+  const language = useUiLanguage();
   const next = system === "arabic" ? "latin" : "arabic";
   return (
     <button
       type="button"
       onClick={() => setNumberSystem(next)}
-      aria-label={`تغيير شكل الأرقام إلى ${next === "latin" ? "الإنجليزية" : "العربية"}`}
-      title={`شكل الأرقام الحالي: ${system === "arabic" ? "عربي" : "إنجليزي"}`}
+      aria-label={uiText(
+        `تغيير شكل الأرقام إلى ${next === "latin" ? "الإنجليزية" : "العربية"}`,
+        `Switch digits to ${next === "latin" ? "Latin" : "Arabic"}`,
+        language,
+      )}
+      title={uiText(
+        `شكل الأرقام الحالي: ${system === "arabic" ? "عربي" : "إنجليزي"}`,
+        `Current digits: ${system === "arabic" ? "Arabic-Indic" : "Latin"}`,
+        language,
+      )}
       style={{
         border: "1px solid #cbd5e1",
         borderRadius: 8,

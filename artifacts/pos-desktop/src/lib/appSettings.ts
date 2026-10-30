@@ -24,8 +24,10 @@ const LS_PHONE = "pos_desktop_company_phone";
 const LS_DECIMALS = "pos_desktop_decimal_places";
 const LS_HIDE_ZEROS = "pos_desktop_hide_zeros";
 const LS_NUMBER_SYSTEM = "pos_desktop_number_system";
+const LS_UI_LANGUAGE = "pos_desktop_ui_language";
 
 export type NumberSystem = "arabic" | "latin";
+export type UiLanguage = "ar" | "en";
 
 export const DECIMALS_MIN = 0;
 export const DECIMALS_MAX = 6;
@@ -96,6 +98,35 @@ export function useNumberSystem(): NumberSystem {
     };
   }, []);
   return system;
+}
+
+export function getUiLanguage(): UiLanguage {
+  if (typeof window === "undefined") return "ar";
+  return localStorage.getItem(LS_UI_LANGUAGE) === "en" ? "en" : "ar";
+}
+
+/** Kept internal until English translations cover the complete POS Desktop UI. */
+export function setUiLanguage(language: UiLanguage): void {
+  writeKey(LS_UI_LANGUAGE, language);
+  window.dispatchEvent(new Event(EVT));
+}
+
+export function useUiLanguage(): UiLanguage {
+  const [language, setLanguage] = useState<UiLanguage>(() => getUiLanguage());
+  useEffect(() => {
+    const refresh = () => setLanguage(getUiLanguage());
+    window.addEventListener(EVT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(EVT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return language;
+}
+
+export function uiText(arabic: string, english: string, language = getUiLanguage()): string {
+  return language === "en" ? english : arabic;
 }
 
 /** Only allow data:image/* or https:// logo sources (anti-XSS, mirrors web safeLogoSrc). */

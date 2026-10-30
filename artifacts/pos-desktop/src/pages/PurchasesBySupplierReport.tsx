@@ -2,6 +2,7 @@ import { useState } from "react";
 import { reportPurchaseInvoices, reportPurchaseReturns } from "../lib/purchaseReports";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
@@ -13,6 +14,8 @@ type Bucket = {
 };
 
 export default function PurchasesBySupplierReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const { branches } = useDimensions();
   const [fromDate, setFromDate] = useState(firstOfYear());
   const [toDate, setToDate] = useState(todayStr());
@@ -22,7 +25,7 @@ export default function PurchasesBySupplierReport() {
   const [err, setErr] = useState<string | null>(null);
 
   async function run() {
-    if (fromDate > toDate) { setErr("تاريخ البداية يجب أن يكون قبل تاريخ النهاية"); return; }
+    if (fromDate > toDate) { setErr(text("تاريخ البداية يجب أن يكون قبل تاريخ النهاية", "Start date must be on or before end date.")); return; }
     setErr(null); setLoading(true);
     try {
       const branch = branchId === "" ? null : branchId;
@@ -34,7 +37,7 @@ export default function PurchasesBySupplierReport() {
       const get = (id: number | null, name: string | null): Bucket => {
         const key = id ?? NO_SUPPLIER;
         let b = map.get(key);
-        if (!b) { b = { key, name: name || "مورد غير محدد", count: 0, sub: 0, vat: 0, purchases: 0, returns: 0 }; map.set(key, b); }
+        if (!b) { b = { key, name: name || text("مورد غير محدد", "Unspecified supplier"), count: 0, sub: 0, vat: 0, purchases: 0, returns: 0 }; map.set(key, b); }
         return b;
       };
       for (const r of invs) {
@@ -55,13 +58,13 @@ export default function PurchasesBySupplierReport() {
   );
 
   return (
-    <Page title="المشتريات حسب المورد" subtitle="إجمالي المشتريات والمرتجعات والصافي لكل مورد خلال الفترة.">
+    <Page title={text("المشتريات حسب المورد", "Purchases by supplier")} subtitle={text("إجمالي المشتريات والمرتجعات والصافي لكل مورد خلال الفترة.", "Purchases, returns, and net purchases by supplier for the selected period.")}>
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <DateField label="من تاريخ" value={fromDate} onChange={setFromDate} />
-          <DateField label="إلى تاريخ" value={toDate} onChange={setToDate} />
+          <DateField label={text("من تاريخ", "From date")} value={fromDate} onChange={setFromDate} />
+          <DateField label={text("إلى تاريخ", "To date")} value={toDate} onChange={setToDate} />
           <BranchField branches={branches} value={branchId} onChange={setBranchId} />
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : text("عرض", "Run report")}</button>
         </div>
         {err && <div style={{ marginTop: 8, color: "#991b1b", fontSize: 13 }}>⚠️ {err}</div>}
       </Card>
@@ -71,18 +74,18 @@ export default function PurchasesBySupplierReport() {
           <Table>
             <thead>
               <tr>
-                <Th>المورد</Th>
-                <Th style={{ width: 90, textAlign: "center" }}>الفواتير</Th>
-                <Th style={{ textAlign: "left", width: 120 }}>الصافي</Th>
-                <Th style={{ textAlign: "left", width: 110 }}>الضريبة</Th>
-                <Th style={{ textAlign: "left", width: 130 }}>إجمالي المشتريات</Th>
-                <Th style={{ textAlign: "left", width: 120 }}>المرتجعات</Th>
-                <Th style={{ textAlign: "left", width: 140 }}>صافي المشتريات</Th>
+                <Th>{text("المورد", "Supplier")}</Th>
+                <Th style={{ width: 90, textAlign: "center" }}>{text("الفواتير", "Invoices")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 120 }}>{text("الصافي", "Net")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 110 }}>{text("الضريبة", "Tax")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 130 }}>{text("إجمالي المشتريات", "Purchases total")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 120 }}>{text("المرتجعات", "Returns")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 140 }}>{text("صافي المشتريات", "Net purchases")}</Th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><Td colSpan={7}><Empty text="لا توجد مشتريات في الفترة المحددة" /></Td></tr>
+                <tr><Td colSpan={7}><Empty text={text("لا توجد مشتريات في الفترة المحددة", "No purchases for this period")} /></Td></tr>
               )}
               {rows.map((r) => (
                 <tr key={r.key}>
@@ -97,7 +100,7 @@ export default function PurchasesBySupplierReport() {
               ))}
               {rows.length > 0 && (
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
-                  <Td>الإجمالي ({rows.length} مورد)</Td>
+                  <Td>{text("الإجمالي", "Total")} ({rows.length} {text("مورد", "suppliers")})</Td>
                   <Td style={{ textAlign: "center" }}>{totals.count}</Td>
                   <Td num>{fmt(totals.sub)}</Td>
                   <Td num>{fmt(totals.vat)}</Td>

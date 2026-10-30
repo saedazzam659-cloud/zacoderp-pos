@@ -2,6 +2,7 @@ import { useState } from "react";
 import { reportPurchaseReturns, type PurchaseReturnReportRow } from "../lib/purchaseReports";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
@@ -13,6 +14,8 @@ type Bucket = {
 };
 
 export default function PurchaseReturnsReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const { branches } = useDimensions();
   const [fromDate, setFromDate] = useState(firstOfYear());
   const [toDate, setToDate] = useState(todayStr());
@@ -23,7 +26,7 @@ export default function PurchaseReturnsReport() {
   const [err, setErr] = useState<string | null>(null);
 
   async function run() {
-    if (fromDate > toDate) { setErr("تاريخ البداية يجب أن يكون قبل تاريخ النهاية"); return; }
+    if (fromDate > toDate) { setErr(text("تاريخ البداية يجب أن يكون قبل تاريخ النهاية", "Start date must be on or before end date.")); return; }
     setErr(null); setLoading(true);
     try {
       const rets = await reportPurchaseReturns({ fromDate, toDate, branchId: branchId === "" ? null : branchId });
@@ -32,7 +35,7 @@ export default function PurchaseReturnsReport() {
       for (const r of rets) {
         const key = r.supplierId ?? NO_SUPPLIER;
         let b = map.get(key);
-        if (!b) { b = { key, name: r.supplierName || "مورد غير محدد", count: 0, sub: 0, vat: 0, total: 0 }; map.set(key, b); }
+        if (!b) { b = { key, name: r.supplierName || text("مورد غير محدد", "Unspecified supplier"), count: 0, sub: 0, vat: 0, total: 0 }; map.set(key, b); }
         b.count += 1; b.sub += r.subtotal; b.vat += r.vatTotal; b.total += r.grandTotal;
       }
       setRows([...map.values()].sort((a, b) => b.total - a.total));
@@ -45,13 +48,13 @@ export default function PurchaseReturnsReport() {
   );
 
   return (
-    <Page title="تقرير مرتجعات المشتريات" subtitle="إجمالي مرتجعات المشتريات لكل مورد خلال الفترة المحددة.">
+    <Page title={text("تقرير مرتجعات المشتريات", "Purchase returns report")} subtitle={text("إجمالي مرتجعات المشتريات لكل مورد خلال الفترة المحددة.", "Total purchase returns by supplier for the selected period.")}>
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <DateField label="من تاريخ" value={fromDate} onChange={setFromDate} />
-          <DateField label="إلى تاريخ" value={toDate} onChange={setToDate} />
+          <DateField label={text("من تاريخ", "From date")} value={fromDate} onChange={setFromDate} />
+          <DateField label={text("إلى تاريخ", "To date")} value={toDate} onChange={setToDate} />
           <BranchField branches={branches} value={branchId} onChange={setBranchId} />
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : text("عرض", "Run report")}</button>
         </div>
         {err && <div style={{ marginTop: 8, color: "#991b1b", fontSize: 13 }}>⚠️ {err}</div>}
       </Card>
@@ -59,21 +62,21 @@ export default function PurchaseReturnsReport() {
       {rows && (
         <Card>
           <div style={{ marginBottom: 8, fontSize: 13, color: "#64748b" }}>
-            عدد مستندات المرتجع: <b>{raw.length}</b>
+            {text("عدد مستندات المرتجع:", "Return documents:")} <b>{raw.length}</b>
           </div>
           <Table>
             <thead>
               <tr>
-                <Th>المورد</Th>
-                <Th style={{ width: 110, textAlign: "center" }}>عدد المرتجعات</Th>
-                <Th style={{ textAlign: "left", width: 130 }}>الصافي</Th>
-                <Th style={{ textAlign: "left", width: 120 }}>الضريبة</Th>
-                <Th style={{ textAlign: "left", width: 140 }}>إجمالي المرتجع</Th>
+                <Th>{text("المورد", "Supplier")}</Th>
+                <Th style={{ width: 110, textAlign: "center" }}>{text("عدد المرتجعات", "Returns")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 130 }}>{text("الصافي", "Net")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 120 }}>{text("الضريبة", "Tax")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 140 }}>{text("إجمالي المرتجع", "Return total")}</Th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><Td colSpan={5}><Empty text="لا توجد مرتجعات في الفترة المحددة" /></Td></tr>
+                <tr><Td colSpan={5}><Empty text={text("لا توجد مرتجعات في الفترة المحددة", "No returns for this period")} /></Td></tr>
               )}
               {rows.map((r) => (
                 <tr key={r.key}>
@@ -86,7 +89,7 @@ export default function PurchaseReturnsReport() {
               ))}
               {rows.length > 0 && (
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
-                  <Td>الإجمالي ({rows.length} مورد)</Td>
+                  <Td>{text("الإجمالي", "Total")} ({rows.length} {text("مورد", "suppliers")})</Td>
                   <Td style={{ textAlign: "center" }}>{totals.count}</Td>
                   <Td num>{fmt(totals.sub)}</Td>
                   <Td num>{fmt(totals.vat)}</Td>

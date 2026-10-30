@@ -5,15 +5,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { currencySymbol, CURRENCIES, baseCurrencyCode } from "../lib/currency";
-import { getDecimals } from "../lib/appSettings";
+import { getDecimals, useUiLanguage } from "../lib/appSettings";
 import type { DiscType, DiscountResult } from "../lib/discount";
 import { exportToExcel, exportToPdf, type ExportColumn } from "../lib/exporters";
 
 export function Page({ title, subtitle, right, children }: {
   title: string; subtitle?: string; right?: ReactNode; children: ReactNode;
 }) {
+  const language = useUiLanguage();
   return (
-    <div dir="rtl" style={{ padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" }}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={{ padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16, minWidth: 0 }}>
         <div>
           <h2 style={{ margin: 0 }}>{title}</h2>

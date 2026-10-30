@@ -42,6 +42,7 @@ import {
   type ParkedCart,
 } from "../lib/parkedCarts";
 import { useTaxSettings, computeTotals } from "../lib/taxSettings";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
 interface CartLine {
@@ -73,6 +74,8 @@ type Props = {
 };
 
 export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "300000000000003", posSessionId = 0, cashierName, reuseInvoiceId = null, onReuseConsumed }: Props) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const sym = useCurrencySymbol();
   const [cart, setCart] = useState<CartLine[]>([]);
   const [checkoutKey, setCheckoutKey] = useState<string | null>(null);
@@ -643,14 +646,14 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       // (client) or will be (single/host), and the invoice persisted — so the
       // sale is always fully consistent. Oversells aborted earlier with no
       // invoice committed.
-      setMsg({ kind: "ok", text: `✅ تم إنهاء البيع — فاتورة ${invNum}` });
+      setMsg({ kind: "ok", text: `✅ ${text("تم إنهاء البيع — فاتورة", "Sale completed — invoice")} ${invNum}` });
     } catch (e: any) {
-      setMsg({ kind: "err", text: `فشل إنهاء البيع: ${e?.message ?? e}` });
+      setMsg({ kind: "err", text: `${text("فشل إنهاء البيع:", "Could not complete sale:")} ${e?.message ?? e}` });
     } finally { setPaying(false); }
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <style>{`
         .cart-scroll::-webkit-scrollbar { width: 10px; }
         .cart-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 8px; margin: 4px; }
@@ -666,13 +669,13 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       <div style={S.itemsPane}>
         <div style={S.searchRow}>
           <input
-            placeholder="🔍 بحث بالاسم أو الباركود... (أو امسح باركود)"
+            placeholder={text("🔍 بحث بالاسم أو الباركود... (أو امسح باركود)", "🔍 Search by name or barcode… (or scan a barcode)")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={S.search}
             data-allow-scan="true"
           />
-          <div style={S.countChip}>{items.length} صنف</div>
+          <div style={S.countChip}>{items.length} {text("صنف", "items")}</div>
           {isClient() && (
             <div
               style={
@@ -682,19 +685,19 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
               }
               title={
                 hostOnline === false
-                  ? "تعذّر الوصول إلى الجهاز الرئيسي — تحقق من شبكة Wi-Fi وأن الجهاز الرئيسي يعمل"
+                  ? text("تعذّر الوصول إلى الجهاز الرئيسي — تحقق من شبكة Wi-Fi وأن الجهاز الرئيسي يعمل", "Cannot reach the host device. Check Wi-Fi and make sure the host is running.")
                   : hostOnline === true
-                  ? "الاتصال بالجهاز الرئيسي سليم"
-                  : "جارٍ التحقق من الاتصال بالجهاز الرئيسي..."
+                  ? text("الاتصال بالجهاز الرئيسي سليم", "Connected to the host device")
+                  : text("جارٍ التحقق من الاتصال بالجهاز الرئيسي...", "Checking connection to the host device…")
               }
             >
               <span style={{ fontSize: 9 }}>{hostOnline === false ? "🔴" : hostOnline === true ? "🟢" : "⚪"}</span>
               <span>
                 {hostOnline === false
-                  ? "غير متصل بالجهاز الرئيسي"
+                  ? text("غير متصل بالجهاز الرئيسي", "Host offline")
                   : hostOnline === true
-                  ? "متصل بالجهاز الرئيسي"
-                  : "جارٍ التحقق..."}
+                  ? text("متصل بالجهاز الرئيسي", "Host connected")
+                  : text("جارٍ التحقق...", "Checking…")}
               </span>
             </div>
           )}
@@ -704,11 +707,11 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         <div className="grid-scroll" style={S.gridScroll}>
           <div style={S.grid}>
             {loadingItems && items.length === 0 ? (
-              <div style={S.empty}>... جاري تحميل الأصناف</div>
+              <div style={S.empty}>{text("... جاري تحميل الأصناف", "Loading items…")}</div>
             ) : items.length === 0 ? (
               <div style={S.empty}>
-                <div style={{ fontSize: 16, marginBottom: 6 }}>لا توجد أصناف</div>
-                <div style={{ fontSize: 13 }}>اسحب من السحابة (لوحة التحكم → Pull) أو أضف صنف يدوياً من شاشة "أصناف"</div>
+                <div style={{ fontSize: 16, marginBottom: 6 }}>{text("لا توجد أصناف", "No items found")}</div>
+                <div style={{ fontSize: 13 }}>{text('اسحب من السحابة (لوحة التحكم → Pull) أو أضف صنف يدوياً من شاشة "أصناف"', 'Pull items from the cloud (Dashboard → Pull) or add an item from the Items screen.')}</div>
               </div>
             ) : (
               items.map((item) => {
@@ -728,7 +731,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                         color: sev === "red" ? "#dc2626" : "#ca8a04",
                         border: `1px solid ${sev === "red" ? "#fecaca" : "#fef08a"}`,
                       }}>
-                        {(d as number) < 0 ? "❌ منتهي" : `${sev === "red" ? "⚠️" : "🕒"} ${d}ي`}
+                        {(d as number) < 0 ? `❌ ${text("منتهي", "Expired")}` : `${sev === "red" ? "⚠️" : "🕒"} ${d}${text("ي", "d")}`}
                       </div>
                     )}
                     <div style={S.itemName}>{item.nameAr}</div>
@@ -757,13 +760,13 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                   </div>
                 )}
               </div>
-              <button onClick={() => setShowCustomerPicker(true)} style={S.customerEditBtn} title="تغيير العميل">✏️</button>
-              <button onClick={() => setCustomer(null)} style={S.customerRemoveBtn} title="إزالة العميل">×</button>
+              <button onClick={() => setShowCustomerPicker(true)} style={S.customerEditBtn} title={text("تغيير العميل", "Change customer")}>✏️</button>
+              <button onClick={() => setCustomer(null)} style={S.customerRemoveBtn} title={text("إزالة العميل", "Remove customer")}>×</button>
             </div>
           ) : (
             <button onClick={() => setShowCustomerPicker(true)} style={S.customerAddBtn}>
               <span style={{ fontSize: 18 }}>👤</span>
-              <span>إضافة عميل للفاتورة</span>
+              <span>{text("إضافة عميل للفاتورة", "Add customer to invoice")}</span>
               <span style={{ flex: 1 }} />
               <span style={{ fontSize: 18, color: "#3b82f6" }}>+</span>
             </button>
@@ -772,21 +775,21 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
 
         <div style={S.cartHeader}>
           <h2 style={S.cartTitle}>
-            🛒 السلة
+            🛒 {text("السلة", "Cart")}
             {cart.length > 0 && (
               <span style={S.cartCountBadge}>
-                {cart.length} {cart.length === 1 ? "صنف" : "أصناف"} · {cart.reduce((s, l) => s + l.qty, 0)} قطعة
+                {cart.length} {cart.length === 1 ? text("صنف", "item") : text("أصناف", "items")} · {cart.reduce((s, l) => s + l.qty, 0)} {text("قطعة", "units")}
               </span>
             )}
-            {activeParkedId && <span style={S.resumedBadge}>مستأنفة</span>}
+            {activeParkedId && <span style={S.resumedBadge}>{text("مستأنفة", "Resumed")}</span>}
           </h2>
           {cart.length > 0 && (
             <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={parkCart} style={S.parkBtn} title="تعليق السلة وحفظها للعودة لاحقاً">
-                📌 تعليق
+              <button onClick={parkCart} style={S.parkBtn} title={text("تعليق السلة وحفظها للعودة لاحقاً", "Park this cart and return to it later")}>
+                📌 {text("تعليق", "Park")}
               </button>
               <button onClick={() => { setCart([]); setCheckoutKey(null); setActiveParkedId(null); }} style={S.clearBtn}>
-                مسح
+                {text("مسح", "Clear")}
               </button>
             </div>
           )}
@@ -797,8 +800,8 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           {cart.length === 0 ? (
             <div style={S.cartEmpty}>
               <div style={{ fontSize: 48, marginBottom: 8 }}>🛍️</div>
-              <div>السلة فارغة</div>
-              <div style={{ fontSize: 12, marginTop: 6, color: "#94a3b8" }}>اضغط على صنف أو امسح باركود</div>
+              <div>{text("السلة فارغة", "Cart is empty")}</div>
+              <div style={{ fontSize: 12, marginTop: 6, color: "#94a3b8" }}>{text("اضغط على صنف أو امسح باركود", "Select an item or scan a barcode")}</div>
             </div>
           ) : (
             <div style={S.lines}>
@@ -819,7 +822,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                       // and only allow remove. To re-weigh, delete and add
                       // the item again.
                       <span style={{ minWidth: 80, textAlign: "center", fontWeight: 600, color: "#1d4ed8" }}>
-                        ⚖️ {l.qty.toFixed(3)} كجم
+                        ⚖️ {l.qty.toFixed(3)} {text("كجم", "kg")}
                       </span>
                     ) : (
                       <>
@@ -839,9 +842,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         {/* ─── STICKY FOOTER ─ totals + payment buttons ─── */}
         <div style={S.footer}>
           <div style={S.totals}>
-            <Row k="قبل الضريبة" v={totals.subtotal.toFixed(2)} />
-            <Row k={`ضريبة ${vatRatePct}%${taxMode === "inclusive" ? " (شاملة)" : ""}`} v={totals.vat.toFixed(2)} />
-            <Row k="الإجمالي" v={totals.grandTotal.toFixed(2)} big />
+            <Row k={text("قبل الضريبة", "Subtotal")} v={totals.subtotal.toFixed(2)} />
+            <Row k={`${text("ضريبة", "Tax")} ${vatRatePct}%${taxMode === "inclusive" ? ` (${text("شاملة", "inclusive")})` : ""}`} v={totals.vat.toFixed(2)} />
+            <Row k={text("الإجمالي", "Total")} v={totals.grandTotal.toFixed(2)} big />
           </div>
 
           {/* Paid amount + change calculator */}
@@ -853,7 +856,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             return (
               <div style={S.paidBox}>
                 <div style={S.paidRow}>
-                  <label style={S.paidLabel}>💵 المبلغ المدفوع</label>
+                  <label style={S.paidLabel}>💵 {text("المبلغ المدفوع", "Amount paid")}</label>
                   <input
                     type="number" inputMode="decimal" step="0.01" min="0"
                     placeholder="0.00"
@@ -865,7 +868,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                 {hasPaid && (
                   <div style={enough ? S.changeRowOk : S.changeRowShort}>
                     <span style={{ fontSize: 13, fontWeight: 600 }}>
-                      {enough ? "💰 الباقي للعميل" : "⚠️ المتبقي على العميل"}
+                      {enough ? `💰 ${text("الباقي للعميل", "Change due")}` : `⚠️ ${text("المتبقي على العميل", "Amount remaining")}`}
                     </span>
                     <span style={S.changeAmount}>
                       {Math.abs(change).toFixed(2)} <span style={{ fontSize: 11, fontWeight: 400 }}>{sym}</span>
@@ -889,10 +892,10 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             {payMethods.length === 0 ? (
               <>
                 <button onClick={() => checkout({ id: 0, nameAr: "نقداً", kind: "cash", accountId: null, isActive: true, sortOrder: 0 })} disabled={paying || cart.length === 0} style={S.payCash}>
-                  {paying ? "..." : "💵 نقداً"}
+                  {paying ? "..." : `💵 ${text("نقداً", "Cash")}`}
                 </button>
                 <button onClick={() => checkout({ id: 0, nameAr: "بطاقة", kind: "bank", accountId: null, isActive: true, sortOrder: 1 })} disabled={paying || cart.length === 0} style={S.payCard}>
-                  {paying ? "..." : "💳 بطاقة"}
+                  {paying ? "..." : `💳 ${text("بطاقة", "Card")}`}
                 </button>
               </>
             ) : (
@@ -914,7 +917,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             <div style={msg.kind === "ok" ? S.msgOk : S.msgErr}>{msg.text}</div>
           )}
           {lastInvoice && !msg && (
-            <div style={S.lastInv}>آخر فاتورة: {lastInvoice}</div>
+            <div style={S.lastInv}>{text("آخر فاتورة:", "Last invoice:")} {lastInvoice}</div>
           )}
         </div>
       </aside>
@@ -963,21 +966,23 @@ function UnitPickerModal({
   onPick: (unit: ItemUnit | null) => void;
   onCancel: () => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const units = item.units ?? [];
   return (
     <div style={S.modalOverlay} onClick={onCancel}>
-      <div dir="rtl" style={{ ...S.modalCard, maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+      <div dir={language === "en" ? "ltr" : "rtl"} style={{ ...S.modalCard, maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
         <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>
           {item.nameAr}
         </div>
         <div style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
-          اختر وحدة البيع
+          {text("اختر وحدة البيع", "Choose a sales unit")}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {/* Base unit */}
           <button onClick={() => onPick(null)} style={S.unitPickRow}>
-            <span style={{ fontWeight: 700, color: "#0f172a" }}>قطعة</span>
+            <span style={{ fontWeight: 700, color: "#0f172a" }}>{text("قطعة", "Piece")}</span>
             <span style={{ color: "#166534", fontWeight: 700 }}>{item.salePrice.toFixed(2)} {currencySymbol()}</span>
           </button>
           {units.map((u) => (
@@ -985,7 +990,7 @@ function UnitPickerModal({
               <span style={{ fontWeight: 700, color: "#0f172a" }}>
                 {u.name}
                 <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 400, marginInlineStart: 6 }}>
-                  ({u.factor} قطعة)
+                  ({u.factor} {text("قطعة", "pieces")})
                 </span>
               </span>
               <span style={{ color: "#166534", fontWeight: 700 }}>{u.price.toFixed(2)} {currencySymbol()}</span>
@@ -994,7 +999,7 @@ function UnitPickerModal({
         </div>
 
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-          <button onClick={onCancel} style={S.modalBackBtn}>إلغاء</button>
+          <button onClick={onCancel} style={S.modalBackBtn}>{text("إلغاء", "Cancel")}</button>
         </div>
       </div>
     </div>
@@ -1013,6 +1018,8 @@ function WeightCaptureModal({
   onConfirm: (kg: number) => void;
   onCancel: () => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [reading, setReading] = useState<number | null>(null);
   const [manual, setManual] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -1025,7 +1032,7 @@ function WeightCaptureModal({
       const kg = await readWeightOnce();
       setReading(kg);
     } catch (e: any) {
-      setErr(e?.message ?? "فشل قراءة الميزان");
+      setErr(e?.message ?? text("فشل قراءة الميزان", "Could not read the scale."));
     } finally { setBusy(false); }
   }
 
@@ -1045,7 +1052,7 @@ function WeightCaptureModal({
         const kg = await readWeightOnce();
         if (!cancelled) { setReading(kg); setErr(null); }
       } catch (e: any) {
-        if (!cancelled) setErr(e?.message ?? "فشل قراءة الميزان");
+        if (!cancelled) setErr(e?.message ?? text("فشل قراءة الميزان", "Could not read the scale."));
       } finally { inflight = false; }
     };
     void tick();
@@ -1059,38 +1066,38 @@ function WeightCaptureModal({
   const subtotal = kg * (item.pricePerKg ?? 0);
 
   function confirm() {
-    if (kg <= 0) { setErr("الوزن يجب أن يكون أكبر من صفر"); return; }
+    if (kg <= 0) { setErr(text("الوزن يجب أن يكون أكبر من صفر", "Weight must be greater than zero.")); return; }
     onConfirm(kg);
   }
 
   return (
     <div style={S.modalOverlay} onClick={onCancel}>
-      <div dir="rtl" style={{ ...S.modalCard, maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+      <div dir={language === "en" ? "ltr" : "rtl"} style={{ ...S.modalCard, maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
         <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>
           ⚖️ {item.nameAr}
         </div>
         <div style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
-          السعر: {(item.pricePerKg ?? 0).toFixed(2)} {currencySymbol()} / كجم
+          {text("السعر:", "Price:")} {(item.pricePerKg ?? 0).toFixed(2)} {currencySymbol()} / {text("كجم", "kg")}
         </div>
 
         {hasPort ? (
           <div style={{ background: "#f1f5f9", border: "1px solid #cbd5e1", borderRadius: 10, padding: 16, textAlign: "center", marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: "#64748b" }}>القراءة من الميزان</div>
+            <div style={{ fontSize: 12, color: "#64748b" }}>{text("القراءة من الميزان", "Scale reading")}</div>
             <div style={{ fontSize: 36, fontWeight: 700, color: live !== null ? "#166534" : "#94a3b8" }}>
-              {live !== null ? live.toFixed(3) : "—"} <span style={{ fontSize: 18 }}>كجم</span>
+              {live !== null ? live.toFixed(3) : "—"} <span style={{ fontSize: 18 }}>{text("كجم", "kg")}</span>
             </div>
             <button onClick={() => void poll()} disabled={busy} style={{ ...S.modalSaveBtn, marginTop: 8, background: "#475569" }}>
-              {busy ? "..." : "🔄 إعادة القراءة"}
+              {busy ? "..." : `🔄 ${text("إعادة القراءة", "Read again")}`}
             </button>
           </div>
         ) : (
           <div style={{ ...S.msgErr, marginBottom: 12 }}>
-            لم يتم تكوين منفذ الميزان. أدخل الوزن يدوياً، أو افتح ‹الميزان› من لوحة التحكم لتفعيل القراءة الحيّة.
+            {text("لم يتم تكوين منفذ الميزان. أدخل الوزن يدوياً، أو افتح ‹الميزان› من لوحة التحكم لتفعيل القراءة الحيّة.", "No scale port is configured. Enter the weight manually or enable live readings from Dashboard → Scale.")}
           </div>
         )}
 
         <label style={{ display: "block", marginBottom: 12 }}>
-          <div style={{ fontSize: 13, color: "#475569", marginBottom: 4 }}>وزن يدوي (كجم) — يُلغي قراءة الميزان</div>
+          <div style={{ fontSize: 13, color: "#475569", marginBottom: 4 }}>{text("وزن يدوي (كجم) — يُلغي قراءة الميزان", "Manual weight (kg) — overrides the scale reading")}</div>
           <input type="number" step="0.001" min="0" value={manual}
                  onChange={(e) => setManual(e.target.value)} autoFocus
                  placeholder={live !== null ? live.toFixed(3) : "0.000"}
@@ -1098,7 +1105,7 @@ function WeightCaptureModal({
         </label>
 
         <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 12px", background: "#fefce8", border: "1px solid #fde047", borderRadius: 8, marginBottom: 12 }}>
-          <span style={{ color: "#854d0e" }}>المجموع</span>
+          <span style={{ color: "#854d0e" }}>{text("المجموع", "Subtotal")}</span>
           <strong style={{ color: "#854d0e", fontSize: 18 }}>{subtotal.toFixed(2)} {currencySymbol()}</strong>
         </div>
 
@@ -1106,9 +1113,9 @@ function WeightCaptureModal({
 
         <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
           <button onClick={confirm} disabled={kg <= 0} style={{ ...S.modalSaveBtn, opacity: kg <= 0 ? 0.5 : 1 }}>
-            ✅ إضافة للسلة
+            ✅ {text("إضافة للسلة", "Add to cart")}
           </button>
-          <button onClick={onCancel} style={S.modalBackBtn}>إلغاء</button>
+          <button onClick={onCancel} style={S.modalBackBtn}>{text("إلغاء", "Cancel")}</button>
         </div>
       </div>
     </div>
@@ -1117,6 +1124,8 @@ function WeightCaptureModal({
 
 // ─── Customer picker modal ─────────────────────────────────────────
 function CustomerPicker({ onSelect, onClose }: { onSelect: (c: LocalCustomer) => void; onClose: () => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<LocalCustomer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1139,7 +1148,7 @@ function CustomerPicker({ onSelect, onClose }: { onSelect: (c: LocalCustomer) =>
   }, [q]);
 
   async function handleCreate() {
-    if (!newName.trim()) { setErr("اسم العميل مطلوب"); return; }
+    if (!newName.trim()) { setErr(text("اسم العميل مطلوب", "Customer name is required.")); return; }
     setSaving(true); setErr(null);
     try {
       const c = await createCustomer({
@@ -1149,16 +1158,16 @@ function CustomerPicker({ onSelect, onClose }: { onSelect: (c: LocalCustomer) =>
       });
       onSelect(c);
     } catch (e: any) {
-      setErr(`تعذّر الإنشاء: ${e?.message ?? e}`);
+      setErr(`${text("تعذّر الإنشاء:", "Could not create customer:")} ${e?.message ?? e}`);
     } finally { setSaving(false); }
   }
 
   return (
     <div style={S.modalOverlay} onClick={onClose}>
-      <div dir="rtl" style={S.modalCard} onClick={(e) => e.stopPropagation()}>
+      <div dir={language === "en" ? "ltr" : "rtl"} style={S.modalCard} onClick={(e) => e.stopPropagation()}>
         <div style={S.modalHeader}>
           <h3 style={{ margin: 0, fontSize: 18, color: "#0f172a" }}>
-            {showNew ? "👤 عميل جديد" : "👥 اختر العميل"}
+            {showNew ? `👤 ${text("عميل جديد", "New customer")}` : `👥 ${text("اختر العميل", "Choose a customer")}`}
           </h3>
           <button onClick={onClose} style={S.modalCloseBtn}>×</button>
         </div>
@@ -1166,17 +1175,17 @@ function CustomerPicker({ onSelect, onClose }: { onSelect: (c: LocalCustomer) =>
         {!showNew ? (
           <>
             <input
-              autoFocus placeholder="🔍 بحث بالاسم، الجوال، أو الرقم الضريبي..."
+              autoFocus placeholder={text("🔍 بحث بالاسم، الجوال، أو الرقم الضريبي...", "🔍 Search by name, phone, or tax number…")}
               value={q} onChange={(e) => setQ(e.target.value)}
               style={S.modalSearch}
             />
             <div style={S.modalList}>
               {loading ? (
-                <div style={S.modalEmpty}>... جاري التحميل</div>
+                <div style={S.modalEmpty}>{text("... جاري التحميل", "Loading…")}</div>
               ) : rows.length === 0 ? (
                 <div style={S.modalEmpty}>
                   <div style={{ fontSize: 32, marginBottom: 8 }}>🤷‍♂️</div>
-                  <div>لا يوجد عميل مطابق</div>
+                  <div>{text("لا يوجد عميل مطابق", "No matching customer")}</div>
                 </div>
               ) : (
                 rows.map((c) => (
@@ -1189,35 +1198,35 @@ function CustomerPicker({ onSelect, onClose }: { onSelect: (c: LocalCustomer) =>
                         </div>
                       )}
                     </div>
-                    <span style={{ color: "#3b82f6", fontSize: 14, fontWeight: 600 }}>اختيار ←</span>
+                    <span style={{ color: "#3b82f6", fontSize: 14, fontWeight: 600 }}>{text("اختيار ←", "Select →")}</span>
                   </button>
                 ))
               )}
             </div>
             <button onClick={() => setShowNew(true)} style={S.modalNewBtn}>
-              <span style={{ fontSize: 18 }}>＋</span> إضافة عميل جديد
+              <span style={{ fontSize: 18 }}>＋</span> {text("إضافة عميل جديد", "Add new customer")}
             </button>
           </>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div>
-              <label style={S.modalFieldLabel}>اسم العميل *</label>
+              <label style={S.modalFieldLabel}>{text("اسم العميل *", "Customer name *")}</label>
               <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} style={S.modalField} />
             </div>
             <div>
-              <label style={S.modalFieldLabel}>رقم الجوال</label>
+              <label style={S.modalFieldLabel}>{text("رقم الجوال", "Phone number")}</label>
               <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} style={S.modalField} placeholder="05XXXXXXXX" />
             </div>
             <div>
-              <label style={S.modalFieldLabel}>الرقم الضريبي (اختياري)</label>
+              <label style={S.modalFieldLabel}>{text("الرقم الضريبي (اختياري)", "Tax number (optional)")}</label>
               <input value={newVat} onChange={(e) => setNewVat(e.target.value)} style={S.modalField} placeholder="3xxxxxxxxxxxxx3" />
             </div>
             {err && <div style={S.msgErr}>{err}</div>}
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
               <button onClick={handleCreate} disabled={saving} style={{ ...S.modalSaveBtn, opacity: saving ? 0.6 : 1 }}>
-                {saving ? "..." : "💾 حفظ واختيار"}
+                {saving ? "..." : `💾 ${text("حفظ واختيار", "Save and select")}`}
               </button>
-              <button onClick={() => setShowNew(false)} style={S.modalBackBtn}>← رجوع</button>
+              <button onClick={() => setShowNew(false)} style={S.modalBackBtn}>← {text("رجوع", "Back")}</button>
             </div>
           </div>
         )}

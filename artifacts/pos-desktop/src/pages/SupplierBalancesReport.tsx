@@ -4,6 +4,7 @@ import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, SearchCombobox, inpu
 import { FilterField } from "./_reportFilters";
 import { useDataRefresh } from "../lib/dataBus";
 import type { ExportColumn } from "../lib/exporters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 // Flat row mirroring the on-screen balances table (per-supplier rows + totals row).
 type BalExportRow = {
@@ -20,6 +21,8 @@ type BalExportRow = {
 type Filter = "all" | "owed" | "advance" | "zero";
 
 export default function SupplierBalancesReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<Supplier[] | null>(null);
   const [filter, setFilter] = useState<Filter>("owed");
   const [loading, setLoading] = useState(false);
@@ -53,41 +56,41 @@ export default function SupplierBalancesReport() {
     vatNumber: s.vatNumber || "—",
     phone: s.phone || "—",
     balance: s.balance,
-    note: s.balance < -0.001 ? "مدين" : s.balance > 0.001 ? "دائن" : "",
+    note: s.balance < -0.001 ? text("مدين", "Debit") : s.balance > 0.001 ? text("دائن", "Credit") : "",
   }));
   if (shown.length > 0) {
     exportRows.push({
-      code: "", name: `الإجمالي (${shown.length} مورد)`, vatNumber: "", phone: "",
+      code: "", name: `${text("الإجمالي", "Total")} (${shown.length} ${text("مورد", "suppliers")})`, vatNumber: "", phone: "",
       balance: shown.reduce((s, r) => s + r.balance, 0), note: "",
     });
   }
   const exportCols: ExportColumn<BalExportRow>[] = [
-    { header: "الكود", cell: (r) => r.code },
-    { header: "المورد", cell: (r) => r.name },
-    { header: "الرقم الضريبي", cell: (r) => r.vatNumber },
-    { header: "الهاتف", cell: (r) => r.phone },
-    { header: "الرصيد", cell: (r) => r.balance },
-    { header: "الطبيعة", cell: (r) => r.note },
+    { header: text("الكود", "Code"), cell: (r) => r.code },
+    { header: text("المورد", "Supplier"), cell: (r) => r.name },
+    { header: text("الرقم الضريبي", "Tax number"), cell: (r) => r.vatNumber },
+    { header: text("الهاتف", "Phone"), cell: (r) => r.phone },
+    { header: text("الرصيد", "Balance"), cell: (r) => r.balance },
+    { header: text("الطبيعة", "Type"), cell: (r) => r.note },
   ];
 
   return (
-    <Page title="أرصدة الموردين" subtitle="الرصيد الحالي لكل مورد. الرصيد الموجب = مستحق للمورد (دائن)، السالب = دفعة مقدمة لدى المورد (مدين).">
+    <Page title={text("أرصدة الموردين", "Supplier balances")} subtitle={text("الرصيد الحالي لكل مورد. الرصيد الموجب = مستحق للمورد (دائن)، السالب = دفعة مقدمة لدى المورد (مدين).", "Current balance for each supplier. Positive means payable to the supplier; negative means an advance payment.")}>
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <FilterField label="التصفية">
+          <FilterField label={text("التصفية", "Filter")}>
             <SearchCombobox
               value={filter}
               onChange={(v) => setFilter((v as Filter) || "all")}
               options={[
-                { value: "owed", label: "مستحق للمورد فقط" },
-                { value: "advance", label: "دفعات مقدمة فقط" },
-                { value: "zero", label: "رصيد صفري" },
-                { value: "all", label: "الكل" },
+                { value: "owed", label: text("مستحق للمورد فقط", "Payables only") },
+                { value: "advance", label: text("دفعات مقدمة فقط", "Advances only") },
+                { value: "zero", label: text("رصيد صفري", "Zero balance") },
+                { value: "all", label: text("الكل", "All") },
               ]}
               style={{ ...input, padding: "8px 10px", minWidth: 200 }}
             />
           </FilterField>
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : text("عرض", "Run report")}</button>
         </div>
       </Card>
 
@@ -98,28 +101,28 @@ export default function SupplierBalancesReport() {
               <ExportButtons
                 columns={exportCols}
                 rows={exportRows}
-                filenameBase="أرصدة-الموردين"
-                title="أرصدة الموردين"
+                filenameBase={text("أرصدة-الموردين", "supplier-balances")}
+                title={text("أرصدة الموردين", "Supplier balances")}
               />
             </div>
           )}
           <div style={{ display: "flex", gap: 24, marginBottom: 10, fontSize: 13 }}>
-            <div><b>إجمالي المستحق للموردين:</b> {fmt(totalOwed)}</div>
-            <div><b>إجمالي الدفعات المقدمة:</b> {fmt(totalAdvance)}</div>
+            <div><b>{text("إجمالي المستحق للموردين:", "Total payable to suppliers:")}</b> {fmt(totalOwed)}</div>
+            <div><b>{text("إجمالي الدفعات المقدمة:", "Total supplier advances:")}</b> {fmt(totalAdvance)}</div>
           </div>
           <Table>
             <thead>
               <tr>
-                <Th style={{ width: 120 }}>الكود</Th>
-                <Th>المورد</Th>
-                <Th style={{ width: 160 }}>الرقم الضريبي</Th>
-                <Th style={{ width: 140 }}>الهاتف</Th>
-                <Th style={{ textAlign: "left", width: 160 }}>الرصيد</Th>
+                <Th style={{ width: 120 }}>{text("الكود", "Code")}</Th>
+                <Th>{text("المورد", "Supplier")}</Th>
+                <Th style={{ width: 160 }}>{text("الرقم الضريبي", "Tax number")}</Th>
+                <Th style={{ width: 140 }}>{text("الهاتف", "Phone")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 160 }}>{text("الرصيد", "Balance")}</Th>
               </tr>
             </thead>
             <tbody>
               {shown.length === 0 && (
-                <tr><Td colSpan={5}><Empty text="لا يوجد موردون مطابقون للتصفية" /></Td></tr>
+                <tr><Td colSpan={5}><Empty text={text("لا يوجد موردون مطابقون للتصفية", "No suppliers match this filter")} /></Td></tr>
               )}
               {shown.map((s) => (
                 <tr key={s.id}>
@@ -128,13 +131,13 @@ export default function SupplierBalancesReport() {
                   <Td mono>{s.vatNumber || "—"}</Td>
                   <Td mono>{s.phone || "—"}</Td>
                   <Td num style={{ color: s.balance < -0.001 ? "#991b1b" : undefined }}>
-                    {fmt(s.balance)} {s.balance < -0.001 ? "(مدين)" : s.balance > 0.001 ? "(دائن)" : ""}
+                    {fmt(s.balance)} {s.balance < -0.001 ? `(${text("مدين", "Debit")})` : s.balance > 0.001 ? `(${text("دائن", "Credit")})` : ""}
                   </Td>
                 </tr>
               ))}
               {shown.length > 0 && (
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
-                  <Td colSpan={4}>الإجمالي ({shown.length} مورد)</Td>
+                  <Td colSpan={4}>{text("الإجمالي", "Total")} ({shown.length} {text("مورد", "suppliers")})</Td>
                   <Td num>{fmt(shown.reduce((s, r) => s + r.balance, 0))}</Td>
                 </tr>
               )}

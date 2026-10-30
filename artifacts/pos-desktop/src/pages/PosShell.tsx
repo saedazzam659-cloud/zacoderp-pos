@@ -17,6 +17,7 @@ import { useCurrencySymbol, getCountryIso, setCountryIso, countryByIso, ARAB_COU
 import { SearchCombobox } from "./_adminUi";
 import { TAURI_MODE, type CashierContext } from "../lib/tauri-shim";
 import NumberSystemControl from "./NumberSystemControl";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 import PeripheralsSettings from "./PeripheralsSettings";
 import SalesScreen from "./SalesScreen";
 import RegisterScreen from "./RegisterScreen";
@@ -275,6 +276,49 @@ const NAV_GROUPS: NavGroupDef[] = [
     ],
   },
 ];
+
+const NAV_LABELS_EN: Record<string, string> = {
+  sales: "Sale", returns: "Returns", pos_invoices: "POS invoices", parked: "Parked carts",
+  daily: "Daily report", pending: "Pending invoices", customers: "Customers",
+  suppliers: "Suppliers", supplier_groups: "Supplier groups", items: "Items",
+  item_groups: "Item groups", brands: "Brands", stock_import: "Import opening stock",
+  item_import: "Import items", low_stock: "Low stock", uom: "Units of measure",
+  purchase_orders: "Purchase orders", goods_receipts: "Goods receipts", purchases: "Purchase invoices",
+  purchase_returns: "Purchase returns", letters_of_credit: "Letters of credit",
+  supplier_settlement: "Supplier settlements", supplier_payment: "Supplier payment",
+  salespersons: "Sales representatives", quotations: "Quotations", sales_orders: "Sales orders",
+  sales_invoices: "Sales invoices", sales_returns: "Sales returns", customer_collection: "Customer collection",
+  invoice_import: "Import invoices", cash_boxes: "Cash boxes", banks: "Banks",
+  financial_tx: "Financial transactions", treasury_transfers: "Treasury transfers",
+  currencies: "Currencies", exchange_rates: "Exchange rates", chart_of_accounts: "Chart of accounts",
+  journal_entries: "Journal entries", posting_center: "Posting center", fiscal_periods: "Fiscal periods",
+  cost_centers: "Cost centers", taxes: "Taxes", branches: "Branches", warehouses: "Warehouses",
+  stocktakes: "Stocktakes", stock_adjustments: "Stock adjustments", stock_movements: "Stock movements",
+  stock_transfers: "Warehouse transfers", item_card: "Item card", stock_valuation: "Stock valuation",
+  warehouse_stock: "Stock by warehouse", slow_moving: "Slow-moving items", free_quantities: "Free quantities",
+  item_sales_valuation: "Item sales valuation", units: "Units", warehouse_groups: "Warehouse groups",
+  inventory_dashboard: "Inventory dashboard", smart_alerts: "Smart alerts", goods_deliveries: "Goods issues",
+  offers: "Promotions", scale: "Scale", network: "Network sharing", expiry: "Expiry report",
+  users: "Users", number_series: "Number sequences", posting_control: "Posting controls",
+  pos_accounts: "POS account settings", backup: "Backup", user_permissions: "User permissions",
+  dashboard: "Dashboard", settings_guide: "Settings guide", zatca: "ZATCA", updates: "Updates",
+  report_sales_daily: "Daily sales", report_sales_by_period: "Sales by period",
+  report_sales_by_item: "Sales by item", report_sales_by_customer: "Sales by customer",
+  report_sales_daily_detailed: "Detailed daily sales", report_sales_payment_mix: "Sales by payment method",
+  report_sales_returns: "Sales returns", report_sales_top_customers: "Top customers",
+  report_purchases_by_supplier: "Purchases by supplier", report_purchases_by_item: "Purchases by item",
+  report_purchases_by_period: "Purchases by period", report_purchases_returns: "Purchase returns",
+  report_top_suppliers: "Top suppliers", report_supplier_statement: "Supplier statement",
+  report_supplier_statement_detailed: "Detailed supplier statement", report_supplier_balances: "Supplier balances",
+  report_supplier_aging: "Supplier aging", report_lc_statement: "Letter of credit statement",
+  report_account_statement: "Account statement", report_customer_statement: "Customer statement",
+  report_income_statement: "Income statement", report_balance_sheet: "Balance sheet",
+  report_trial_balance: "Trial balance",
+};
+
+function navLabel(id: string, arabic: string, language: "ar" | "en"): string {
+  return language === "en" ? NAV_LABELS_EN[id] ?? arabic : arabic;
+}
 // Reverse lookup: view id → group key (for auto-expanding the active group).
 const VIEW_TO_GROUP: Partial<Record<View, string>> = Object.fromEntries(
   NAV_GROUPS.flatMap((g) => g.members.map((m) => [m, g.key])),
@@ -311,6 +355,7 @@ export default function PosShell({
   companyName, deviceId, expiresAt, onSignOut, onLogoutCashier,
   standalone = false, standaloneLicense, standaloneSession,
 }: Props) {
+  const language = useUiLanguage();
   const api = useMemo(
     () => standalone ? null : createApi({ baseUrl, deviceToken, userToken: userToken ?? null }),
     [baseUrl, deviceToken, userToken, standalone],
@@ -1029,7 +1074,7 @@ export default function PosShell({
   );
 
   return (
-    <div dir="rtl" style={S.shell}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.shell}>
 
       {/* ─── Main column ───────────────────────────────────── */}
       <div style={S.main}>
@@ -1044,11 +1089,12 @@ export default function PosShell({
             {(() => {
               const renderTopLeaf = (it: { id: View; icon: string; label: string; badge?: number }) => {
                 const active = view === it.id;
+                const label = navLabel(it.id, it.label, language);
                 return (
                   <button key={it.id} onClick={() => { setView(it.id); setOpenGroup(null); }}
-                    style={active ? S.topLeafActive : S.topLeaf} title={it.label}>
+                    style={active ? S.topLeafActive : S.topLeaf} title={label}>
                     <span style={{ fontSize: 13 }}>{it.icon}</span>
-                    <span>{it.label}</span>
+                    <span>{label}</span>
                     {it.badge !== undefined && <span style={S.topBadge}>{it.badge}</span>}
                   </button>
                 );
@@ -1077,13 +1123,18 @@ export default function PosShell({
                     const isOpen = openGroup === g.key;
                     const hasActive = children.some((c) => c.id === view);
                     const badgeTotal = children.reduce((sum, c) => sum + (c.badge ?? 0), 0);
+                    const groupLabel = uiText(g.label, ({
+                      pos: "Point of sale", inventory: "Inventory", selling: "Sales and customers",
+                      purchasing: "Purchasing and suppliers", cash_banks: "Cash and banks",
+                      accounts: "General accounts", control: "General controls",
+                    } as Record<string, string>)[g.key] ?? g.label, language);
                     return (
                       <div key={g.key} style={{ position: "relative" }}>
                         <button onClick={() => setOpenGroup((prev) => (prev === g.key ? null : g.key))}
                           style={(isOpen || hasActive) ? S.topGroupActive : S.topGroup}
-                          aria-expanded={isOpen} title={g.label}>
+                          aria-expanded={isOpen} title={groupLabel}>
                           <span style={{ fontSize: 13 }}>{g.icon}</span>
-                          <span>{g.label}</span>
+                          <span>{groupLabel}</span>
                           {!isOpen && badgeTotal > 0 && <span style={S.topBadge}>{badgeTotal}</span>}
                           <span style={{ fontSize: 9, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▾</span>
                         </button>
@@ -1094,11 +1145,11 @@ export default function PosShell({
                               const active = view === it.id;
                               return (
                                 <Fragment key={it.id}>
-                                  {sub && <div style={S.dropdownSub}>{sub}</div>}
+                                  {sub && <div style={S.dropdownSub}>{uiText(sub, "Financial reports", language)}</div>}
                                   <button onClick={() => { setView(it.id); setOpenGroup(null); }}
                                     style={active ? S.dropdownItemActive : S.dropdownItem}>
                                     <span style={{ fontSize: 14, width: 22, textAlign: "center" }}>{it.icon}</span>
-                                    <span style={{ flex: 1 }}>{it.label}</span>
+                                    <span style={{ flex: 1 }}>{navLabel(it.id, it.label, language)}</span>
                                     {it.badge !== undefined && <span style={S.topBadge}>{it.badge}</span>}
                                   </button>
                                 </Fragment>

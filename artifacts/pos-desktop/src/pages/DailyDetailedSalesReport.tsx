@@ -2,14 +2,17 @@ import { Fragment, useState } from "react";
 import { reportSalesInvoices, reportSalesInvoiceLines, type SalesInvoiceReportRow, type SalesLineReportRow } from "../lib/salesReports";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
-function payLabel(m: string): string {
-  return m === "cash" ? "نقدي" : m === "bank" ? "بنك / شبكة" : "آجل";
+function payLabel(m: string, language: "ar" | "en"): string {
+  return m === "cash" ? uiText("نقدي", "Cash", language) : m === "bank" ? uiText("بنك / شبكة", "Bank / card", language) : uiText("آجل", "Credit", language);
 }
 
 type ItemBucket = { itemId: number; code: string | null; name: string; qty: number; total: number };
 
 export default function DailyDetailedSalesReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const { branches } = useDimensions();
   const [fromDate, setFromDate] = useState(todayStr());
   const [toDate, setToDate] = useState(todayStr());
@@ -21,7 +24,7 @@ export default function DailyDetailedSalesReport() {
   const [err, setErr] = useState<string | null>(null);
 
   async function run() {
-    if (fromDate > toDate) { setErr("تاريخ البداية يجب أن يكون قبل تاريخ النهاية"); return; }
+    if (fromDate > toDate) { setErr(text("تاريخ البداية يجب أن يكون قبل تاريخ النهاية", "Start date must be on or before end date.")); return; }
     setErr(null); setLoading(true);
     try {
       const branch = branchId === "" ? null : branchId;
@@ -49,13 +52,13 @@ export default function DailyDetailedSalesReport() {
   );
 
   return (
-    <Page title="تقرير المبيعات اليومي التفصيلي" subtitle="قائمة الفواتير مع بنودها، وملخّص إجمالي لكل صنف خلال الفترة.">
+    <Page title={text("تقرير المبيعات اليومي التفصيلي", "Detailed daily sales report")} subtitle={text("قائمة الفواتير مع بنودها، وملخّص إجمالي لكل صنف خلال الفترة.", "Invoices with line items and a per-item summary for the selected period.")}>
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <DateField label="من تاريخ" value={fromDate} onChange={setFromDate} />
-          <DateField label="إلى تاريخ" value={toDate} onChange={setToDate} />
+          <DateField label={text("من تاريخ", "From date")} value={fromDate} onChange={setFromDate} />
+          <DateField label={text("إلى تاريخ", "To date")} value={toDate} onChange={setToDate} />
           <BranchField branches={branches} value={branchId} onChange={setBranchId} />
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : text("عرض", "Run report")}</button>
         </div>
         {err && <div style={{ marginTop: 8, color: "#991b1b", fontSize: 13 }}>⚠️ {err}</div>}
       </Card>
@@ -63,22 +66,22 @@ export default function DailyDetailedSalesReport() {
       {invoices && (
         <>
           <Card style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 8, fontWeight: 700 }}>الفواتير وبنودها ({invoices.length} فاتورة)</div>
+            <div style={{ marginBottom: 8, fontWeight: 700 }}>{text("الفواتير وبنودها", "Invoices and line items")} ({invoices.length} {text("فاتورة", "invoices")})</div>
             <Table>
               <thead>
                 <tr>
-                  <Th style={{ width: 120 }}>رقم الفاتورة</Th>
-                  <Th style={{ width: 110 }}>التاريخ</Th>
-                  <Th>العميل</Th>
-                  <Th style={{ width: 90 }}>الدفع</Th>
-                  <Th style={{ textAlign: "left", width: 110 }}>الصافي</Th>
-                  <Th style={{ textAlign: "left", width: 100 }}>الضريبة</Th>
-                  <Th style={{ textAlign: "left", width: 120 }}>الإجمالي</Th>
+                  <Th style={{ width: 120 }}>{text("رقم الفاتورة", "Invoice number")}</Th>
+                  <Th style={{ width: 110 }}>{text("التاريخ", "Date")}</Th>
+                  <Th>{text("العميل", "Customer")}</Th>
+                  <Th style={{ width: 90 }}>{text("الدفع", "Payment")}</Th>
+                  <Th style={{ textAlign: language === "en" ? "right" : "left", width: 110 }}>{text("الصافي", "Net")}</Th>
+                  <Th style={{ textAlign: language === "en" ? "right" : "left", width: 100 }}>{text("الضريبة", "Tax")}</Th>
+                  <Th style={{ textAlign: language === "en" ? "right" : "left", width: 120 }}>{text("الإجمالي", "Total")}</Th>
                 </tr>
               </thead>
               <tbody>
                 {invoices.length === 0 && (
-                  <tr><Td colSpan={7}><Empty text="لا توجد فواتير في الفترة المحددة" /></Td></tr>
+                  <tr><Td colSpan={7}><Empty text={text("لا توجد فواتير في الفترة المحددة", "No invoices for this period")} /></Td></tr>
                 )}
                 {invoices.map((inv) => {
                   const lines = linesByInvoice.get(inv.id) ?? [];
@@ -87,8 +90,8 @@ export default function DailyDetailedSalesReport() {
                       <tr style={{ background: "#f8fafc", fontWeight: 600 }}>
                         <Td mono>{inv.invoiceNo}</Td>
                         <Td mono>{inv.invoiceDate}</Td>
-                        <Td>{inv.customerName || "عميل نقدي"}</Td>
-                        <Td>{payLabel(inv.paymentMethod)}</Td>
+                        <Td>{inv.customerName || text("عميل نقدي", "Cash customer")}</Td>
+                        <Td>{payLabel(inv.paymentMethod, language)}</Td>
                         <Td num>{fmt(inv.subtotal)}</Td>
                         <Td num>{fmt(inv.vatTotal)}</Td>
                         <Td num>{fmt(inv.grandTotal)}</Td>
@@ -110,7 +113,7 @@ export default function DailyDetailedSalesReport() {
                 })}
                 {invoices.length > 0 && (
                   <tr style={{ fontWeight: 700, background: "#eef2ff" }}>
-                    <Td colSpan={4}>الإجمالي العام</Td>
+                    <Td colSpan={4}>{text("الإجمالي العام", "Grand total")}</Td>
                     <Td num>{fmt(totals.sub)}</Td>
                     <Td num>{fmt(totals.vat)}</Td>
                     <Td num>{fmt(totals.tot)}</Td>
@@ -121,19 +124,19 @@ export default function DailyDetailedSalesReport() {
           </Card>
 
           <Card>
-            <div style={{ marginBottom: 8, fontWeight: 700 }}>ملخّص الأصناف ({items.length} صنف)</div>
+            <div style={{ marginBottom: 8, fontWeight: 700 }}>{text("ملخّص الأصناف", "Item summary")} ({items.length} {text("صنف", "items")})</div>
             <Table>
               <thead>
                 <tr>
-                  <Th style={{ width: 120 }}>كود الصنف</Th>
-                  <Th>اسم الصنف</Th>
-                  <Th style={{ textAlign: "left", width: 120 }}>الكمية</Th>
-                  <Th style={{ textAlign: "left", width: 150 }}>إجمالي المبيعات</Th>
+                  <Th style={{ width: 120 }}>{text("كود الصنف", "Item code")}</Th>
+                  <Th>{text("اسم الصنف", "Item name")}</Th>
+                  <Th style={{ textAlign: language === "en" ? "right" : "left", width: 120 }}>{text("الكمية", "Quantity")}</Th>
+                  <Th style={{ textAlign: language === "en" ? "right" : "left", width: 150 }}>{text("إجمالي المبيعات", "Sales total")}</Th>
                 </tr>
               </thead>
               <tbody>
                 {items.length === 0 && (
-                  <tr><Td colSpan={4}><Empty text="لا توجد بنود في الفترة المحددة" /></Td></tr>
+                  <tr><Td colSpan={4}><Empty text={text("لا توجد بنود في الفترة المحددة", "No line items for this period")} /></Td></tr>
                 )}
                 {items.map((r) => (
                   <tr key={r.itemId}>

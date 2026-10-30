@@ -12,8 +12,11 @@ import {
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 export default function StocktakesAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<StocktakeSummary[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [posting, setPosting] = useState<number | null>(null);
@@ -24,21 +27,21 @@ export default function StocktakesAdmin() {
   useDataRefresh(["stock", "journal"], () => { void refresh(); });
 
   async function post(s: StocktakeSummary) {
-    if (!confirm(`ترحيل الجرد ${s.stocktake_no}؟ سيتم إنشاء تسوية بالفروقات.`)) return;
+    if (!confirm(`${text("ترحيل الجرد", "Post stocktake")} ${s.stocktake_no}? ${text("سيتم إنشاء تسوية بالفروقات.", "An adjustment will be created for the differences.")}`)) return;
     setPosting(s.id);
     try { await postStocktake(s.id); await refresh(); }
-    catch (e: any) { alert(e?.message ?? "فشل الترحيل"); }
+    catch (e: any) { alert(e?.message ?? text("فشل الترحيل", "Could not post stocktake.")); }
     finally { setPosting(null); }
   }
 
   return (
     <Page
-      title="جرد المخازن"
-      subtitle={`${rows.length} جرد`}
+      title={text("جرد المخازن", "Stocktakes")}
+      subtitle={`${rows.length} ${text("جرد", "stocktakes")}`}
       right={
         <button onClick={() => setShowForm(true)} disabled={showForm}
           style={{ ...btnPrimary, opacity: showForm ? 0.5 : 1, cursor: showForm ? "not-allowed" : "pointer" }}>
-          + جرد جديد
+          + {text("جرد جديد", "New stocktake")}
         </button>
       }
     >
@@ -51,19 +54,19 @@ export default function StocktakesAdmin() {
       )}
       {rows.length > 0 && !showForm && (
         <ActionBar selectedLabel={sel.selected ? sel.selected.stocktake_no : null}>
-          <ActionBtn label="ترحيل" icon="✔" tone="success"
+          <ActionBtn label={text("ترحيل", "Post")} icon="✔" tone="success"
             disabled={!sel.selected || posting === sel.selectedId || showForm || sel.selected.status !== "draft"}
             onClick={() => { const s = sel.selected; if (s) void post(s); }} />
         </ActionBar>
       )}
       <Card>
-        {rows.length === 0 && !showForm ? <Empty text="لا توجد عمليات جرد بعد" /> : (
+        {rows.length === 0 && !showForm ? <Empty text={text("لا توجد عمليات جرد بعد", "No stocktakes yet")} /> : (
           <Table>
             <thead><tr>
               <SelectTh />
-              <Th>الرقم</Th><Th>التاريخ</Th><Th>المخزن</Th>
-              <Th>عدد الأصناف</Th><Th>الحالة</Th>
-              <Th>التسوية</Th>
+              <Th>{text("الرقم", "Number")}</Th><Th>{text("التاريخ", "Date")}</Th><Th>{text("المخزن", "Warehouse")}</Th>
+              <Th>{text("عدد الأصناف", "Items")}</Th><Th>{text("الحالة", "Status")}</Th>
+              <Th>{text("التسوية", "Adjustment")}</Th>
             </tr></thead>
             <tbody>
               {rows.map((s) => (
@@ -75,8 +78,8 @@ export default function StocktakesAdmin() {
                   <Td num>{s.lines_count}</Td>
                   <Td>
                     {s.status === "draft"
-                      ? <span style={{ color: "#d97706", fontWeight: 600 }}>مسودة</span>
-                      : <span style={{ color: "#16a34a", fontWeight: 600 }}>مرحّل</span>}
+                      ? <span style={{ color: "#d97706", fontWeight: 600 }}>{text("مسودة", "Draft")}</span>
+                      : <span style={{ color: "#16a34a", fontWeight: 600 }}>{text("مرحّل", "Posted")}</span>}
                   </Td>
                   <Td mono>{s.adjustment_id ? `ADJ #${s.adjustment_id}` : "—"}</Td>
                 </tr>
@@ -92,6 +95,8 @@ export default function StocktakesAdmin() {
 type LineRow = StocktakeLineInput & { _key: number; system_qty: number; nameAr: string };
 
 function StocktakeForm({ onCancel, onDone }: { onCancel: () => void; onDone: () => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [items, setItems] = useState<LocalItem[]>([]);
   const [date, setDate] = useState<string>(todayStr());
@@ -112,7 +117,7 @@ function StocktakeForm({ onCancel, onDone }: { onCancel: () => void; onDone: () 
   }, []);
 
   async function loadAllItemsFromWarehouse() {
-    if (warehouseId === "") { setErr("اختر المخزن أولاً"); return; }
+    if (warehouseId === "") { setErr(text("اختر المخزن أولاً", "Select a warehouse first.")); return; }
     const onHand = await listStockOnHand(warehouseId);
     const byItem = new Map<number, { qty: number; last_cost: number }>();
     for (const r of onHand) byItem.set(r.item_id, { qty: r.qty, last_cost: r.last_cost });
@@ -138,8 +143,8 @@ function StocktakeForm({ onCancel, onDone }: { onCancel: () => void; onDone: () 
   }
 
   async function save() {
-    if (warehouseId === "") { setErr("اختر المخزن"); return; }
-    if (lines.length === 0) { setErr("اضغط 'تحميل أصناف المخزن' أو أضف بنوداً"); return; }
+    if (warehouseId === "") { setErr(text("اختر المخزن", "Select a warehouse.")); return; }
+    if (lines.length === 0) { setErr(text("اضغط 'تحميل أصناف المخزن' أو أضف بنوداً", "Load the warehouse items or add lines.")); return; }
     setBusy(true); setErr(null);
     try {
       await createStocktake({
@@ -149,47 +154,47 @@ function StocktakeForm({ onCancel, onDone }: { onCancel: () => void; onDone: () 
         lines: lines.map(({ item_id, counted_qty, unit_cost }) => ({ item_id, counted_qty, unit_cost })),
       });
       onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل الحفظ", "Could not save stocktake.")); }
     finally { setBusy(false); }
   }
 
   return (
     <div>
-      <h3 style={{ marginTop: 0 }}>جرد مخزن جديد</h3>
+      <h3 style={{ marginTop: 0 }}>{text("جرد مخزن جديد", "New stocktake")}</h3>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 10 }}>
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-        <Field label="المخزن">
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+        <Field label={text("المخزن", "Warehouse")}>
           <SearchCombobox
             value={warehouseId}
             onChange={(v) => setWarehouseId(v === "" ? "" : Number(v))}
             style={input}
             options={[
-              { value: "", label: "— اختر —" },
+              { value: "", label: text("— اختر —", "— Select —") },
               ...warehouses.map((w) => ({ value: w.id, label: w.name })),
             ]}
           />
         </Field>
-        <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} style={input} /></Field>
+        <Field label={text("ملاحظات", "Notes")}><input value={notes} onChange={(e) => setNotes(e.target.value)} style={input} /></Field>
       </div>
 
       <div style={{ marginTop: 12, marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <strong>بنود الجرد ({lines.length})</strong>
-        <button onClick={() => void loadAllItemsFromWarehouse()} style={btnSecondary} type="button">⬇ تحميل أصناف المخزن</button>
+        <strong>{text("بنود الجرد", "Stocktake lines")} ({lines.length})</strong>
+        <button onClick={() => void loadAllItemsFromWarehouse()} style={btnSecondary} type="button">⬇ {text("تحميل أصناف المخزن", "Load warehouse items")}</button>
       </div>
 
       <div style={{ maxHeight: "45vh", overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 6 }}>
         <Table>
           <thead style={{ position: "sticky", top: 0, background: "#f8fafc" }}><tr>
-            <Th>الصنف</Th>
-            <Th style={{ width: 120 }}>كمية النظام</Th>
-            <Th style={{ width: 120 }}>الكمية الفعلية</Th>
-            <Th style={{ width: 120 }}>الفرق</Th>
-            <Th style={{ width: 120 }}>تكلفة الوحدة</Th>
+            <Th>{text("الصنف", "Item")}</Th>
+            <Th style={{ width: 120 }}>{text("كمية النظام", "System quantity")}</Th>
+            <Th style={{ width: 120 }}>{text("الكمية الفعلية", "Counted quantity")}</Th>
+            <Th style={{ width: 120 }}>{text("الفرق", "Difference")}</Th>
+            <Th style={{ width: 120 }}>{text("تكلفة الوحدة", "Unit cost")}</Th>
             <Th style={{ width: 60 }}></Th>
           </tr></thead>
           <tbody>
             {lines.length === 0 ? (
-              <tr><Td colSpan={6}><div style={{ padding: 16, textAlign: "center", color: "#94a3b8" }}>اضغط "تحميل أصناف المخزن" لجلب أرصدة النظام</div></Td></tr>
+              <tr><Td colSpan={6}><div style={{ padding: 16, textAlign: "center", color: "#94a3b8" }}>{text("اضغط \"تحميل أصناف المخزن\" لجلب أرصدة النظام", "Select “Load warehouse items” to retrieve system balances.")}</div></Td></tr>
             ) : lines.map((l) => {
               const diff = l.counted_qty - l.system_qty;
               return (
@@ -208,13 +213,13 @@ function StocktakeForm({ onCancel, onDone }: { onCancel: () => void; onDone: () 
       </div>
 
       <div style={{ marginTop: 8, padding: 8, background: "#f8fafc", borderRadius: 6, fontSize: 12, color: "#64748b" }}>
-        ℹ️ يُحفظ الجرد كمسودة. اضغط "ترحيل" من القائمة لإنشاء التسوية والقيد المحاسبي.
+        ℹ️ {text("يُحفظ الجرد كمسودة. اضغط \"ترحيل\" من القائمة لإنشاء التسوية والقيد المحاسبي.", "The stocktake is saved as a draft. Select “Post” in the list to create the adjustment and journal entry.")}
       </div>
 
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} style={btnSecondary} type="button">إلغاء</button>
-        <button onClick={save} disabled={busy} style={btnPrimary} type="button">{busy ? "..." : "حفظ كمسودة"}</button>
+        <button onClick={onCancel} style={btnSecondary} type="button">{text("إلغاء", "Cancel")}</button>
+        <button onClick={save} disabled={busy} style={btnPrimary} type="button">{busy ? "..." : text("حفظ كمسودة", "Save draft")}</button>
       </Actions>
     </div>
   );

@@ -3,6 +3,7 @@ import { reportSalesInvoiceLines } from "../lib/salesReports";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
 import type { ExportColumn } from "../lib/exporters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
@@ -22,6 +23,8 @@ type Bucket = {
 };
 
 export default function SalesByItemReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const { branches } = useDimensions();
   const [fromDate, setFromDate] = useState(firstOfYear());
   const [toDate, setToDate] = useState(todayStr());
@@ -31,7 +34,7 @@ export default function SalesByItemReport() {
   const [err, setErr] = useState<string | null>(null);
 
   async function run() {
-    if (fromDate > toDate) { setErr("تاريخ البداية يجب أن يكون قبل تاريخ النهاية"); return; }
+    if (fromDate > toDate) { setErr(text("تاريخ البداية يجب أن يكون قبل تاريخ النهاية", "Start date must be on or before end date.")); return; }
     setErr(null); setLoading(true);
     try {
       const lines = await reportSalesInvoiceLines({ fromDate, toDate, branchId: branchId === "" ? null : branchId });
@@ -59,27 +62,27 @@ export default function SalesByItemReport() {
   }));
   if (rows && rows.length > 0) {
     exportRows.push({
-      code: `الإجمالي (${rows.length} صنف)`,
+      code: `${text("الإجمالي", "Total")} (${rows.length} ${text("صنف", "items")})`,
       name: "", qty: totalQty, invoices: "", total: grandTotal, share: "100%",
     });
   }
   const exportCols: ExportColumn<ItemExportRow>[] = [
-    { header: "كود الصنف", cell: (r) => r.code },
-    { header: "اسم الصنف", cell: (r) => r.name },
-    { header: "الكمية", cell: (r) => r.qty },
-    { header: "الفواتير", cell: (r) => r.invoices },
-    { header: "إجمالي المبيعات", cell: (r) => r.total },
-    { header: "المساهمة", cell: (r) => r.share },
+    { header: text("كود الصنف", "Item code"), cell: (r) => r.code },
+    { header: text("اسم الصنف", "Item name"), cell: (r) => r.name },
+    { header: text("الكمية", "Quantity"), cell: (r) => r.qty },
+    { header: text("الفواتير", "Invoices"), cell: (r) => r.invoices },
+    { header: text("إجمالي المبيعات", "Sales total"), cell: (r) => r.total },
+    { header: text("المساهمة", "Share"), cell: (r) => r.share },
   ];
 
   return (
-    <Page title="المبيعات حسب الصنف" subtitle="إجمالي مبيعات كل صنف خلال الفترة مرتبة تنازلياً مع نسبة المساهمة.">
+    <Page title={text("المبيعات حسب الصنف", "Sales by item")} subtitle={text("إجمالي مبيعات كل صنف خلال الفترة مرتبة تنازلياً مع نسبة المساهمة.", "Total sales per item for the period, sorted by contribution.")}>
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <DateField label="من تاريخ" value={fromDate} onChange={setFromDate} />
-          <DateField label="إلى تاريخ" value={toDate} onChange={setToDate} />
+          <DateField label={text("من تاريخ", "From date")} value={fromDate} onChange={setFromDate} />
+          <DateField label={text("إلى تاريخ", "To date")} value={toDate} onChange={setToDate} />
           <BranchField branches={branches} value={branchId} onChange={setBranchId} />
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : text("عرض", "Run report")}</button>
         </div>
         {err && <div style={{ marginTop: 8, color: "#991b1b", fontSize: 13 }}>⚠️ {err}</div>}
       </Card>
@@ -91,25 +94,25 @@ export default function SalesByItemReport() {
               <ExportButtons
                 columns={exportCols}
                 rows={exportRows}
-                filenameBase="المبيعات-حسب-الصنف"
-                title={`المبيعات حسب الصنف — ${fromDate} ← ${toDate}`}
+                filenameBase={text("المبيعات-حسب-الصنف", "sales-by-item")}
+                title={`${text("المبيعات حسب الصنف", "Sales by item")} — ${fromDate} ← ${toDate}`}
               />
             </div>
           )}
           <Table>
             <thead>
               <tr>
-                <Th style={{ width: 120 }}>كود الصنف</Th>
-                <Th>اسم الصنف</Th>
-                <Th style={{ textAlign: "left", width: 110 }}>الكمية</Th>
-                <Th style={{ textAlign: "center", width: 90 }}>الفواتير</Th>
-                <Th style={{ textAlign: "left", width: 150 }}>إجمالي المبيعات</Th>
-                <Th style={{ textAlign: "left", width: 100 }}>المساهمة</Th>
+                <Th style={{ width: 120 }}>{text("كود الصنف", "Item code")}</Th>
+                <Th>{text("اسم الصنف", "Item name")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 110 }}>{text("الكمية", "Quantity")}</Th>
+                <Th style={{ textAlign: "center", width: 90 }}>{text("الفواتير", "Invoices")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 150 }}>{text("إجمالي المبيعات", "Sales total")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 100 }}>{text("المساهمة", "Share")}</Th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><Td colSpan={6}><Empty text="لا توجد مبيعات في الفترة المحددة" /></Td></tr>
+                <tr><Td colSpan={6}><Empty text={text("لا توجد مبيعات في الفترة المحددة", "No sales for this period")} /></Td></tr>
               )}
               {rows.map((r) => (
                 <tr key={r.itemId}>
@@ -123,7 +126,7 @@ export default function SalesByItemReport() {
               ))}
               {rows.length > 0 && (
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
-                  <Td colSpan={2}>الإجمالي ({rows.length} صنف)</Td>
+                  <Td colSpan={2}>{text("الإجمالي", "Total")} ({rows.length} {text("صنف", "items")})</Td>
                   <Td num>{fmt(totalQty)}</Td>
                   <Td />
                   <Td num>{fmt(grandTotal)}</Td>

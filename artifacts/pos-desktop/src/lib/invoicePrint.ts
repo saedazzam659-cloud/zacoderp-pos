@@ -6,7 +6,7 @@
 // ZATCA QR is rendered from the stored TLV (base64) via the `qrcode` lib, the
 // same way the web builds it.
 import QRCode from "qrcode";
-import { getCompanyProfile, getDecimals, type CompanyProfile } from "./appSettings";
+import { getCompanyProfile, getDecimals, getUiLanguage, uiText, type CompanyProfile } from "./appSettings";
 import { currencySymbol, baseCurrencyCode, currencyByCode } from "./currency";
 import { isZatcaCountry } from "./zatcaBridge";
 import { applyNumberSystemToDocument } from "./numberDisplay";
@@ -31,9 +31,11 @@ export interface PrintDoc {
   qrBase64?: string | null;
 }
 
-const PAYMENT_LABEL: Record<PrintDoc["paymentMethod"], string> = {
-  credit: "آجل", cash: "نقدي", bank: "تحويل بنكي",
-};
+const L = (ar: string, en: string) => uiText(ar, en);
+function paymentLabel(method: PrintDoc["paymentMethod"]): string {
+  return method === "credit" ? L("آجل", "Credit")
+    : method === "cash" ? L("نقدي", "Cash") : L("تحويل بنكي", "Bank transfer");
+}
 
 function esc(s: unknown): string {
   return String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -45,7 +47,7 @@ function fmt(n: number, dp = getDecimals()): string {
 }
 
 function docTitle(kind: PrintDocKind): string {
-  return kind === "invoice" ? "فاتورة ضريبية" : "إشعار دائن (مرتجع مبيعات)";
+  return kind === "invoice" ? L("فاتورة ضريبية", "Tax invoice") : L("إشعار دائن (مرتجع مبيعات)", "Credit note (sales return)");
 }
 
 // ─── ZATCA QR (TLV base64 → PNG data URL) ─────────────────────────────
@@ -69,6 +71,8 @@ async function buildQrDataUrl(base64Tlv: string | null | undefined): Promise<str
 // 3-column header (company right / logo+title+pills center / customer left),
 // gold accents, borderless zebra lines table, totals + QR cards, audit footer.
 function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca: boolean): string {
+  const language = getUiLanguage();
+  const align = language === "en" ? "left" : "right";
   const dp = co.decimals ?? 2;
   const sym = currencySymbol();
   const logo = co.logo;
@@ -76,8 +80,8 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
   const isSimplified = !doc.customerVat;
   // Outside Saudi Arabia, drop all tax-authority ("ضريبية"/"Tax") wording.
   const titleMain = isReturn
-    ? (zatca ? (isSimplified ? "مرتجع مبيعات مبسط" : "مرتجع مبيعات ضريبي") : "مرتجع مبيعات")
-    : (zatca ? (isSimplified ? "فاتورة مبيعات مبسطة" : "فاتورة مبيعات ضريبية") : "فاتورة مبيعات");
+    ? (zatca ? (isSimplified ? L("مرتجع مبيعات مبسط", "Simplified sales return") : L("مرتجع مبيعات ضريبي", "Tax sales return")) : L("مرتجع مبيعات", "Sales return"))
+    : (zatca ? (isSimplified ? L("فاتورة مبيعات مبسطة", "Simplified sales invoice") : L("فاتورة مبيعات ضريبية", "Tax sales invoice")) : L("فاتورة مبيعات", "Sales invoice"));
   const titleSub = isReturn
     ? "Sales Return"
     : (zatca ? (isSimplified ? "Simplified Tax Invoice" : "Tax Invoice") : "Sales Invoice");
@@ -114,7 +118,7 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
     return itemRow + notesRow;
   }).join("");
 
-  return `<!DOCTYPE html><html dir="rtl" lang="ar">
+  return `<!DOCTYPE html><html dir="${language === "en" ? "ltr" : "rtl"}" lang="${language}">
 <head><meta charset="UTF-8"><title>${esc(titleMain)} — ${esc(doc.docNo)}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -151,8 +155,8 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
        fragments cleanly across pages on long multi-page invoices) ────── */
   .lines-chunk { width:100%; border-collapse:collapse; font-size:11px; margin-top:8px; border:1.5px solid var(--gold2); }
   .lines-chunk thead tr { background:linear-gradient(180deg,#fbf2db,#f3e4bf); color:var(--ink); }
-  .lines-chunk th { padding:9px 6px; font-weight:800; font-size:10.5px; border:1px solid var(--gold2); text-align:right; }
-  .lines-chunk td { padding:9px 6px; border:1px solid var(--line); text-align:right; }
+   .lines-chunk th { padding:9px 6px; font-weight:800; font-size:10.5px; border:1px solid var(--gold2); text-align:${align}; }
+   .lines-chunk td { padding:9px 6px; border:1px solid var(--line); text-align:${align}; }
   .lines-chunk tbody tr.item-row:nth-of-type(odd) td { background:#fbfaf6; }
   .lines-chunk tbody tr { page-break-inside: avoid; break-inside: avoid; }
   .lines-chunk tbody tr.line-notes td { padding:6px 10px 10px; font-size:10.5px; color:#475569; font-style:italic; border-right:3px solid var(--gold2); }
@@ -175,11 +179,11 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
 <body><div class="sheet">
   <div class="hdr">
     <div class="col-co">
-      <div class="label">بيانات المنشأة</div>
+      <div class="label">${L("بيانات المنشأة", "Company details")}</div>
       <div class="co-name-ar">${esc(co.name)}</div>
-      ${zatca && co.vat ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${esc(co.vat)}</span></div>` : ""}
-      ${co.cr ? `<div class="row"><b>السجل التجاري:</b><span class="mono">${esc(co.cr)}</span></div>` : ""}
-      ${co.phone ? `<div class="row"><b>الهاتف:</b><span class="mono">${esc(co.phone)}</span></div>` : ""}
+      ${zatca && co.vat ? `<div class="row"><b>${L("الرقم الضريبي", "Tax number")}:</b><span class="mono">${esc(co.vat)}</span></div>` : ""}
+      ${co.cr ? `<div class="row"><b>${L("السجل التجاري", "Commercial registration")}:</b><span class="mono">${esc(co.cr)}</span></div>` : ""}
+      ${co.phone ? `<div class="row"><b>${L("الهاتف", "Phone")}:</b><span class="mono">${esc(co.phone)}</span></div>` : ""}
     </div>
 
     <div class="col-mid">
@@ -187,42 +191,42 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
       <div class="doc-title-pill">${esc(titleMain)}<span class="en">${esc(titleSub)}</span></div>
       <div class="meta-pills">
         <span class="pill no"><b>${esc(doc.docNo)}</b></span>
-        <span class="pill pay"><b>${PAYMENT_LABEL[doc.paymentMethod]}</b></span>
+        <span class="pill pay"><b>${paymentLabel(doc.paymentMethod)}</b></span>
         <span class="pill">📅 <b>${esc(doc.date)}</b></span>
       </div>
     </div>
 
     <div class="col-cu">
-      <div class="label">بيانات العميل</div>
-      <div class="cu-name">${esc(doc.customerName ?? "عميل نقدي")}</div>
-      ${zatca && doc.customerVat ? `<div class="row"><b>الرقم الضريبي:</b><span class="mono">${esc(doc.customerVat)}</span></div>` : ""}
+      <div class="label">${L("بيانات العميل", "Customer details")}</div>
+      <div class="cu-name">${esc(doc.customerName ?? L("عميل نقدي", "Cash customer"))}</div>
+      ${zatca && doc.customerVat ? `<div class="row"><b>${L("الرقم الضريبي", "Tax number")}:</b><span class="mono">${esc(doc.customerVat)}</span></div>` : ""}
     </div>
   </div>
 
   <table class="lines-chunk">
     <thead><tr>
       <th style="width:30px">#</th>
-      <th>الصنف</th>
-      <th>الكمية</th>
-      ${showFree ? `<th style="color:#b45309;">مجاني</th>` : ""}
-      <th>الوحدة</th>
-      <th>سعر الوحدة</th>
-      ${zatca ? `<th>الضريبة</th>` : ""}
-      ${zatca ? `<th>قيمة الضريبة</th>` : ""}
-      <th>الإجمالي</th>
+      <th>${L("الصنف", "Item")}</th>
+      <th>${L("الكمية", "Quantity")}</th>
+      ${showFree ? `<th style="color:#b45309;">${L("مجاني", "Free")}</th>` : ""}
+      <th>${L("الوحدة", "Unit")}</th>
+      <th>${L("سعر الوحدة", "Unit price")}</th>
+      ${zatca ? `<th>${L("الضريبة", "Tax")}</th>` : ""}
+      ${zatca ? `<th>${L("قيمة الضريبة", "Tax amount")}</th>` : ""}
+      <th>${L("الإجمالي", "Total")}</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
 
-  ${doc.notes ? `<div class="notes-box"><b>ملاحظات:</b> ${esc(doc.notes)}</div>` : ""}
+  ${doc.notes ? `<div class="notes-box"><b>${L("ملاحظات", "Notes")}:</b> ${esc(doc.notes)}</div>` : ""}
 
   <div class="bottom">
     <div class="totals-card">
-      ${zatca ? `<div class="__totalsRow"><span>المبلغ قبل الضريبة</span><span class="mono">${fmt(doc.subtotal, dp)} ${esc(sym)}</span></div>` : ""}
-      ${zatca ? `<div class="__totalsRow"><span>ضريبة القيمة المضافة</span><span class="mono">${fmt(doc.vatTotal, dp)} ${esc(sym)}</span></div>` : ""}
-      <div class="__totalsRow grand"><span>الإجمالي المستحق</span><span class="mono">${fmt(doc.grandTotal, dp)} ${esc(sym)}</span></div>
+      ${zatca ? `<div class="__totalsRow"><span>${L("المبلغ قبل الضريبة", "Subtotal")}</span><span class="mono">${fmt(doc.subtotal, dp)} ${esc(sym)}</span></div>` : ""}
+      ${zatca ? `<div class="__totalsRow"><span>${L("ضريبة القيمة المضافة", "VAT")}</span><span class="mono">${fmt(doc.vatTotal, dp)} ${esc(sym)}</span></div>` : ""}
+      <div class="__totalsRow grand"><span>${L("الإجمالي المستحق", "Amount due")}</span><span class="mono">${fmt(doc.grandTotal, dp)} ${esc(sym)}</span></div>
     </div>
-    ${zatca && qrDataUrl ? `<div class="qr-card"><img src="${qrDataUrl}" width="150" height="150" /><div class="lbl">رمز الاستجابة السريعة (QR) — زاتكا</div></div>` : "<div></div>"}
+    ${zatca && qrDataUrl ? `<div class="qr-card"><img src="${qrDataUrl}" width="150" height="150" /><div class="lbl">${L("رمز الاستجابة السريعة (QR) — زاتكا", "ZATCA QR code")}</div></div>` : "<div></div>"}
   </div>
 
   <div class="audit-footer">
@@ -231,8 +235,8 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
       ${zatca ? `<span style="color:var(--gold);font-weight:700;">ZATCA e-Invoice</span>` : ""}
     </div>
     <div class="grp" style="text-align:left;">
-      <span>تاريخ الطباعة: <b>${esc(new Date().toLocaleString("en-GB"))}</b></span>
-      ${zatca ? `<span>نظام الفاتورة الإلكترونية — متوافق مع زاتكا</span>` : `<span>شكراً لتعاملكم معنا</span>`}
+       <span>${L("تاريخ الطباعة", "Printed at")}: <b>${esc(new Date().toLocaleString(language === "en" ? "en-GB" : "ar-SA"))}</b></span>
+       ${zatca ? `<span>${L("نظام الفاتورة الإلكترونية — متوافق مع زاتكا", "E-invoicing system — ZATCA compliant")}</span>` : `<span>${L("شكراً لتعاملكم معنا", "Thank you for your business")}</span>`}
     </div>
   </div>
 </div></body></html>`;
@@ -240,7 +244,8 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
 
 // ─── Thermal (80 mm receipt) ──────────────────────────────────────────
 function buildThermalHtml(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca: boolean): string {
-  const thermalTitle = zatca ? docTitle(doc.kind) : (doc.kind === "invoice" ? "فاتورة مبيعات" : "مرتجع مبيعات");
+  const language = getUiLanguage();
+  const thermalTitle = zatca ? docTitle(doc.kind) : (doc.kind === "invoice" ? L("فاتورة مبيعات", "Sales invoice") : L("مرتجع مبيعات", "Sales return"));
   const dp = co.decimals ?? 2;
   const sym = currencySymbol();
   const rows = doc.lines.map((l) => `
@@ -251,12 +256,12 @@ function buildThermalHtml(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, 
           <span>${fmt(l.lineTotal, dp)}</span>
         </div>
       </div>`).join("");
-  return `<!DOCTYPE html><html dir="rtl" lang="ar">
+  return `<!DOCTYPE html><html dir="${language === "en" ? "ltr" : "rtl"}" lang="${language}">
 <head><meta charset="UTF-8"><title>${esc(doc.docNo)}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   @page { size: 80mm auto; margin: 0; }
-  body { font-family: 'Tahoma', 'Segoe UI', Arial, sans-serif; direction: rtl; color: #000; background: #fff; }
+  body { font-family: 'Tahoma', 'Segoe UI', Arial, sans-serif; direction: ${language === "en" ? "ltr" : "rtl"}; color: #000; background: #fff; }
   .rcpt { width: 80mm; padding: 4mm 3mm; font-size: 12px; }
   .center { text-align: center; }
   .co-name { font-size: 16px; font-weight: 800; }
@@ -275,26 +280,26 @@ function buildThermalHtml(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, 
 <body><div class="rcpt">
   <div class="center">
     <div class="co-name">${esc(co.name)}</div>
-    ${zatca && co.vat ? `<div class="muted">الرقم الضريبي: ${esc(co.vat)}</div>` : ""}
-    ${co.cr ? `<div class="muted">س.ت: ${esc(co.cr)}</div>` : ""}
-    ${co.phone ? `<div class="muted">هاتف: ${esc(co.phone)}</div>` : ""}
+    ${zatca && co.vat ? `<div class="muted">${L("الرقم الضريبي", "Tax number")}: ${esc(co.vat)}</div>` : ""}
+    ${co.cr ? `<div class="muted">${L("س.ت:", "CR:")} ${esc(co.cr)}</div>` : ""}
+    ${co.phone ? `<div class="muted">${L("هاتف:", "Phone:")} ${esc(co.phone)}</div>` : ""}
     <div class="doc-title">${esc(thermalTitle)}</div>
   </div>
   <div class="sep"></div>
-  <div class="meta"><span>${doc.kind === "invoice" ? "رقم الفاتورة" : "رقم المرتجع"}</span><span>${esc(doc.docNo)}</span></div>
-  <div class="meta"><span>التاريخ</span><span>${esc(doc.date)}</span></div>
-  <div class="meta"><span>طريقة الدفع</span><span>${PAYMENT_LABEL[doc.paymentMethod]}</span></div>
-  ${doc.customerName ? `<div class="meta"><span>العميل</span><span>${esc(doc.customerName)}</span></div>` : ""}
+  <div class="meta"><span>${doc.kind === "invoice" ? L("رقم الفاتورة", "Invoice number") : L("رقم المرتجع", "Return number")}</span><span>${esc(doc.docNo)}</span></div>
+  <div class="meta"><span>${L("التاريخ", "Date")}</span><span>${esc(doc.date)}</span></div>
+  <div class="meta"><span>${L("طريقة الدفع", "Payment method")}</span><span>${paymentLabel(doc.paymentMethod)}</span></div>
+  ${doc.customerName ? `<div class="meta"><span>${L("العميل", "Customer")}</span><span>${esc(doc.customerName)}</span></div>` : ""}
   <div class="sep"></div>
   ${rows}
   <div class="sep"></div>
-  ${zatca ? `<div class="tot"><span>المبلغ قبل الضريبة</span><span>${fmt(doc.subtotal, dp)} ${esc(sym)}</span></div>` : ""}
-  ${zatca ? `<div class="tot"><span>ضريبة القيمة المضافة</span><span>${fmt(doc.vatTotal, dp)} ${esc(sym)}</span></div>` : ""}
-  <div class="tot grand"><span>الإجمالي</span><span>${fmt(doc.grandTotal, dp)} ${esc(sym)}</span></div>
-  ${doc.notes ? `<div class="sep"></div><div class="muted">ملاحظات: ${esc(doc.notes)}</div>` : ""}
+  ${zatca ? `<div class="tot"><span>${L("المبلغ قبل الضريبة", "Subtotal")}</span><span>${fmt(doc.subtotal, dp)} ${esc(sym)}</span></div>` : ""}
+  ${zatca ? `<div class="tot"><span>${L("ضريبة القيمة المضافة", "VAT")}</span><span>${fmt(doc.vatTotal, dp)} ${esc(sym)}</span></div>` : ""}
+  <div class="tot grand"><span>${L("الإجمالي", "Total")}</span><span>${fmt(doc.grandTotal, dp)} ${esc(sym)}</span></div>
+  ${doc.notes ? `<div class="sep"></div><div class="muted">${L("ملاحظات", "Notes")}: ${esc(doc.notes)}</div>` : ""}
   ${zatca && qrDataUrl ? `<div class="qr"><img src="${qrDataUrl}" width="120" height="120" /></div>` : ""}
   <div class="sep"></div>
-  <div class="center muted">شكراً لتعاملكم معنا</div>
+  <div class="center muted">${L("شكراً لتعاملكم معنا", "Thank you for your business")}</div>
 </div></body></html>`;
 }
 

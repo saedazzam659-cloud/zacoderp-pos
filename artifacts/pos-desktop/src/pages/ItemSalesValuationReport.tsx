@@ -13,6 +13,7 @@ import { reportSalesInvoiceLines, reportSalesReturnLines } from "../lib/salesRep
 import { useCurrencySymbol } from "../lib/currency";
 import { Page, Card, Table, Th, Td, Empty, input, btnPrimary, fmt, fmtCurrency, todayStr } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
@@ -21,6 +22,11 @@ const BASIS_LABELS: Record<Basis, string> = {
   cost: "التكلفة",
   excl_vat: "قبل الضريبة",
   incl_vat: "شامل الضريبة",
+};
+const BASIS_LABELS_EN: Record<Basis, string> = {
+  cost: "Cost",
+  excl_vat: "Excluding tax",
+  incl_vat: "Including tax",
 };
 
 type RawLine = { itemId: number; itemCode: string | null; itemName: string; qty: number; unitCost: number; lineTotal: number; vatRate: number };
@@ -41,6 +47,8 @@ type Bucket = {
 };
 
 export default function ItemSalesValuationReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   useCurrencySymbol(); // subscribe so currency formatting re-renders on country change
   const { branches } = useDimensions();
   const [fromDate, setFromDate] = useState(firstOfYear());
@@ -54,7 +62,7 @@ export default function ItemSalesValuationReport() {
   const [err, setErr] = useState<string | null>(null);
 
   async function run() {
-    if (fromDate > toDate) { setErr("تاريخ البداية يجب أن يكون قبل تاريخ النهاية"); return; }
+    if (fromDate > toDate) { setErr(text("تاريخ البداية يجب أن يكون قبل تاريخ النهاية", "Start date must be on or before end date.")); return; }
     setErr(null); setLoading(true);
     try {
       const branch = branchId === "" ? null : branchId;
@@ -104,25 +112,25 @@ export default function ItemSalesValuationReport() {
   );
 
   return (
-    <Page title="تقييم مبيعات الأصناف" subtitle={`صافي مبيعات كل صنف (المباع − المرتجع) مقيّمًا على أساس ${BASIS_LABELS[basis]}.`}>
+    <Page title={text("تقييم مبيعات الأصناف", "Item sales valuation")} subtitle={`${text("صافي مبيعات كل صنف (المباع − المرتجع) مقيّمًا على أساس", "Net sales per item (sold minus returned), valued by")} ${language === "en" ? BASIS_LABELS_EN[basis] : BASIS_LABELS[basis]}.`}>
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <DateField label="من تاريخ" value={fromDate} onChange={setFromDate} />
-          <DateField label="إلى تاريخ" value={toDate} onChange={setToDate} />
+          <DateField label={text("من تاريخ", "From date")} value={fromDate} onChange={setFromDate} />
+          <DateField label={text("إلى تاريخ", "To date")} value={toDate} onChange={setToDate} />
           <BranchField branches={branches} value={branchId} onChange={setBranchId} />
           <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 160 }}>
-            <label style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>أساس التقييم</label>
+            <label style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>{text("أساس التقييم", "Valuation basis")}</label>
             <select value={basis} onChange={(e) => setBasis(e.target.value as Basis)} style={{ ...input, padding: "8px 10px" }}>
-              <option value="cost">التكلفة</option>
-              <option value="excl_vat">قبل الضريبة</option>
-              <option value="incl_vat">شامل الضريبة</option>
+              <option value="cost">{text("التكلفة", "Cost")}</option>
+              <option value="excl_vat">{text("قبل الضريبة", "Excluding tax")}</option>
+              <option value="incl_vat">{text("شامل الضريبة", "Including tax")}</option>
             </select>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180 }}>
-            <label style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>بحث (اسم / كود)</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...input, padding: "8px 10px" }} placeholder="ابحث باسم الصنف أو الكود" />
+            <label style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>{text("بحث (اسم / كود)", "Search (name / code)")}</label>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...input, padding: "8px 10px" }} placeholder={text("ابحث باسم الصنف أو الكود", "Search by item name or code")} />
           </div>
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : text("عرض", "Run report")}</button>
         </div>
         {err && <div style={{ marginTop: 8, color: "#991b1b", fontSize: 13 }}>⚠️ {err}</div>}
       </Card>
@@ -132,19 +140,19 @@ export default function ItemSalesValuationReport() {
           <Table>
             <thead>
               <tr>
-                <Th style={{ width: 110 }}>كود الصنف</Th>
-                <Th>اسم الصنف</Th>
-                <Th style={{ textAlign: "left", width: 90 }}>كمية مباعة</Th>
-                <Th style={{ textAlign: "left", width: 130 }}>قيمة مباعة</Th>
-                <Th style={{ textAlign: "left", width: 90 }}>كمية مرتجعة</Th>
-                <Th style={{ textAlign: "left", width: 130 }}>قيمة مرتجعة</Th>
-                <Th style={{ textAlign: "left", width: 90 }}>صافي الكمية</Th>
-                <Th style={{ textAlign: "left", width: 140 }}>صافي القيمة</Th>
+                <Th style={{ width: 110 }}>{text("كود الصنف", "Item code")}</Th>
+                <Th>{text("اسم الصنف", "Item name")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 90 }}>{text("كمية مباعة", "Qty sold")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 130 }}>{text("قيمة مباعة", "Sales value")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 90 }}>{text("كمية مرتجعة", "Qty returned")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 130 }}>{text("قيمة مرتجعة", "Return value")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 90 }}>{text("صافي الكمية", "Net quantity")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 140 }}>{text("صافي القيمة", "Net value")}</Th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><Td colSpan={8}><Empty text="لا توجد مبيعات في الفترة المحددة" /></Td></tr>
+                <tr><Td colSpan={8}><Empty text={text("لا توجد مبيعات في الفترة المحددة", "No sales for this period")} /></Td></tr>
               )}
               {filtered.map((r) => (
                 <tr key={r.itemId}>
@@ -160,7 +168,7 @@ export default function ItemSalesValuationReport() {
               ))}
               {filtered.length > 0 && (
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
-                  <Td colSpan={2}>الإجمالي ({filtered.length} صنف)</Td>
+                  <Td colSpan={2}>{text("الإجمالي", "Total")} ({filtered.length} {text("صنف", "items")})</Td>
                   <Td num>{fmt(tot.soldQty)}</Td>
                   <Td num>{fmtCurrency(tot.soldValue)}</Td>
                   <Td num>{fmt(tot.returnedQty)}</Td>

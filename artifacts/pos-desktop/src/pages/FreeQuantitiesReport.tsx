@@ -12,6 +12,7 @@ import { reportSalesInvoiceLines, reportSalesReturnLines } from "../lib/salesRep
 import { useCurrencySymbol } from "../lib/currency";
 import { Page, Card, Table, Th, Td, Empty, input, btnPrimary, fmt, todayStr } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
@@ -21,6 +22,8 @@ type Bucket = {
 };
 
 export default function FreeQuantitiesReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   useCurrencySymbol(); // subscribe so formatting re-renders on country change
   const { branches } = useDimensions();
   const [fromDate, setFromDate] = useState(firstOfYear());
@@ -32,7 +35,7 @@ export default function FreeQuantitiesReport() {
   const [err, setErr] = useState<string | null>(null);
 
   async function run() {
-    if (fromDate > toDate) { setErr("تاريخ البداية يجب أن يكون قبل تاريخ النهاية"); return; }
+    if (fromDate > toDate) { setErr(text("تاريخ البداية يجب أن يكون قبل تاريخ النهاية", "Start date must be on or before end date.")); return; }
     setErr(null); setLoading(true);
     try {
       const branch = branchId === "" ? null : branchId;
@@ -72,17 +75,17 @@ export default function FreeQuantitiesReport() {
   const totalNet = totalSold - totalReturned;
 
   return (
-    <Page title="تقرير الكميات الحرة" subtitle="الكميات المجانية (البونص) المصروفة لكل صنف خلال الفترة: المباع الحر مطروحًا منه المرتجع الحر.">
+    <Page title={text("تقرير الكميات الحرة", "Free quantities report")} subtitle={text("الكميات المجانية (البونص) المصروفة لكل صنف خلال الفترة: المباع الحر مطروحًا منه المرتجع الحر.", "Free bonus quantities given per item during the period: free units sold minus free units returned.")}>
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <DateField label="من تاريخ" value={fromDate} onChange={setFromDate} />
-          <DateField label="إلى تاريخ" value={toDate} onChange={setToDate} />
+          <DateField label={text("من تاريخ", "From date")} value={fromDate} onChange={setFromDate} />
+          <DateField label={text("إلى تاريخ", "To date")} value={toDate} onChange={setToDate} />
           <BranchField branches={branches} value={branchId} onChange={setBranchId} />
           <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 200 }}>
-            <label style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>بحث (اسم / كود)</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...input, padding: "8px 10px" }} placeholder="ابحث باسم الصنف أو الكود" />
+            <label style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>{text("بحث (اسم / كود)", "Search (name / code)")}</label>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...input, padding: "8px 10px" }} placeholder={text("ابحث باسم الصنف أو الكود", "Search by item name or code")} />
           </div>
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : text("عرض", "Run report")}</button>
         </div>
         {err && <div style={{ marginTop: 8, color: "#991b1b", fontSize: 13 }}>⚠️ {err}</div>}
       </Card>
@@ -92,16 +95,16 @@ export default function FreeQuantitiesReport() {
           <Table>
             <thead>
               <tr>
-                <Th style={{ width: 120 }}>كود الصنف</Th>
-                <Th>اسم الصنف</Th>
-                <Th style={{ textAlign: "left", width: 150 }}>الكمية الحرة المباعة</Th>
-                <Th style={{ textAlign: "left", width: 150 }}>الكمية الحرة المرتجعة</Th>
-                <Th style={{ textAlign: "left", width: 150 }}>صافي الكمية الحرة</Th>
+                <Th style={{ width: 120 }}>{text("كود الصنف", "Item code")}</Th>
+                <Th>{text("اسم الصنف", "Item name")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 150 }}>{text("الكمية الحرة المباعة", "Free quantity sold")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 150 }}>{text("الكمية الحرة المرتجعة", "Free quantity returned")}</Th>
+                <Th style={{ textAlign: language === "en" ? "right" : "left", width: 150 }}>{text("صافي الكمية الحرة", "Net free quantity")}</Th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><Td colSpan={5}><Empty text="لا توجد كميات حرة في الفترة المحددة" /></Td></tr>
+                <tr><Td colSpan={5}><Empty text={text("لا توجد كميات حرة في الفترة المحددة", "No free quantities for this period")} /></Td></tr>
               )}
               {filtered.map((r) => (
                 <tr key={r.itemId}>
@@ -114,7 +117,7 @@ export default function FreeQuantitiesReport() {
               ))}
               {filtered.length > 0 && (
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
-                  <Td colSpan={2}>الإجمالي ({filtered.length} صنف)</Td>
+                  <Td colSpan={2}>{text("الإجمالي", "Total")} ({filtered.length} {text("صنف", "items")})</Td>
                   <Td num>{fmt(totalSold)}</Td>
                   <Td num>{fmt(totalReturned)}</Td>
                   <Td num>{fmt(totalNet)}</Td>

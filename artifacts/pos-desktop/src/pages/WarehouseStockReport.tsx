@@ -11,6 +11,7 @@ import {
   Page, Card, Table, Th, Td, Empty, input, btnSecondary, fmt, ExportButtons,
 } from "./_adminUi";
 import type { ExportColumn } from "../lib/exporters";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 // Flat row mirroring the on-screen pivot table (item rows + per-warehouse qty
 // columns + grand total) plus a trailing totals row.
@@ -31,6 +32,8 @@ interface PivotRow {
 }
 
 export default function WarehouseStockReport() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [raw, setRaw] = useState<StockOnHand[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -51,8 +54,8 @@ export default function WarehouseStockReport() {
     for (const r of raw) if (!m.has(r.warehouse_id)) m.set(r.warehouse_id, r.warehouse_name);
     return [...m.entries()]
       .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name, "ar"));
-  }, [raw]);
+      .sort((a, b) => a.name.localeCompare(b.name, language === "en" ? "en" : "ar"));
+  }, [raw, language]);
 
   const rows = useMemo<PivotRow[]>(() => {
     const m = new Map<number, PivotRow>();
@@ -73,8 +76,8 @@ export default function WarehouseStockReport() {
       );
     }
     if (hideZero) list = list.filter((p) => Math.abs(p.total) > 1e-9);
-    return list.sort((a, b) => a.itemName.localeCompare(b.itemName, "ar"));
-  }, [raw, search, hideZero]);
+    return list.sort((a, b) => a.itemName.localeCompare(b.itemName, language === "en" ? "en" : "ar"));
+  }, [raw, search, hideZero, language]);
 
   // Per-warehouse + grand totals for the footer row.
   const totals = useMemo(() => {
@@ -99,61 +102,61 @@ export default function WarehouseStockReport() {
       }
       return { itemName: p.itemName, itemCode: p.itemCode ?? "—", qtyByWh, total: p.total };
     });
-    const totalRow: StockExportRow = { itemName: "الإجمالي", itemCode: "—", qtyByWh: {}, total: totals.grand };
+    const totalRow: StockExportRow = { itemName: text("الإجمالي", "Total"), itemCode: "—", qtyByWh: {}, total: totals.grand };
     for (const w of warehouses) totalRow.qtyByWh[w.id] = totals.byWh[w.id] ?? 0;
     out.push(totalRow);
     return out;
-  }, [rows, warehouses, totals]);
+  }, [rows, warehouses, totals, language]);
 
   const exportCols = useMemo<ExportColumn<StockExportRow>[]>(() => [
-    { header: "الصنف", cell: (r) => r.itemName },
-    { header: "الكود", cell: (r) => r.itemCode },
+    { header: text("الصنف", "Item"), cell: (r) => r.itemName },
+    { header: text("الكود", "Code"), cell: (r) => r.itemCode },
     ...warehouses.map((w) => ({ header: w.name, cell: (r: StockExportRow) => r.qtyByWh[w.id] ?? "" })),
-    { header: "الإجمالي", cell: (r: StockExportRow) => r.total },
-  ], [warehouses]);
+    { header: text("الإجمالي", "Total"), cell: (r: StockExportRow) => r.total },
+  ], [warehouses, language]);
 
   return (
-    <Page title="الكميات المتاحة حسب المخزن">
+    <Page title={text("الكميات المتاحة حسب المخزن", "Available stock by warehouse")}>
       <Card>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
           <input
             style={{ ...input, maxWidth: 280 }}
-            placeholder="بحث بالاسم أو الكود…"
+            placeholder={text("بحث بالاسم أو الكود…", "Search by item name or code…")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
           <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
             <input type="checkbox" checked={hideZero} onChange={(e) => setHideZero(e.target.checked)} />
-            إخفاء الأصناف ذات الرصيد صفر
+            {text("إخفاء الأصناف ذات الرصيد صفر", "Hide items with zero stock")}
           </label>
           <button style={btnSecondary} onClick={() => void refresh()} disabled={loading}>
-            {loading ? "جارٍ التحديث…" : "تحديث"}
+            {loading ? text("جارٍ التحديث…", "Refreshing…") : text("تحديث", "Refresh")}
           </button>
           {exportRows.length > 0 && (
             <div style={{ marginInlineStart: "auto", display: "flex", gap: 8 }}>
               <ExportButtons
                 columns={exportCols}
                 rows={exportRows}
-                filenameBase="الكميات-حسب-المخزن"
-                title="الكميات المتاحة حسب المخزن"
+                filenameBase={text("الكميات-حسب-المخزن", "available-stock-by-warehouse")}
+                title={text("الكميات المتاحة حسب المخزن", "Available stock by warehouse")}
               />
             </div>
           )}
         </div>
 
         {rows.length === 0 ? (
-          <Empty text="لا توجد بيانات مخزون." />
+          <Empty text={text("لا توجد بيانات مخزون.", "No stock data.")} />
         ) : (
           <div style={{ overflowX: "auto" }}>
             <Table>
               <thead>
                 <tr>
-                  <Th>الصنف</Th>
-                  <Th>الكود</Th>
+                  <Th>{text("الصنف", "Item")}</Th>
+                  <Th>{text("الكود", "Code")}</Th>
                   {warehouses.map((w) => (
                     <Th key={w.id} style={{ textAlign: "center" }}>{w.name}</Th>
                   ))}
-                  <Th style={{ textAlign: "center" }}>الإجمالي</Th>
+                  <Th style={{ textAlign: "center" }}>{text("الإجمالي", "Total")}</Th>
                 </tr>
               </thead>
               <tbody>
@@ -175,7 +178,7 @@ export default function WarehouseStockReport() {
               </tbody>
               <tfoot>
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
-                  <Td>الإجمالي</Td>
+                  <Td>{text("الإجمالي", "Total")}</Td>
                   <Td>—</Td>
                   {warehouses.map((w) => (
                     <Td key={w.id} style={{ textAlign: "center" }}>{fmt(totals.byWh[w.id] ?? 0)}</Td>
