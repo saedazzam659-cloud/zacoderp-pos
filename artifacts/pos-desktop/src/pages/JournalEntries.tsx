@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useDataRefresh } from "../lib/dataBus";
+import { applyNumberSystemToDocument } from "../lib/numberDisplay";
 import {
   listJournalEntries, getJournalEntry, getJournalEntryDetail,
   createJournalEntry, updateJournalEntry, postJournalEntry, unpostJournalEntry,
@@ -968,6 +969,7 @@ function printJournalEntry(data: ManualJeDetail, company: CompanyProfile): void 
   doc.open();
   doc.write(html);
   doc.close();
+  applyNumberSystemToDocument(doc);
   // Wait for the document (incl. the logo image) to finish loading so the
   // letterhead isn't blank, then print. Fall back to a timeout in case the
   // load event never fires inside the embedded webview.

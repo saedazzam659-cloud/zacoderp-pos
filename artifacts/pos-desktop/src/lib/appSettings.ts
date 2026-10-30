@@ -13,7 +13,8 @@
 
 import { useEffect, useState } from "react";
 
-const EVT = "pos-desktop-company-changed";
+export const APP_SETTINGS_EVENT = "pos-desktop-company-changed";
+const EVT = APP_SETTINGS_EVENT;
 
 const LS_LOGO = "pos_desktop_company_logo";   // base64 data URL or https URL
 const LS_NAME = "pos_desktop_company_name";
@@ -22,6 +23,9 @@ const LS_CR = "pos_desktop_company_cr";
 const LS_PHONE = "pos_desktop_company_phone";
 const LS_DECIMALS = "pos_desktop_decimal_places";
 const LS_HIDE_ZEROS = "pos_desktop_hide_zeros";
+const LS_NUMBER_SYSTEM = "pos_desktop_number_system";
+
+export type NumberSystem = "arabic" | "latin";
 
 export const DECIMALS_MIN = 0;
 export const DECIMALS_MAX = 6;
@@ -68,6 +72,30 @@ if (typeof window !== "undefined") {
 /** Configured decimal places (0–6, default 2). Synchronous + cached. */
 export function getDecimals(): number {
   return _decimals;
+}
+
+export function getNumberSystem(): NumberSystem {
+  if (typeof window === "undefined") return "arabic";
+  return localStorage.getItem(LS_NUMBER_SYSTEM) === "latin" ? "latin" : "arabic";
+}
+
+export function setNumberSystem(system: NumberSystem): void {
+  writeKey(LS_NUMBER_SYSTEM, system);
+  window.dispatchEvent(new Event(EVT));
+}
+
+export function useNumberSystem(): NumberSystem {
+  const [system, setSystem] = useState<NumberSystem>(() => getNumberSystem());
+  useEffect(() => {
+    const refresh = () => setSystem(getNumberSystem());
+    window.addEventListener(EVT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(EVT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return system;
 }
 
 /** Only allow data:image/* or https:// logo sources (anti-XSS, mirrors web safeLogoSrc). */

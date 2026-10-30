@@ -1,3 +1,5 @@
+import { applyNumberSystemToDocument } from "./numberDisplay";
+
 // Reusable offline export helpers for list/report screens.
 //   • exportToExcel — real .xlsx via SheetJS (RTL sheet, Arabic-safe).
 //   • exportToPdf   — prints an HTML table through an isolated hidden iframe
@@ -62,6 +64,7 @@ function printDocHtml(html: string): void {
   idoc.open();
   idoc.write(html);
   idoc.close();
+  applyNumberSystemToDocument(idoc);
   if (idoc.readyState === "complete") setTimeout(run, 200);
   else { win.addEventListener("load", () => setTimeout(run, 200)); setTimeout(run, 1000); }
 }

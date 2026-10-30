@@ -53,6 +53,7 @@ import { getFingerprint } from "./lib/tauri-shim";
 import { initBridge } from "./lib/bridge";
 import { clockGuardCheck, clockGuardClearOnline } from "./lib/clockGuard";
 import ClockTamperLocked from "./pages/ClockTamperLocked";
+import { observeNumberSystem } from "./lib/numberDisplay";
 
 type BootState =
   | { phase: "checking" }
@@ -96,6 +97,7 @@ export default function App() {
   const effectiveNowRef = useRef<number>(Date.now());
 
   useEffect(() => { void boot(); }, []);
+  useEffect(() => observeNumberSystem(document), []);
 
   // ── Clock-rollback guard tick ─────────────────────────────────────────
   // Re-checks the monotonic time guard once a minute while the app is in any

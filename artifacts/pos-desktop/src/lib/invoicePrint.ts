@@ -9,6 +9,7 @@ import QRCode from "qrcode";
 import { getCompanyProfile, getDecimals, type CompanyProfile } from "./appSettings";
 import { currencySymbol, baseCurrencyCode, currencyByCode } from "./currency";
 import { isZatcaCountry } from "./zatcaBridge";
+import { applyNumberSystemToDocument } from "./numberDisplay";
 import type { SalesLine } from "./accounting";
 
 export type PrintKind = "a4" | "thermal";
@@ -316,6 +317,7 @@ function printHtml(html: string): void {
   idoc.open();
   idoc.write(html);
   idoc.close();
+  applyNumberSystemToDocument(idoc);
   // CSP-proof styling: the Tauri WebView CSP can block the iframe's inline
   // <style> element (it then prints as raw unstyled text). The element still
   // exists in the DOM with its CSS text, so re-apply that text through the

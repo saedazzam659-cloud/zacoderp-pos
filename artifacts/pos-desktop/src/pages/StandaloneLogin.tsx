@@ -11,6 +11,7 @@
 
 import { useEffect, useState } from "react";
 import { authLocalUser, type LocalSession, listLocalUsers } from "../lib/standalone";
+import NumberSystemControl from "./NumberSystemControl";
 
 export default function StandaloneLogin({ onSignedIn, customerName }: {
   onSignedIn: (s: LocalSession) => void;
@@ -48,6 +49,9 @@ export default function StandaloneLogin({ onSignedIn, customerName }: {
             <div style={S.brandName}>{customerName}</div>
             <div style={S.brandTag}>تسجيل دخول الكاشير — وضع مستقل</div>
           </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-start" }}>
+          <NumberSystemControl />
         </div>
         <label style={S.label}>
           اسم المستخدم

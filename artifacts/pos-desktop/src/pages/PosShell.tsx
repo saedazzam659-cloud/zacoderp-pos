@@ -16,6 +16,7 @@ import { createApi, type SyncStatus } from "../lib/api";
 import { useCurrencySymbol, getCountryIso, setCountryIso, countryByIso, ARAB_COUNTRIES } from "../lib/currency";
 import { SearchCombobox } from "./_adminUi";
 import { TAURI_MODE, type CashierContext } from "../lib/tauri-shim";
+import NumberSystemControl from "./NumberSystemControl";
 import PeripheralsSettings from "./PeripheralsSettings";
 import SalesScreen from "./SalesScreen";
 import RegisterScreen from "./RegisterScreen";
@@ -1116,6 +1117,7 @@ export default function PosShell({
           </div>
           {/* Right-side controls (moved here from the old white top bar) */}
           <div style={S.topnavControls}>
+            <NumberSystemControl compact />
             <button onClick={() => setShowPeripherals(true)} style={S.periphBtn} title="الأجهزة الطرفية">🖨️</button>
             {cashierContext && !standalone && (
               <div style={S.cashierChip} title={`جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`}>

@@ -23,6 +23,7 @@ import {
   saveUserToken, clearUserToken, saveCashierContext, type CashierContext,
   getDeviceName, getFingerprint, TAURI_MODE,
 } from "../lib/tauri-shim";
+import NumberSystemControl from "./NumberSystemControl";
 
 type Props = {
   baseUrl: string;
@@ -206,6 +207,9 @@ export default function CashierLogin({ baseUrl, deviceToken, onSignedIn }: Props
           </div>
         </div>
       </header>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -10 }}>
+        <NumberSystemControl />
+      </div>
 
       <div style={S.progressRow}>
         <Dot active={step === "creds"} done={step !== "creds"} label="الحساب" />
