@@ -16,7 +16,7 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
-import { getCompanyProfile, useHideZeros, blankIfZero } from "../lib/appSettings";
+import { getCompanyProfile, useHideZeros, blankIfZero, uiText, useUiLanguage } from "../lib/appSettings";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
@@ -41,6 +41,8 @@ import { type WindowsView } from "../lib/moduleRegistry";
 type FLine = SalesLine & DiscFields & { unitKey?: string; brandId?: number | null; brandName?: string | null };
 
 export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: WindowsView) => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<SalesInvoice[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<SalesInvoice | null>(null);
@@ -71,7 +73,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   // the user to a credit-note return instead. `zatcaStatus` is the linked
   // offline_invoices sync state; any non-null value means it reached the bridge.
   function bridgedMsg(): string {
-    return "هذه الفاتورة مرتبطة بزاتكا ولا يمكن تعديلها أو حذفها قانونياً. استخدم زر «إرجاع» لإنشاء إشعار دائن.";
+    return text("هذه الفاتورة مرتبطة بزاتكا ولا يمكن تعديلها أو حذفها قانونياً. استخدم زر «إرجاع» لإنشاء إشعار دائن.", "This invoice is linked to ZATCA and cannot legally be edited or deleted. Use “Return” to create a credit note.");
   }
 
   async function startEdit(id: number) {
@@ -82,21 +84,21 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
       if (inv.zatcaStatus) { setErr(bridgedMsg()); return; }
       setCreating(false);
       setEditDoc(inv);
-    } catch (e: any) { setErr(e?.message ?? "تعذّر تحميل الفاتورة"); }
+    } catch (e: any) { setErr(e?.message ?? text("تعذّر تحميل الفاتورة", "Could not load invoice.")); }
     finally { setBusyId(null); }
   }
 
   async function remove(id: number, invoiceNo: string, zatcaStatus?: string | null) {
     setErr(null);
     if (zatcaStatus) { setErr(bridgedMsg()); return; }
-    if (!confirm(`حذف الفاتورة ${invoiceNo}؟`)) return;
+    if (!confirm(`${text("حذف الفاتورة", "Delete invoice")} ${invoiceNo}?`)) return;
     setBusyId(id);
     try {
       await deleteSalesInvoice(id);
       dropInvoiceLineBrands(id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? "تعذّر حذف الفاتورة"); }
+    } catch (e: any) { setErr(e?.message ?? text("تعذّر حذف الفاتورة", "Could not delete invoice.")); }
     finally { setBusyId(null); }
   }
 
@@ -104,24 +106,24 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   // editable draft. ترحيل: re-apply a draft's impact. Both refresh the list.
   async function unpost(id: number, invoiceNo: string) {
     setErr(null);
-    if (!confirm(`فك ترحيل الفاتورة ${invoiceNo}؟ سيتم عكس القيد المحاسبي والمخزون وتتحول إلى مسودة قابلة للتعديل.`)) return;
+    if (!confirm(text(`فك ترحيل الفاتورة ${invoiceNo}؟ سيتم عكس القيد المحاسبي والمخزون وتتحول إلى مسودة قابلة للتعديل.`, `Unpost invoice ${invoiceNo}? Its journal and stock effects will be reversed and it will become an editable draft.`))) return;
     setBusyId(id);
     try {
       await unpostSalesInvoice(id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? "تعذّر فك الترحيل"); }
+    } catch (e: any) { setErr(e?.message ?? text("تعذّر فك الترحيل", "Could not unpost invoice.")); }
     finally { setBusyId(null); }
   }
   async function post(id: number, invoiceNo: string) {
     setErr(null);
-    if (!confirm(`ترحيل الفاتورة ${invoiceNo}؟ سيتم توليد القيد المحاسبي وخصم المخزون.`)) return;
+    if (!confirm(text(`ترحيل الفاتورة ${invoiceNo}؟ سيتم توليد القيد المحاسبي وخصم المخزون.`, `Post invoice ${invoiceNo}? This will create the journal entry and deduct stock.`))) return;
     setBusyId(id);
     try {
       await postSalesInvoice(id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? "تعذّر الترحيل"); }
+    } catch (e: any) { setErr(e?.message ?? text("تعذّر الترحيل", "Could not post invoice.")); }
     finally { setBusyId(null); }
   }
   // Per-row A4 print: list rows don't carry lines, so load the full invoice first.
@@ -131,7 +133,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
     try {
       const inv = await getSalesInvoice(id);
       await printSalesDoc("a4", invoiceToPrintDoc(inv));
-    } catch (e: any) { setErr(e?.message ?? "تعذّر طباعة الفاتورة"); }
+    } catch (e: any) { setErr(e?.message ?? text("تعذّر طباعة الفاتورة", "Could not print invoice.")); }
     finally { setBusyId(null); }
   }
   async function reloadDeps() {
@@ -150,21 +152,21 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   const zatca = isZatcaCountry();
   const columns = useMemo<GridColumn<SalesInvoice>[]>(() => {
     const base: GridColumn<SalesInvoice>[] = [
-      { key: "invoiceNo", label: "رقم الفاتورة", value: (p) => p.invoiceNo },
-      { key: "date", label: "التاريخ", value: (p) => p.invoiceDate },
-      { key: "customer", label: "العميل", value: (p) => p.customerName ?? "نقدي/بدون عميل" },
-      { key: "payment", label: "طريقة الدفع", value: (p) => p.paymentMethod },
-      { key: "status", label: "الحالة", value: (p) => p.status ?? "" },
+      { key: "invoiceNo", label: text("رقم الفاتورة", "Invoice number"), value: (p) => p.invoiceNo },
+      { key: "date", label: text("التاريخ", "Date"), value: (p) => p.invoiceDate },
+      { key: "customer", label: text("العميل", "Customer"), value: (p) => p.customerName ?? text("نقدي/بدون عميل", "Cash / no customer") },
+      { key: "payment", label: text("طريقة الدفع", "Payment method"), value: (p) => p.paymentMethod },
+      { key: "status", label: text("الحالة", "Status"), value: (p) => p.status ?? "" },
     ];
-    if (zatca) base.push({ key: "zatca", label: "زاتكا", value: (p) => p.zatcaStatus ?? "" });
+    if (zatca) base.push({ key: "zatca", label: "ZATCA", value: (p) => p.zatcaStatus ?? "" });
     base.push(
-      { key: "subtotal", label: "المجموع", type: "number", value: (p) => p.subtotal },
-      { key: "vat", label: "الضريبة", type: "number", value: (p) => p.vatTotal },
-      { key: "grand", label: "الإجمالي", type: "number", value: (p) => p.grandTotal },
-      { key: "paid", label: "المسدّد", type: "number", value: (p) => paidByInvoice.get(p.id) ?? 0 },
+      { key: "subtotal", label: text("المجموع", "Subtotal"), type: "number", value: (p) => p.subtotal },
+      { key: "vat", label: text("الضريبة", "Tax"), type: "number", value: (p) => p.vatTotal },
+      { key: "grand", label: text("الإجمالي", "Total"), type: "number", value: (p) => p.grandTotal },
+      { key: "paid", label: text("المسدّد", "Paid"), type: "number", value: (p) => paidByInvoice.get(p.id) ?? 0 },
     );
     return base;
-  }, [zatca, paidByInvoice]);
+  }, [zatca, paidByInvoice, language]);
   const grid = useGridFilter(rows, columns);
   const sel = useRowSelect(grid.view);
 
@@ -200,13 +202,14 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   }
 
   return (
+    <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title="فواتير المبيعات"
-      subtitle={`${rows.length} فاتورة — يتم ترحيل قيد المبيعات وتكلفة البضاعة المباعة تلقائياً عند الحفظ`}
+      title={text("فواتير المبيعات", "Sales invoices")}
+      subtitle={text(`${rows.length} فاتورة — يتم ترحيل قيد المبيعات وتكلفة البضاعة المباعة تلقائياً عند الحفظ`, `${rows.length} invoices — sales and cost-of-goods-sold entries post automatically when saved`)}
       right={
         <button onClick={() => setCreating(true)} disabled={!deps || formOpen}
           style={{ ...btnPrimary, opacity: (!deps || formOpen) ? 0.5 : 1, cursor: (!deps || formOpen) ? "not-allowed" : "pointer" }}>
-          + فاتورة مبيعات
+          + {text("فاتورة مبيعات", "Sales invoice")}
         </button>
       }
     >
@@ -220,50 +223,50 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
           </div>
         </Card>
       )}
-      {!formOpen && rows.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في فواتير المبيعات…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="فواتير-المبيعات" title="فواتير المبيعات" />} />}
+      {!formOpen && rows.length > 0 && <GridToolbar grid={grid} placeholder={text("🔍 بحث في فواتير المبيعات…", "🔍 Search sales invoices…")} extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="sales-invoices" title={text("فواتير المبيعات", "Sales invoices")} />} />}
       {rows.length > 0 && !formOpen && (
         <ActionBar selectedLabel={sel.selected ? sel.selected.invoiceNo : null}>
-          <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!sel.selected}
+          <ActionBtn label={expandedId === sel.selectedId ? text("إخفاء", "Hide") : text("عرض", "View")} icon="▼" disabled={!sel.selected}
             onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
-          <ActionBtn label="طباعة الفاتورة" icon="🖨️" tone="primary" disabled={!sel.selected || busyId === sel.selectedId}
+          <ActionBtn label={text("طباعة الفاتورة", "Print invoice")} icon="🖨️" tone="primary" disabled={!sel.selected || busyId === sel.selectedId}
             onClick={() => { if (sel.selectedId != null) void printRow(sel.selectedId); }} />
           {onNavigate && (
-            <ActionBtn label="إرجاع" icon="↩" tone="warn" disabled={!sel.selected}
+            <ActionBtn label={text("إرجاع", "Return")} icon="↩" tone="warn" disabled={!sel.selected}
               onClick={() => { if (sel.selectedId != null) void startReturn(sel.selectedId); }} />
           )}
           {sel.selected?.zatcaStatus ? (
-            <span style={{ fontSize: 12, color: "#94a3b8" }}>🔒 مُرحّلة لزاتكا</span>
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>🔒 {text("مُرحّلة لزاتكا", "ZATCA-linked")}</span>
           ) : (() => {
             const s = sel.selected;
             const busy = !s || busyId === s.id;
             const isDraft = s?.status === "draft";
             return (
               <>
-                <ActionBtn label="ترحيل" icon="✔" tone="success" disabled={busy || !isDraft} onClick={() => { if (s) void post(s.id, s.invoiceNo); }} />
-                <ActionBtn label="تعديل" icon="✎" disabled={busy || !isDraft} onClick={() => { if (s) void startEdit(s.id); }} />
-                <ActionBtn label="حذف" icon="🗑" tone="danger" disabled={busy || !isDraft} onClick={() => { if (s) void remove(s.id, s.invoiceNo, s.zatcaStatus); }} />
-                <ActionBtn label="فك الترحيل" icon="↺" tone="warn" disabled={busy || isDraft} onClick={() => { if (s) void unpost(s.id, s.invoiceNo); }} />
+                <ActionBtn label={text("ترحيل", "Post")} icon="✔" tone="success" disabled={busy || !isDraft} onClick={() => { if (s) void post(s.id, s.invoiceNo); }} />
+                <ActionBtn label={text("تعديل", "Edit")} icon="✎" disabled={busy || !isDraft} onClick={() => { if (s) void startEdit(s.id); }} />
+                <ActionBtn label={text("حذف", "Delete")} icon="🗑" tone="danger" disabled={busy || !isDraft} onClick={() => { if (s) void remove(s.id, s.invoiceNo, s.zatcaStatus); }} />
+                <ActionBtn label={text("فك الترحيل", "Unpost")} icon="↺" tone="warn" disabled={busy || isDraft} onClick={() => { if (s) void unpost(s.id, s.invoiceNo); }} />
               </>
             );
           })()}
         </ActionBar>
       )}
       {!formOpen && <Card>
-        {rows.length === 0 && !formOpen ? <Empty text="لا توجد فواتير مبيعات" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
+        {rows.length === 0 && !formOpen ? <Empty text={text("لا توجد فواتير مبيعات", "No sales invoices")} /> : grid.view.length === 0 ? <Empty text={text("لا نتائج مطابقة للبحث", "No matching results")} /> : (
           <Table>
             <thead>
               <tr>
                 <SelectTh />
-                <SortableTh grid={grid} colKey="invoiceNo">رقم الفاتورة</SortableTh>
-                <SortableTh grid={grid} colKey="date">التاريخ</SortableTh>
-                <SortableTh grid={grid} colKey="customer">العميل</SortableTh>
-                <SortableTh grid={grid} colKey="payment">طريقة الدفع</SortableTh>
-                <SortableTh grid={grid} colKey="status">الحالة</SortableTh>
-                {zatca && <SortableTh grid={grid} colKey="zatca">زاتكا</SortableTh>}
-                <SortableTh grid={grid} colKey="subtotal" style={{ textAlign: "left" }}>المجموع</SortableTh>
-                <SortableTh grid={grid} colKey="vat" style={{ textAlign: "left" }}>الضريبة</SortableTh>
-                <SortableTh grid={grid} colKey="grand" style={{ textAlign: "left" }}>الإجمالي</SortableTh>
-                <SortableTh grid={grid} colKey="paid" style={{ textAlign: "left" }}>المسدّد / المتبقّي</SortableTh>
+                <SortableTh grid={grid} colKey="invoiceNo">{text("رقم الفاتورة", "Invoice number")}</SortableTh>
+                <SortableTh grid={grid} colKey="date">{text("التاريخ", "Date")}</SortableTh>
+                <SortableTh grid={grid} colKey="customer">{text("العميل", "Customer")}</SortableTh>
+                <SortableTh grid={grid} colKey="payment">{text("طريقة الدفع", "Payment method")}</SortableTh>
+                <SortableTh grid={grid} colKey="status">{text("الحالة", "Status")}</SortableTh>
+                {zatca && <SortableTh grid={grid} colKey="zatca">ZATCA</SortableTh>}
+                <SortableTh grid={grid} colKey="subtotal" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المجموع", "Subtotal")}</SortableTh>
+                <SortableTh grid={grid} colKey="vat" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الضريبة", "Tax")}</SortableTh>
+                <SortableTh grid={grid} colKey="grand" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</SortableTh>
+                <SortableTh grid={grid} colKey="paid" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المسدّد / المتبقّي", "Paid / remaining")}</SortableTh>
               </tr>
               <GridFilterRow grid={grid} columns={columns} leading={1} />
             </thead>
@@ -274,19 +277,19 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
                     <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.invoiceNo}</Td>
                     <Td>{p.invoiceDate}</Td>
-                    <Td>{p.customerName ?? "نقدي/بدون عميل"}</Td>
+                    <Td>{p.customerName ?? text("نقدي/بدون عميل", "Cash / no customer")}</Td>
                     <Td><PayBadge m={p.paymentMethod} /></Td>
                     <Td><StatusBadge status={p.status} /></Td>
                     {isZatcaCountry() && <Td><ZatcaBadge status={p.zatcaStatus} /></Td>}
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
-                    <Td num>{paidCell(p, paidByInvoice.get(p.id) ?? 0)}</Td>
+                    <Td num><PaidCell invoice={p} paid={paidByInvoice.get(p.id) ?? 0} /></Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
                       <Td colSpan={11 as any}>
-                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
+                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>{text("... جاري التحميل", "Loading…")}</div> : (
                           <SalesDetail p={expandedDetail} />
                         )}
                       </Td>
@@ -303,15 +306,18 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
         )}
       </Card>}
     </Page>
+    </div>
   );
 }
 
 // المسدّد / المتبقّي cell: cash/bank invoices are settled at sale → "مدفوعة".
 // Credit invoices show Σ collected (تحصيل) and the outstanding remainder.
-function paidCell(p: SalesInvoice, paid: number) {
-  if (p.paymentMethod !== "credit") return <span style={{ color: "#15803d" }}>مدفوعة</span>;
+function PaidCell({ invoice: p, paid }: { invoice: SalesInvoice; paid: number }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
+  if (p.paymentMethod !== "credit") return <span style={{ color: "#15803d" }}>{text("مدفوعة", "Paid")}</span>;
   const remaining = p.grandTotal - paid;
-  if (paid <= 0.005) return <span style={{ color: "#b45309" }}>غير مسدّدة</span>;
+  if (paid <= 0.005) return <span style={{ color: "#b45309" }}>{text("غير مسدّدة", "Unpaid")}</span>;
   return (
     <span>
       <span style={{ color: "#15803d", fontWeight: 600 }}>{fmt(paid)}</span>
@@ -322,36 +328,45 @@ function paidCell(p: SalesInvoice, paid: number) {
 }
 
 function PayBadge({ m }: { m: PaymentMethod }) {
-  const map = { credit: { l: "آجل", c: "#9a3412" }, cash: { l: "نقدي", c: "#15803d" }, bank: { l: "بنك", c: "#1e40af" } } as const;
+  const language = useUiLanguage();
+  const map = {
+    credit: { ar: "آجل", en: "Credit", c: "#9a3412" },
+    cash: { ar: "نقدي", en: "Cash", c: "#15803d" },
+    bank: { ar: "بنك", en: "Bank", c: "#1e40af" },
+  } as const;
   const x = map[m];
-  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{x.l}</span>;
+  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{language === "en" ? x.en : x.ar}</span>;
 }
 
 // Posting state badge: a draft has its impact reversed (no GL/stock effect) and
 // is editable; posted is the normal, locked state. Absent status ⇒ posted.
 function StatusBadge({ status }: { status?: string }) {
+  const language = useUiLanguage();
   const draft = status === "draft";
   const c = draft ? "#b45309" : "#15803d";
-  return <span style={{ background: c + "20", color: c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{draft ? "مسودة" : "مُرحّلة"}</span>;
+  return <span style={{ background: c + "20", color: c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{draft ? uiText("مسودة", "Draft", language) : uiText("مُرحّلة", "Posted", language)}</span>;
 }
 
 // ZATCA sync state of the linked offline_invoices row. `null` = not bridged
 // (non-Saudi installs, or the bridge hasn't run yet).
 function ZatcaBadge({ status }: { status?: string | null }) {
+  const language = useUiLanguage();
   if (!status) return <span style={{ color: "#94a3b8", fontSize: 12 }}>—</span>;
   const synced = status === "synced" || status === "submitted" || status === "cleared" || status === "reported";
   const c = synced ? "#15803d" : "#b45309";
-  const label = synced ? "مُرسلة" : "بانتظار الرفع";
+  const label = synced ? uiText("مُرسلة", "Submitted", language) : uiText("بانتظار الرفع", "Awaiting upload", language);
   return <span style={{ background: c + "20", color: c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{label}</span>;
 }
 
 function SalesDetail({ p }: { p: SalesInvoice }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const disc = getDocDiscount("sales_invoice", p.id);
   const discTotal = disc ? (disc.lineDiscountTotal + disc.headerDiscountValue) : 0;
   return (
     <div style={{ padding: 12 }}>
       <Table>
-        <thead><tr><Th>الصنف</Th><Th>الوحدة</Th><Th style={{ textAlign: "left" }}>الكمية</Th><Th style={{ textAlign: "left" }}>سعر الوحدة</Th><Th style={{ textAlign: "left" }}>الضريبة %</Th><Th style={{ textAlign: "left" }}>الإجمالي</Th></tr></thead>
+        <thead><tr><Th>{text("الصنف", "Item")}</Th><Th>{text("الوحدة", "Unit")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الكمية", "Quantity")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("سعر الوحدة", "Unit price")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الضريبة %", "Tax %")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</Th></tr></thead>
         <tbody>
           {p.lines.map((l, i) => (
             <tr key={l.id ?? i}>
@@ -360,26 +375,26 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
           ))}
           {disc && discTotal > 0.00001 && (
             <>
-              <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={5 as any}>الإجمالي قبل الخصم</Td><Td num>{fmt(disc.grossSubtotal)}</Td></tr>
-              <tr style={{ background: "#fff", color: "#b45309" }}><Td colSpan={5 as any}>الخصم</Td><Td num>− {fmt(discTotal)}</Td></tr>
+              <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={5 as any}>{text("الإجمالي قبل الخصم", "Gross subtotal")}</Td><Td num>{fmt(disc.grossSubtotal)}</Td></tr>
+              <tr style={{ background: "#fff", color: "#b45309" }}><Td colSpan={5 as any}>{text("الخصم", "Discount")}</Td><Td num>− {fmt(discTotal)}</Td></tr>
             </>
           )}
           {disc?.currencyCode && disc.currencyCode !== baseCurrencyCode() && (
-            <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={5 as any}>العملة · سعر الصرف</Td><Td num>{disc.currencyCode} · {fmt(disc.exchangeRate ?? 1)}</Td></tr>
+            <tr style={{ background: "#fff", color: "#475569" }}><Td colSpan={5 as any}>{text("العملة · سعر الصرف", "Currency · exchange rate")}</Td><Td num>{disc.currencyCode} · {fmt(disc.exchangeRate ?? 1)}</Td></tr>
           )}
           <tr style={{ background: "#fff", fontWeight: 700 }}>
-            <Td colSpan={5 as any}>الإجمالي قبل الضريبة</Td><Td num>{fmt(p.subtotal)}</Td>
+            <Td colSpan={5 as any}>{text("الإجمالي قبل الضريبة", "Subtotal")}</Td><Td num>{fmt(p.subtotal)}</Td>
           </tr>
-          <tr style={{ background: "#fff" }}><Td colSpan={5 as any}>ضريبة القيمة المضافة</Td><Td num>{fmt(p.vatTotal)}</Td></tr>
-          <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 16 }}><Td colSpan={5 as any}>الإجمالي النهائي</Td><Td num>{fmt(p.grandTotal)}</Td></tr>
-          <tr style={{ background: "#fff", color: "#64748b" }}><Td colSpan={5 as any}>تكلفة البضاعة المباعة</Td><Td num>{fmt(p.cogsTotal)}</Td></tr>
+          <tr style={{ background: "#fff" }}><Td colSpan={5 as any}>{text("ضريبة القيمة المضافة", "VAT")}</Td><Td num>{fmt(p.vatTotal)}</Td></tr>
+          <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 16 }}><Td colSpan={5 as any}>{text("الإجمالي النهائي", "Grand total")}</Td><Td num>{fmt(p.grandTotal)}</Td></tr>
+          <tr style={{ background: "#fff", color: "#64748b" }}><Td colSpan={5 as any}>{text("تكلفة البضاعة المباعة", "Cost of goods sold")}</Td><Td num>{fmt(p.cogsTotal)}</Td></tr>
           {isZatcaCountry() && p.zatcaQrBase64 && (
             <tr style={{ background: "#fff" }}>
-              <Td colSpan={5 as any}>زاتكا</Td>
+              <Td colSpan={5 as any}>ZATCA</Td>
               <Td>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   <ZatcaBadge status={p.zatcaStatus ?? "pending"} />
-                  <span style={{ color: "#15803d", fontSize: 12 }}>✓ تم توليد رمز QR وإدراج الفاتورة في طابور الإرسال لزاتكا</span>
+                  <span style={{ color: "#15803d", fontSize: 12 }}>✓ {text("تم توليد رمز QR وإدراج الفاتورة في طابور الإرسال لزاتكا", "QR code generated and invoice added to the ZATCA submission queue")}</span>
                 </span>
               </Td>
             </tr>
@@ -387,9 +402,9 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
         </tbody>
       </Table>
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button onClick={() => void printSalesDoc("a4", invoiceToPrintDoc(p))} style={btnSecondary}>🖨️ طباعة A4</button>
-        <button onClick={() => void printSalesDoc("thermal", invoiceToPrintDoc(p))} style={btnSecondary}>🧾 طباعة حرارية</button>
-        <button onClick={() => openWhatsApp(buildDocWhatsAppText({ kind: "invoice", companyName: getCompanyProfile().name, docNo: p.invoiceNo, date: p.invoiceDate, grandTotal: p.grandTotal, customerName: p.buyerName ?? p.customerName }))} style={{ ...btnSecondary, color: "#075e54", borderColor: "#25d366" }}>💬 واتساب</button>
+        <button onClick={() => void printSalesDoc("a4", invoiceToPrintDoc(p))} style={btnSecondary}>🖨️ {text("طباعة A4", "Print A4")}</button>
+        <button onClick={() => void printSalesDoc("thermal", invoiceToPrintDoc(p))} style={btnSecondary}>🧾 {text("طباعة حرارية", "Thermal print")}</button>
+        <button onClick={() => openWhatsApp(buildDocWhatsAppText({ kind: "invoice", companyName: getCompanyProfile().name, docNo: p.invoiceNo, date: p.invoiceDate, grandTotal: p.grandTotal, customerName: p.buyerName ?? p.customerName }))} style={{ ...btnSecondary, color: "#075e54", borderColor: "#25d366" }}>💬 WhatsApp</button>
       </div>
     </div>
   );
@@ -421,6 +436,8 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   initial?: SalesInvoice | null;
   onCancel: () => void; onDone: () => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const isEdit = !!initial;
   const hideZeros = useHideZeros();
   const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
@@ -632,17 +649,17 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
     setBusy(true); setErr(null); setIssues([]);
     try {
       const problems = collectDocIssues([
-        { label: "طريقة الدفع", ok: !!paymentMethod },
-        { label: "العميل", ok: paymentMethod !== "credit" || !!customerId },
-        { label: "العملة", ok: !!currency },
-        ...(branches.length ? [{ label: "الفرع", ok: branchId !== "" }] : []),
-        { label: "المستودع", ok: !!warehouseId },
-      ], lines.map((l) => ({ itemId: l.itemId, uomId: l.uomId ?? null, price: l.unitPrice, qty: l.qty })), "سعر البيع");
+        { label: text("طريقة الدفع", "Payment method"), ok: !!paymentMethod },
+        { label: text("العميل", "Customer"), ok: paymentMethod !== "credit" || !!customerId },
+        { label: text("العملة", "Currency"), ok: !!currency },
+        ...(branches.length ? [{ label: text("الفرع", "Branch"), ok: branchId !== "" }] : []),
+        { label: text("المستودع", "Warehouse"), ok: !!warehouseId },
+      ], lines.map((l) => ({ itemId: l.itemId, uomId: l.uomId ?? null, price: l.unitPrice, qty: l.qty })), text("سعر البيع", "Sales price"));
       if (problems.length) { setIssues(problems); setBusy(false); return; }
       const cleaned = lines.filter((l) => l.itemId && (l.qty || 0) > 0);
       // Print-only per-line brand snapshot, aligned to the persisted (cleaned) order.
       const brandSnapshot = cleaned.map((l) => ({ brandId: l.brandId ?? null, brandName: l.brandName ?? null }));
-      if (currency !== baseCurrencyCode() && !(exchangeRate > 0)) throw new Error("أدخل سعر صرف صحيح للعملة الأجنبية");
+      if (currency !== baseCurrencyCode() && !(exchangeRate > 0)) throw new Error(text("أدخل سعر صرف صحيح للعملة الأجنبية", "Enter a valid exchange rate for the foreign currency."));
       // Fold the discount into each unit price; Rust recomputes totals from
       // qty × unitPrice so VAT lands on the net base (ZATCA-correct).
       const r = computeDiscount(
@@ -718,12 +735,12 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
             customerVat: selectedCustomer?.vatNumber ?? null,
           });
         } catch (e: any) {
-          setErr(`تم حفظ الفاتورة لكن تعذّر ربطها بزاتكا. اضغط «حفظ» مرة أخرى لإعادة المحاولة. (${e?.message ?? "خطأ"})`);
+          setErr(text(`تم حفظ الفاتورة لكن تعذّر ربطها بزاتكا. اضغط «حفظ» مرة أخرى لإعادة المحاولة. (${e?.message ?? "خطأ"})`, `Invoice saved, but the ZATCA link failed. Select “Save” again to retry. (${e?.message ?? "Error"})`));
           return;
         }
       }
       onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save invoice.")); }
     finally { setBusy(false); }
   }
 
@@ -745,71 +762,71 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         @media(max-width:700px){.zsales-totals-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}}
         @media(max-width:700px){.zline-details-panel{grid-template-columns:1fr;}}
       `}</style>
-      <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل الفاتورة ${initial?.invoiceNo ?? ""}` : "فاتورة مبيعات جديدة"}</h3>
+      <h3 style={{ marginTop: 0 }}>{isEdit ? `${text("تعديل الفاتورة", "Edit invoice")} ${initial?.invoiceNo ?? ""}` : text("فاتورة مبيعات جديدة", "New sales invoice")}</h3>
       <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
-        { key: "basic", label: "البيانات الأساسية" },
-        { key: "lines", label: `بنود الأصناف (${selectedLineCount})` },
-        { key: "payments", label: "المدفوعات" },
+        { key: "basic", label: text("البيانات الأساسية", "Basic information") },
+        { key: "lines", label: `${text("بنود الأصناف", "Items")} (${selectedLineCount})` },
+        { key: "payments", label: text("المدفوعات", "Payments") },
       ]} />
 
       <div style={contentPanel(activeTab, "basic")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
-        <Field label="العميل *">
+        <Field label={text("العميل *", "Customer *")}>
           <SearchCombobox
             value={customerId}
             onChange={(v) => setCustomerId(Number(v))}
             {...navCombo}
             style={input}
             options={[
-              { value: 0, label: "— بدون عميل —" },
+              { value: 0, label: text("— بدون عميل —", "— No customer —") },
               ...deps.customers.map((c) => ({ value: c.id, label: c.nameAr })),
             ]}
           />
         </Field>
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} {...navInput} /></Field>
-        <Field label="المستودع">
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} {...navInput} /></Field>
+        <Field label={text("المستودع", "Warehouse")}>
           <SearchCombobox
             value={warehouseId}
             onChange={(v) => setWarehouseId(Number(v))}
             {...navCombo}
             style={input}
             options={[
-              { value: 0, label: "— المستودع الافتراضي —" },
+              { value: 0, label: text("— المستودع الافتراضي —", "— Default warehouse —") },
               ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
             ]}
           />
         </Field>
-        <Field label="الضريبة">
+        <Field label={text("الضريبة", "Tax")}>
           <SearchCombobox value={taxId} onChange={onSelectTax} {...navCombo} options={taxOptions} style={input} />
         </Field>
-        <Field label="الفرع">
+        <Field label={text("الفرع", "Branch")}>
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} {...navCombo} options={branchPickerOptions(branches)} style={input} />
         </Field>
-        <Field label="مركز التكلفة">
+        <Field label={text("مركز التكلفة", "Cost center")}>
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} {...navCombo} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
-        <Field label="مندوب المبيعات">
+        <Field label={text("مندوب المبيعات", "Sales representative")}>
           <SearchCombobox
             value={salesRepId}
             onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
             {...navCombo}
             style={input}
             options={[
-              { value: "", label: "— بدون —" },
+              { value: "", label: text("— بدون —", "— None —") },
               ...deps.salespersons.map((s) => ({ value: s.id, label: s.nameAr })),
             ]}
           />
         </Field>
         {isZatcaCountry() && (
-        <Field label="نوع الفاتورة (زاتكا)">
+        <Field label={text("نوع الفاتورة (زاتكا)", "Invoice type (ZATCA)")}>
           <SearchCombobox
             value={invoiceType}
             onChange={(v) => setInvoiceType(v as "simplified" | "standard")}
             {...navCombo}
             style={input}
             options={[
-              { value: "simplified", label: "مبسّطة (B2C)" },
-              { value: "standard", label: "ضريبية (B2B)" },
+              { value: "simplified", label: text("مبسّطة (B2C)", "Simplified (B2C)") },
+              { value: "standard", label: text("ضريبية (B2B)", "Standard tax (B2B)") },
             ]}
           />
         </Field>
@@ -817,15 +834,15 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
         {invoiceType === "standard" && (
           <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري (للفاتورة الضريبية)</div>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{text("بيانات المشتري (للفاتورة الضريبية)", "Buyer details (for tax invoices)")}</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px" }}>
-              <Field label="اسم المشتري">
+              <Field label={text("اسم المشتري", "Buyer name")}>
                 <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} {...navInput} />
               </Field>
-              <Field label="الرقم الضريبي للمشتري">
+              <Field label={text("الرقم الضريبي للمشتري", "Buyer tax number")}>
                 <input value={buyerVat} onChange={(e) => setBuyerVat(e.target.value)} style={input} {...navInput} />
               </Field>
-              <Field label="عنوان المشتري">
+              <Field label={text("عنوان المشتري", "Buyer address")}>
                 <input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} style={input} {...navInput} />
               </Field>
             </div>
@@ -836,24 +853,24 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
 
       <div style={linesPanel(activeTab)}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
-        <strong style={{ fontSize: 15 }}>بنود الأصناف</strong>
+        <strong style={{ fontSize: 15 }}>{text("بنود الأصناف", "Invoice items")}</strong>
         <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>
-          {selectedLineCount} صنف
+          {selectedLineCount} {text("صنف", "items")}
         </span>
       </div>
       <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 8 }}>
       <Table style={{ width: "100%", minWidth: 900, tableLayout: "fixed" }}>
         <thead><tr>
           <Th style={{ width: "3%", textAlign: "center" }}>#</Th>
-          <Th style={{ width: "23%" }}>الصنف</Th>
-          <Th style={{ width: "10%" }}>الوحدة</Th>
-          <Th style={{ width: "8%", textAlign: "center" }}>الكمية</Th>
-          <Th style={{ width: "6%", textAlign: "center" }}>مجاني</Th>
-          <Th style={{ width: "13%", textAlign: "center" }}>سعر الوحدة</Th>
-          <Th style={{ width: "12%" }}>الخصم</Th>
-          <Th style={{ width: "6%", textAlign: "center" }}>ض. %</Th>
-          <Th style={{ width: "12%", textAlign: "left" }}>الإجمالي</Th>
-          <Th style={{ width: "7%", textAlign: "center" }}>إجراءات</Th>
+          <Th style={{ width: "23%" }}>{text("الصنف", "Item")}</Th>
+          <Th style={{ width: "10%" }}>{text("الوحدة", "Unit")}</Th>
+          <Th style={{ width: "8%", textAlign: "center" }}>{text("الكمية", "Quantity")}</Th>
+          <Th style={{ width: "6%", textAlign: "center" }}>{text("مجاني", "Free")}</Th>
+          <Th style={{ width: "13%", textAlign: "center" }}>{text("سعر الوحدة", "Unit price")}</Th>
+          <Th style={{ width: "12%" }}>{text("الخصم", "Discount")}</Th>
+          <Th style={{ width: "6%", textAlign: "center" }}>{text("ض. %", "Tax %")}</Th>
+          <Th style={{ width: "12%", textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</Th>
+          <Th style={{ width: "7%", textAlign: "center" }}>{text("إجراءات", "Actions")}</Th>
         </tr></thead>
         <tbody>
           {lines.length === 0 && <EmptyItemsRow colSpan={10} />}
@@ -870,7 +887,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
                       {...navCombo}
                       style={input}
                       options={[
-                        { value: 0, label: "— اختر —" },
+                        { value: 0, label: text("— اختر —", "— Select —") },
                         ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
                       ]}
                     />
@@ -883,7 +900,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
                         : (defUom?.nameAr ?? "");
                       const unitOpts = selItem
                         ? [
-                            { value: "base", label: baseName || "أساسي" },
+                            { value: "base", label: baseName || text("أساسي", "Base") },
                             ...((selItem.units ?? []).map((u) => ({ value: `add:${u.id}`, label: `${u.name} (×${u.factor})` }))),
                           ]
                         : [{ value: "base", label: defUom?.nameAr ?? "" }];
@@ -913,13 +930,13 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
                           if (next.has(i)) next.delete(i); else next.add(i);
                           return next;
                         })}
-                        aria-label={expanded ? "إخفاء تفاصيل السطر" : "فتح تفاصيل السطر"}
-                        title={expanded ? "إخفاء التفاصيل" : "ملاحظة وبيانات إضافية"}
+                        aria-label={expanded ? text("إخفاء تفاصيل السطر", "Hide line details") : text("فتح تفاصيل السطر", "Open line details")}
+                        title={expanded ? text("إخفاء التفاصيل", "Hide details") : text("ملاحظة وبيانات إضافية", "Note and additional information")}
                         style={{ ...btnLink, color: expanded ? "#087f69" : "#64748b", fontSize: 16, padding: "2px 5px" }}
                       >
                         {expanded ? "⌄" : "⋯"}
                       </button>
-                      <button type="button" onClick={() => removeLine(i)} aria-label="حذف السطر" title="حذف السطر" style={{ ...btnLink, color: "#dc2626", fontSize: 17, padding: "2px 5px" }}>×</button>
+                      <button type="button" onClick={() => removeLine(i)} aria-label={text("حذف السطر", "Remove line")} title={text("حذف السطر", "Remove line")} style={{ ...btnLink, color: "#dc2626", fontSize: 17, padding: "2px 5px" }}>×</button>
                     </div>
                   </Td>
                 </tr>
@@ -929,20 +946,20 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
                       <div className="zline-details-panel">
                         {itemHasBrands(l.itemId) && (
                           <div>
-                            <label className="zline-detail-label">العلامة التجارية</label>
+                            <label className="zline-detail-label">{text("العلامة التجارية", "Brand")}</label>
                             <SearchCombobox
                               value={l.brandId ?? ""}
                               onChange={(v) => setLine(i, { brandId: v === "" ? null : Number(v) })}
                               style={input}
                               options={[
-                                { value: "", label: "بدون علامة تجارية" },
+                                { value: "", label: text("بدون علامة تجارية", "No brand") },
                                 ...listItemBrands(l.itemId).map((b) => ({ value: b.brandId, label: b.brandNameAr })),
                               ]}
                             />
                           </div>
                         )}
                         <div style={{ gridColumn: itemHasBrands(l.itemId) ? undefined : "1 / -1" }}>
-                          <label className="zline-detail-label">ملاحظة السطر</label>
+                          <label className="zline-detail-label">{text("ملاحظة السطر", "Line note")}</label>
                           <input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} {...navInput} />
                         </div>
                       </div>
@@ -957,7 +974,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </div>
       <div style={{ display: "flex", justifyContent: "flex-start", marginTop: 8 }}>
         <button onClick={addLine} type="button" style={{ padding: "7px 14px", background: "#fff", color: "#087f69", border: "1px solid #9bd6c9", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
-          + إضافة صنف
+          + {text("إضافة صنف", "Add item")}
         </button>
       </div>
       <div style={docFormPinned}>
@@ -967,21 +984,21 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
 
       <div style={contentPanel(activeTab, "payments")}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
-        <Field label="طريقة الدفع">
+        <Field label={text("طريقة الدفع", "Payment method")}>
           <SearchCombobox
             value={paymentMethod}
             onChange={(v) => setPaymentMethod(v as PaymentMethod)}
             {...navCombo}
             style={input}
             options={[
-              { value: "cash", label: "نقدي" },
-              { value: "bank", label: "بنك" },
-              { value: "credit", label: "آجل (على الحساب)" },
+              { value: "cash", label: text("نقدي", "Cash") },
+              { value: "bank", label: text("بنك", "Bank") },
+              { value: "credit", label: text("آجل (على الحساب)", "Credit (on account)") },
             ]}
           />
         </Field>
         {paymentMethod === "cash" && (
-          <Field label="الخزينة">
+          <Field label={text("الخزينة", "Cashbox")}>
             <SearchCombobox
               value={cashBoxId ?? ""}
               onChange={(v) => setCashBoxId(Number(v) || null)}
@@ -992,7 +1009,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           </Field>
         )}
         {paymentMethod === "bank" && (
-          <Field label="البنك">
+          <Field label={text("البنك", "Bank")}>
             <SearchCombobox
               value={bankId ?? ""}
               onChange={(v) => setBankId(Number(v) || null)}
@@ -1005,13 +1022,13 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </div>
       {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
         <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
-          الرصيد الحالي: <b>{fmt(selectedCustomer.balance ?? 0)}</b>
-          {(selectedCustomer.creditLimit ?? 0) > 0 && <> · حد الائتمان: <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
-          {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · مدة الاستحقاق: <b>{selectedCustomer.paymentTermsDays} يوم</b></>}
-          {selectedCustomer.enforceCreditLimit && <> · <b>المنع مُفعّل</b></>}
+          {text("الرصيد الحالي:", "Current balance:")} <b>{fmt(selectedCustomer.balance ?? 0)}</b>
+          {(selectedCustomer.creditLimit ?? 0) > 0 && <> · {text("حد الائتمان:", "Credit limit:")} <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
+          {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · {text("مدة الاستحقاق:", "Payment terms:")} <b>{selectedCustomer.paymentTermsDays} {text("يوم", "days")}</b></>}
+          {selectedCustomer.enforceCreditLimit && <> · <b>{text("المنع مُفعّل", "Credit limit enforced")}</b></>}
         </div>
       )}
-      <Field label="ملاحظات" style={{ marginTop: 12 }}>
+      <Field label={text("ملاحظات", "Notes")} style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
       </div>
@@ -1020,8 +1037,8 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : (isEdit ? "حفظ التعديل" : "حفظ وترحيل")}</button>
+        <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
+        <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : (isEdit ? text("حفظ التعديل", "Save changes") : text("حفظ وترحيل", "Save and post"))}</button>
       </Actions>
       </div>
     </div>
