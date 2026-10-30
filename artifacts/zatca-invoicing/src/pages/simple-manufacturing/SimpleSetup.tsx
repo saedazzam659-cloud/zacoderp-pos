@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useFmt } from "@/hooks/use-fmt";
+import { useAuth } from "@/contexts/AuthContext";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +11,8 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { EmployeeMultiSelect } from "@/components/EmployeeMultiSelect";
 import { Switch } from "@/components/ui/switch";
 import type { Catalog } from "./types";
+
+const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const ROUTING_STAGE_ACCENTS = [
   { card: "border-sky-200 bg-sky-50/50 dark:border-sky-800 dark:bg-sky-950/20", marker: "border-sky-300 bg-sky-100 text-sky-800 dark:border-sky-700 dark:bg-sky-900 dark:text-sky-200" },
@@ -57,10 +61,12 @@ export function SimpleSetup({
   }) => Promise<unknown>;
 }) {
   const { fmtQty } = useFmt();
+  const { token, user, actingCompanyId } = useAuth();
   const [material, setMaterial] = useState({ code: "", nameAr: "", itemNature: "raw", unitId: "" });
   const [bom, setBom] = useState({ productItemId: "", nameAr: "", outputQty: "1", outputUnitCode: "" });
   const [bomLines, setBomLines] = useState<Array<{ itemId: string; quantity: string; unitCode: string }>>([{ itemId: "", quantity: "1", unitCode: "" }]);
   const [routing, setRouting] = useState({ productItemId: "", nameAr: "" });
+  const [routingMaterialItemIds, setRoutingMaterialItemIds] = useState<string[]>([]);
   const [routingMaterialOptions, setRoutingMaterialOptions] = useState<Array<{ id: number; nameAr: string; code: string; detail: string }>>([]);
   const routingMaterialLoadRef = useRef(0);
   const [routingStages, setRoutingStages] = useState<Array<{
@@ -88,6 +94,40 @@ export function SimpleSetup({
     catalog.accounting?.settings?.comprehensiveCostingEnabled === true,
   );
   const [savingTransportSetting, setSavingTransportSetting] = useState(false);
+  const inventoryCompanyId = actingCompanyId ?? user?.companyId ?? undefined;
+  const itemPickerHeaders = useMemo(() => ({
+    Authorization: `Bearer ${token ?? ""}`,
+    ...(actingCompanyId ? { "x-acting-company-id": String(actingCompanyId) } : {}),
+  }), [token, actingCompanyId]);
+  const configuredProductIds = useMemo(() => [
+    ...(catalog.bomTemplates ?? []).map(row => String(row.productItemId)),
+    ...catalog.routings.map(row => row.productItemId == null ? "" : String(row.productItemId)).filter(Boolean),
+    ...catalog.templates.map(row => String(row.configuration?.productItemId ?? "")).filter(Boolean),
+  ], [catalog.bomTemplates, catalog.routings, catalog.templates]);
+  const productItemIds = useMemo(() => [
+    bom.productItemId, routing.productItemId, template.productItemId, ...configuredProductIds,
+  ], [bom.productItemId, routing.productItemId, template.productItemId, configuredProductIds]);
+  const productItemSearch = useInventoryItemSearch(
+    inventoryCompanyId, itemPickerHeaders, productItemIds, Boolean(token),
+    ["finished", "semi", "merchandise"], { includeUnclassified: true, onlyWhenEmpty: true },
+  );
+  const materialItemIds = useMemo(() => [
+    ...bomLines.map(line => line.itemId), ...routingMaterialItemIds,
+  ], [bomLines, routingMaterialItemIds]);
+  const materialItemSearch = useInventoryItemSearch(
+    inventoryCompanyId, itemPickerHeaders, materialItemIds, Boolean(token),
+    ["raw", "semi", "consumable"], { includeUnclassified: true },
+  );
+  const productPickerItems = useMemo(() => {
+    const byId = new Map<string, Catalog["items"][number]>();
+    for (const item of [...catalog.items, ...productItemSearch.items]) byId.set(String(item.id), item);
+    return [...byId.values()];
+  }, [catalog.items, productItemSearch.items]);
+  const materialPickerItems = useMemo(() => {
+    const byId = new Map<string, Catalog["items"][number]>();
+    for (const item of [...catalog.items, ...materialItemSearch.items]) byId.set(String(item.id), item);
+    return [...byId.values()];
+  }, [catalog.items, materialItemSearch.items]);
 
   useEffect(() => {
     setInternalTransportEnabled(catalog.accounting?.settings?.internalTransportEnabled === true);
@@ -125,6 +165,7 @@ export function SimpleSetup({
   const resetRouting = () => {
     routingMaterialLoadRef.current++;
     setRoutingMaterialOptions([]);
+    setRoutingMaterialItemIds([]);
     setEditingRoutingId(null);
     setRouting({ productItemId: "", nameAr: "" });
     setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, materialLineIds: [] }]);
@@ -133,16 +174,32 @@ export function SimpleSetup({
   const loadRoutingMaterialsForProduct = async (productItemId: string) => {
     const requestId = ++routingMaterialLoadRef.current;
     setRoutingMaterialOptions([]);
+    setRoutingMaterialItemIds([]);
     const template = catalog.bomTemplates?.find(row => String(row.productItemId) === productItemId);
     if (!productItemId || !template) return [];
     const detail = await onLoadBom(template.id);
     if (requestId !== routingMaterialLoadRef.current) return [];
+    const itemIds = [...new Set((Array.isArray(detail?.lines) ? detail.lines : [])
+      .map((line: any) => Number(line?.itemId))
+      .filter((id: number) => Number.isInteger(id) && id > 0))];
+    if (!itemIds.length) {
+      setRoutingMaterialItemIds([]);
+      return [];
+    }
+    const response = await fetch(
+      `${API}/api/inventory/items/lookup?${inventoryCompanyId ? `companyId=${inventoryCompanyId}&` : ""}ids=${encodeURIComponent(itemIds.join(","))}`,
+      { headers: itemPickerHeaders },
+    );
+    if (!response.ok) throw new Error("تعذر تحميل أصناف قائمة المواد");
+    const rows = await response.json();
+    if (requestId !== routingMaterialLoadRef.current) return [];
+    const itemsById = new Map((Array.isArray(rows) ? rows : []).map((item: any) => [Number(item.id), item]));
     const options: Array<{ id: number; nameAr: string; code: string; detail: string }> = [];
     for (const line of Array.isArray(detail?.lines) ? detail.lines : []) {
       const id = Number(line?.id);
       const itemId = Number(line?.itemId);
       if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(itemId) || itemId <= 0) continue;
-      const item = catalog.items.find(candidate => candidate.id === itemId);
+      const item = itemsById.get(itemId) as Catalog["items"][number] | undefined;
       if (!item || (item.itemNature && !["raw", "consumable"].includes(item.itemNature))) continue;
       options.push({
         id,
@@ -153,6 +210,7 @@ export function SimpleSetup({
         detail: `${line.quantity ?? ""} ${line.unitCode ?? ""}`.trim(),
       });
     }
+    setRoutingMaterialItemIds(itemIds.map(String));
     setRoutingMaterialOptions(options);
     return options.map(option => String(option.id));
   };
@@ -479,7 +537,7 @@ export function SimpleSetup({
                       searchPlaceholder="ابحث برمز أو اسم المنتج..."
                       items={[
                         { value: "", label: "اختر المنتج..." },
-                        ...catalog.items
+                        ...productPickerItems
                           .filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature))
                           .map(i => ({
                             value: String(i.id),
@@ -489,6 +547,8 @@ export function SimpleSetup({
                           })),
                       ]}
                       onValueChange={value => setBom({ ...bom, productItemId: value })}
+                      onSearchChange={productItemSearch.setSearch}
+                      loading={productItemSearch.isSearching}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -532,7 +592,7 @@ export function SimpleSetup({
                             searchPlaceholder="ابحث برمز أو اسم المادة..."
                             items={[
                               { value: "", label: "اختر المادة..." },
-                              ...catalog.items
+                              ...materialPickerItems
                                 .filter(i => !i.itemNature || ["raw", "semi", "consumable"].includes(i.itemNature))
                                 .map(i => ({
                                   value: String(i.id),
@@ -544,6 +604,8 @@ export function SimpleSetup({
                             onValueChange={value => setBomLines(lines => lines.map((current, i) => i === index
                               ? { ...current, itemId: value }
                               : current))}
+                            onSearchChange={materialItemSearch.setSearch}
+                            loading={materialItemSearch.isSearching}
                           />
                          <Input className="flex-[1] min-w-[80px]" type="text" inputMode="decimal" value={line.quantity}
                            onChange={e => setBomLines(lines => lines.map((current, i) => i === index
@@ -597,16 +659,7 @@ export function SimpleSetup({
 
           {catalog.bomTemplates && catalog.bomTemplates.length > 0 && (
             <div className="space-y-2 mt-2">
-              <div className="text-sm font-semibold text-slate-600">الأصناف المحفوظة</div>
-              <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto">
-                {catalog.items.map(item => (
-                  <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50/40 px-3 py-2 text-sm">
-                    <span className="font-medium">{item.nameAr}</span>
-                    <span className="text-xs text-muted-foreground" dir="ltr">{item.code}{item.unitCode ? ` · ${item.unitCode}` : ""}</span>
-                  </div>
-                ))}
-                {!catalog.items.length && <span className="text-sm text-muted-foreground">لم تُضف أصناف بعد.</span>}
-              </div>
+              <p className="text-xs text-muted-foreground">ابحث عن الصنف داخل حقول الاختيار لعرض النتائج دون تحميل كتالوج الشركة بالكامل.</p>
               <div className="text-sm font-semibold text-slate-600">قوائم المواد المحفوظة</div>
               <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto pr-1">
                 {catalog.bomTemplates.map(b => (
@@ -662,7 +715,7 @@ export function SimpleSetup({
                     searchPlaceholder="ابحث برمز أو اسم المنتج..."
                     items={[
                       { value: "", label: "اختر المنتج..." },
-                      ...catalog.items.map(i => ({
+                      ...productPickerItems.map(i => ({
                         value: String(i.id),
                         code: i.code,
                         label: i.nameAr,
@@ -676,6 +729,8 @@ export function SimpleSetup({
                       }
                       void loadRoutingMaterialsForProduct(value).catch(() => {});
                     }}
+                    onSearchChange={productItemSearch.setSearch}
+                    loading={productItemSearch.isSearching}
                   />
                 </div>
                 <div className="space-y-2">
@@ -994,7 +1049,7 @@ export function SimpleSetup({
                     searchPlaceholder="ابحث برمز أو اسم المنتج..."
                     items={[
                       { value: "", label: "اختر المنتج الافتراضي..." },
-                      ...catalog.items
+                      ...productPickerItems
                         .filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature))
                         .map(i => ({
                           value: String(i.id),
@@ -1004,6 +1059,8 @@ export function SimpleSetup({
                         })),
                     ]}
                     onValueChange={value => setTemplate({ ...template, productItemId: value })}
+                    onSearchChange={productItemSearch.setSearch}
+                    loading={productItemSearch.isSearching}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-4">

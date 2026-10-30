@@ -21,6 +21,12 @@ Remote item pickers must remain mounted when a search returns zero results. Repl
 
 **How to apply:** Render the searchable picker whenever the authenticated form is active, regardless of current result count; render an empty-results state inside the picker and let the user continue typing.
 
+When requesting `/api/simple-manufacturing/catalog?includeItems=0`, migrate every setup selector that reads `catalog.items` to bounded remote search in the same change. Otherwise BOM component and product pickers silently become empty.
+
+**Why:** The lightweight manufacturing catalog intentionally omits item rows; changing only the catalog request leaves legacy setup pickers with no choices.
+
+**How to apply:** Audit every `catalog.items` consumer when changing the include-items flag. Use the shared tenant-scoped item-search hook, connect each picker’s search callback, and hydrate both current selections and existing BOM/routing references.
+
 Apply item-search loading and race handling consistently across every operational web screen that loads items, not only sales invoices. A background refetch must not replace cached picker choices with a blocking spinner, and custom debounced searches must cancel or ignore responses for older queries.
 
 **Why:** Users use the same item catalog across sales, purchasing, inventory, and production screens; fixing only one screen leaves the same disappearance or stale-result behavior elsewhere.
