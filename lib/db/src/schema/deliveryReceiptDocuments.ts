@@ -25,6 +25,8 @@ export const deliveryReceiptDocumentsTable = pgTable(
     kind:          text("kind").notNull(),               // 'receipt' | 'delivery'
     docNumber:     text("doc_number").notNull(),
     docDate:       timestamp("doc_date", { withTimezone: true }).notNull().defaultNow(),
+    currencyCode:  text("currency_code"),
+    exchangeRate:  numeric("exchange_rate", { precision: 15, scale: 6 }),
     // Linked invoice (snapshot number kept so the doc reads standalone).
     invoiceId:     integer("invoice_id"),
     invoiceType:   text("invoice_type"),                 // 'purchase' | 'sales'

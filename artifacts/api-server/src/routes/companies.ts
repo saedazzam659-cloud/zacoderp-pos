@@ -461,7 +461,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     faDisposalGainAccountId, faDisposalLossAccountId,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     printQuotationShowQr, printQuotationShowCurrencyName, printQuotationShowCustomerAddress,
-    purchaseOrderPrintOptions,
+    purchaseOrderPrintOptions, deliveryReceiptPrintOptions,
     bankAccountText, printCustomNotes, printCustomNotesOnSales, printCustomNotesOnQuotation,
     printShowItemsSummary,
     printT14ShowEnSubtitle, printT14ShowAccountCode, printT14ShowAuditFooter,
@@ -545,6 +545,11 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       showTerms: boolean;
       termsAr: string;
       termsEn: string;
+    };
+    deliveryReceiptPrintOptions?: {
+      showCompanyDetails: boolean; showBranch: boolean; showWarehouse: boolean;
+      showInvoice: boolean; showRecipient: boolean; showLineNotes: boolean;
+      showNotes: boolean; showSignature: boolean; termsAr: string; termsEn: string;
     };
     bankAccountText?: string | null; printCustomNotes?: string;
     printCustomNotesOnSales?: boolean; printCustomNotesOnQuotation?: boolean;
@@ -820,6 +825,30 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       ...purchaseOrderPrintOptions,
       termsAr: purchaseOrderPrintOptions.termsAr.trim(),
       termsEn: purchaseOrderPrintOptions.termsEn.trim(),
+    };
+  }
+  if (deliveryReceiptPrintOptions !== undefined) {
+    const optionKeys = [
+      "showCompanyDetails", "showBranch", "showWarehouse", "showInvoice",
+      "showRecipient", "showLineNotes", "showNotes", "showSignature", "termsAr", "termsEn",
+    ] as const;
+    if (
+      !deliveryReceiptPrintOptions ||
+      typeof deliveryReceiptPrintOptions !== "object" ||
+      Array.isArray(deliveryReceiptPrintOptions) ||
+      Object.keys(deliveryReceiptPrintOptions).some(key => !optionKeys.includes(key as typeof optionKeys[number])) ||
+      optionKeys.slice(0, 8).some(key => typeof deliveryReceiptPrintOptions[key] !== "boolean") ||
+      typeof deliveryReceiptPrintOptions.termsAr !== "string" ||
+      typeof deliveryReceiptPrintOptions.termsEn !== "string" ||
+      deliveryReceiptPrintOptions.termsAr.length > 8000 ||
+      deliveryReceiptPrintOptions.termsEn.length > 8000
+    ) {
+      res.status(400).json({ error: "إعدادات نموذج الاستلام والتسليم غير صالحة" }); return;
+    }
+    updates.deliveryReceiptPrintOptions = {
+      ...deliveryReceiptPrintOptions,
+      termsAr: deliveryReceiptPrintOptions.termsAr.trim(),
+      termsEn: deliveryReceiptPrintOptions.termsEn.trim(),
     };
   }
   if (bankAccountText !== undefined) {

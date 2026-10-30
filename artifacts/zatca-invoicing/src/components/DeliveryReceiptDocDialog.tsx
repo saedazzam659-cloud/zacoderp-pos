@@ -29,6 +29,9 @@ import {
   PenLine, ImageUp, Loader2, History,
 } from "lucide-react";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useQuery } from "@tanstack/react-query";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -82,6 +85,8 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
   // Approve (lock) maps to the backend `post` action on this module.
   const canApprove = usePermission("delivery_receipt_docs", "post");
   const company = (user as any)?.company ?? null;
+  const companyId = Number(company?.id) || undefined;
+  const authH = { Authorization: `Bearer ${token}` };
   const isReceipt = kind === "receipt";
   const label = isReceipt ? "سند استلام" : "سند تسليم";
   const partyLabel = isReceipt ? "المورد / الجهة المسلِّمة" : "العميل / الجهة المستلِمة";
@@ -93,6 +98,11 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
   const [docNumber, setDocNumber] = useState("");
   const [docDate, setDocDate] = useState(todayIso());
   const [invoiceNumber, setInvoiceNumber] = useState<string | null>(null);
+  const [partyId, setPartyId] = useState<number | null>(null);
+  const [branchId, setBranchId] = useState<number | null>(seed?.branchId ?? null);
+  const [warehouseId, setWarehouseId] = useState<number | null>(seed?.warehouseId ?? null);
+  const [currencyCode, setCurrencyCode] = useState("");
+  const [exchangeRate, setExchangeRate] = useState("1");
   const [warehouseName, setWarehouseName] = useState<string | null>(null);
   const [partyName, setPartyName] = useState<string | null>(null);
   const [recipientName, setRecipientName] = useState("");
@@ -107,6 +117,63 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
   const [isApproved, setIsApproved] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
 
+  const { data: parties = [] } = useQuery<any[]>({
+    queryKey: ["delivery-receipt-parties", kind, companyId],
+    enabled: !!token,
+    queryFn: async () => {
+      const path = isReceipt ? "/api/suppliers" : "/api/customers";
+      const response = await fetch(`${API}${path}${companyId ? `?companyId=${companyId}` : ""}`, { headers: authH });
+      if (!response.ok) throw new Error("تعذر تحميل الجهات");
+      return response.json();
+    },
+  });
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", companyId],
+    enabled: !!token,
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/org/branches${companyId ? `?companyId=${companyId}` : ""}`, { headers: authH });
+      if (!response.ok) throw new Error("تعذر تحميل الفروع");
+      return response.json();
+    },
+  });
+  const { data: warehouses = [] } = useQuery<any[]>({
+    queryKey: ["warehouses", companyId],
+    enabled: !!token,
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/inventory/warehouses${companyId ? `?companyId=${companyId}` : ""}`, { headers: authH });
+      if (!response.ok) throw new Error("تعذر تحميل المخازن");
+      return response.json();
+    },
+  });
+  const { data: currencies = [] } = useQuery<any[]>({
+    queryKey: ["currencies", companyId],
+    enabled: !!token,
+    queryFn: async () => {
+      const response = await fetch(`${API}/api/currencies${companyId ? `?companyId=${companyId}` : ""}`, { headers: authH });
+      if (!response.ok) throw new Error("تعذر تحميل العملات");
+      return response.json();
+    },
+  });
+  const { items: inventoryItems, setSearch: setItemSearch, isSearching: isSearchingItems } =
+    useInventoryItemSearch(companyId, authH, lines.map(line => line.itemId), !!token);
+  const partyOptions = parties.map((party: any) => ({
+    value: String(party.id), label: party.nameAr || party.name || party.nameEn || `#${party.id}`,
+    code: party.code, description: party.phone,
+  }));
+  const itemOptions = inventoryItems.map((item: any) => ({
+    value: String(item.id), label: item.nameAr || item.name || item.nameEn || `#${item.id}`,
+    code: item.code, barcode: item.barcode, description: item.unitName || item.unit,
+    rawItem: item,
+  }));
+  const branchOptions = branches.map((branch: any) => ({ value: String(branch.id), label: branch.nameAr || branch.name || `#${branch.id}` }));
+  const warehouseOptions = warehouses
+    .filter((warehouse: any) => !branchId || !warehouse.branchId || Number(warehouse.branchId) === branchId)
+    .map((warehouse: any) => ({ value: String(warehouse.id), label: warehouse.nameAr || warehouse.name || `#${warehouse.id}` }));
+  const currencyOptions = currencies.map((currency: any) => ({
+    value: String(currency.code ?? currency.currencyCode ?? currency.id),
+    label: currency.nameAr || currency.name || currency.code || currency.currencyCode || `#${currency.id}`,
+  }));
+
   // Signature: either drawn (pad) or an uploaded image. `sigDataUrl` holds the
   // in-memory image for immediate print; `sigObjectPath` is the stored path.
   const [sigMode, setSigMode] = useState<"draw" | "image">("draw");
@@ -120,6 +187,11 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
     const s = seedRef.current;
     setStatus("full"); setDocNumber(""); setDocDate(todayIso());
     setInvoiceNumber(s?.invoiceNumber ?? null);
+    setPartyId(s?.partyId ?? null);
+    setBranchId(s?.branchId ?? null);
+    setWarehouseId(s?.warehouseId ?? null);
+    setCurrencyCode("");
+    setExchangeRate("1");
     setWarehouseName(s?.warehouseName ?? null);
     setPartyName(s?.partyName ?? null);
     setRecipientName(""); setRecipientJob(""); setRecipientIdNumber(""); setRecipientPhone("");
@@ -141,6 +213,8 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
       setSavedId(d.id); setStatus(d.status ?? "full");
       setDocNumber(d.docNumber ?? ""); setDocDate(d.docDate ?? todayIso());
       setInvoiceNumber(d.invoiceNumber ?? null); setPartyName(d.partyName ?? null);
+      setPartyId(d.partyId ?? null); setBranchId(d.branchId ?? null); setWarehouseId(d.warehouseId ?? null);
+      setCurrencyCode(d.currencyCode ?? ""); setExchangeRate(String(d.exchangeRate ?? 1));
       setRecipientName(d.recipientName ?? ""); setRecipientJob(d.recipientJob ?? "");
       setRecipientIdNumber(d.recipientIdNumber ?? ""); setRecipientPhone(d.recipientPhone ?? "");
       setNotes(d.notes ?? ""); setApprovedByName(d.approvedByName ?? null);
@@ -211,14 +285,16 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
       docNumber: docNumber || undefined,
       docDate,
       status,
-      branchId: s?.branchId ?? undefined,
-      warehouseId: s?.warehouseId ?? undefined,
+      branchId: branchId ?? null,
+      warehouseId: warehouseId ?? null,
       invoiceId: s?.invoiceId ?? undefined,
       invoiceType: s?.invoiceType ?? undefined,
       invoiceNumber: invoiceNumber ?? undefined,
-      partyId: s?.partyId ?? undefined,
-      partyType: s?.partyType ?? undefined,
+      partyId: partyId ?? null,
+      partyType: isReceipt ? "supplier" : "customer",
       partyName: partyName ?? undefined,
+      currencyCode: currencyCode || null,
+      exchangeRate: exchangeRate ? Number(exchangeRate) : null,
       recipientName: recipientName || undefined,
       recipientJob: recipientJob || undefined,
       recipientIdNumber: recipientIdNumber || undefined,
@@ -311,8 +387,15 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
 
   function toPrintDoc(sigUrl: string | null): DRPrintDoc {
     return {
-      kind, docNumber, docDate, invoiceNumber, partyName, warehouseName, status, notes,
+      kind, docNumber, docDate, invoiceNumber, partyName,
+      branchName: branches.find((branch: any) => Number(branch.id) === branchId)?.nameAr
+        || branches.find((branch: any) => Number(branch.id) === branchId)?.name,
+      warehouseName: warehouses.find((warehouse: any) => Number(warehouse.id) === warehouseId)?.nameAr
+        || warehouses.find((warehouse: any) => Number(warehouse.id) === warehouseId)?.name
+        || warehouseName,
+      currencyCode, exchangeRate, status, notes,
       recipientName, recipientJob, recipientIdNumber, recipientPhone,
+      printOptions: company?.deliveryReceiptPrintOptions ?? null,
       signatureUrl: sigUrl, createdByName, approvedByName,
       lines: lines.filter(l => l.itemName.trim()).map<DRPrintLine>(l => ({
         itemName: l.itemName, unit: l.unit, orderedQty: l.orderedQty, actualQty: l.actualQty, notes: l.notes,
@@ -386,19 +469,28 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
   const canWrite = !isApproved;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto" dir="rtl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {label}{docNumber ? ` — ${docNumber}` : " جديد"}
+    <div className="min-h-screen bg-slate-50/70 p-3 sm:p-6" dir="rtl">
+      <div className="mx-auto max-w-7xl space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>عودة للسندات</Button>
+            <div>
+              <h1 className="text-xl font-bold">{label}{docNumber ? ` — ${docNumber}` : " جديد"}</h1>
+              <p className="text-xs text-muted-foreground mt-1">مستند أرشيفي للتوثيق فقط — لا ينشئ قيداً أو حركة مخزون</p>
+            </div>
             {isApproved && <Badge className="bg-emerald-600 text-white gap-1"><CheckCircle2 className="h-3 w-3" />معتمد</Badge>}
-          </DialogTitle>
-        </DialogHeader>
+          </div>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" size="sm" className="gap-1" onClick={doPrint}><Printer className="h-4 w-4" />طباعة</Button>
+            <Button type="button" variant="outline" size="sm" className="gap-1" onClick={doDownload}><Download className="h-4 w-4" />PDF</Button>
+            <Button type="button" disabled={saving || !canWrite} onClick={() => save()}>{saving ? "جارٍ الحفظ…" : "حفظ السند"}</Button>
+          </div>
+        </div>
 
         {loading ? (
           <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
         ) : (
-        <div className="space-y-5">
+        <div className="space-y-5 rounded-xl border bg-white p-4 sm:p-6 shadow-sm">
           {/* Header meta */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="space-y-1"><Label className="text-xs">رقم السند</Label>
@@ -415,11 +507,45 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
               <Input className="h-9 text-sm bg-muted/40" dir="ltr" value={invoiceNumber ?? ""} readOnly /></div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 rounded-lg border p-3">
             <div className="space-y-1"><Label className="text-xs">{partyLabel}</Label>
-              <Input className="h-9 text-sm" value={partyName ?? ""} onChange={e => setPartyName(e.target.value)} disabled={!canWrite} /></div>
-            {warehouseName && <div className="space-y-1"><Label className="text-xs">المستودع</Label>
-              <Input className="h-9 text-sm bg-muted/40" value={warehouseName} readOnly /></div>}
+              <SearchCombobox items={partyOptions} value={partyId == null ? "" : String(partyId)}
+                onValueChange={value => {
+                  const party = parties.find((row: any) => String(row.id) === value);
+                  setPartyId(value ? Number(value) : null);
+                  setPartyName(party ? (party.nameAr || party.name || party.nameEn) : null);
+                  if (party?.phone) setRecipientPhone(String(party.phone));
+                }}
+                placeholder={`اختر ${isReceipt ? "المورد" : "العميل"} (اختياري)`}
+                searchPlaceholder="ابحث بالاسم أو الكود..." disabled={!canWrite} clearable testId="drdoc-party-picker" />
+            </div>
+            <div className="space-y-1"><Label className="text-xs">الفرع (اختياري)</Label>
+              <SearchCombobox items={branchOptions} value={branchId == null ? "" : String(branchId)}
+                onValueChange={value => {
+                  setBranchId(value ? Number(value) : null);
+                  setWarehouseId(null);
+                  setWarehouseName(null);
+                }}
+                placeholder="اختر الفرع" disabled={!canWrite} clearable testId="drdoc-branch-picker" />
+            </div>
+            <div className="space-y-1"><Label className="text-xs">المخزن (اختياري)</Label>
+              <SearchCombobox items={warehouseOptions} value={warehouseId == null ? "" : String(warehouseId)}
+                onValueChange={value => {
+                  setWarehouseId(value ? Number(value) : null);
+                  const selected = warehouses.find((row: any) => String(row.id) === value);
+                  setWarehouseName(selected?.nameAr || selected?.name || null);
+                }}
+                placeholder="اختر المخزن" disabled={!canWrite} clearable testId="drdoc-warehouse-picker" />
+            </div>
+            <div className="space-y-1"><Label className="text-xs">العملة (اختياري)</Label>
+              <SearchCombobox items={currencyOptions} value={currencyCode}
+                onValueChange={setCurrencyCode} placeholder="اختر العملة" disabled={!canWrite}
+                clearable testId="drdoc-currency-picker" />
+            </div>
+            <div className="space-y-1"><Label className="text-xs">سعر الصرف</Label>
+              <Input className="h-9 text-sm" type="number" min="0.000001" step="0.000001" dir="ltr"
+                value={exchangeRate} onChange={event => setExchangeRate(event.target.value)} disabled={!canWrite} />
+            </div>
           </div>
 
           {/* Recipient */}
@@ -456,7 +582,18 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
                 <tbody>
                   {lines.map((l, i) => (
                     <tr key={i} className="border-t">
-                      <td className="p-1"><Input className="h-8 text-xs" value={l.itemName} onChange={e => updateLine(i, { itemName: e.target.value })} disabled={!canWrite} /></td>
+                      <td className="p-1 min-w-[220px]"><SearchCombobox items={itemOptions}
+                        value={l.itemId == null ? "" : String(l.itemId)}
+                        onValueChange={value => {
+                          const item = inventoryItems.find((row: any) => String(row.id) === value);
+                          updateLine(i, {
+                            itemId: value ? Number(value) : null,
+                            itemName: item ? (item.nameAr || item.name || item.nameEn || "") : "",
+                            unit: item ? (item.unitName || item.unit || item.baseUnitName || "") : "",
+                          });
+                        }}
+                        onSearchChange={setItemSearch} loading={isSearchingItems}
+                        placeholder="ابحث واختر الصنف..." disabled={!canWrite} clearable testId={`drdoc-item-${i}`} /></td>
                       <td className="p-1"><Input className="h-8 text-xs" value={l.unit ?? ""} onChange={e => updateLine(i, { unit: e.target.value })} disabled={!canWrite} /></td>
                       <td className="p-1"><Input className="h-8 text-xs" type="number" dir="ltr" value={l.orderedQty ?? 0} onChange={e => updateLine(i, { orderedQty: Number(e.target.value) || 0 })} disabled={!canWrite} /></td>
                       <td className="p-1"><Input className="h-8 text-xs" type="number" dir="ltr" value={l.actualQty ?? 0} onChange={e => updateLine(i, { actualQty: Number(e.target.value) || 0 })} disabled={!canWrite} /></td>
@@ -515,7 +652,7 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
         </div>
         )}
 
-        <DialogFooter className="flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-white p-3 shadow-sm">
           <div className="flex flex-wrap gap-2 ml-auto">
             <Button type="button" variant="outline" size="sm" className="gap-1" onClick={doPrint}><Printer className="h-4 w-4" />طباعة</Button>
             <Button type="button" variant="outline" size="sm" className="gap-1" onClick={doDownload}><Download className="h-4 w-4" />PDF</Button>
@@ -530,7 +667,7 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ"}
             </Button>
           )}
-        </DialogFooter>
+        </div>
 
         {/* Email sub-dialog */}
         <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
@@ -547,7 +684,7 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }

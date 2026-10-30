@@ -68,6 +68,8 @@ const DocBody = z.object({
   kind:          KIND,
   docNumber:     z.string().max(64).optional().nullable(),
   docDate:       z.string().datetime({ offset: true }).optional().nullable(),
+  currencyCode:  z.string().trim().max(16).optional().nullable(),
+  exchangeRate:  z.coerce.number().finite().positive().optional().nullable(),
   branchId:      z.number().int().positive().optional().nullable(),
   warehouseId:   z.number().int().positive().optional().nullable(),
   invoiceId:     z.number().int().positive().optional().nullable(),
@@ -261,6 +263,8 @@ router.post("/", async (req: Request, res: Response) => {
           kind: b.kind,
           docNumber,
           docDate: b.docDate ? new Date(b.docDate) : new Date(),
+          currencyCode: b.currencyCode ?? null,
+          exchangeRate: b.exchangeRate == null ? null : String(b.exchangeRate),
           invoiceId: b.invoiceId ?? null,
           invoiceType: b.invoiceType ?? null,
           invoiceNumber: b.invoiceNumber ?? null,
@@ -335,12 +339,15 @@ router.put("/:id", async (req: Request, res: Response) => {
   try {
     await db.transaction(async (tx) => {
       await tx.update(deliveryReceiptDocumentsTable).set({
-        branchId: b.branchId ?? existing.branchId,
-        warehouseId: b.warehouseId ?? existing.warehouseId,
+        branchId: b.branchId === undefined ? existing.branchId : b.branchId,
+        warehouseId: b.warehouseId === undefined ? existing.warehouseId : b.warehouseId,
         docDate: b.docDate ? new Date(b.docDate) : existing.docDate,
-        partyId: b.partyId ?? existing.partyId,
+        currencyCode: b.currencyCode === undefined ? existing.currencyCode : b.currencyCode,
+        exchangeRate: b.exchangeRate === undefined ? existing.exchangeRate
+          : b.exchangeRate == null ? null : String(b.exchangeRate),
+        partyId: b.partyId === undefined ? existing.partyId : b.partyId,
         partyType: b.partyType ?? existing.partyType,
-        partyName: b.partyName ?? existing.partyName,
+        partyName: b.partyName === undefined ? existing.partyName : b.partyName,
         employeeId: b.employeeId ?? existing.employeeId,
         employeeName: b.employeeName ?? existing.employeeName,
         status: b.status ?? existing.status,

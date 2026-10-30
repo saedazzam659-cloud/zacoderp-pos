@@ -2518,6 +2518,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
         kind                  TEXT NOT NULL,
         doc_number            TEXT NOT NULL,
         doc_date              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        currency_code         TEXT,
+        exchange_rate         NUMERIC(15,6),
         invoice_id            INTEGER,
         invoice_type          TEXT,
         invoice_number        TEXT,

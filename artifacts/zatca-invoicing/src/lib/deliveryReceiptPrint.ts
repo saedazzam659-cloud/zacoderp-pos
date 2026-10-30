@@ -32,6 +32,19 @@ export interface DRPrintLine {
   notes?: string | null;
 }
 
+export interface DRPrintOptions {
+  showCompanyDetails: boolean;
+  showBranch: boolean;
+  showWarehouse: boolean;
+  showInvoice: boolean;
+  showRecipient: boolean;
+  showLineNotes: boolean;
+  showNotes: boolean;
+  showSignature: boolean;
+  termsAr: string;
+  termsEn: string;
+}
+
 export interface DRPrintDoc {
   kind: "receipt" | "delivery";
   docNumber?: string | null;
@@ -40,6 +53,8 @@ export interface DRPrintDoc {
   partyName?: string | null;
   warehouseName?: string | null;
   branchName?: string | null;
+  currencyCode?: string | null;
+  exchangeRate?: string | number | null;
   status?: string | null;
   notes?: string | null;
   recipientName?: string | null;
@@ -49,6 +64,7 @@ export interface DRPrintDoc {
   signatureUrl?: string | null;   // resolved image URL (object download or data)
   createdByName?: string | null;
   approvedByName?: string | null;
+  printOptions?: Partial<DRPrintOptions> | null;
   lines: DRPrintLine[];
 }
 
@@ -79,6 +95,11 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export function buildDeliveryReceiptPrintHtml(doc: DRPrintDoc, company: DRPrintCompany | null): string {
+  const options: DRPrintOptions = {
+    showCompanyDetails: true, showBranch: true, showWarehouse: true, showInvoice: true,
+    showRecipient: true, showLineNotes: true, showNotes: true, showSignature: true,
+    termsAr: "", termsEn: "", ...(doc.printOptions ?? {}),
+  };
   const language = typeof document === "undefined" ? "ar" : document.documentElement.lang;
   const isEnglish = language.toLowerCase().startsWith("en");
   const isReceipt = doc.kind === "receipt";
@@ -103,7 +124,7 @@ export function buildDeliveryReceiptPrintHtml(doc: DRPrintDoc, company: DRPrintC
         <td class="c">${esc(l.unit ?? "")}</td>
         <td class="c">${fmtQty(l.orderedQty)}</td>
         <td class="c">${fmtQty(l.actualQty)}</td>
-        <td class="r-note">${esc(l.notes ?? "")}</td>
+        ${options.showLineNotes ? `<td class="r-note">${esc(l.notes ?? "")}</td>` : ""}
       </tr>`).join("");
 
   const signatureBlock = doc.signatureUrl
@@ -154,7 +175,7 @@ export function buildDeliveryReceiptPrintHtml(doc: DRPrintDoc, company: DRPrintC
 </head>
 <body>
   <div class="head">
-    <div class="co">
+    ${options.showCompanyDetails ? `<div class="co">
       <h1>${companyName}</h1>
       <div class="meta">
         ${company?.vatNumber ? `الرقم الضريبي: ${esc(company.vatNumber)}<br/>` : ""}
@@ -163,7 +184,7 @@ export function buildDeliveryReceiptPrintHtml(doc: DRPrintDoc, company: DRPrintC
         ${company?.phone ? `هاتف: ${esc(company.phone)}` : ""}
       </div>
     </div>
-    ${logo ? `<img src="${esc(logo)}" class="logo" alt="logo" />` : ""}
+    ${logo ? `<img src="${esc(logo)}" class="logo" alt="logo" />` : ""}` : ""}
   </div>
 
   <div class="title-badge"><span>${esc(title)}</span></div>
@@ -173,17 +194,19 @@ export function buildDeliveryReceiptPrintHtml(doc: DRPrintDoc, company: DRPrintC
       <h3>بيانات المستند</h3>
       <div class="kv"><b>رقم السند</b><span>${esc(doc.docNumber ?? "—")}</span></div>
       <div class="kv"><b>التاريخ</b><span>${fmtDate(doc.docDate)}</span></div>
-      ${doc.invoiceNumber ? `<div class="kv"><b>الفاتورة المرتبطة</b><span>${esc(doc.invoiceNumber)}</span></div>` : ""}
-      ${doc.warehouseName ? `<div class="kv"><b>المستودع</b><span>${esc(doc.warehouseName)}</span></div>` : ""}
-      ${doc.branchName ? `<div class="kv"><b>الفرع</b><span>${esc(doc.branchName)}</span></div>` : ""}
+      ${options.showInvoice && doc.invoiceNumber ? `<div class="kv"><b>الفاتورة المرتبطة</b><span>${esc(doc.invoiceNumber)}</span></div>` : ""}
+      ${options.showWarehouse && doc.warehouseName ? `<div class="kv"><b>المستودع</b><span>${esc(doc.warehouseName)}</span></div>` : ""}
+      ${options.showBranch && doc.branchName ? `<div class="kv"><b>الفرع</b><span>${esc(doc.branchName)}</span></div>` : ""}
+      ${doc.currencyCode ? `<div class="kv"><b>العملة</b><span>${esc(doc.currencyCode)}</span></div>` : ""}
+      ${doc.exchangeRate ? `<div class="kv"><b>سعر الصرف</b><span>${esc(doc.exchangeRate)}</span></div>` : ""}
       <div class="kv"><b>الحالة</b><span>${esc(STATUS_LABEL[doc.status ?? "full"] ?? doc.status ?? "—")}</span></div>
     </div>
     <div class="card">
       <h3>${esc(partyLabel)}</h3>
       <div class="kv"><b>الاسم</b><span>${esc(doc.partyName ?? "—")}</span></div>
-      <div class="recip-line"><b>المستلِم:</b> ${esc(doc.recipientName ?? "—")}${doc.recipientJob ? ` — ${esc(doc.recipientJob)}` : ""}</div>
+      ${options.showRecipient ? `<div class="recip-line"><b>المستلِم:</b> ${esc(doc.recipientName ?? "—")}${doc.recipientJob ? ` — ${esc(doc.recipientJob)}` : ""}</div>
       ${doc.recipientIdNumber ? `<div class="recip-line"><b>رقم الهوية:</b> ${esc(doc.recipientIdNumber)}</div>` : ""}
-      ${doc.recipientPhone ? `<div class="recip-line"><b>الجوال:</b> ${esc(doc.recipientPhone)}</div>` : ""}
+      ${doc.recipientPhone ? `<div class="recip-line"><b>الجوال:</b> ${esc(doc.recipientPhone)}</div>` : ""}` : ""}
     </div>
   </div>
 
@@ -195,15 +218,16 @@ export function buildDeliveryReceiptPrintHtml(doc: DRPrintDoc, company: DRPrintC
         <th style="width:12%">الوحدة</th>
         <th style="width:14%">الكمية بالفاتورة</th>
         <th style="width:14%">الكمية الفعلية</th>
-        <th style="width:14%">ملاحظات</th>
+        ${options.showLineNotes ? '<th style="width:14%">ملاحظات</th>' : ""}
       </tr>
     </thead>
     <tbody>${rows}</tbody>
   </table>
 
-  <div class="notes"><b>ملاحظات:</b> ${esc(doc.notes ?? "")}</div>
+  ${options.showNotes && doc.notes ? `<div class="notes"><b>ملاحظات:</b> ${esc(doc.notes)}</div>` : ""}
+  ${options.termsAr || options.termsEn ? `<div class="notes"><b>الشروط والأحكام:</b>${options.termsAr ? `<div>${esc(options.termsAr)}</div>` : ""}${options.termsEn ? `<div dir="ltr">${esc(options.termsEn)}</div>` : ""}</div>` : ""}
 
-  <div class="sign-row">
+  ${options.showSignature ? `<div class="sign-row">
     <div class="sign-box">
       <h4>توقيع المستلِم</h4>
       ${signatureBlock}
@@ -214,7 +238,7 @@ export function buildDeliveryReceiptPrintHtml(doc: DRPrintDoc, company: DRPrintC
       <div class="sig-empty"></div>
       <div class="recip-line" style="text-align:center;border-top:1px solid #9ca3af;margin-top:6px;padding-top:4px">${esc(doc.approvedByName || doc.createdByName || "")}</div>
     </div>
-  </div>
+  </div>` : ""}
 
   <div class="foot">
     تم إنشاء هذا السند إلكترونياً بواسطة نظام زاكود · ${esc(company?.nameAr || "")} · هذا المستند لأغراض التوثيق ولا يمثل مستنداً محاسبياً أو ضريبياً

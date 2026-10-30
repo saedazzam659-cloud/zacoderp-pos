@@ -353,6 +353,18 @@ export const companiesTable = pgTable("companies", {
     termsAr: string;
     termsEn: string;
   }>(),
+  deliveryReceiptPrintOptions: jsonb("delivery_receipt_print_options").$type<{
+    showCompanyDetails: boolean;
+    showBranch: boolean;
+    showWarehouse: boolean;
+    showInvoice: boolean;
+    showRecipient: boolean;
+    showLineNotes: boolean;
+    showNotes: boolean;
+    showSignature: boolean;
+    termsAr: string;
+    termsEn: string;
+  }>(),
   // Which date the `{MM}`/`{YY}`/`{YYYY}` tokens in a document-number
   // sequence pattern should read from:
   //   - "system"   = today's date at the moment of issuance (default,
