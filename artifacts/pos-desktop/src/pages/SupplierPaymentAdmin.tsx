@@ -13,6 +13,7 @@ import {
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { printVoucher } from "../lib/invoicePrint";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function payWalletName(
   deps: { cashBoxes: CashBox[]; banks: Bank[] } | null,
@@ -29,6 +30,8 @@ function payWalletName(
 // optionally tagging the payment to a specific outstanding purchase invoice so
 // the purchase list + supplier statement can surface the paid amount.
 export default function SupplierPaymentAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<FinancialTx[]>([]);
   const [creating, setCreating] = useState(false);
   const [deps, setDeps] = useState<{ suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; purchases: Purchase[] } | null>(null);
@@ -58,24 +61,25 @@ export default function SupplierPaymentAdmin() {
     f.appliedDocType === "purchase" && f.appliedDocId != null
       ? deps?.purchases.find((i) => i.id === f.appliedDocId) ?? null : null;
   const columns = useMemo<GridColumn<FinancialTx>[]>(() => [
-    { key: "txNo", label: "الرقم", value: (f) => f.txNo },
-    { key: "txDate", label: "التاريخ", value: (f) => f.txDate },
-    { key: "party", label: "المورد", value: (f) => f.partyName ?? "" },
-    { key: "invoice", label: "الفاتورة المرتبطة", value: (f) => invByApplied(f)?.invoiceNo ?? "" },
-    { key: "description", label: "البيان", value: (f) => f.description ?? "" },
-    { key: "amount", label: "المبلغ", type: "number", value: (f) => f.amount },
-  ], [deps]);
+    { key: "txNo", label: text("الرقم", "Number"), value: (f) => f.txNo },
+    { key: "txDate", label: text("التاريخ", "Date"), value: (f) => f.txDate },
+    { key: "party", label: text("المورد", "Supplier"), value: (f) => f.partyName ?? "" },
+    { key: "invoice", label: text("الفاتورة المرتبطة", "Linked invoice"), value: (f) => invByApplied(f)?.invoiceNo ?? "" },
+    { key: "description", label: text("البيان", "Description"), value: (f) => f.description ?? "" },
+    { key: "amount", label: text("المبلغ", "Amount"), type: "number", value: (f) => f.amount },
+  ], [deps, language]);
   const grid = useGridFilter(rows, columns);
   const sel = useRowSelect(grid.view);
 
   return (
+    <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title="سند صرف للموردين"
-      subtitle="سند صرف مرتبط بالمورد — يخصم من رصيد المورد ويظهر في كشف حسابه"
+      title={text("سند صرف للموردين", "Supplier payment vouchers")}
+      subtitle={text("سند صرف مرتبط بالمورد — يخصم من رصيد المورد ويظهر في كشف حسابه", "Supplier payments reduce the supplier balance and appear on the supplier statement")}
       right={
         <button onClick={() => setCreating(true)}
           style={{ ...btnPrimary, background: "#b91c1c", opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}
-          disabled={!deps || creating}>+ سند صرف</button>
+          disabled={!deps || creating}>+ {text("سند صرف", "Payment voucher")}</button>
       }
     >
       {creating && deps && (
@@ -85,16 +89,16 @@ export default function SupplierPaymentAdmin() {
           </div>
         </Card>
       )}
-      {rows.length > 0 && <GridToolbar grid={grid} placeholder="🔍 بحث في سندات الصرف…" extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="سندات-الصرف" title="سندات الصرف للموردين" />} />}
+      {rows.length > 0 && <GridToolbar grid={grid} placeholder={text("🔍 بحث في سندات الصرف…", "🔍 Search payment vouchers…")} extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="supplier-payments" title={text("سندات الصرف للموردين", "Supplier payment vouchers")} />} />}
       {rows.length > 0 && (
         <ActionBar selectedLabel={sel.selected ? sel.selected.txNo : null}>
-          <ActionBtn label="طباعة" icon="🖨️" tone="primary" disabled={!sel.selected}
+          <ActionBtn label={text("طباعة", "Print")} icon="🖨️" tone="primary" disabled={!sel.selected}
             onClick={() => {
               const f = sel.selected; if (!f) return;
               const inv = invByApplied(f);
               printVoucher({
                 kind: "payment",
-                title: "سند صرف",
+                title: text("سند صرف", "Payment voucher"),
                 docNo: f.txNo,
                 date: f.txDate,
                 partyName: f.partyName ?? null,
@@ -108,17 +112,17 @@ export default function SupplierPaymentAdmin() {
         </ActionBar>
       )}
       <Card>
-        {rows.length === 0 && !creating ? <Empty text="لا توجد سندات صرف للموردين" /> : grid.view.length === 0 ? <Empty text="لا نتائج مطابقة للبحث" /> : (
+        {rows.length === 0 && !creating ? <Empty text={text("لا توجد سندات صرف للموردين", "No supplier payment vouchers")} /> : grid.view.length === 0 ? <Empty text={text("لا نتائج مطابقة للبحث", "No matching results")} /> : (
           <Table>
             <thead>
               <tr>
                 <SelectTh />
-                <SortableTh grid={grid} colKey="txNo">الرقم</SortableTh>
-                <SortableTh grid={grid} colKey="txDate">التاريخ</SortableTh>
-                <SortableTh grid={grid} colKey="party">المورد</SortableTh>
-                <SortableTh grid={grid} colKey="invoice">الفاتورة المرتبطة</SortableTh>
-                <SortableTh grid={grid} colKey="description">البيان</SortableTh>
-                <SortableTh grid={grid} colKey="amount" style={{ textAlign: "left" }}>المبلغ</SortableTh>
+                <SortableTh grid={grid} colKey="txNo">{text("الرقم", "Number")}</SortableTh>
+                <SortableTh grid={grid} colKey="txDate">{text("التاريخ", "Date")}</SortableTh>
+                <SortableTh grid={grid} colKey="party">{text("المورد", "Supplier")}</SortableTh>
+                <SortableTh grid={grid} colKey="invoice">{text("الفاتورة المرتبطة", "Linked invoice")}</SortableTh>
+                <SortableTh grid={grid} colKey="description">{text("البيان", "Description")}</SortableTh>
+                <SortableTh grid={grid} colKey="amount" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المبلغ", "Amount")}</SortableTh>
               </tr>
               <GridFilterRow grid={grid} columns={columns} leading={1} />
             </thead>
@@ -141,6 +145,7 @@ export default function SupplierPaymentAdmin() {
         )}
       </Card>
     </Page>
+    </div>
   );
 }
 
@@ -149,6 +154,8 @@ function PayForm({ deps, allTx, onCancel, onDone }: {
   allTx: FinancialTx[];
   onCancel: () => void; onDone: () => void;
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const { branches, costCenters } = useDimensions();
   const [date, setDate] = useState(todayStr());
   const [branchId, setBranchId] = useState<number | "">("");
@@ -193,8 +200,8 @@ function PayForm({ deps, allTx, onCancel, onDone }: {
   async function save() {
     setBusy(true); setErr(null);
     try {
-      if (supplierId == null) throw new Error("اختر المورد");
-      if (amount <= 0) throw new Error("أدخل مبلغاً موجباً");
+      if (supplierId == null) throw new Error(text("اختر المورد", "Select a supplier."));
+      if (amount <= 0) throw new Error(text("أدخل مبلغاً موجباً", "Enter an amount greater than zero."));
       await createFinancialTx({
         txDate: date, txType: "payment",
         partyType: "supplier", partyId: supplierId,
@@ -209,75 +216,75 @@ function PayForm({ deps, allTx, onCancel, onDone }: {
       });
       emitData("vouchers", "journal", "suppliers", "cashboxes", "banks");
       onDone();
-    } catch (e: any) { setErr(e?.message ?? "فشل"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save payment voucher.")); }
     finally { setBusy(false); }
   }
 
   return (
     <div>
-      <h3 style={{ marginTop: 0, color: "#b91c1c" }}>سند صرف جديد</h3>
-      <Field label="المورد">
+      <h3 style={{ marginTop: 0, color: "#b91c1c" }}>{text("سند صرف جديد", "New payment voucher")}</h3>
+      <Field label={text("المورد", "Supplier")}>
         <SearchCombobox
           value={supplierId ?? ""}
           onChange={(v) => { setSupplierId(Number(v) || null); setPurchaseId(null); }}
           style={input}
           options={[
-            { value: "", label: "— اختر —" },
-            ...deps.suppliers.map((s) => ({ value: s.id, label: `${s.nameAr} (رصيد: ${fmt(s.balance)})` })),
+            { value: "", label: text("— اختر —", "— Select —") },
+            ...deps.suppliers.map((s) => ({ value: s.id, label: `${s.nameAr} (${text("الرصيد", "Balance")}: ${fmt(s.balance)})` })),
           ]}
         />
       </Field>
 
       {supplierId != null && (
-        <Field label="ربط بفاتورة شراء (اختياري)">
+        <Field label={text("ربط بفاتورة شراء (اختياري)", "Link to purchase invoice (optional)")}>
           <SearchCombobox
             value={purchaseId ?? ""}
             onChange={(v) => pickPurchase(Number(v) || null)}
             style={input}
             options={[
-              { value: "", label: "— بدون ربط —" },
-              ...openPurchases.map((x) => ({ value: x.inv.id, label: `${x.inv.invoiceNo} — متبقّي ${fmt(x.outstanding)}` })),
+              { value: "", label: text("— بدون ربط —", "— No link —") },
+              ...openPurchases.map((x) => ({ value: x.inv.id, label: `${x.inv.invoiceNo} — ${text("متبقّي", "Outstanding")} ${fmt(x.outstanding)}` })),
             ]}
           />
         </Field>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-        <Field label="المبلغ"><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} /></Field>
-        <Field label="المحفظة">
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+        <Field label={text("المبلغ", "Amount")}><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} /></Field>
+        <Field label={text("المحفظة", "Wallet")}>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? btnPrimary : btnSecondary}>خزينة</button>
-            <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? btnPrimary : btnSecondary}>بنك</button>
+            <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? btnPrimary : btnSecondary}>{text("خزينة", "Cashbox")}</button>
+            <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? btnPrimary : btnSecondary}>{text("بنك", "Bank")}</button>
           </div>
         </Field>
       </div>
 
       {walletKind === "cash" ? (
-        <Field label="الخزينة">
+        <Field label={text("الخزينة", "Cashbox")}>
           <SearchCombobox value={cashBoxId ?? ""} onChange={(v) => setCashBoxId(Number(v) || null)} style={input}
             options={deps.cashBoxes.map((c) => ({ value: c.id, label: `${c.name} (${fmt(c.balance)})` }))} />
         </Field>
       ) : (
-        <Field label="البنك">
+        <Field label={text("البنك", "Bank")}>
           <SearchCombobox value={bankId ?? ""} onChange={(v) => setBankId(Number(v) || null)} style={input}
             options={deps.banks.map((b) => ({ value: b.id, label: `${b.name} (${fmt(b.balance)})` }))} />
         </Field>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label="الفرع">
+        <Field label={text("الفرع", "Branch")}>
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
         </Field>
-        <Field label="مركز التكلفة">
+        <Field label={text("مركز التكلفة", "Cost center")}>
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
       </div>
-      <Field label="البيان"><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
+      <Field label={text("البيان", "Description")}><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
       <ErrorMsg text={err} />
       <Actions>
-        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} type="button" style={{ ...btnPrimary, background: "#b91c1c" }}>{busy ? "..." : "حفظ وترحيل"}</button>
+        <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
+        <button onClick={save} disabled={busy} type="button" style={{ ...btnPrimary, background: "#b91c1c" }}>{busy ? "..." : text("حفظ وترحيل", "Save and post")}</button>
       </Actions>
     </div>
   );

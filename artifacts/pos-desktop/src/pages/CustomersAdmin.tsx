@@ -10,6 +10,7 @@ import { listCurrencies, listAccounts, type Currency, type Account } from "../li
 import { listBranches, type Branch } from "../lib/branches";
 import { SearchCombobox, ExportButtons } from "./_adminUi";
 import { useDataRefresh, emitData } from "../lib/dataBus";
+import { uiText, useUiLanguage, type UiLanguage } from "../lib/appSettings";
 
 const emptyInput: CreateCustomerInput = {
   nameAr: "", nameEn: "", phone: "", vatNumber: "",
@@ -23,12 +24,14 @@ const emptyInput: CreateCustomerInput = {
 };
 
 // Customer balance follows AR convention: positive = owes us (مدين).
-function balanceNature(bal: number): { label: string; color: string } {
+function balanceNature(bal: number, language: UiLanguage): { label: string; color: string } {
   if (Math.abs(bal) < 0.001) return { label: "—", color: "#94a3b8" };
-  return bal > 0 ? { label: "مدين", color: "#16a34a" } : { label: "دائن", color: "#dc2626" };
+  return bal > 0
+    ? { label: uiText("مدين", "Debit", language), color: "#16a34a" }
+    : { label: uiText("دائن", "Credit", language), color: "#dc2626" };
 }
-function fmtAmount(n: number): string {
-  return n.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function fmtAmount(n: number, language: UiLanguage): string {
+  return n.toLocaleString(language === "en" ? "en-US" : "ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 type EditState =
@@ -37,6 +40,8 @@ type EditState =
   | null;
 
 export default function CustomersAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<LocalCustomer[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -88,15 +93,15 @@ export default function CustomersAdmin() {
   async function save() {
     if (!edit) return;
     const f = edit.data;
-    if (!f.nameAr.trim()) { setErr("الاسم بالعربية مطلوب"); return; }
+    if (!f.nameAr.trim()) { setErr(text("الاسم بالعربية مطلوب", "Arabic name is required.")); return; }
     if (f.vatNumber && !/^3\d{13}3$/.test(f.vatNumber)) {
-      setErr("الرقم الضريبي يجب أن يكون 15 رقم يبدأ وينتهي بـ3"); return;
+      setErr(text("الرقم الضريبي يجب أن يكون 15 رقم يبدأ وينتهي بـ3", "The tax number must contain 15 digits and start and end with 3.")); return;
     }
     setBusy(true); setErr(null);
     try {
       if (edit.mode === "new") {
         await createCustomer({ ...f, openingDate: new Date().toISOString().slice(0, 10) });
-        setToast({ kind: "ok", text: "تم إضافة العميل" });
+        setToast({ kind: "ok", text: text("تم إضافة العميل", "Customer added.") });
       } else {
         await updateCustomer(edit.id, {
           nameAr: f.nameAr, nameEn: f.nameEn, phone: f.phone, vatNumber: f.vatNumber,
@@ -113,46 +118,46 @@ export default function CustomersAdmin() {
           branchId: f.branchId,
           accountId: f.accountId,
         });
-        setToast({ kind: "ok", text: "تم تحديث العميل" });
+        setToast({ kind: "ok", text: text("تم تحديث العميل", "Customer updated.") });
       }
       emitData("customers");
       setEdit(null); await refresh();
-    } catch (e: any) { setErr(e?.message ?? "فشل الحفظ"); }
+    } catch (e: any) { setErr(e?.message ?? text("فشل الحفظ", "Could not save customer.")); }
     finally { setBusy(false); }
   }
 
   const currencyOpts = currencies.length > 0 ? currencies.map(c => c.code) : ["SAR"];
 
   async function handleDelete(c: LocalCustomer) {
-    if (!confirm(`حذف العميل «${c.nameAr}»؟`)) return;
-    try { await deleteCustomer(c.id); emitData("customers"); setToast({ kind: "ok", text: "تم الحذف" }); await refresh(); }
-    catch (e: any) { setToast({ kind: "err", text: e?.message ?? "فشل الحذف" }); }
+    if (!confirm(text(`حذف العميل «${c.nameAr}»؟`, `Delete customer “${c.nameAr}”?`))) return;
+    try { await deleteCustomer(c.id); emitData("customers"); setToast({ kind: "ok", text: text("تم الحذف", "Customer deleted.") }); await refresh(); }
+    catch (e: any) { setToast({ kind: "err", text: e?.message ?? text("فشل الحذف", "Could not delete customer.") }); }
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.headerRow}>
         <div>
-          <h2 style={S.h2}>العملاء ({rows.length})</h2>
-          <div style={S.sub}>إدارة قائمة العملاء — يُزامن تلقائيًا مع السحابة عند الاتصال</div>
+          <h2 style={S.h2}>{text("العملاء", "Customers")} ({rows.length})</h2>
+          <div style={S.sub}>{text("إدارة قائمة العملاء — يُزامن تلقائيًا مع السحابة عند الاتصال", "Manage customers — automatically syncs with the cloud when connected.")}</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <ExportButtons<typeof rows[number]>
-            title="العملاء"
+            title={text("العملاء", "Customers")}
             filenameBase="customers"
             rows={rows}
             columns={[
-              { header: "الاسم", cell: (c) => c.nameAr },
-              { header: "الهاتف", cell: (c) => c.phone ?? "" },
-              { header: "الرقم الضريبي", cell: (c) => c.vatNumber ?? "" },
-              { header: "العملة", cell: (c) => c.currencyCode ?? "SAR" },
-              { header: "الرصيد", cell: (c) => Math.abs(c.balance ?? 0) },
-              { header: "حد الائتمان", cell: (c) => c.creditLimit ?? 0 },
+              { header: text("الاسم", "Name"), cell: (c) => c.nameAr },
+              { header: text("الهاتف", "Phone"), cell: (c) => c.phone ?? "" },
+              { header: text("الرقم الضريبي", "Tax number"), cell: (c) => c.vatNumber ?? "" },
+              { header: text("العملة", "Currency"), cell: (c) => c.currencyCode ?? "SAR" },
+              { header: text("الرصيد", "Balance"), cell: (c) => Math.abs(c.balance ?? 0) },
+              { header: text("حد الائتمان", "Credit limit"), cell: (c) => c.creditLimit ?? 0 },
             ]}
           />
           <button onClick={startNew} disabled={!!edit}
             style={{ ...S.btnPrimary, opacity: edit ? 0.5 : 1, cursor: edit ? "not-allowed" : "pointer" }}>
-            + عميل جديد
+            + {text("عميل جديد", "New customer")}
           </button>
         </div>
       </div>
@@ -175,30 +180,30 @@ export default function CustomersAdmin() {
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder="بحث بالاسم أو الهاتف أو الرقم الضريبي..."
+        placeholder={text("بحث بالاسم أو الهاتف أو الرقم الضريبي...", "Search by name, phone, or tax number…")}
         style={S.search}
       />
 
       {toast && <div style={toast.kind === "ok" ? S.ok : S.err}>{toast.text}</div>}
 
-      {loading ? <div style={S.empty}>... جاري التحميل</div>
-      : rows.length === 0 ? <div style={S.empty}>لا يوجد عملاء بعد — أضف أول عميل</div>
+      {loading ? <div style={S.empty}>{text("... جاري التحميل", "Loading…")}</div>
+      : rows.length === 0 ? <div style={S.empty}>{text("لا يوجد عملاء بعد — أضف أول عميل", "No customers yet — add your first customer.")}</div>
       : (
         <table style={S.table}>
           <thead><tr>
-            <th style={S.th}>الاسم</th>
-            <th style={S.th}>الهاتف</th>
-            <th style={S.th}>الرقم الضريبي</th>
-            <th style={S.th}>العملة</th>
-            <th style={S.th}>الرصيد</th>
-            <th style={S.th}>النوع</th>
-            <th style={S.th}>حد الائتمان</th>
-            <th style={S.th}>المصدر</th>
-            <th style={S.thRight}>إجراء</th>
+            <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("الاسم", "Name")}</th>
+            <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("الهاتف", "Phone")}</th>
+            <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("الرقم الضريبي", "Tax number")}</th>
+            <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("العملة", "Currency")}</th>
+            <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("الرصيد", "Balance")}</th>
+            <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("النوع", "Balance type")}</th>
+            <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("حد الائتمان", "Credit limit")}</th>
+            <th style={{ ...S.th, textAlign: language === "en" ? "left" : "right" }}>{text("المصدر", "Source")}</th>
+            <th style={{ ...S.thRight, textAlign: language === "en" ? "right" : "left" }}>{text("إجراء", "Actions")}</th>
           </tr></thead>
           <tbody>
             {rows.map((c) => (
-              <tr key={c.id} style={{ ...S.tr, opacity: edit ? 0.5 : 1, cursor: edit ? "default" : "pointer" }} title={edit ? undefined : "نقر مزدوج للتعديل"} onDoubleClick={() => { if (!edit) startEdit(c); }}>
+              <tr key={c.id} style={{ ...S.tr, opacity: edit ? 0.5 : 1, cursor: edit ? "default" : "pointer" }} title={edit ? undefined : text("نقر مزدوج للتعديل", "Double-click to edit")} onDoubleClick={() => { if (!edit) startEdit(c); }}>
                 <td style={S.td}>
                   <div style={{ fontWeight: 600 }}>{c.nameAr}</div>
                   {c.nameEn && <div style={S.muted}>{c.nameEn}</div>}
@@ -206,21 +211,21 @@ export default function CustomersAdmin() {
                 <td style={S.td}>{c.phone ?? "—"}</td>
                 <td style={S.tdMono}>{c.vatNumber ?? "—"}</td>
                 <td style={S.td}><span style={S.badgeCur}>{c.currencyCode ?? "SAR"}</span></td>
-                <td style={{ ...S.tdMono, color: balanceNature(c.balance ?? 0).color, fontWeight: 600 }}>{fmtAmount(Math.abs(c.balance ?? 0))}</td>
-                <td style={{ ...S.td, color: balanceNature(c.balance ?? 0).color, fontWeight: 600 }}>{balanceNature(c.balance ?? 0).label}</td>
+                <td style={{ ...S.tdMono, color: balanceNature(c.balance ?? 0, language).color, fontWeight: 600 }}>{fmtAmount(Math.abs(c.balance ?? 0), language)}</td>
+                <td style={{ ...S.td, color: balanceNature(c.balance ?? 0, language).color, fontWeight: 600 }}>{balanceNature(c.balance ?? 0, language).label}</td>
                 <td style={S.td}>
                   {(c.creditLimit ?? 0) > 0
-                    ? <span style={c.enforceCreditLimit ? S.badgeLimitOn : S.badgeLimitOff}>{fmtAmount(c.creditLimit ?? 0)}</span>
+                    ? <span style={c.enforceCreditLimit ? S.badgeLimitOn : S.badgeLimitOff}>{fmtAmount(c.creditLimit ?? 0, language)}</span>
                     : <span style={S.muted}>—</span>}
                 </td>
                 <td style={S.td}>
                   <span style={c.cloudId ? S.badgeCloud : S.badgeLocal}>
-                    {c.cloudId ? `☁️ سحابة #${c.cloudId}` : "📱 محلي"}
+                    {c.cloudId ? `☁️ ${text("سحابة", "Cloud")} #${c.cloudId}` : `📱 ${text("محلي", "Local")}`}
                   </span>
                 </td>
                 <td style={S.tdRight}>
-                  <button onClick={() => startEdit(c)} disabled={!!edit} style={S.btnEdit}>تعديل</button>
-                  <button onClick={() => handleDelete(c)} disabled={!!edit} style={S.btnDel}>حذف</button>
+                  <button onClick={() => startEdit(c)} disabled={!!edit} style={S.btnEdit}>{text("تعديل", "Edit")}</button>
+                  <button onClick={() => handleDelete(c)} disabled={!!edit} style={S.btnDel}>{text("حذف", "Delete")}</button>
                 </td>
               </tr>
             ))}
@@ -241,6 +246,8 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
   branches: Branch[];
   accounts: Account[];
 }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [tab, setTab] = useState<"basic" | "address" | "credit" | "accounting">("basic");
   // Only postable (leaf) accounts can be assigned — mirrors the JE account picker.
   const leafAccounts = accounts.filter((a) => a.isLeaf);
@@ -250,52 +257,52 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
   };
   return (
     <div style={S.formCard}>
-      <div style={S.formTitle}>{mode === "new" ? "عميل جديد" : "تعديل بيانات العميل"}</div>
+      <div style={S.formTitle}>{mode === "new" ? text("عميل جديد", "New customer") : text("تعديل بيانات العميل", "Edit customer")}</div>
 
       <div style={S.tabBar}>
-        <button type="button" onClick={() => setTab("basic")} style={tab === "basic" ? S.tabActive : S.tab}>المعلومات الأساسية</button>
-        <button type="button" onClick={() => setTab("address")} style={tab === "address" ? S.tabActive : S.tab}>العنوان الوطني</button>
-        <button type="button" onClick={() => setTab("credit")} style={tab === "credit" ? S.tabActive : S.tab}>الائتمان والاستحقاق</button>
-        <button type="button" onClick={() => setTab("accounting")} style={tab === "accounting" ? S.tabActive : S.tab}>إعدادات المحاسبة</button>
+        <button type="button" onClick={() => setTab("basic")} style={tab === "basic" ? S.tabActive : S.tab}>{text("المعلومات الأساسية", "Basic information")}</button>
+        <button type="button" onClick={() => setTab("address")} style={tab === "address" ? S.tabActive : S.tab}>{text("العنوان الوطني", "National address")}</button>
+        <button type="button" onClick={() => setTab("credit")} style={tab === "credit" ? S.tabActive : S.tab}>{text("الائتمان والاستحقاق", "Credit and payment terms")}</button>
+        <button type="button" onClick={() => setTab("accounting")} style={tab === "accounting" ? S.tabActive : S.tab}>{text("إعدادات المحاسبة", "Accounting settings")}</button>
       </div>
 
       {tab === "basic" && (
       <div style={S.grid}>
-        <Field label="الاسم بالعربية *">
-          <input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={S.bigInput} placeholder="اسم العميل" />
+        <Field label={text("الاسم بالعربية *", "Arabic name *")}>
+          <input autoFocus value={data.nameAr} onChange={(e) => setField("nameAr", e.target.value)} style={S.bigInput} placeholder={text("اسم العميل", "Arabic customer name")} />
         </Field>
-        <Field label="الاسم بالإنجليزية">
+        <Field label={text("الاسم بالإنجليزية", "English name")}>
           <input value={data.nameEn ?? ""} onChange={(e) => setField("nameEn", e.target.value)} style={S.bigInput} placeholder="Customer name" />
         </Field>
-        <Field label="رقم الهاتف">
+        <Field label={text("رقم الهاتف", "Phone number")}>
           <input value={data.phone ?? ""} onChange={(e) => setField("phone", e.target.value)} style={S.bigInput} placeholder="05xxxxxxxx" />
         </Field>
-        <Field label="الرقم الضريبي">
+        <Field label={text("الرقم الضريبي", "Tax number")}>
           <input value={data.vatNumber ?? ""} onChange={(e) => setField("vatNumber", e.target.value)} style={{ ...S.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="3xxxxxxxxxxxxx3" />
         </Field>
-        <Field label="السجل التجاري">
+        <Field label={text("السجل التجاري", "Commercial registration")}>
           <input value={data.crNumber ?? ""} onChange={(e) => setField("crNumber", e.target.value)} style={{ ...S.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="10xxxxxxxx" />
         </Field>
-        <Field label="البريد الإلكتروني">
+        <Field label={text("البريد الإلكتروني", "Email")}>
           <input type="email" value={data.email ?? ""} onChange={(e) => setField("email", e.target.value)} style={S.bigInput} placeholder="name@example.com" />
         </Field>
-        <Field label="العملة">
+        <Field label={text("العملة", "Currency")}>
           <select value={data.currencyCode ?? "SAR"} onChange={(e) => setField("currencyCode", e.target.value)} style={S.bigInput}>
             {currencyOpts.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </Field>
-        <Field label="الفرع الافتراضي">
+        <Field label={text("الفرع الافتراضي", "Default branch")}>
           <select value={data.branchId ?? ""} onChange={(e) => setField("branchId", e.target.value ? Number(e.target.value) : null)} style={S.bigInput}>
-            <option value="">— بدون —</option>
+            <option value="">{text("— بدون —", "— None —")}</option>
             {branches.map((b) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
           </select>
         </Field>
-        <Field label="إدراج في كشوف الحساب والأعمار">
+        <Field label={text("إدراج في كشوف الحساب والأعمار", "Include in statements and aging")}>
           <label style={S.checkRow}>
             <input type="checkbox" checked={data.includeInStatements ?? true}
               onChange={(e) => setField("includeInStatements", e.target.checked)}
               style={S.checkbox} />
-            <span>عند الإلغاء يُستبعد العميل من كشف الحساب وتقارير أعمار الديون</span>
+            <span>{text("عند الإلغاء يُستبعد العميل من كشف الحساب وتقارير أعمار الديون", "When disabled, exclude this customer from statements and receivables aging reports.")}</span>
           </label>
         </Field>
       </div>
@@ -304,38 +311,38 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
       {tab === "address" && (
       <>
       <div style={S.grid}>
-        <Field label="المدينة">
-          <input value={data.city ?? ""} onChange={(e) => setField("city", e.target.value)} style={S.bigInput} placeholder="الرياض" />
+        <Field label={text("المدينة", "City")}>
+          <input value={data.city ?? ""} onChange={(e) => setField("city", e.target.value)} style={S.bigInput} placeholder={text("الرياض", "Riyadh")} />
         </Field>
-        <Field label="الحي">
-          <input value={data.district ?? ""} onChange={(e) => setField("district", e.target.value)} style={S.bigInput} placeholder="حي ..." />
+        <Field label={text("الحي", "District")}>
+          <input value={data.district ?? ""} onChange={(e) => setField("district", e.target.value)} style={S.bigInput} placeholder={text("حي ...", "District…")} />
         </Field>
-        <Field label="الشارع">
-          <input value={data.street ?? ""} onChange={(e) => setField("street", e.target.value)} style={S.bigInput} placeholder="شارع ..." />
+        <Field label={text("الشارع", "Street")}>
+          <input value={data.street ?? ""} onChange={(e) => setField("street", e.target.value)} style={S.bigInput} placeholder={text("شارع ...", "Street…")} />
         </Field>
-        <Field label="رقم المبنى">
+        <Field label={text("رقم المبنى", "Building number")}>
           <input value={data.buildingNumber ?? ""} onChange={(e) => setField("buildingNumber", e.target.value)} style={S.bigInput} placeholder="0000" />
         </Field>
-        <Field label="الرمز البريدي">
+        <Field label={text("الرمز البريدي", "Postal code")}>
           <input value={data.postalCode ?? ""} onChange={(e) => setField("postalCode", e.target.value)} style={S.bigInput} placeholder="00000" />
         </Field>
-        <Field label="الدولة">
+        <Field label={text("الدولة", "Country")}>
           <input value={data.country ?? "SA"} onChange={(e) => setField("country", e.target.value)} style={S.bigInput} placeholder="SA" />
         </Field>
-        <Field label="العنوان الوطني المختصر">
+        <Field label={text("العنوان الوطني المختصر", "Short national address")}>
           <input value={data.nationalAddressShort ?? ""} onChange={(e) => setField("nationalAddressShort", e.target.value)} style={{ ...S.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="RRRD0000" />
         </Field>
       </div>
 
-      <div style={S.section}>الموقع الجغرافي (اختياري)</div>
+      <div style={S.section}>{text("الموقع الجغرافي (اختياري)", "Geographic location (optional)")}</div>
       <div style={S.grid}>
-        <Field label="خط العرض (Latitude)">
+        <Field label={text("خط العرض (Latitude)", "Latitude")}>
           <input value={data.locationLat ?? ""} onChange={(e) => setField("locationLat", e.target.value)} style={{ ...S.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="24.7136" />
         </Field>
-        <Field label="خط الطول (Longitude)">
+        <Field label={text("خط الطول (Longitude)", "Longitude")}>
           <input value={data.locationLng ?? ""} onChange={(e) => setField("locationLng", e.target.value)} style={{ ...S.bigInput, fontFamily: "ui-monospace, monospace" }} placeholder="46.6753" />
         </Field>
-        <Field label="رابط الموقع (خرائط جوجل)">
+        <Field label={text("رابط الموقع (خرائط جوجل)", "Location link (Google Maps)")}>
           <input value={data.locationLink ?? ""} onChange={(e) => setField("locationLink", e.target.value)} style={S.bigInput} placeholder="https://maps.google.com/..." />
         </Field>
       </div>
@@ -345,41 +352,41 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
       {tab === "credit" && (
       <>
       <div style={S.grid}>
-        <Field label="حد الائتمان (الحد الأقصى للمديونية)">
+        <Field label={text("حد الائتمان (الحد الأقصى للمديونية)", "Credit limit (maximum receivable)")}>
           <input type="number" step="0.01" min="0" value={data.creditLimit ?? 0}
             onChange={(e) => setField("creditLimit", Number(e.target.value) || 0)}
             style={S.bigInput} placeholder="0.00" />
         </Field>
-        <Field label="مدة الاستحقاق (بالأيام)">
+        <Field label={text("مدة الاستحقاق (بالأيام)", "Payment terms (days)")}>
           <input type="number" step="1" min="0" value={data.paymentTermsDays ?? 0}
             onChange={(e) => setField("paymentTermsDays", Math.max(0, Math.floor(Number(e.target.value) || 0)))}
             style={S.bigInput} placeholder="0" />
         </Field>
-        <Field label="منع البيع عند تجاوز الحد / التأخر">
+        <Field label={text("منع البيع عند تجاوز الحد / التأخر", "Block sales when over limit or overdue")}>
           <label style={S.checkRow}>
             <input type="checkbox" checked={!!data.enforceCreditLimit}
               onChange={(e) => setField("enforceCreditLimit", e.target.checked)}
               style={S.checkbox} />
-            <span>تفعيل المنع — لن يُسمح بفاتورة بيع آجلة تتجاوز الحد أو لعميل متأخر السداد</span>
+            <span>{text("تفعيل المنع — لن يُسمح بفاتورة بيع آجلة تتجاوز الحد أو لعميل متأخر السداد", "When enabled, credit sales are blocked if they exceed the limit or the customer is overdue.")}</span>
           </label>
         </Field>
       </div>
 
       {mode === "new" && (
         <>
-          <div style={S.section}>الرصيد الافتتاحي (عند الإضافة فقط)</div>
+          <div style={S.section}>{text("الرصيد الافتتاحي (عند الإضافة فقط)", "Opening balance (new customers only)")}</div>
           <div style={S.grid}>
-            <Field label="المبلغ">
+            <Field label={text("المبلغ", "Amount")}>
               <input type="number" step="0.01" min="0" value={data.openingBalance ?? 0}
                 onChange={(e) => setField("openingBalance", Number(e.target.value) || 0)}
                 style={S.bigInput} placeholder="0.00" />
             </Field>
-            <Field label="الطبيعة">
+            <Field label={text("الطبيعة", "Balance type")}>
               <select value={data.openingNature ?? "debit"}
                 onChange={(e) => setField("openingNature", e.target.value as "debit" | "credit")}
                 style={S.bigInput}>
-                <option value="debit">مدين (لنا عليه)</option>
-                <option value="credit">دائن (له علينا)</option>
+                <option value="debit">{text("مدين (لنا عليه)", "Debit (customer owes us)")}</option>
+                <option value="credit">{text("دائن (له علينا)", "Credit (we owe customer)")}</option>
               </select>
             </Field>
           </div>
@@ -390,14 +397,14 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
 
       {tab === "accounting" && (
         <>
-          <div style={S.section}>الربط المحاسبي</div>
+          <div style={S.section}>{text("الربط المحاسبي", "Accounting link")}</div>
           <div style={S.grid}>
-            <Field label="حساب العميل في دليل الحسابات">
+            <Field label={text("حساب العميل في دليل الحسابات", "Customer account in chart of accounts")}>
               <SearchCombobox
                 value={data.accountId ?? ""}
                 onChange={(v) => setField("accountId", v === "" ? null : Number(v))}
                 options={[
-                  { value: "", label: "— بدون (حساب العملاء الافتراضي) —" },
+                  { value: "", label: text("— بدون (حساب العملاء الافتراضي) —", "— None (default customers account) —") },
                   ...leafAccounts.map((a) => ({ value: a.id, label: `${a.code} - ${a.nameAr}` })),
                 ]}
                 style={S.bigInput}
@@ -405,8 +412,7 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
             </Field>
           </div>
           <div style={S.muted}>
-            عند اختيار حساب، تُرحَّل ذمم هذا العميل إلى هذا الحساب بدلاً من حساب العملاء الافتراضي.
-            تظهر الحسابات الفرعية (القابلة للترحيل) فقط.
+            {text("عند اختيار حساب، تُرحَّل ذمم هذا العميل إلى هذا الحساب بدلاً من حساب العملاء الافتراضي. تظهر الحسابات الفرعية (القابلة للترحيل) فقط.", "When selected, this customer's receivables post to this account instead of the default customers account. Only postable leaf accounts are shown.")}
           </div>
         </>
       )}
@@ -414,8 +420,8 @@ function CustomerForm({ mode, data, setField, onSave, onCancel, busy, err, curre
       {err && <div style={S.formErr}>⚠️ {err}</div>}
 
       <div style={S.formActions}>
-        <button onClick={handleSave} disabled={busy} style={S.btnSave}>{busy ? "جاري الحفظ..." : "حفظ"}</button>
-        <button onClick={onCancel} disabled={busy} style={S.btnCancel}>إلغاء</button>
+        <button onClick={handleSave} disabled={busy} style={S.btnSave}>{busy ? text("جاري الحفظ...", "Saving…") : text("حفظ", "Save")}</button>
+        <button onClick={onCancel} disabled={busy} style={S.btnCancel}>{text("إلغاء", "Cancel")}</button>
       </div>
     </div>
   );
