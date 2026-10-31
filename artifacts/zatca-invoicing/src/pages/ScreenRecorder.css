@@ -94,6 +94,11 @@
 .sr-tool-button { display:grid; place-items:center; width:38px; height:36px; border:1px solid #dce8e2; color:#5e7a71; border-radius:8px; background:#fffefa; cursor:pointer; }
 .sr-tool-button:hover { border-color:#9fc7b8; color:var(--sr-teal); }
 .sr-tool-button.active { background:#e9f5ef; color:#087f73; border-color:#8fc3b1; box-shadow:inset 0 0 0 1px #8fc3b1; }
+.sr-guide-colors { display:flex; align-items:center; flex-wrap:wrap; gap:9px; margin-top:13px; color:#668078; font-size:11px; font-weight:700; }
+.sr-color-swatch { width:23px; height:23px; padding:0; border:2px solid #fff; border-radius:50%; background:var(--sr-swatch); box-shadow:0 0 0 1px #d7e5df; cursor:pointer; transition:transform .15s ease, box-shadow .15s ease; }
+.sr-color-swatch:hover { transform:scale(1.12); }
+.sr-color-swatch.active { box-shadow:0 0 0 2px var(--sr-swatch), 0 0 0 4px #fff; }
+.sr-guide-note { color:#28745f; font-weight:800; }
 .sr-tool-note { color:#69827a; font-size:10px; line-height:1.7; margin-top:10px; }
 .sr-estimate { margin-top:13px; padding:13px; border:1px solid #dce9e2; border-radius:10px; background:#f5f9f5; }
 .sr-estimate > div { display:flex; justify-content:space-between; align-items:center; gap:12px; color:#688079; font-size:11px; }

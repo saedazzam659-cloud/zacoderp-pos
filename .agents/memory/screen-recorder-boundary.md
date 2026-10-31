@@ -9,6 +9,8 @@ Offer bitrate presets and estimated file sizes for long recordings, but describe
 
 The recorder stays off by default per company, enabled by SuperAdmin, and separately restricted by per-user permission. Captures are not uploaded to ERP.
 
+Keep drawing guides as a local preview layer and exclude them from the app's video/image composition. However, browser display capture cannot mask UI pixels that are part of the selected screen or tab; when the recorder itself is inside the selected source, explain this limitation and recommend a separate target window/tab.
+
 **Why:** The user explicitly needs to record other Windows apps or limit capture to a browser tab, distribute recordings, and reduce file size; platform capture/audio support is not uniform.
 
-**How to apply:** Preserve these boundaries when adding capture sources, upload/compression workflows, permissions, or native-helper proposals.
+**How to apply:** Preserve these boundaries when adding capture sources, preview-only guides, upload/compression workflows, permissions, or native-helper proposals.

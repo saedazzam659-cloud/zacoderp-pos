@@ -9,9 +9,14 @@ import {
 import "./ScreenRecorder.css";
 
 type Phase = "ready" | "recording" | "paused" | "preview" | "error";
-type Tool = "select" | "pen" | "arrow" | "text" | "marker";
+type Tool = "select" | "rectangle" | "ellipse" | "pen" | "arrow" | "text" | "marker";
 type QualityPreset = "low" | "balanced" | "high";
-type Mark = { tool: Exclude<Tool, "select">; points: { x: number; y: number }[]; text?: string };
+type Mark = { tool: Exclude<Tool, "select">; points: { x: number; y: number }[]; text?: string; color?: string };
+type GuidePoint = { x: number; y: number };
+type ResizeHandle = "nw" | "ne" | "sw" | "se";
+type GuideGesture =
+  | { mode: "move"; index: number; anchor: GuidePoint; original: GuidePoint[] }
+  | { mode: "resize"; index: number; handle: ResizeHandle; fixed: GuidePoint };
 type SavePickerOptions = { suggestedName: string; types: { description: string; accept: Record<string, string[]> }[] };
 type SaveFileHandle = { createWritable: () => Promise<{ write: (blob: Blob) => Promise<void>; close: () => Promise<void> }> };
 declare global { interface Window { showSaveFilePicker?: (options: SavePickerOptions) => Promise<SaveFileHandle> } }
@@ -46,7 +51,7 @@ const arabic = {
   browserCaptureLimits: "يعرض المتصفح وأنظمة التشغيل مصادر مختلفة. قد لا يظهر خيار الشاشة أو النافذة الأصلية؛ إن لم يظهر، استخدم وضع علامة تبويب المتصفح. اختيار المصدر النهائي والصوت المتاح يخضعان للمتصفح والنظام.",
   sourceUnavailable: "لم يتوفر مصدر مشاركة مناسب في المتصفح أو النظام. جرّب وضع علامة تبويب المتصفح أو تحقق من إعدادات المشاركة.",
   switchingNote: "قد يستمر وضع الشاشة أو النافذة عند الانتقال بين تطبيقات Windows، لكن المتصفح يلتقط المصدر المحدد فقط. لا يمكن ضمان الاستمرار إذا أوقفت المشاركة أو غيّر النظام الصلاحية.",
-  annotate: "أدوات التوضيح", annotationHelp: "ارسم فوق المعاينة. تُضمّن العلامات في التسجيل والصورة المحفوظة.", undo: "تراجع", clear: "مسح العلامات",
+  annotate: "أدوات التوضيح", annotationHelp: "طبقة إرشادية للمعاينة فقط؛ لا تدخل في تركيب الفيديو أو الصورة. إذا سجلت الشاشة أو التبويب الذي تظهر فيه واجهة المسجّل، قد يلتقط المصدر عناصر الواجهة نفسها؛ استخدم نافذة أو تبويب الهدف منفصلًا.", undo: "تراجع", clear: "مسح العلامات",
   noMarks: "اختر أداة ثم ابدأ الرسم على المعاينة.",
   choose: "اختيار مصدر", start: "بدء التسجيل", pause: "إيقاف مؤقت", resume: "استئناف", stop: "إنهاء التسجيل",
   screenshot: "التقاط صورة", crop: "تحديد منطقة", cropActive: "اسحب لتحديد المنطقة", cancelCrop: "إلغاء التحديد", save: "حفظ الملف", discard: "حذف المعاينة",
@@ -55,7 +60,8 @@ const arabic = {
   denied: "لم يُسمح بمشاركة الشاشة. تحقق من صلاحية المتصفح ثم أعد المحاولة.", unsupported: "المتصفح لا يدعم مشاركة الشاشة أو تسجيل الفيديو. استخدم إصداراً حديثاً من Chrome أو Edge أو Firefox.",
   saveFallback: "تم تنزيل الملف عبر المتصفح.", saveError: "تعذر حفظ الملف. جرّب التنزيل المعتاد.", screenshotSaved: "تم تنزيل الصورة.",
   sourceName: "مصدر مشترك", videoType: "فيديو", imageType: "صورة", useFileSystem: "استخدام نافذة الحفظ عند توفرها",
-  canvasCrop: "المنطقة المحددة", fullFrame: "الإطار الكامل", toolSelect: "تحديد", toolPen: "قلم", toolArrow: "سهم", toolText: "نص", toolMarker: "تمييز",
+  canvasCrop: "المنطقة المحددة", fullFrame: "الإطار الكامل", toolSelect: "تحديد وتحريك وتغيير الحجم", toolRectangle: "مستطيل", toolEllipse: "دائرة أو شكل بيضاوي", toolPen: "قلم", toolArrow: "سهم", toolText: "نص", toolMarker: "تمييز",
+  guideColors: "لون الأداة", guideLayerOnly: "أدوات مساعدة للشرح فقط — لا تدخل في تركيب الملف المحفوظ.",
   screenshotRegion: "التقاط المنطقة", keyboard: "تلميح: أوقف التسجيل من هذه الصفحة أو من شريط مشاركة المتصفح.",
 };
 const english: typeof arabic = {
@@ -80,7 +86,7 @@ const english: typeof arabic = {
   browserCaptureLimits: "Browsers and operating systems expose different sources. The native display or window option may not be listed; if unavailable, use browser-tab mode. The browser and OS control the final source and available audio.",
   sourceUnavailable: "No suitable capture source was available in the browser or OS. Try browser-tab mode or check sharing settings.",
   switchingNote: "Display or window mode may continue while switching Windows apps, but the browser captures only the granted source. Sharing can still stop if you end it or the OS changes permission.",
-  annotate: "Annotation tools", annotationHelp: "Draw over the preview. Marks are included in the recording and saved image.", undo: "Undo", clear: "Clear marks",
+  annotate: "On-screen guides", annotationHelp: "Guides are preview-only and are not composited into the video or still. If you record the same screen or tab showing the recorder, the capture source may include its UI; use a separate target window or tab.", undo: "Undo", clear: "Clear guides",
   noMarks: "Choose a tool, then draw over the preview.",
   choose: "Choose source", start: "Start recording", pause: "Pause", resume: "Resume", stop: "Stop recording",
   screenshot: "Capture still", crop: "Select region", cropActive: "Drag to select a region", cancelCrop: "Cancel selection", save: "Save file", discard: "Discard preview",
@@ -89,7 +95,8 @@ const english: typeof arabic = {
   denied: "Screen sharing was not allowed. Check browser permissions and try again.", unsupported: "This browser does not support screen sharing or video recording. Try a recent version of Chrome, Edge, or Firefox.",
   saveFallback: "Downloaded through your browser.", saveError: "Could not save the file. Try the standard download.", screenshotSaved: "Image downloaded.",
   sourceName: "Shared source", videoType: "Video", imageType: "Image", useFileSystem: "Use save dialog when available",
-  canvasCrop: "Selected region", fullFrame: "Full frame", toolSelect: "Select", toolPen: "Pen", toolArrow: "Arrow", toolText: "Text", toolMarker: "Marker",
+  canvasCrop: "Selected region", fullFrame: "Full frame", toolSelect: "Select, move, and resize", toolRectangle: "Rectangle", toolEllipse: "Circle or ellipse", toolPen: "Pen", toolArrow: "Arrow", toolText: "Text", toolMarker: "Highlight",
+  guideColors: "Tool color", guideLayerOnly: "Helper guides only — excluded from the saved file composition.",
   screenshotRegion: "Capture region", keyboard: "Tip: stop from this page or the browser’s screen-sharing bar.",
 };
 
@@ -114,12 +121,13 @@ export default function ScreenRecorder() {
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
   const [previewKind, setPreviewKind] = useState<"video" | "image">("video");
-  const [imageLoaded, setImageLoaded] = useState(false);
   const [mime, setMime] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [tool, setTool] = useState<Tool>("select");
   const [marks, setMarks] = useState<Mark[]>([]);
+  const [selectedMarkIndex, setSelectedMarkIndex] = useState<number | null>(null);
+  const [guideColor, setGuideColor] = useState("#ff5c7a");
   const [isDrawing, setIsDrawing] = useState(false);
   const [cropMode, setCropMode] = useState(false);
   const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -146,6 +154,7 @@ export default function ScreenRecorder() {
   const elapsedRef = useRef(0);
   const objectUrlRef = useRef("");
   const marksRef = useRef(marks);
+  const guideGestureRef = useRef<GuideGesture | null>(null);
   marksRef.current = marks;
 
   const formats = useMemo(() => typeof MediaRecorder === "undefined" ? [] : MIME_CANDIDATES.filter((type) => MediaRecorder.isTypeSupported(type)), []);
@@ -204,14 +213,14 @@ export default function ScreenRecorder() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, width, height);
-    marksRef.current.forEach((mark) => {
+    marksRef.current.forEach((mark, markIndex) => {
       if (mark.tool === "text") {
         const point = mark.points[0];
         if (!point) return;
         ctx.font = `${Math.max(22, width * .026)}px Cairo, sans-serif`;
         ctx.lineWidth = 4;
         ctx.strokeStyle = "#16352d";
-        ctx.fillStyle = "#ffe091";
+        ctx.fillStyle = mark.color || "#ffe091";
         ctx.strokeText(mark.text || "", point.x * width, point.y * height);
         ctx.fillText(mark.text || "", point.x * width, point.y * height);
         return;
@@ -220,9 +229,17 @@ export default function ScreenRecorder() {
       ctx.beginPath();
       ctx.lineCap = "round"; ctx.lineJoin = "round";
       ctx.lineWidth = mark.tool === "marker" ? Math.max(18, width * .022) : Math.max(4, width * .005);
-      ctx.strokeStyle = mark.tool === "marker" ? "rgba(242, 204, 87, .38)" : mark.tool === "arrow" ? "#ffcf69" : "#f2f7e9";
-      ctx.moveTo(mark.points[0].x * width, mark.points[0].y * height);
-      mark.points.slice(1).forEach((point) => ctx.lineTo(point.x * width, point.y * height));
+      ctx.strokeStyle = mark.tool === "marker" ? `${mark.color || "#f2cc57"}66` : mark.color || "#f2f7e9";
+      if ((mark.tool === "rectangle" || mark.tool === "ellipse") && mark.points.length > 1) {
+        const first = mark.points[0], last = mark.points[mark.points.length - 1];
+        const x = Math.min(first.x, last.x) * width, y = Math.min(first.y, last.y) * height;
+        const w = Math.abs(last.x - first.x) * width, h = Math.abs(last.y - first.y) * height;
+        if (mark.tool === "rectangle") ctx.rect(x, y, w, h);
+        else ctx.ellipse(x + w / 2, y + h / 2, Math.max(1, w / 2), Math.max(1, h / 2), 0, 0, Math.PI * 2);
+      } else {
+        ctx.moveTo(mark.points[0].x * width, mark.points[0].y * height);
+        mark.points.slice(1).forEach((point) => ctx.lineTo(point.x * width, point.y * height));
+      }
       if (mark.tool === "arrow" && mark.points.length > 1) {
         const from = mark.points[0], to = mark.points[mark.points.length - 1];
         const x1 = from.x * width, y1 = from.y * height, x2 = to.x * width, y2 = to.y * height;
@@ -231,27 +248,19 @@ export default function ScreenRecorder() {
         ctx.moveTo(x2, y2); ctx.lineTo(x2 - head * Math.cos(angle + Math.PI / 6), y2 - head * Math.sin(angle + Math.PI / 6));
       }
       ctx.stroke();
+      if (selectedMarkIndex === markIndex && (mark.tool === "rectangle" || mark.tool === "ellipse") && mark.points.length > 1) {
+        const first = mark.points[0], last = mark.points[mark.points.length - 1];
+        const left = Math.min(first.x, last.x) * width, right = Math.max(first.x, last.x) * width;
+        const top = Math.min(first.y, last.y) * height, bottom = Math.max(first.y, last.y) * height;
+        [[left, top], [right, top], [left, bottom], [right, bottom]].forEach(([x, y]) => {
+          ctx.beginPath(); ctx.fillStyle = "#fff"; ctx.strokeStyle = mark.color || "#ff5c7a"; ctx.lineWidth = 2;
+          ctx.rect(x - 5, y - 5, 10, 10); ctx.fill(); ctx.stroke();
+        });
+      }
     });
-  }, [previewKind, phase]);
+  }, [previewKind, phase, selectedMarkIndex]);
 
   useEffect(() => { drawMarks(); }, [marks, drawMarks, phase, stream, previewUrl]);
-
-  useEffect(() => {
-    if (phase !== "preview" || previewKind !== "image" || !previewUrl) return;
-    const image = imageRef.current;
-    const overlay = overlayRef.current;
-    if (!imageLoaded || !image || !overlay || !image.complete || !image.naturalWidth) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = image.naturalWidth || overlay.width;
-    canvas.height = image.naturalHeight || overlay.height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    ctx.drawImage(overlay, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob((blob) => {
-      if (blob) setPreviewBlob(blob);
-    }, "image/png");
-  }, [imageLoaded, marks, phase, previewKind, previewUrl]);
 
   useEffect(() => {
     if (phase !== "recording") return;
@@ -328,27 +337,80 @@ export default function ScreenRecorder() {
     event.currentTarget.setPointerCapture(event.pointerId);
     const point = pointFromEvent(event);
     if (cropMode) { setSelectionDraft({ x: point.x, y: point.y, w: 0, h: 0 }); setIsDrawing(true); return; }
-    if (tool === "select") return;
-    if (tool === "text") {
-      const text = window.prompt(isArabic ? "اكتب النص التوضيحي" : "Enter annotation text");
-      if (text?.trim()) setMarks((current) => [...current, { tool, points: [point], text: text.trim() }]);
+    if (tool === "select") {
+      const selected = selectedMarkIndex === null ? null : marks[selectedMarkIndex];
+      if (selected && (selected.tool === "rectangle" || selected.tool === "ellipse") && selected.points.length > 1) {
+        const first = selected.points[0], last = selected.points[selected.points.length - 1];
+        const left = Math.min(first.x, last.x), right = Math.max(first.x, last.x);
+        const top = Math.min(first.y, last.y), bottom = Math.max(first.y, last.y);
+        const handles: { id: ResizeHandle; point: GuidePoint; fixed: GuidePoint }[] = [
+          { id: "nw", point: { x: left, y: top }, fixed: { x: right, y: bottom } },
+          { id: "ne", point: { x: right, y: top }, fixed: { x: left, y: bottom } },
+          { id: "sw", point: { x: left, y: bottom }, fixed: { x: right, y: top } },
+          { id: "se", point: { x: right, y: bottom }, fixed: { x: left, y: top } },
+        ];
+        const handle = handles.find((item) => Math.hypot(item.point.x - point.x, item.point.y - point.y) < .035);
+        if (handle) {
+          guideGestureRef.current = { mode: "resize", index: selectedMarkIndex!, handle: handle.id, fixed: handle.fixed };
+          setIsDrawing(true);
+          return;
+        }
+      }
+      const hitIndex = [...marks.keys()].reverse().find((index) => {
+        const mark = marks[index], points = mark.points;
+        if (!points.length) return false;
+        const left = Math.min(...points.map((item) => item.x)) - .02;
+        const right = Math.max(...points.map((item) => item.x)) + .02;
+        const top = Math.min(...points.map((item) => item.y)) - .02;
+        const bottom = Math.max(...points.map((item) => item.y)) + .02;
+        return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+      });
+      setSelectedMarkIndex(hitIndex ?? null);
+      if (hitIndex !== undefined) {
+        guideGestureRef.current = { mode: "move", index: hitIndex, anchor: point, original: marks[hitIndex].points };
+        setIsDrawing(true);
+      }
       return;
     }
-    setMarks((current) => [...current, { tool, points: [point] }]);
+    if (tool === "text") {
+      const text = window.prompt(isArabic ? "اكتب النص التوضيحي" : "Enter annotation text");
+      if (text?.trim()) {
+        setMarks((current) => [...current, { tool, points: [point], text: text.trim(), color: guideColor }]);
+        setSelectedMarkIndex(null);
+      }
+      return;
+    }
+    setMarks((current) => [...current, { tool, points: [point, point], color: guideColor }]);
+    setSelectedMarkIndex(marks.length);
+    guideGestureRef.current = null;
     setIsDrawing(true);
   };
   const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawing) return;
     const point = pointFromEvent(event);
-    if (cropMode) {
-      setSelectionDraft((draft) => draft ? { x: Math.min(draft.x, point.x), y: Math.min(draft.y, point.y), w: Math.abs(point.x + (draft.w < 0 ? draft.w : 0) - draft.x), h: Math.abs(point.y + (draft.h < 0 ? draft.h : 0) - draft.y) } : draft);
-      // Store the drag origin separately in data using the inverse sign until pointer-up.
+    const gesture = guideGestureRef.current;
+    if (gesture?.mode === "resize") {
+      const resized = gesture.handle === "nw" || gesture.handle === "se"
+        ? [gesture.fixed, point]
+        : [gesture.fixed, point];
+      setMarks((current) => current.map((mark, index) => index === gesture.index ? { ...mark, points: resized } : mark));
       return;
     }
-    setMarks((current) => current.map((mark, index) => index === current.length - 1 ? { ...mark, points: [...mark.points, point] } : mark));
+    if (gesture?.mode === "move") {
+      const dx = point.x - gesture.anchor.x, dy = point.y - gesture.anchor.y;
+      const moved = gesture.original.map((item) => ({ x: Math.max(0, Math.min(1, item.x + dx)), y: Math.max(0, Math.min(1, item.y + dy)) }));
+      setMarks((current) => current.map((mark, index) => index === gesture.index ? { ...mark, points: moved } : mark));
+      return;
+    }
+    setMarks((current) => current.map((mark, index) => {
+      if (index !== current.length - 1) return mark;
+      if (mark.tool === "rectangle" || mark.tool === "ellipse" || mark.tool === "arrow") return { ...mark, points: [mark.points[0], point] };
+      return { ...mark, points: [...mark.points, point] };
+    }));
   };
   const onPointerUp = () => {
     setIsDrawing(false);
+    guideGestureRef.current = null;
     if (cropMode && selectionDraft) {
       const rect = { x: selectionDraft.x, y: selectionDraft.y, w: selectionDraft.w, h: selectionDraft.h };
       if (rect.w > .025 && rect.h > .025) setCropRect(rect);
@@ -371,16 +433,14 @@ export default function ScreenRecorder() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
-    const overlay = overlayRef.current;
-    if (overlay) ctx.drawImage(overlay, sx, sy, sw, sh, 0, 0, sw, sh);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
     if (!blob) return;
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     const url = URL.createObjectURL(blob);
     objectUrlRef.current = url;
     setPreviewBlob(blob); setPreviewKind("image"); setPreviewUrl(url); setPhase("preview");
-    setImageLoaded(false);
     setMarks([]);
+    setSelectedMarkIndex(null);
   };
 
   const drawComposite = useCallback(() => {
@@ -392,8 +452,6 @@ export default function ScreenRecorder() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
-    const overlay = overlayRef.current;
-    if (overlay) ctx.drawImage(overlay, sx, sy, sw, sh, 0, 0, sw, sh);
     compositeRafRef.current = requestAnimationFrame(drawComposite);
   }, [cropBounds]);
 
@@ -501,7 +559,7 @@ export default function ScreenRecorder() {
   const resetPreview = () => {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     objectUrlRef.current = "";
-    setPreviewBlob(null); setPreviewUrl(""); setMarks([]); setCropRect(null); setElapsed(0); elapsedRef.current = 0; setPhase("ready");
+    setPreviewBlob(null); setPreviewUrl(""); setMarks([]); setSelectedMarkIndex(null); setCropRect(null); setElapsed(0); elapsedRef.current = 0; setPhase("ready");
     setVideoSource(streamRef.current);
   };
 
@@ -516,11 +574,14 @@ export default function ScreenRecorder() {
 
   const toolOptions: { id: Tool; label: string; icon: typeof Pen }[] = [
     { id: "select", label: copy.toolSelect, icon: MousePointer2 },
+    { id: "rectangle", label: copy.toolRectangle, icon: Square },
+    { id: "ellipse", label: copy.toolEllipse, icon: Circle },
     { id: "pen", label: copy.toolPen, icon: Pen },
     { id: "arrow", label: copy.toolArrow, icon: ArrowDownRight },
     { id: "text", label: copy.toolText, icon: Type },
     { id: "marker", label: copy.toolMarker, icon: Highlighter },
   ];
+  const guideColors = ["#ff5c7a", "#f6b73c", "#22c7a9", "#4c8dff", "#bb78ff", "#ffffff"];
 
   return (
     <main className="sr-page" dir={isArabic ? "rtl" : "ltr"}>
@@ -557,7 +618,7 @@ export default function ScreenRecorder() {
                   {(stream || previewUrl) ? (
                     <>
                       {previewKind === "image" && phase === "preview"
-                        ? <img ref={imageRef} src={previewUrl} className="sr-preview-video" style={{ transform: `scale(${zoom})` }} onLoad={() => { drawMarks(); setImageLoaded(true); }} alt={isArabic ? "معاينة الصورة الملتقطة" : "Captured image preview"} data-testid="image-preview" />
+                        ? <img ref={imageRef} src={previewUrl} className="sr-preview-video" style={{ transform: `scale(${zoom})` }} onLoad={drawMarks} alt={isArabic ? "معاينة الصورة الملتقطة" : "Captured image preview"} data-testid="image-preview" />
                         : <video ref={videoRef} className="sr-preview-video" playsInline controls={!!previewUrl} onLoadedMetadata={drawMarks} style={{ transform: `scale(${zoom})` }} data-testid="video-preview" />}
                       {(stream || previewUrl) && <canvas ref={overlayRef} className="sr-draw-layer" style={{ cursor: cropMode ? "crosshair" : tool === "select" ? "default" : "crosshair", transform: `scale(${zoom})` }} onPointerDown={(event) => {
                         if (cropMode) { const p = pointFromEvent(event); event.currentTarget.dataset.originX = String(p.x); event.currentTarget.dataset.originY = String(p.y); setSelectionDraft({ x: p.x, y: p.y, w: 0, h: 0 }); setIsDrawing(true); }
@@ -675,10 +736,15 @@ export default function ScreenRecorder() {
                     <div className="sr-tool-row" role="toolbar" aria-label={copy.annotate}>
                       {toolOptions.map(({ id, label, icon: Icon }) => <button key={id} className={`sr-tool-button ${tool === id ? "active" : ""}`} aria-label={label} title={label} onClick={() => { setTool(id); setCropMode(false); }} disabled={!stream && !previewUrl} data-testid={`button-tool-${id}`}><Icon size={16} /></button>)}
                     </div>
-                    <div className="sr-tool-note">{phase === "preview" && previewKind === "video" ? (isArabic ? "علامات المعاينة بعد التسجيل تظهر كطبقة فقط ولا تُضاف إلى ملف الفيديو. ارسم أثناء التسجيل لتضمين العلامات." : "Marks added after recording are preview-only and are not added to the video file. Draw while recording to include them.") : copy.annotationHelp}</div>
+                    <div className="sr-guide-colors" role="group" aria-label={copy.guideColors}>
+                      <span>{copy.guideColors}</span>
+                      {guideColors.map((color) => <button key={color} className={`sr-color-swatch ${guideColor === color ? "active" : ""}`} type="button" style={{ "--sr-swatch": color } as React.CSSProperties} onClick={() => setGuideColor(color)} aria-label={color} aria-pressed={guideColor === color} data-testid={`button-guide-color-${color.slice(1)}`} />)}
+                    </div>
+                    <div className="sr-tool-note sr-guide-note">{copy.guideLayerOnly}</div>
+                    <div className="sr-tool-note">{copy.annotationHelp}</div>
                     <div className="sr-tool-actions">
-                      <button className="sr-control-btn" onClick={() => setMarks((current) => current.slice(0, -1))} disabled={!marks.length} data-testid="button-undo-annotation"><Undo2 size={13} />{copy.undo}</button>
-                      <button className="sr-control-btn" onClick={() => setMarks([])} disabled={!marks.length} data-testid="button-clear-annotations"><X size={13} />{copy.clear}</button>
+                      <button className="sr-control-btn" onClick={() => { setMarks((current) => current.slice(0, -1)); setSelectedMarkIndex(null); }} disabled={!marks.length} data-testid="button-undo-annotation"><Undo2 size={13} />{copy.undo}</button>
+                      <button className="sr-control-btn" onClick={() => { setMarks([]); setSelectedMarkIndex(null); }} disabled={!marks.length} data-testid="button-clear-annotations"><X size={13} />{copy.clear}</button>
                     </div>
                   </div>
                 </section>
