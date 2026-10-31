@@ -122,6 +122,8 @@ export const MENU_ITEMS: MenuItem[] = [
   // (`office`) drives the company toggle, per-user RBAC, the collapsible
   // sidebar group and every route.
   { key: "office",             label: "أوفيس زاكود",                section: "أوفيس زاكود" },
+  // Screen recorder is enabled explicitly per company by SuperAdmin.
+  { key: "screen_recorder",    label: "تسجيل الشاشة والتصوير",       section: "أدوات النظام" },
 
   // Goods Receipt / Delivery archive (سندات الاستلام والتسليم) — pure archive
   // linked to invoices. Default ON; single key gates the sidebar group + every
@@ -170,7 +172,7 @@ export const LEGACY_DEFAULT_ON_MENU_KEYS: ReadonlySet<string> = new Set([
 
 // The school module must be enabled only from SuperAdmin Menu Permissions.
 export const REGISTRATION_BLOCKED_MENU_KEYS: ReadonlySet<string> = new Set([
-  "school", "clothing", "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
+  "school", "clothing", "screen_recorder", "pos_cashier", "pos_returns", "pos_waiter", "pos_kitchen",
 ]);
 
 export const MENU_ITEM_BY_KEY: Record<string, MenuItem> = Object.fromEntries(
@@ -284,6 +286,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   // Office suite is LOCKED BY DEFAULT — the permission key itself is the
   // on/off switch (no separate billable parent module).
   office:             null,
+  screen_recorder:    null,
   // Goods Receipt / Delivery archive — permission key is the on/off switch,
   // no separate billable parent module.
   delivery_receipt_docs: null,

@@ -106,3 +106,4 @@
 - [External invoice import boundary](external-invoice-import-boundary.md) — convert source files into the existing unified invoice rows for review; never infer missing facts or post on extraction alone.
 - [Company-specific invoice import formats](company-invoice-import-formats.md) — isolate each company's source format adapter and normalize into the shared invoice review flow.
 - [Saved feature scope](saved-feature-scope.md) — invoice item multi-select and Saudi VAT display only for Mahmoud's agent.
+- [Screen recorder boundaries](screen-recorder-boundary.md) — browser-local capture, company/user gates, bitrate estimates, and platform-limited audio.

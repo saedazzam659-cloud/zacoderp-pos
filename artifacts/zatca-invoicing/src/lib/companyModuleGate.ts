@@ -135,6 +135,8 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   // Default OFF; a company sees/uses the office suite ONLY after SuperAdmin
   // grants the `office` toggle. Single key gates every office route.
   office: "office",
+  // Browser-only screen recorder; explicitly enabled by SuperAdmin per company.
+  screen_recorder: "screen_recorder",
   // Goods Receipt / Delivery documents (مستندات الاستلام والتسليم) — pure
   // archive module linked to invoices. Single key gates the sidebar group +
   // every /api/delivery-receipt-documents/* call. Mirror of the backend
@@ -167,7 +169,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
 // of the normal default-on). Keep in sync with permissions.ts (backend) and
 // DEFAULT_OFF_KEYS in MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
-  "extensions_platform", "office", "demo_analytics", "module_dashboards", "simple_manufacturing",
+  "extensions_platform", "office", "screen_recorder", "demo_analytics", "module_dashboards", "simple_manufacturing",
   "zid_integration", "salla_integration",
   "internal_control", "egypt_tax", "jordan_tax", "school", "clothing", "additional_accounting_reports",
   "additional_sales_reports", "additional_purchase_reports",

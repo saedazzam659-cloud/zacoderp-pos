@@ -56,6 +56,7 @@ const G = {
   deliveryDocs: "perms.groups.deliveryDocs",
   trainingRoom: "perms.groups.trainingRoom",
   internalControl: "perms.groups.internalControl",
+  screenRecorder: "perms.groups.screenRecorder",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -76,6 +77,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "extensions",           label: "perms.modules.extensions",           group: G.dashboard,  actions: VO },
 
   { key: "office",               label: "perms.modules.office",               group: G.office,     actions: VO },
+  { key: "screen_recorder",      label: "perms.modules.screen_recorder",      group: G.screenRecorder, actions: VO },
 
   // Goods Receipt / Delivery archive (سندات الاستلام والتسليم) — pure archive
   // linked to invoices; single company gate `delivery_receipt_docs`. `post`

@@ -44,6 +44,7 @@ import {
   Copy,
   Bookmark,
   Mail,
+  MonitorPlay,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -352,6 +353,7 @@ const superAdminNav: NavDef[] = [
 // (POS Management) parent group rendered by PosNavGroup, so this list
 // stays empty (kept around for future business-level top-level NavItems).
 const companyBusinessNav: NavDef[] = [
+  { nameKey: "nav.screenRecorder", href: "/screen-recorder", icon: MonitorPlay, permKey: "screen_recorder" },
   { nameKey: "nav.userGuide", name: "دليل التشغيل", href: "/user-guide", icon: BookOpen },
   { nameKey: "nav.demoAnalytics", href: "/demo-analytics", icon: Activity, permKey: "demo_analytics", requireAdmin: true },
   { nameKey: "nav.egyptTax", href: "/tax-integration", icon: FileKey2, permKey: "egypt_tax", country: "EG", requireAdmin: true },

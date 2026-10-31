@@ -104,6 +104,7 @@ import PartnersAdmin from "@/pages/PartnersAdmin";
 import DevCloudAdmin from "@/pages/DevCloudAdmin";
 import DevStudioRegister from "@/pages/DevStudioRegister";
 import TrainingRoom from "@/pages/TrainingRoom";
+import ScreenRecorder from "@/pages/ScreenRecorder";
 import TrainingJoinPublic from "@/pages/TrainingJoinPublic";
 import IncomingSupportCall from "@/components/livekit/IncomingSupportCall";
 import DevStudio from "@/pages/DevStudio";
@@ -995,6 +996,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/user-tracking/movement-report" module="user_tracking" component={UserMovementReport} />}
             {/* قاعة التدريب المباشر — كونسول المدرب (بث + رفع يد + حضور) */}
             {!isSuperAdmin && <PermRoute path="/training-room" module="training_room" component={TrainingRoom} />}
+            {!isSuperAdmin && <PermRoute path="/screen-recorder" module="screen_recorder" component={ScreenRecorder} />}
             {!isSuperAdmin && user?.role === "admin" && <Route path="/ai-reports" component={AiReports} />}
 
             {/* Company user routes */}

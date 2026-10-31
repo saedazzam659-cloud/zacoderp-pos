@@ -982,6 +982,7 @@
     "deliveryDocsModule": "Goods Receipt & Delivery Notes",
     "deliveryDocsGroup": "Goods Receipt & Delivery Notes",
     "trainingRoom": "Live Training Hall",
+    "screenRecorder": "Screen Recorder",
     "stockAdjustments": "Stock Adjustments",
     "stockCounts": "Stock Counts",
     "offers": "Offers",
@@ -2964,6 +2965,7 @@
       "multiLink": "Multi-Link Gateway",
       "office": "Zacode Office",
       "trainingRoom": "Live Training Hall",
+      "screenRecorder": "Screen Recorder",
       "deliveryDocs": "Goods Receipt / Delivery",
       "demoAnalytics": "Demo Monitoring",
       "internalControl": "Internal Control"
@@ -3007,6 +3009,7 @@
       "extensions": "Extensions",
       "demo_analytics": "Demo User Monitoring",
       "office": "Zacode Office (Word + Excel)",
+      "screen_recorder": "Screen Recorder",
       "delivery_receipt_docs": "Goods Receipt / Delivery Notes",
       "training_room": "Live Training Hall",
       "customers": "Customers",

@@ -167,6 +167,8 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   // Default OFF; mirror in frontend companyModuleGate.ts. Single key gates
   // every office route + the sidebar group.
   office: "office",
+  // Browser-only screen recorder; remains locked until SuperAdmin enables it.
+  screen_recorder: "screen_recorder",
   // Goods Receipt / Delivery documents (مستندات الاستلام والتسليم) — pure
   // archive module linked to invoices. Single company toggle gates the sidebar
   // group + every /api/delivery-receipt-documents/* call. Mirror in frontend
@@ -197,7 +199,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
 // sync with companyModuleGate.ts (frontend) + DEFAULT_OFF_KEYS in
 // MenuPermissions.tsx.
 const MODULE_GATE_DEFAULT_OFF = new Set<string>([
-  "extensions_platform", "office", "demo_analytics", "module_dashboards", "simple_manufacturing", "internal_control",
+  "extensions_platform", "office", "screen_recorder", "demo_analytics", "module_dashboards", "simple_manufacturing", "internal_control",
   "zid_integration", "salla_integration",
   "school", "clothing",
   "additional_accounting_reports",

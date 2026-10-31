@@ -984,6 +984,7 @@
     "deliveryDocsModule": "سندات الاستلام والتسليم",
     "deliveryDocsGroup": "سندات الاستلام والتسليم",
     "trainingRoom": "قاعة التدريب المباشر",
+    "screenRecorder": "تسجيل الشاشة والتصوير",
     "stockAdjustments": "التسوية المخزنية",
     "stockCounts": "الجرد المخزني",
     "offers": "العروض",
@@ -2966,6 +2967,7 @@
       "multiLink": "ربط متعدد",
       "office": "أوفيس زاكود",
       "trainingRoom": "قاعة التدريب المباشر",
+      "screenRecorder": "تسجيل الشاشة",
       "deliveryDocs": "سندات الاستلام والتسليم",
       "demoAnalytics": "متابعة الديمو",
       "internalControl": "الرقابة الداخلية"
@@ -3009,6 +3011,7 @@
       "extensions": "الإضافات",
       "demo_analytics": "متابعة مستخدمي الديمو",
       "office": "أوفيس زاكود (Word + Excel)",
+      "screen_recorder": "تسجيل الشاشة والتصوير",
       "delivery_receipt_docs": "سندات الاستلام والتسليم",
       "training_room": "قاعة التدريب المباشر",
       "customers": "العملاء",

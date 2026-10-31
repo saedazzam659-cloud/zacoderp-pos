@@ -1,0 +1,14 @@
+---
+name: Screen recorder boundaries
+description: Product constraints for the ERP's browser-only screen recorder.
+---
+
+Keep the screen recorder browser-local. The user expects to choose between a Windows display/window capture and a browser-tab-only capture; the browser's native permission picker decides which exact surface is available. Do not imply that a web page can capture every Windows monitor or bypass the picker.
+
+Offer bitrate presets and estimated file sizes for long recordings, but describe them as approximate because browser encoders and screen content affect output. Audio availability and quality depend on the browser, OS, selected surface, and user permissions; never guarantee perfect audio.
+
+The recorder stays off by default per company, enabled by SuperAdmin, and separately restricted by per-user permission. Captures are not uploaded to ERP.
+
+**Why:** The user explicitly needs to record other Windows apps or limit capture to a browser tab, distribute recordings, and reduce file size; platform capture/audio support is not uniform.
+
+**How to apply:** Preserve these boundaries when adding capture sources, upload/compression workflows, permissions, or native-helper proposals.
