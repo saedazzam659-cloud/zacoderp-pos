@@ -106,9 +106,9 @@ async function getAgentCaptchaConfig(req: any) {
   const resolvedHost = await resolveAgentRequestHost(req);
   const verifiedProxyHost = normalizeHost((req as any).verifiedAgentProxyIdentity?.host);
   const candidates = [
-    ...(verifiedProxyHost ? [verifiedProxyHost] : []),
     ...(pageHost ? [pageHost] : []),
     ...(requestedHost && pageHost && requestedHost === pageHost ? [requestedHost] : []),
+    ...(verifiedProxyHost ? [verifiedProxyHost] : []),
     ...(resolvedHost ? [resolvedHost] : []),
   ];
   for (const host of [...new Set(candidates)]) {

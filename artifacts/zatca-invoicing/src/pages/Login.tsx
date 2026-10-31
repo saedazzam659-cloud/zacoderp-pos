@@ -246,7 +246,7 @@ export default function Login() {
     setAgentCaptchaError("");
     try {
       const response = await fetch(
-        `${API_BASE}/api/auth/login-captcha?host=${encodeURIComponent(window.location.hostname)}`,
+        `${API_BASE}/api/branding/login-captcha?host=${encodeURIComponent(window.location.hostname)}`,
         { cache: "no-store", credentials: "same-origin" },
       );
       const data = await response.json().catch(() => ({}));

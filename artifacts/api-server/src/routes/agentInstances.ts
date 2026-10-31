@@ -27,7 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { promises as fsp } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import { pbkdf2Sync, createCipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { pbkdf2Sync, createCipheriv, createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 // Control-plane module: ALL registry reads/writes here must hit the CENTRAL
 // DB even when the request is running inside an agent-DB ALS context (an
 // agent's cloned DB has an empty registry — following the proxy would
@@ -7662,6 +7662,43 @@ agentPublicRouter.get("/branding", async (req, res) => {
   // Explicit allow-list: contact phone is public for the resolved agent, while
   // database/proxy/server credentials remain private.
   res.json(resolvedAgentBranding(hit));
+});
+
+// GET /api/branding/login-captcha?host=... — issue a challenge using the
+// same canonical-host lookup as public branding. Keeping these together avoids
+// the login route's proxy/auth context resolving a different agent record.
+agentPublicRouter.get("/branding/login-captcha", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  try {
+    const host = typeof req.query.host === "string"
+      ? normalizeHost(req.query.host)
+      : await resolveAgentRequestHost(req);
+    const hit = await lookupAgentByHost(host);
+    const settings = hit ? sanitizeAgentUiSettings(hit.agentUiSettings).loginPage : null;
+    if (!hit || !settings?.captchaEnabled || !host) {
+      res.status(404).json({ enabled: false });
+      return;
+    }
+
+    const secret = process.env.SESSION_SECRET;
+    if (!secret) throw new Error("Captcha signing is unavailable");
+    const sign = (value: string) => createHmac("sha256", secret).update(value).digest("hex");
+    const code = String(randomInt(1000, 10000));
+    const nonce = randomBytes(16).toString("hex");
+    const payload = Buffer.from(JSON.stringify({
+      host, nonce, exp: Date.now() + 3 * 60_000,
+      digest: sign(`${host}|${nonce}|${code}`),
+    })).toString("base64url");
+    const token = `${payload}.${sign(payload)}`;
+    const text = settings.captchaTextColor ?? "#0f766e";
+    const background = settings.captchaBackgroundColor ?? "#ffffff";
+    const border = settings.captchaBorderColor ?? "#cbd5e1";
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="150" height="48" viewBox="0 0 150 48"><rect x="1" y="1" width="148" height="46" rx="7" fill="${background}" stroke="${border}" stroke-width="2"/><path d="M8 35L142 13M12 10L130 39" stroke="${border}" opacity=".45"/><text x="75" y="33" text-anchor="middle" font-family="monospace" font-size="27" font-weight="700" letter-spacing="5" fill="${text}">${code}</text></svg>`;
+    res.json({ enabled: true, token, image: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}` });
+  } catch {
+    res.status(503).json({ error: "تعذر إنشاء رمز التحقق الآن" });
+  }
 });
 
 // GET /api/branding/manifest?host=... — PWA manifest rebranded per agent
