@@ -32,9 +32,6 @@ async function buildAll() {
     // - use path traversal to read files (e.g. @google-cloud/secret-manager loads sibling .proto files)
     external: [
       "*.node",
-      // resvg includes a platform-specific native addon; keep its package
-      // loader intact instead of asking esbuild to bundle the .node binary.
-      "@resvg/resvg-js",
       "sharp",
       "better-sqlite3",
       "sqlite3",

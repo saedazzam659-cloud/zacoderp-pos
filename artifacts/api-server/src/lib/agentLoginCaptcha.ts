@@ -1,13 +1,31 @@
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import { centralDb, agentLoginCaptchaChallengesTable } from "@workspace/db";
 import { eq, lt } from "drizzle-orm";
-import { Resvg } from "@resvg/resvg-js";
 
 const CAPTCHA_COOKIE = "zacod_agent_captcha";
 const CAPTCHA_TTL_MS = 3 * 60_000;
 const CAPTCHA_MAX_ATTEMPTS = 5;
 const CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CAPTCHA_LENGTH = 6;
+const CAPTCHA_FONT: Record<string, string[]> = {
+  A:["01110","10001","10001","11111","10001","10001","10001"], B:["11110","10001","10001","11110","10001","10001","11110"],
+  C:["01111","10000","10000","10000","10000","10000","01111"], D:["11110","10001","10001","10001","10001","10001","11110"],
+  E:["11111","10000","10000","11110","10000","10000","11111"], F:["11111","10000","10000","11110","10000","10000","10000"],
+  G:["01111","10000","10000","10111","10001","10001","01111"], H:["10001","10001","10001","11111","10001","10001","10001"],
+  J:["00111","00010","00010","00010","10010","10010","01100"], K:["10001","10010","10100","11000","10100","10010","10001"],
+  L:["10000","10000","10000","10000","10000","10000","11111"], M:["10001","11011","10101","10101","10001","10001","10001"],
+  N:["10001","11001","10101","10011","10001","10001","10001"], P:["11110","10001","10001","11110","10000","10000","10000"],
+  Q:["01110","10001","10001","10001","10101","10010","01101"], R:["11110","10001","10001","11110","10100","10010","10001"],
+  S:["01111","10000","10000","01110","00001","00001","11110"], T:["11111","00100","00100","00100","00100","00100","00100"],
+  U:["10001","10001","10001","10001","10001","10001","01110"], V:["10001","10001","10001","10001","10001","01010","00100"],
+  W:["10001","10001","10001","10101","10101","10101","01010"], X:["10001","10001","01010","00100","01010","10001","10001"],
+  Y:["10001","10001","01010","00100","00100","00100","00100"], Z:["11111","00001","00010","00100","01000","10000","11111"],
+  2:["01110","10001","00001","00010","00100","01000","11111"], 3:["11110","00001","00001","01110","00001","00001","11110"],
+  4:["00010","00110","01010","10010","11111","00010","00010"], 5:["11111","10000","10000","11110","00001","00001","11110"],
+  6:["01111","10000","10000","11110","10001","10001","01110"], 7:["11111","00001","00010","00100","01000","01000","01000"],
+  8:["01110","10001","10001","01110","10001","10001","01110"], 9:["01110","10001","10001","01111","00001","00001","11110"],
+};
 
 type CaptchaColors = {
   captchaTextColor?: string | null;
@@ -39,27 +57,79 @@ function randomCode(): string {
   return Array.from({ length: CAPTCHA_LENGTH }, () => CAPTCHA_ALPHABET[randomInt(CAPTCHA_ALPHABET.length)]).join("");
 }
 
-function createSvg(code: string, colors: CaptchaColors): string {
-  const text = safeColor(colors.captchaTextColor, "#0f766e");
-  const background = safeColor(colors.captchaBackgroundColor, "#ffffff");
-  const border = safeColor(colors.captchaBorderColor, "#cbd5e1");
-  const noise = Array.from({ length: 9 }, () => {
-    const x1 = randomInt(4, 146);
-    const y1 = randomInt(4, 44);
-    const x2 = randomInt(4, 146);
-    const y2 = randomInt(4, 44);
-    return `<path d="M${x1} ${y1}L${x2} ${y2}" stroke="${border}" stroke-width="${randomInt(1, 3)}" opacity=".55"/>`;
-  }).join("");
-  const dots = Array.from({ length: 22 }, () =>
-    `<circle cx="${randomInt(4, 146)}" cy="${randomInt(4, 44)}" r="${randomInt(1, 3)}" fill="${border}" opacity=".55"/>`,
-  ).join("");
-  const characters = [...code].map((character, index) => {
-    const x = 27 + index * 20;
-    const y = randomInt(27, 37);
-    const rotation = randomInt(-18, 19);
-    return `<text x="${x}" y="${y}" transform="rotate(${rotation} ${x} ${y})" text-anchor="middle" font-family="monospace" font-size="25" font-weight="700" fill="${text}">${character}</text>`;
-  }).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="150" height="48" viewBox="0 0 150 48"><rect x="1" y="1" width="148" height="46" rx="7" fill="${background}" stroke="${border}" stroke-width="2"/>${noise}${dots}${characters}</svg>`;
+function pngChunk(type: string, data: Buffer): Buffer {
+  const typeBuffer = Buffer.from(type);
+  const body = Buffer.concat([typeBuffer, data]);
+  let crc = 0xffffffff;
+  for (const byte of body) crc = (crc >>> 8) ^ CRC_TABLE[(crc ^ byte) & 0xff];
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+  return Buffer.concat([header, body, checksum]);
+}
+
+const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = (c & 1) ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+export function renderAgentCaptchaPng(code: string, colors: CaptchaColors): Buffer {
+  const width = 150, height = 48;
+  const pixels = Buffer.alloc(width * height * 4);
+  const rgb = (value: unknown, fallback: string): [number, number, number] => {
+    const color = safeColor(value, fallback).slice(1);
+    return [parseInt(color.slice(0, 2), 16), parseInt(color.slice(2, 4), 16), parseInt(color.slice(4, 6), 16)];
+  };
+  const bg = rgb(colors.captchaBackgroundColor, "#ffffff");
+  const ink = rgb(colors.captchaTextColor, "#0f766e");
+  const line = rgb(colors.captchaBorderColor, "#cbd5e1");
+  const put = (x: number, y: number, color: number[]) => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return;
+    const i = (y * width + x) * 4;
+    pixels[i] = color[0]; pixels[i + 1] = color[1]; pixels[i + 2] = color[2]; pixels[i + 3] = 255;
+  };
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) put(x, y, bg);
+  const drawLine = (x0: number, y0: number, x1: number, y1: number, color: number[]) => {
+    const dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    const dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    let error = dx + dy;
+    while (true) {
+      put(x0, y0, color);
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * error;
+      if (e2 >= dy) { error += dy; x0 += sx; }
+      if (e2 <= dx) { error += dx; y0 += sy; }
+    }
+  };
+  for (let x = 1; x < width - 1; x++) { put(x, 1, line); put(x, height - 2, line); }
+  for (let y = 1; y < height - 1; y++) { put(1, y, line); put(width - 2, y, line); }
+  for (let i = 0; i < 8; i++) drawLine(randomInt(3, 147), randomInt(3, 45), randomInt(3, 147), randomInt(3, 45), line);
+  for (let i = 0; i < 28; i++) put(randomInt(3, 147), randomInt(3, 45), line);
+  [...code].forEach((character, index) => {
+    const glyph = CAPTCHA_FONT[character];
+    const x0 = 12 + index * 22;
+    const y0 = 12 + randomInt(0, 4);
+    const shear = randomInt(-2, 3);
+    for (let row = 0; row < glyph.length; row++) for (let col = 0; col < 5; col++) {
+      if (glyph[row][col] !== "1") continue;
+      const x = x0 + col * 3 + Math.round((row - 3) * shear / 6);
+      const y = y0 + row * 3;
+      for (let py = 0; py < 3; py++) for (let px = 0; px < 3; px++) put(x + px, y + py, ink);
+    }
+  });
+  const scanlines = Buffer.alloc(height * (1 + width * 4));
+  for (let y = 0; y < height; y++) pixels.copy(scanlines, y * (1 + width * 4) + 1, y * width * 4, (y + 1) * width * 4);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(scanlines)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 function sessionHash(sessionId: string): string {
@@ -110,8 +180,7 @@ export function issueAgentLoginCaptcha(
     : randomBytes(32).toString("base64url");
   const code = randomCode();
   const nonce = randomBytes(16).toString("hex");
-  const svg = createSvg(code, colors);
-  const image = new Resvg(svg, { fitTo: { mode: "original" } }).render().asPng();
+  const image = renderAgentCaptchaPng(code, colors);
   const hash = sessionHash(sessionId);
   const expiresAt = new Date(Date.now() + CAPTCHA_TTL_MS);
   return centralDb.transaction(async (tx) => {
@@ -127,7 +196,7 @@ export function issueAgentLoginCaptcha(
       target: agentLoginCaptchaChallengesTable.sessionHash,
       set: { host, nonce, answerDigest: digest(`${sessionId}|${host}|${nonce}|${code}`), expiresAt, attempts: 0, createdAt: new Date() },
     });
-    return { sessionId, image: `data:image/png;base64,${Buffer.from(image).toString("base64")}` };
+    return { sessionId, image: `data:image/png;base64,${image.toString("base64")}` };
   });
 }
 
