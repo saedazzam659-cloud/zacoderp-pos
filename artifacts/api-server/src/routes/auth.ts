@@ -104,16 +104,23 @@ async function getAgentCaptchaConfig(req: any) {
     ? normalizeHost(req.query.host)
     : null;
   const resolvedHost = await resolveAgentRequestHost(req);
+  const verifiedProxyHost = normalizeHost((req as any).verifiedAgentProxyIdentity?.host);
   const candidates = [
-    ...(requestedHost && (!pageHost || requestedHost === pageHost) ? [requestedHost] : []),
+    ...(verifiedProxyHost ? [verifiedProxyHost] : []),
     ...(pageHost ? [pageHost] : []),
+    ...(requestedHost && pageHost && requestedHost === pageHost ? [requestedHost] : []),
     ...(resolvedHost ? [resolvedHost] : []),
   ];
   for (const host of [...new Set(candidates)]) {
     const agent = await lookupAgentByHost(host);
     if (!agent) continue;
     const settings = sanitizeAgentUiSettings(agent.agentUiSettings).loginPage;
-    return settings?.captchaEnabled ? { host, settings } : null;
+    // A request can carry more than one trusted host hint behind a reverse
+    // proxy. An earlier candidate may resolve to a registered server that
+    // does not use CAPTCHA, while the page-origin candidate does. Keep
+    // checking the trusted candidates rather than treating that as a final
+    // negative match.
+    if (settings?.captchaEnabled) return { host, settings };
   }
   return null;
 }
@@ -138,6 +145,8 @@ function verifyAgentCaptchaToken(token: unknown, answer: unknown, host: string):
 }
 
 router.get("/login-captcha", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
   try {
     const config = await getAgentCaptchaConfig(req);
     if (!config) { res.status(404).json({ enabled: false }); return; }
@@ -152,7 +161,6 @@ router.get("/login-captcha", async (req, res) => {
     const background = config.settings.captchaBackgroundColor ?? "#ffffff";
     const border = config.settings.captchaBorderColor ?? "#cbd5e1";
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="150" height="48" viewBox="0 0 150 48"><rect x="1" y="1" width="148" height="46" rx="7" fill="${background}" stroke="${border}" stroke-width="2"/><path d="M8 35L142 13M12 10L130 39" stroke="${border}" opacity=".45"/><text x="75" y="33" text-anchor="middle" font-family="monospace" font-size="27" font-weight="700" letter-spacing="5" fill="${text}">${code}</text></svg>`;
-    res.setHeader("Cache-Control", "no-store");
     res.json({ enabled: true, token, image: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}` });
   } catch {
     res.status(503).json({ error: "تعذر إنشاء رمز التحقق الآن" });

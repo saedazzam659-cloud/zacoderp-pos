@@ -342,7 +342,10 @@ export async function lookupAgentByHost(host: string | null): Promise<AgentHostH
 //     runWithExternalDb, so every `db`/`pool` usage anywhere in the handler
 //     chain hits the agent's PostgreSQL instead of the central one;
 //   • active but DB not initialized yet → central DB (setup phase).
-const AGENT_PUBLIC_PATHS = ["/branding", "/agent/heartbeat"];
+// Public agent-login challenge creation reads central agent registration and
+// UI settings, just like branding. Keep it on the central datasource instead
+// of switching into the tenant DB before auth.ts resolves the registered host.
+const AGENT_PUBLIC_PATHS = ["/branding", "/agent/heartbeat", "/auth/login-captcha"];
 
 /**
  * Effective host for agent resolution. Two sources, in trust order:
