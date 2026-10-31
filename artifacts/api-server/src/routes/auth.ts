@@ -4,13 +4,19 @@ import { db } from "@workspace/db";
 import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, workSessionsTable, planConfigsTable, modulesTable, systemSettingsTable, resellersTable, platformPartnersTable, posTerminalsTable, posTerminalUsersTable, traineeRequestsTable, companyDomainsTable, demoDeviceWorkspacesTable } from "@workspace/db";
 import { and, eq, isNull, inArray, sql, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
-import { createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from "crypto";
+import { randomUUID } from "crypto";
 import dnsPromises from "node:dns/promises";
 import { writeAudit } from "../middleware/permissions.js";
 import { normalizeHost } from "../middleware/domainResolver.js";
 import { isLocalAgentSuperadminDisabled, readLocalAgentRuntimeState } from "../lib/localAgentSuperadmin.js";
 import { registrationCountry, seedRegistrationCountryDefaults } from "../lib/registrationCountry.js";
 import { sanitizeAgentUiSettings } from "../lib/agentUiSettings.js";
+import {
+  consumeAgentLoginCaptcha,
+  issueAgentLoginCaptcha,
+  readAgentCaptchaSessionId,
+  setAgentCaptchaSessionCookie,
+} from "../lib/agentLoginCaptcha.js";
 
 // «النطاق الموطن» — true when the request arrives on a REGISTERED main
 // multi-company domain the company is NOT homed to. Unregistered hosts
@@ -84,13 +90,6 @@ import { ASCII_DEMO_USERNAME_VARIANTS, isAsciiDemoUsername, isDemoWebLoginAttemp
 
 const router = Router();
 
-function captchaHmac(value: string): string {
-  const secret = process.env.SESSION_SECRET;
-  if (!secret) throw new Error("Captcha signing is unavailable");
-  return createHmac("sha256", secret).update(value).digest("hex");
-}
-const captchaB64 = (value: string) => Buffer.from(value).toString("base64url");
-
 async function getAgentCaptchaConfig(req: any) {
   const { resolveAgentRequestHost, lookupAgentByHost } = await import("./agentInstances.js");
   const hostFromUrl = (value: unknown): string | null => {
@@ -125,44 +124,22 @@ async function getAgentCaptchaConfig(req: any) {
   return null;
 }
 
-function verifyAgentCaptchaToken(token: unknown, answer: unknown, host: string): boolean {
-  if (typeof token !== "string" || typeof answer !== "string") return false;
-  const [encoded, signature, extra] = token.split(".");
-  if (!encoded || !signature || extra) return false;
-  const expectedSignature = captchaHmac(encoded);
-  const suppliedSignature = Buffer.from(signature);
-  const expectedSignatureBytes = Buffer.from(expectedSignature);
-  if (suppliedSignature.length !== expectedSignatureBytes.length ||
-      !timingSafeEqual(suppliedSignature, expectedSignatureBytes)) return false;
-  try {
-    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
-    if (payload.host !== host || !Number.isInteger(payload.exp) || payload.exp < Date.now() ||
-        typeof payload.nonce !== "string" || typeof payload.digest !== "string") return false;
-    const expectedDigest = captchaHmac(`${host}|${payload.nonce}|${answer.trim().toUpperCase()}`);
-    const a = Buffer.from(payload.digest); const b = Buffer.from(expectedDigest);
-    return a.length === b.length && timingSafeEqual(a, b);
-  } catch { return false; }
-}
-
 router.get("/login-captcha", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
   try {
     const config = await getAgentCaptchaConfig(req);
     if (!config) { res.status(404).json({ enabled: false }); return; }
-    const code = String(randomInt(1000, 10000));
-    const nonce = randomBytes(16).toString("hex");
-    const payload = captchaB64(JSON.stringify({
-      host: config.host, nonce, exp: Date.now() + 3 * 60_000,
-      digest: captchaHmac(`${config.host}|${nonce}|${code}`),
-    }));
-    const token = `${payload}.${captchaHmac(payload)}`;
-    const text = config.settings.captchaTextColor ?? "#0f766e";
-    const background = config.settings.captchaBackgroundColor ?? "#ffffff";
-    const border = config.settings.captchaBorderColor ?? "#cbd5e1";
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="150" height="48" viewBox="0 0 150 48"><rect x="1" y="1" width="148" height="46" rx="7" fill="${background}" stroke="${border}" stroke-width="2"/><path d="M8 35L142 13M12 10L130 39" stroke="${border}" opacity=".45"/><text x="75" y="33" text-anchor="middle" font-family="monospace" font-size="27" font-weight="700" letter-spacing="5" fill="${text}">${code}</text></svg>`;
-    res.json({ enabled: true, token, image: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}` });
-  } catch {
+    const challenge = await issueAgentLoginCaptcha(
+      config.host,
+      config.settings,
+      readAgentCaptchaSessionId(req),
+    );
+    setAgentCaptchaSessionCookie(req, res, challenge.sessionId);
+    res.setHeader("Vary", "Cookie");
+    res.json({ enabled: true, image: challenge.image });
+  } catch (err) {
+    (req as any).log?.error({ err }, "agent login CAPTCHA generation failed");
     res.status(503).json({ error: "تعذر إنشاء رمز التحقق الآن" });
   }
 });
@@ -282,11 +259,21 @@ router.post("/login", async (req, res) => {
     res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" });
     return;
   }
-  if (req.body?.intent !== "check_demo_preparation" && req.headers.origin) {
+  if (req.body?.intent !== "check_demo_preparation") {
     const captchaConfig = await getAgentCaptchaConfig(req);
-    if (captchaConfig && !verifyAgentCaptchaToken(req.body?.captchaToken, req.body?.captchaAnswer, captchaConfig.host)) {
-      res.status(400).json({ error: "أدخل رمز التحقق الظاهر بالصورة", code: "AGENT_CAPTCHA_INVALID" });
-      return;
+    if (captchaConfig) {
+      const result = await consumeAgentLoginCaptcha(
+        readAgentCaptchaSessionId(req),
+        captchaConfig.host,
+        req.body?.captchaAnswer,
+      );
+      if (result !== "valid") {
+        res.status(400).json({
+          error: result === "expired" ? "انتهت صلاحية رمز التحقق، حدّث الصورة" : "رمز التحقق غير صحيح أو مستخدم",
+          code: result === "expired" ? "AGENT_CAPTCHA_EXPIRED" : "AGENT_CAPTCHA_INVALID",
+        });
+        return;
+      }
     }
   }
 

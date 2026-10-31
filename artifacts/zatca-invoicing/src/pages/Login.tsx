@@ -236,12 +236,13 @@ export default function Login() {
   const [demoTransferError, setDemoTransferError] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
-  const [agentCaptcha, setAgentCaptcha] = useState<{ image: string; token: string } | null>(null);
+  const [agentCaptcha, setAgentCaptcha] = useState<{ image: string } | null>(null);
   const [agentCaptchaAnswer, setAgentCaptchaAnswer] = useState("");
   const [agentCaptchaError, setAgentCaptchaError] = useState("");
   const [agentCaptchaLoading, setAgentCaptchaLoading] = useState(false);
 
   const refreshAgentCaptcha = async () => {
+    if (!isAgentDomain || loginPageSettings?.captchaEnabled !== true) return;
     setAgentCaptchaLoading(true);
     setAgentCaptchaError("");
     try {
@@ -250,10 +251,10 @@ export default function Login() {
         { cache: "no-store", credentials: "same-origin" },
       );
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.enabled !== true || !data.image || !data.token) {
+      if (!response.ok || data.enabled !== true || typeof data.image !== "string" || !data.image.startsWith("data:image/png;base64,")) {
         throw new Error("تعذر تحميل رمز التحقق");
       }
-      setAgentCaptcha({ image: data.image, token: data.token });
+      setAgentCaptcha({ image: data.image });
       setAgentCaptchaAnswer("");
     } catch {
       setAgentCaptcha(null);
@@ -507,13 +508,13 @@ export default function Login() {
       await login(cleanUsername, password, cleanCompanyCode, {
         confirmDemoSessionTransfer: true,
         demoPhone,
-        captchaToken: agentCaptcha?.token,
         captchaAnswer: agentCaptchaAnswer,
       });
       rememberCompanyCode(cleanCompanyCode);
       setShowDemoTransfer(false);
       goAfterLogin();
     } catch (err: any) {
+      await refreshAgentCaptcha();
       setDemoTransferError(
         isServerUnreachable(err)
           ? SERVER_UNAVAILABLE_MSG
@@ -541,6 +542,7 @@ export default function Login() {
         return;
       }
       if (preflight.transferRequired) {
+        await refreshAgentCaptcha();
         setShowDemoPhoneConfirm(false);
         setShowDemoTransfer(true);
         return;
@@ -550,7 +552,7 @@ export default function Login() {
         setShowDemoPreparation(true);
       }
       await login(cleanUsername, password, cleanCompanyCode, {
-        demoPhone: phone, captchaToken: agentCaptcha?.token, captchaAnswer: agentCaptchaAnswer,
+        demoPhone: phone, captchaAnswer: agentCaptchaAnswer,
       });
       rememberCompanyCode(cleanCompanyCode);
       setDemoPreparationProgress(100);
@@ -558,10 +560,12 @@ export default function Login() {
       goAfterLogin();
     } catch (err: any) {
       if (err?.status === 409 && err?.data?.code === "DEMO_SESSION_TRANSFER_REQUIRED") {
+        await refreshAgentCaptcha();
         setShowDemoPhoneConfirm(false);
         setShowDemoTransfer(true);
         return;
       }
+      await refreshAgentCaptcha();
       setDemoPhoneError(
         isServerUnreachable(err)
           ? SERVER_UNAVAILABLE_MSG
@@ -615,7 +619,7 @@ export default function Login() {
         }
 
         await login(trimmedUsername, password, trimmedCode, {
-          demoPhone, captchaToken: agentCaptcha?.token, captchaAnswer: agentCaptchaAnswer,
+          demoPhone, captchaAnswer: agentCaptchaAnswer,
         });
         rememberCompanyCode(trimmedCode);
         if (preparationShownForAttempt) {
@@ -628,12 +632,14 @@ export default function Login() {
         return;
       } catch (err: any) {
         if (err?.status === 428 && err?.data?.code === "DEMO_PHONE_REQUIRED") {
+          await refreshAgentCaptcha();
           setDemoPhone("");
           setDemoPhoneError("");
           setShowDemoPhoneConfirm(true);
           return;
         }
         if (err?.status === 409 && err?.data?.code === "DEMO_SESSION_TRANSFER_REQUIRED") {
+          await refreshAgentCaptcha();
           setDemoTransferError("");
           setShowDemoTransfer(true);
           return;
@@ -641,6 +647,7 @@ export default function Login() {
         // 409 + useSuperAdminFlow signals: this account requires the SA flow.
         const isSAHint = err?.status === 409 && err?.data?.useSuperAdminFlow === true;
         if (!isSAHint) {
+          await refreshAgentCaptcha();
           setError(
             isServerUnreachable(err)
             ? SERVER_UNAVAILABLE_MSG
@@ -663,6 +670,7 @@ export default function Login() {
         await performSuperAdminLogin();
       }
     } catch (err: any) {
+      await refreshAgentCaptcha();
       setError(
         isServerUnreachable(err)
           ? SERVER_UNAVAILABLE_MSG

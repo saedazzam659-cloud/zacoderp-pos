@@ -17,6 +17,7 @@
     "@aws-sdk/client-rds-data": "^3.1037.0",
     "@google-cloud/storage": "^7.19.0",
     "@replit/connectors-sdk": "^0.4.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
     "@xmldom/xmldom": "^0.9.10",

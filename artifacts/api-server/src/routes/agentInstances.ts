@@ -56,6 +56,11 @@ import {
 import { agentOwnsHost, resolvedAgentBranding, localAgentPublicBranding } from "../lib/agentPublicBranding.js";
 import { AGENT_MODULE_SCREEN_TILE_IDS, sanitizeAgentUiSettings } from "../lib/agentUiSettings.js";
 import {
+  issueAgentLoginCaptcha,
+  readAgentCaptchaSessionId,
+  setAgentCaptchaSessionCookie,
+} from "../lib/agentLoginCaptcha.js";
+import {
   EXTERNAL_PACKAGE_KINDS,
   type ExternalPackageEntry,
   type ExternalPackageKind,
@@ -7681,22 +7686,12 @@ agentPublicRouter.get("/branding/login-captcha", async (req, res) => {
       return;
     }
 
-    const secret = process.env.SESSION_SECRET;
-    if (!secret) throw new Error("Captcha signing is unavailable");
-    const sign = (value: string) => createHmac("sha256", secret).update(value).digest("hex");
-    const code = String(randomInt(1000, 10000));
-    const nonce = randomBytes(16).toString("hex");
-    const payload = Buffer.from(JSON.stringify({
-      host, nonce, exp: Date.now() + 3 * 60_000,
-      digest: sign(`${host}|${nonce}|${code}`),
-    })).toString("base64url");
-    const token = `${payload}.${sign(payload)}`;
-    const text = settings.captchaTextColor ?? "#0f766e";
-    const background = settings.captchaBackgroundColor ?? "#ffffff";
-    const border = settings.captchaBorderColor ?? "#cbd5e1";
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="150" height="48" viewBox="0 0 150 48"><rect x="1" y="1" width="148" height="46" rx="7" fill="${background}" stroke="${border}" stroke-width="2"/><path d="M8 35L142 13M12 10L130 39" stroke="${border}" opacity=".45"/><text x="75" y="33" text-anchor="middle" font-family="monospace" font-size="27" font-weight="700" letter-spacing="5" fill="${text}">${code}</text></svg>`;
-    res.json({ enabled: true, token, image: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}` });
-  } catch {
+    const challenge = await issueAgentLoginCaptcha(host, settings, readAgentCaptchaSessionId(req));
+    setAgentCaptchaSessionCookie(req, res, challenge.sessionId);
+    res.setHeader("Vary", "Cookie");
+    res.json({ enabled: true, image: challenge.image });
+  } catch (err) {
+    (req as any).log?.error({ err }, "agent login CAPTCHA generation failed");
     res.status(503).json({ error: "تعذر إنشاء رمز التحقق الآن" });
   }
 });
