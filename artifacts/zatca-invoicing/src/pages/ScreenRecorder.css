@@ -111,6 +111,14 @@
 .sr-preflight i.is-ready { background:#3e9a76; box-shadow:0 0 0 3px #3e9a761b; }
 .sr-preflight i.is-pending { background:#d4a045; box-shadow:0 0 0 3px #d4a0451b; }
 .sr-preflight b { margin-inline-start:auto; color:#405f56; font-weight:700; text-align:end; }
+.sr-voice-toggle { padding:9px 10px; border:1px solid #cfe3d9; border-radius:9px; background:#f0f8f2; color:#285e50; font-weight:800; }
+.sr-voice-controls { display:grid; gap:11px; padding:13px; border:1px solid #e0ebe5; border-radius:11px; background:linear-gradient(145deg,#fbfdfa,#f1f7f2); transition:opacity .15s ease; }
+.sr-voice-controls.is-disabled { opacity:.62; }
+.sr-pitch-control label { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.sr-pitch-control label strong { color:#087f73; font:800 11px ui-monospace,monospace; direction:ltr; }
+.sr-pitch-control input { width:100%; accent-color:#087f73; direction:ltr; }
+.sr-pitch-control > div { display:flex; justify-content:space-between; color:#789088; font-size:10px; }
+.sr-voice-note { padding-inline-start:10px; border-inline-start:2px solid #8ec3ad; line-height:1.75; }
 .sr-tool-actions { display:flex; gap:8px; margin-top:11px; }
 .sr-tool-actions .sr-control-btn { min-height:32px; font-size:10px; padding:0 10px; }
 .sr-alert { display:flex; gap:10px; align-items:flex-start; padding:12px 13px; background:#fff5ef; border:1px solid #f0d3c5; border-radius:11px; color:#965243; font-size:12px; line-height:1.7; margin:18px; }

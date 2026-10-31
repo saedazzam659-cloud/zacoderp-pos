@@ -45,6 +45,9 @@ const arabic = {
   audioTrackMissing: "لم يوفر المصدر الحالي مسار صوت نظام. قد يكون الصوت غير مدعوم أو لم يتم اختياره في نافذة المتصفح.",
   preflightSource: "مصدر الالتقاط", preflightAudio: "صوت المصدر", preflightMic: "الميكروفون",
   preflightChoose: "لم يُختر بعد", preflightRequested: "سيُطلب عند التسجيل", preflightOff: "غير مفعّل",
+  voiceChange: "تغيير صوت الميكروفون محليًا", voiceStyle: "طابع الصوت", voiceFeminine: "أنثوي", voiceMasculine: "رجالي",
+  voiceAge: "العمر الصوتي التقريبي", voicePitch: "رفع أو تخفيض الطبقة", voiceNatural: "طبيعي", voiceEffectNote: "تأثير محلي تقريبي على طبقة الصوت ونبرته، وليس صوتًا مولّدًا أو استنساخًا لشخص. صوت الشاشة لا يتغير.",
+  voiceEffectUnavailable: "تعذر تشغيل مؤثر الصوت المحلي في هذا المتصفح. أوقف تغيير الصوت أو استخدم متصفحًا حديثًا.",
   quality: "جودة وحجم الملف", qualityLow: "منخفض", qualityBalanced: "متوازن", qualityHigh: "مرتفع",
   estimate: "الحجم التقريبي لمدة 60 دقيقة", estimateVaries: "تقدير تقريبي؛ يختلف حسب المتصفح ومحتوى الشاشة. خفض معدل البت يقلل وضوح النص والتفاصيل.",
   requestedBitrate: "معدل البت المطلوب", audioTab: "طلب صوت علامة التبويب", audioSystem: "طلب صوت النظام / النافذة",
@@ -80,6 +83,9 @@ const english: typeof arabic = {
   audioTrackMissing: "The current source did not provide system audio. It may be unsupported or was not selected in the browser picker.",
   preflightSource: "Capture source", preflightAudio: "Source audio", preflightMic: "Microphone",
   preflightChoose: "Not selected", preflightRequested: "Permission asked on record", preflightOff: "Off",
+  voiceChange: "Change microphone voice locally", voiceStyle: "Voice style", voiceFeminine: "Feminine", voiceMasculine: "Masculine",
+  voiceAge: "Approximate voice age", voicePitch: "Raise or lower pitch", voiceNatural: "Natural", voiceEffectNote: "An approximate local pitch and tone effect, not a generated voice or a real-person clone. Screen audio is unchanged.",
+  voiceEffectUnavailable: "The local voice effect could not start in this browser. Turn it off or use a recent browser.",
   quality: "Quality & file size", qualityLow: "Low", qualityBalanced: "Balanced", qualityHigh: "High",
   estimate: "Approximate size for 60 minutes", estimateVaries: "Approximate only; browser and screen content affect size. Lower bitrate reduces text and detail clarity.",
   requestedBitrate: "Requested bitrate", audioTab: "Request browser-tab audio", audioSystem: "Request system / window audio",
@@ -136,6 +142,10 @@ export default function ScreenRecorder() {
   const [captureMode, setCaptureMode] = useState<"desktop" | "tab">("desktop");
   const [includeSystemAudio, setIncludeSystemAudio] = useState(true);
   const [includeMicrophone, setIncludeMicrophone] = useState(false);
+  const [voiceChangeEnabled, setVoiceChangeEnabled] = useState(false);
+  const [voiceGender, setVoiceGender] = useState<"feminine" | "masculine">("feminine");
+  const [voiceAge, setVoiceAge] = useState(28);
+  const [voicePitchAdjustment, setVoicePitchAdjustment] = useState(0);
   const [qualityPreset, setQualityPreset] = useState<QualityPreset>("balanced");
   const [notice, setNotice] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -166,6 +176,9 @@ export default function ScreenRecorder() {
     high: { video: 5_000_000, audio: 192_000 },
   };
   const selectedProfile = bitrateProfiles[qualityPreset];
+  const voiceAgeShift = (34 - voiceAge) * 0.1;
+  const voiceBasePitch = voiceGender === "feminine" ? 4 : -3;
+  const voicePitchSemitones = Math.max(-12, Math.min(12, voiceBasePitch + voiceAgeShift + voicePitchAdjustment));
   const audioEstimated = ((includeSystemAudio && (!stream || stream.getAudioTracks().length > 0)) || includeMicrophone) ? selectedProfile.audio : 0;
   const estimatedBytesPerHour = ((selectedProfile.video + audioEstimated) * 60 * 60) / 8;
   const formatEstimate = (bytes: number) => bytes >= 1_000_000_000 ? `${(bytes / 1_000_000_000).toFixed(1)} GB` : `${Math.round(bytes / 1_000_000)} MB`;
@@ -474,21 +487,41 @@ export default function ScreenRecorder() {
       compositeRef.current = composite;
       drawComposite();
     const composedStream = composite.captureStream(30);
-    const audioTracks = [
-      ...streamRef.current.getAudioTracks(),
-      ...(microphoneRef.current?.getAudioTracks() ?? []),
-    ];
-    if (audioTracks.length === 1) {
-      composedStream.addTrack(audioTracks[0]);
-    } else if (audioTracks.length > 1) {
+    const systemAudioTracks = streamRef.current.getAudioTracks();
+    const microphoneTracks = microphoneRef.current?.getAudioTracks() ?? [];
+    const audioTracks = [...systemAudioTracks, ...microphoneTracks];
+    const processMicrophone = voiceChangeEnabled && microphoneTracks.length > 0;
+    if (audioTracks.length > 1 || processMicrophone) {
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
       await audioContext.resume();
       const destination = audioContext.createMediaStreamDestination();
-      audioTracks.forEach((track) => {
+      if (processMicrophone) {
+        if (!audioContext.audioWorklet) throw new Error("AudioWorklet is unavailable");
+        await audioContext.audioWorklet.addModule(`${import.meta.env.BASE_URL}voice-pitch-shifter.worklet.js`);
+      }
+      systemAudioTracks.forEach((track) => {
         audioContext.createMediaStreamSource(new MediaStream([track])).connect(destination);
       });
+      microphoneTracks.forEach((track) => {
+        const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+        if (!processMicrophone) { source.connect(destination); return; }
+        const pitch = new AudioWorkletNode(audioContext, "voice-pitch-shifter");
+        pitch.parameters.get("semitones")?.setValueAtTime(voicePitchSemitones, audioContext.currentTime);
+        const lowShelf = audioContext.createBiquadFilter();
+        lowShelf.type = "lowshelf"; lowShelf.frequency.value = 170;
+        lowShelf.gain.value = voiceGender === "masculine" ? 2 + (voiceAge - 34) * .035 : -1.5 + (voiceAge - 34) * .02;
+        const highShelf = audioContext.createBiquadFilter();
+        highShelf.type = "highshelf"; highShelf.frequency.value = 2800;
+        highShelf.gain.value = voiceGender === "feminine" ? 1.5 + (34 - voiceAge) * .04 : -.5 + (34 - voiceAge) * .025;
+        const compressor = audioContext.createDynamicsCompressor();
+        compressor.threshold.value = -20;
+        compressor.ratio.value = 2.5;
+        source.connect(pitch).connect(lowShelf).connect(highShelf).connect(compressor).connect(destination);
+      });
       destination.stream.getAudioTracks().forEach((track) => composedStream.addTrack(track));
+    } else if (audioTracks.length === 1) {
+      composedStream.addTrack(audioTracks[0]);
     }
       const hasAudio = composedStream.getAudioTracks().length > 0;
       const recorderOptions: MediaRecorderOptions = {
@@ -514,7 +547,10 @@ export default function ScreenRecorder() {
       };
       recorder.start(250);
       setElapsed(0); elapsedRef.current = 0; setPhase("recording");
-    } catch { setErrorMessage(copy.unsupported); setPhase("error"); stopTracks(); }
+    } catch {
+      setErrorMessage(voiceChangeEnabled && includeMicrophone ? copy.voiceEffectUnavailable : copy.unsupported);
+      setPhase("error"); stopTracks();
+    }
   };
 
   const pauseResume = () => {
@@ -718,6 +754,28 @@ export default function ScreenRecorder() {
                     <div className="sr-settings">
                       <label className="sr-check-line"><input type="checkbox" checked={includeSystemAudio} onChange={(event) => setIncludeSystemAudio(event.target.checked)} disabled={!!stream || isActive} data-testid="checkbox-system-audio" />{captureMode === "tab" ? copy.audioTab : copy.audioSystem}</label>
                       <label className="sr-check-line"><input type="checkbox" checked={includeMicrophone} onChange={(event) => setIncludeMicrophone(event.target.checked)} disabled={isActive} data-testid="checkbox-microphone" />{copy.microphone}</label>
+                      <label className="sr-check-line sr-voice-toggle"><input type="checkbox" checked={voiceChangeEnabled} onChange={(event) => setVoiceChangeEnabled(event.target.checked)} disabled={!includeMicrophone || isActive} data-testid="checkbox-voice-change" />{copy.voiceChange}</label>
+                      <div className={`sr-voice-controls ${voiceChangeEnabled && includeMicrophone ? "" : "is-disabled"}`}>
+                        <div className="sr-field">
+                          <label htmlFor="sr-voice-gender">{copy.voiceStyle}</label>
+                          <select id="sr-voice-gender" value={voiceGender} onChange={(event) => setVoiceGender(event.target.value as "feminine" | "masculine")} disabled={!includeMicrophone || isActive} data-testid="select-voice-style">
+                            <option value="feminine">{copy.voiceFeminine}</option>
+                            <option value="masculine">{copy.voiceMasculine}</option>
+                          </select>
+                        </div>
+                        <div className="sr-field">
+                          <label htmlFor="sr-voice-age">{copy.voiceAge}</label>
+                          <select id="sr-voice-age" value={voiceAge} onChange={(event) => setVoiceAge(Number(event.target.value))} disabled={!includeMicrophone || isActive} data-testid="select-voice-age">
+                            {Array.from({ length: 33 }, (_, index) => index + 18).map((age) => <option key={age} value={age}>{age}</option>)}
+                          </select>
+                        </div>
+                        <div className="sr-field sr-pitch-control">
+                          <label htmlFor="sr-voice-pitch">{copy.voicePitch}<strong>{voicePitchSemitones > 0 ? "+" : ""}{voicePitchSemitones.toFixed(1)} st</strong></label>
+                          <input id="sr-voice-pitch" type="range" min="-6" max="6" step=".5" value={voicePitchAdjustment} onChange={(event) => setVoicePitchAdjustment(Number(event.target.value))} disabled={!includeMicrophone || isActive} data-testid="range-voice-pitch" />
+                          <div><span>{copy.voiceNatural}</span><span>{voicePitchSemitones >= 0 ? copy.voiceFeminine : copy.voiceMasculine}</span></div>
+                        </div>
+                      </div>
+                      <div className="sr-tool-note sr-voice-note">{copy.voiceEffectNote}</div>
                       {stream && <div className="sr-tool-note" role="status" data-testid="status-source-audio">{stream.getAudioTracks().length ? copy.audioTrackPresent : copy.audioTrackMissing}</div>}
                       <div className="sr-info-note"><AlertTriangle size={14} /><span>{copy.audioLimit}</span></div>
                       <div className="sr-preflight" role="status" data-testid="status-audio-preflight">
