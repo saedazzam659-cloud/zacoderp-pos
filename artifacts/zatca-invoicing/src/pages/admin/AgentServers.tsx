@@ -2466,7 +2466,8 @@ export default function AgentServers() {
                       <h3 className="text-sm font-semibold">فتح الوحدات بشاشة أيقونات</h3>
                       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                         اختر الوحدات التي يفتحها شريط التنقل على شاشة بطاقات بأسماء الشاشات بدل القائمة المنسدلة.
-                        نستخدم شاشة الوحدة الحالية وبطاقاتها وصلاحياتها؛ اترك الاختيارات فارغة للإبقاء على القائمة الحالية.
+                        عند تفعيل الشريط العلوي، تفتح الوحدات المحددة شاشة البطاقات الحالية، وتبقى الوحدات الأخرى قوائم منسدلة.
+                        نستخدم بطاقات الوحدة وصلاحياتها الحالية؛ اترك الاختيارات فارغة للإبقاء على القوائم المنسدلة.
                       </p>
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -2569,7 +2570,7 @@ export default function AgentServers() {
                     <div>
                       <h3 className="text-sm font-semibold">القوائم المنسدلة في التنقل الرئيسي</h3>
                       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        تتيح هذا النمط لهذا السيرفر فقط؛ تظل أيقونات القائمة الجانبية كما هي، ويختار المستخدم طريقة العرض من إعداداته.
+                        تتيح هذا النمط لهذا السيرفر فقط. عند اختيار الشريط العلوي، تظهر الوحدات المحددة أعلاه بشاشات البطاقات، وتظهر بقية الوحدات كقوائم منسدلة.
                       </p>
                     </div>
                     <label className="flex cursor-pointer items-start gap-2 text-sm">

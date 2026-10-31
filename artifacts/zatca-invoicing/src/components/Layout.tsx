@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
   useAgentBrandName,
+  useAgentMainNavDropdowns,
   useAgentModuleShortcutIcons,
   useAgentModuleScreensAsTiles,
   useAgentUserGuideEnabled,
@@ -2765,11 +2766,9 @@ function AgentTopNavNewTabAction({
 
 function TopNavDropdown({
   label,
-  icon: Icon,
   children,
 }: {
   label: string;
-  icon: LucideIcon;
   children: (close: () => void) => React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -2786,7 +2785,6 @@ function TopNavDropdown({
               : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
           )}
         >
-          <Icon className="h-4 w-4 shrink-0 opacity-80" aria-hidden="true" />
           <span>{localizeUiText(label)}</span>
           <ChevronDown className="h-3.5 w-3.5 opacity-60" />
         </button>
@@ -2811,6 +2809,7 @@ function TopNavDropdown({
 function TopNavBar(props: any) {
   const { t } = useTranslation();
   const { location, isSuperAdmin, isAgentDomain, user, menuPerms, onNavigate } = props;
+  const agentMainNavDropdowns = useAgentMainNavDropdowns();
   const localSuperadminScreens = useLocalSuperadminScreens();
   const deletedRecordsFeature = useDeletedRecordsRestoreFeature();
   const visibleSuperAdminNav = superAdminNav.filter(item =>
@@ -3084,42 +3083,6 @@ function TopNavBar(props: any) {
     },
   ];
 
-  const groupIcons: Record<string, LucideIcon> = {
-    dashboard: LayoutDashboard,
-    zatca: FileText,
-    inventory: Package,
-    sister: Building2,
-    office: Briefcase,
-    deliveryDocs: Truck,
-    trainingRoom: GraduationCap,
-    sales: ShoppingCart,
-    purchasing: ShoppingBag,
-    cash: Wallet,
-    accounting: Calculator,
-    hr: Users,
-    production: Factory,
-    internalControl: ShieldCheck,
-    simpleManufacturing: Cog,
-    safety: ShieldAlert,
-    contracting: HardHat,
-    maintenance: Wrench,
-    installments: CalendarRange,
-    hotel: Hotel,
-    hospital: Stethoscope,
-    school: GraduationCap,
-    crm: Handshake,
-    fixedAssets: Building2,
-    multiLink: Plug,
-    pos: Store,
-    security: ShieldCheck,
-    aiTools: Brain,
-    voiceAssistant: Mic,
-    sessions: Clock,
-    chat: MessageSquare,
-    companyMaintenance: Database,
-    liveMonitoring: Activity,
-  };
-
   return (
     <div
       className="hidden md:flex flex-wrap items-center gap-1 border-b border-sidebar-border bg-sidebar px-3 py-1.5"
@@ -3133,7 +3096,6 @@ function TopNavBar(props: any) {
           user,
         ))
         .map(g => {
-          const GroupIcon = groupIcons[g.key] ?? LayoutDashboard;
           if (isAgentDomain && g.key === "dashboard") {
             const active = location === "/control-panel" || location.startsWith("/control-panel/");
             return (
@@ -3150,7 +3112,7 @@ function TopNavBar(props: any) {
                   )}
                   data-testid="topnav-agent-control-panel"
                 >
-                  <GroupIcon className="h-4 w-4 shrink-0 opacity-80" aria-hidden="true" />
+                  <Settings className="h-4 w-4" aria-hidden="true" />
                   {g.label}
                 </Link>
                 {showAgentNewTabActions && (
@@ -3163,7 +3125,7 @@ function TopNavBar(props: any) {
               </div>
             );
           }
-          const tileHub = moduleScreensAsTiles.includes(g.key)
+          const tileHub = isAgentDomain && agentMainNavDropdowns && moduleScreensAsTiles.includes(g.key)
             ? AGENT_MODULE_SCREEN_TILE_OPTIONS.find(option => option.id === g.key)
             : undefined;
           if (tileHub) {
@@ -3182,7 +3144,6 @@ function TopNavBar(props: any) {
                   )}
                   data-testid={`topnav-module-tiles-${g.key}`}
                 >
-                  <GroupIcon className="h-4 w-4 shrink-0 opacity-80" aria-hidden="true" />
                   {g.label}
                 </Link>
                 {showAgentNewTabActions && (
@@ -3197,7 +3158,7 @@ function TopNavBar(props: any) {
           }
           return (
             <div key={g.key} className="inline-flex shrink-0 items-center gap-0.5">
-              <TopNavDropdown label={g.label} icon={GroupIcon}>
+              <TopNavDropdown label={g.label}>
                 {close => <div className="space-y-0.5">{g.node(close)}</div>}
               </TopNavDropdown>
               {showAgentNewTabActions && (
@@ -4401,6 +4362,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [location, navigate] = useLocation();
   const { user, logout, actingCompanyId } = useAuth() as any;
   const isAgentDomain = useIsAgentDomain();
+  const agentMainNavDropdowns = useAgentMainNavDropdowns();
   const [agentUpdateOpen, setAgentUpdateOpen] = useState(false);
 
   // Explicit sign-out should ALWAYS return the user to a clean login form so
@@ -4802,7 +4764,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   // Company-wide menu placement. 'topnav' renders a horizontal top bar instead
   // of the fixed side sidebar (desktop only; mobile always uses the drawer).
-  const topNav = !isSuperAdmin && user?.company?.menuLayout === "topnav";
+  const topNav = !isSuperAdmin
+    && user?.company?.menuLayout === "topnav"
+    && (!isAgentDomain || agentMainNavDropdowns);
 
   const { i18n } = useTranslation();
   const langCode = normalizeLang(i18n.language);

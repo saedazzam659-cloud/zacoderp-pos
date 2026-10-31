@@ -96,6 +96,7 @@
 - [Company document field controls](company-document-field-controls.md) — keep company controls off by default, SuperAdmin-gated, and company-wide when enabled.
 - [Document visibility scope](document-visibility-scope.md) — per-user own-document visibility is opt-in; company admins retain company-wide access.
 - [Searchable web dropdowns](searchable-web-dropdowns.md) — use the existing searchable combobox pattern for dropdowns added or modified in ERP web forms.
+- [Agent top navigation and module tiles](agent-topnav-module-tiles.md) — selected modules use existing tile hubs only when agent top navigation is enabled; other groups remain dropdowns.
 - [Language-switch completeness](language-switch-completeness.md) — English mode must translate interface chrome while preserving user-entered business data unless an English name exists.
 - [Artifact environment in workspace builds](artifact-env-in-workspace-builds.md) — Vite build configs must tolerate absent service PORT/BASE_PATH when root builds run recursively.
 - [Zid invoice source boundary](zid-invoice-source-boundary.md) — each company chooses Zid or ERP as its sole ZATCA issuer; use official OAuth and never accept pasted tokens.
