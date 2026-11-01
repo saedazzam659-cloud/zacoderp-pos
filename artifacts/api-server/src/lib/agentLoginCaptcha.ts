@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { deflateSync } from "node:zlib";
-import { centralDb, agentLoginCaptchaChallengesTable } from "@workspace/db";
+import { db, agentLoginCaptchaChallengesTable } from "@workspace/db";
 import { eq, lt } from "drizzle-orm";
 
 const CAPTCHA_COOKIE = "zacod_agent_captcha";
@@ -183,7 +183,7 @@ export function issueAgentLoginCaptcha(
   const image = renderAgentCaptchaPng(code, colors);
   const hash = sessionHash(sessionId);
   const expiresAt = new Date(Date.now() + CAPTCHA_TTL_MS);
-  return centralDb.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await tx.delete(agentLoginCaptchaChallengesTable).where(lt(agentLoginCaptchaChallengesTable.expiresAt, new Date()));
     await tx.insert(agentLoginCaptchaChallengesTable).values({
       sessionHash: hash,
@@ -206,7 +206,7 @@ export async function consumeAgentLoginCaptcha(
   answer: unknown,
 ): Promise<"valid" | "invalid" | "expired"> {
   if (!validSessionId(sessionId)) return "invalid";
-  return centralDb.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const [challenge] = await tx.select().from(agentLoginCaptchaChallengesTable)
       .where(eq(agentLoginCaptchaChallengesTable.sessionHash, sessionHash(sessionId)))
       .for("update");
