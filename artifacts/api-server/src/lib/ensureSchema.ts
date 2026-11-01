@@ -5186,9 +5186,9 @@ export async function runAgentInitializationSchemaHealOnActiveDb(): Promise<void
   });
   await ensureCompanyPurgeSchema();
   await ensureSequenceProtectionSchema();
-  await db.transaction(async (tx) => {
-    await reconcilePostgresSequences(tx);
-  });
+  // Fingerprint setup is a schema heal, not a data restore. Do not take
+  // database-wide table locks here; sequence reconciliation remains in the
+  // explicit external schema-upgrade and restore paths.
 }
 
 /**

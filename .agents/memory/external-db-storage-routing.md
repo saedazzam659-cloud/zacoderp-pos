@@ -30,6 +30,12 @@ For purchase-save performance work requested by the user, preserve this host-bas
 
 Required business tables in externally routed agent databases should have complete, idempotent DDL in the shared pre-validation heal. Generic schema reconciliation adds columns to existing tables; request readiness is strict by default. Cached ensure promises must remain scoped by active database context.
 
+Mahmoud's agent is a shell-only installation and has no “prepare new release” flow. Its schema updates must continue through the existing admin “initialize + fingerprint” action.
+
+**Why:** The owner clarified that this agent's supported update path is fingerprint initialization; directing it through release preparation is incorrect and can block routine schema updates.
+
+**How to apply:** For this agent, keep additive table healing in the fingerprint-init path. Do not require preparing or installing a new agent release to add tables.
+
 SuperAdmin company reset requests with `?agent=` run core company-data queries against that agent's external PostgreSQL through `runWithAgentScope`; inspecting the central Replit database is not evidence of the external schema. Reset preview and transactional recount/delete must apply the same optional-table policy on the selected external database.
 
 **Why:** External agent databases can have older schemas. A preview that skips an absent optional table must not be followed by a transaction that queries it unconditionally, or the whole reset safely rolls back with a misleading generic error.

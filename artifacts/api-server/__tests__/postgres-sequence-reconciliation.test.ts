@@ -104,6 +104,9 @@ test("only the full external schema heal repairs all live sequences", () => {
   const fullHeal = source.slice(fullStart, fastStart);
   const fastHeal = source.slice(fastStart);
   const centralBoot = source.slice(source.indexOf("export function ensureSchemaUpToDate"), fullStart);
+  const initStart = source.indexOf("export async function runAgentInitializationSchemaHealOnActiveDb");
+  const initEnd = source.indexOf("\n}", initStart);
+  const initHeal = source.slice(initStart, initEnd);
 
   assert.match(
     fullHeal,
@@ -111,21 +114,48 @@ test("only the full external schema heal repairs all live sequences", () => {
     "external full healing must preserve table locks in one transaction",
   );
   assert.doesNotMatch(fastHeal, /reconcilePostgresSequences/);
+  assert.doesNotMatch(initHeal, /reconcilePostgresSequences/,
+    "fingerprint setup must not lock every live transaction table");
   assert.doesNotMatch(centralBoot, /reconcilePostgresSequences/);
 });
 
-test("sequence repair locks the table and sequence before reading state or restarting", () => {
+test("sequence repair locks only after a lock-free read detects possible drift", () => {
   const source = readFileSync(resolve(here, "../src/lib/postgresSequenceReconciliation.ts"), "utf8");
+  const initialRead = source.indexOf("let state = await readState()");
   const tableLock = source.indexOf("LOCK TABLE ${table} IN EXCLUSIVE MODE");
   const sequenceLock = source.indexOf("ALTER SEQUENCE ${sequence} CACHE");
-  const stateRead = source.indexOf("(SELECT max(${column})::bigint FROM ${table})");
+  const lockedRead = source.indexOf("state = await readState()", sequenceLock);
   const restart = source.indexOf("ALTER SEQUENCE ${sequence} RESTART WITH");
 
-  assert.ok(tableLock >= 0, "sequence repair must lock the owned table");
+  assert.ok(initialRead >= 0 && initialRead < tableLock,
+    "sequence state must be inspected before locking active tables");
   assert.ok(sequenceLock > tableLock, "the sequence relation must be locked after blocking table writers");
-  assert.ok(sequenceLock < stateRead, "the sequence lock must precede MAX() and sequence-state reads");
-  assert.ok(sequenceLock < restart, "the sequence lock must precede restart");
+  assert.ok(lockedRead > sequenceLock, "state must be re-read under both locks");
+  assert.ok(lockedRead < restart, "the locked state must be checked before restart");
   assert.doesNotMatch(source, /pg_catalog\.setval/);
+});
+
+test("sequences already ahead of table data do not acquire table locks", async () => {
+  let calls = 0;
+  const result = await reconcilePostgresSequences({
+    async execute() {
+      calls += 1;
+      if (calls === 1) {
+        return { rows: [{
+          table_schema: "public",
+          table_name: "cash_transfers",
+          column_name: "id",
+          sequence_schema: "public",
+          sequence_name: "cash_transfers_id_seq",
+          sequence_cache: 1,
+        }] };
+      }
+      return { rows: [{ table_max: "20", last_value: "25", is_called: true }] };
+    },
+  } as any);
+
+  assert.deepEqual(result, { inspected: 1, advanced: 0 });
+  assert.equal(calls, 2, "catalog scan and state read should be enough when no repair is needed");
 });
 
 test("the sequence relation lock blocks direct concurrent nextval allocations", async () => {

@@ -33,11 +33,11 @@ export function quotePostgresIdentifier(identifier: string): string {
  * Bring owned SERIAL and IDENTITY sequences up to the greatest value currently
  * stored in their columns.
  *
- * Empty tables are deliberately untouched. Likewise, a sequence which is
- * already ahead is never restarted, so reconciliation cannot consume or lower
- * an allocation made by another writer. Before inspecting either state, each
- * table and its owned sequence are locked until repair is complete; callers
- * must provide a transaction so both lock lifetimes cover the read and restart.
+ * Empty tables are deliberately untouched. A sequence which is already ahead
+ * is never restarted. Most tables need no repair, so inspect their state before
+ * taking locks; only a possible drift acquires a table/sequence lock, followed
+ * by a fresh read under that lock before any restart. Callers must provide a
+ * transaction so repair locks remain held through the restart.
  * Catalog-derived identifiers are quoted before use and
  * the optional allow-list limits restore callers to the live tables which they
  * actually restored.
@@ -89,20 +89,32 @@ export async function reconcilePostgresSequences(
     const table = `${quotePostgresIdentifier(item.table_schema)}.${quotePostgresIdentifier(item.table_name)}`;
     const column = quotePostgresIdentifier(item.column_name);
     const sequence = `${quotePostgresIdentifier(item.sequence_schema)}.${quotePostgresIdentifier(item.sequence_name)}`;
-    // Block table writers first, then take the sequence relation's own
-    // AccessExclusiveLock through a no-op ALTER. Unlike setval(), ALTER
-    // SEQUENCE coordinates with nextval(), so no allocation can slip between
-    // the state read and the repair while this transaction remains open.
-    await executor.execute(sql.raw(`LOCK TABLE ${table} IN EXCLUSIVE MODE`));
-    const sequenceCache = BigInt(String(item.sequence_cache));
-    await executor.execute(sql.raw(`ALTER SEQUENCE ${sequence} CACHE ${sequenceCache.toString()}`));
-    const state = resultRows(await executor.execute(sql.raw(`
+    const readState = async () => resultRows(await executor.execute(sql.raw(`
       SELECT
         (SELECT max(${column})::bigint FROM ${table}) AS table_max,
         last_value::bigint AS last_value,
         is_called
       FROM ${sequence}
     `)))[0];
+    const needsRepair = (state: Record<string, unknown> | undefined) => {
+      const tableMax = state?.table_max == null ? null : BigInt(String(state.table_max));
+      const lastValue = state?.last_value == null ? null : BigInt(String(state.last_value));
+      const isCalled = state?.is_called === true || state?.is_called === "true";
+      return tableMax != null && lastValue != null
+        && (tableMax > lastValue || (tableMax === lastValue && !isCalled));
+    };
+
+    let state = await readState();
+    if (!needsRepair(state)) continue;
+
+    // A repair may be needed. Block table writers first, then take the sequence
+    // relation's lock through a no-op ALTER. Unlike setval(), ALTER SEQUENCE
+    // coordinates with nextval(). Re-read under both locks because allocations
+    // may have advanced since the initial, lock-free inspection.
+    await executor.execute(sql.raw(`LOCK TABLE ${table} IN EXCLUSIVE MODE`));
+    const sequenceCache = BigInt(String(item.sequence_cache));
+    await executor.execute(sql.raw(`ALTER SEQUENCE ${sequence} CACHE ${sequenceCache.toString()}`));
+    state = await readState();
     const tableMax = state?.table_max == null ? null : BigInt(String(state.table_max));
     const lastValue = state?.last_value == null ? null : BigInt(String(state.last_value));
     const isCalled = state?.is_called === true || state?.is_called === "true";
