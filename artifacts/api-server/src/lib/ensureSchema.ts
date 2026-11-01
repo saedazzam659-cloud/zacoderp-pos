@@ -4790,6 +4790,23 @@ async function runHeal(options: {
   );
 }
 }
+async function ensureAgentLoginCaptchaSchema(): Promise<void> {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS agent_login_captcha_challenges (
+      session_hash TEXT PRIMARY KEY,
+      host TEXT NOT NULL,
+      nonce TEXT NOT NULL,
+      answer_digest TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS agent_login_captcha_expires_at_idx
+       ON agent_login_captcha_challenges(expires_at)`,
+  ];
+  for (const stmt of statements) await execDDL(stmt);
+}
+
 async function ensureAgentPosItemSubgroupsSchema(): Promise<void> {
   const statements = [
     `CREATE TABLE IF NOT EXISTS pos_item_subgroups (
@@ -4889,6 +4906,7 @@ async function runHeal(options: {
   await ensureContractingAdvanceRecoveryCompatibility();
   await ensureContractingSettingsTable();
   if (getActiveExternalDb()) {
+    await ensureAgentLoginCaptchaSchema();
     await ensureAgentSchoolSchema();
     await ensureContractingBoqTables();
     await ensureAgentPosItemSubgroupsSchema();

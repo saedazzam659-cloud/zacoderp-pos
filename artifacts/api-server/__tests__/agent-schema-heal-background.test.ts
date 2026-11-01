@@ -221,3 +221,21 @@ test("agent strict heal creates payroll allocation tables before missing-table v
   assert.ok(payrollPreflight !== -1 && payrollPreflight < genericValidation,
     "required payroll tables must be created before strict missing-table validation");
 });
+
+test("external-agent heal creates CAPTCHA challenge storage before strict validation", () => {
+  const helperStart = ensureSchemaSrc.indexOf("async function ensureAgentLoginCaptchaSchema(");
+  const helperEnd = ensureSchemaSrc.indexOf("async function ensureAgentPosItemSubgroupsSchema(", helperStart);
+  const helperBody = ensureSchemaSrc.slice(helperStart, helperEnd);
+  assert.ok(helperStart !== -1, "the additive agent CAPTCHA table migration must exist");
+  assert.match(helperBody, /CREATE TABLE IF NOT EXISTS agent_login_captcha_challenges/);
+  assert.match(helperBody, /CREATE INDEX IF NOT EXISTS agent_login_captcha_expires_at_idx/);
+
+  const runHealStart = ensureSchemaSrc.lastIndexOf("async function runHeal(");
+  const runHealEnd = ensureSchemaSrc.indexOf("export function ensureSchemaUpToDate", runHealStart);
+  const runHealBody = ensureSchemaSrc.slice(runHealStart, runHealEnd);
+  const externalHeal = runHealBody.indexOf("if (getActiveExternalDb()) {");
+  const captchaHeal = runHealBody.indexOf("await ensureAgentLoginCaptchaSchema()", externalHeal);
+  const genericValidation = runHealBody.indexOf("const r = await ensureColumns(");
+  assert.ok(externalHeal !== -1 && captchaHeal > externalHeal && captchaHeal < genericValidation,
+    "external agent CAPTCHA storage must be created before schema missing-table validation");
+});
