@@ -188,6 +188,27 @@ export default function CompanyDetails() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  const historicalUnitChangesMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await fetch(`${API}/api/companies/${id}/general-settings${agentQS}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ allowHistoricalUnitChanges: enabled }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "تعذّر تحديث السماح بتعديل وحدات القياس");
+      return json;
+    },
+    onSuccess: async (_result, enabled) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admin-company", id, agentId] }),
+        qc.invalidateQueries({ queryKey: ["companies"] }),
+      ]);
+      toast({ title: enabled ? "تم السماح بتعديل الوحدات مع وجود تاريخ" : "تمت إعادة قيود التاريخ للوحدات" });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
   const addUserMutation = useMutation({
     mutationFn: async (body: any) => {
       const res = await fetch(`${API}/api/admin/companies/${id}/users${agentQS}`, {
@@ -971,6 +992,30 @@ export default function CompanyDetails() {
       {/* ─── Packages Tab ─── */}
       {tab === "packages" && (
         <div className="space-y-4">
+          <section className="rounded-xl border border-amber-300 bg-amber-50/60 p-5 dark:border-amber-900 dark:bg-amber-950/20">
+            <div className="flex items-start justify-between gap-6">
+              <div className="space-y-1">
+                <h3 className="font-semibold">السماح بتعديل وحدات القياس مع وجود تاريخ</h3>
+                <p className="text-sm text-muted-foreground leading-6">
+                  عند التفعيل، يمكن تعيين أو تغيير الوحدة الأساسية رغم وجود كميات تاريخية مسجلة بوحدات مختلفة.
+                  لا يعيد النظام احتساب الكميات التاريخية. تظل سلامة علاقات التحويل وعزل وحدات الشركات مطبّقين،
+                  ولا يمكن تغيير الأساس ما دامت للصنف علاقات تحويل مرتبطة.
+                </p>
+              </div>
+              <Switch
+                checked={company.allowHistoricalUnitChanges === true}
+                disabled={historicalUnitChangesMutation.isPending}
+                onCheckedChange={(enabled) => historicalUnitChangesMutation.mutate(enabled)}
+                aria-label="السماح بتعديل وحدات القياس مع وجود تاريخ"
+                data-testid="switch-historical-unit-changes"
+              />
+            </div>
+            <p className="mt-3 rounded-lg bg-white/70 p-3 text-xs leading-5 text-amber-900 dark:bg-black/20 dark:text-amber-200">
+              {company.allowHistoricalUnitChanges
+                ? "السماح مفعّل لهذه الشركة فقط. راجع تحويلات الأصناف قبل اعتماد أي تعديل."
+                : "مغلق افتراضيًا. عند تفعيله قد يتغير تفسير بعض الكميات القديمة؛ استخدمه بعد مراجعة بيانات الشركة."}
+            </p>
+          </section>
           <section className="rounded-xl border bg-card p-5">
             <div className="flex items-start justify-between gap-6">
               <div className="flex items-start gap-3">

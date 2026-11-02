@@ -1683,6 +1683,7 @@ async function ensureUsersSecurityNoticeColumn(): Promise<void> {
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_demo_shadow boolean DEFAULT false NOT NULL`);
     await db.execute(sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_internal_demo_workspace boolean DEFAULT false NOT NULL`);
     await db.execute(sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS demo_parent_company_id integer REFERENCES companies(id) ON DELETE CASCADE`);
+    await db.execute(sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS allow_historical_unit_changes boolean DEFAULT false NOT NULL`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS demo_device_workspaces (
         id serial PRIMARY KEY,

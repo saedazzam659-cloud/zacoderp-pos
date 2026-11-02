@@ -1304,6 +1304,13 @@ async function itemHasHistoricalUsage(executor: any, cid: number, itemId: number
   return (await inspectItemHistoricalUsage(executor, cid, itemId)).hasUsage;
 }
 
+async function companyAllowsHistoricalUnitChanges(executor: any, cid: number): Promise<boolean> {
+  const [company] = await executor.select({
+    enabled: companiesTable.allowHistoricalUnitChanges,
+  }).from(companiesTable).where(eq(companiesTable.id, cid)).limit(1);
+  return company?.enabled === true;
+}
+
 /**
  * Validate all unit ids already present in an item graph inside the same
  * tenant before changing the item's root.  `unit_id` has a database FK, but
@@ -1352,12 +1359,14 @@ async function validateAndSyncItemBaseUnit(
   const validationRows = [...rows, ...proposedRows];
   await assertItemUnitGraphTenant(tx, cid, itemId, validationRows, newBaseId);
   const history = await inspectItemHistoricalUsage(tx, cid, itemId);
+  const allowHistoricalChanges = await companyAllowsHistoricalUnitChanges(tx, cid);
   const decision = validateBaseUnitAssignment({
     currentBaseUnitId: oldBaseId,
     requestedBaseUnitId: newBaseId,
     rows: validationRows,
     historicalUsage: history.hasUsage,
     historicalUnitIds: history.unitIds,
+    allowHistoricalChanges,
   });
 
   if (decision.normalizeLegacyRoots) {
@@ -1458,7 +1467,8 @@ async function changeItemBaseUnit(
   if (rows.length > 0) {
     throw new UnitConversionError("BASE_CHANGE_BLOCKED", "The base unit cannot change while item-unit relationships exist");
   }
-  if (await itemHasHistoricalUsage(tx, cid, itemId)) {
+  if (await itemHasHistoricalUsage(tx, cid, itemId)
+    && !(await companyAllowsHistoricalUnitChanges(tx, cid))) {
     throw new UnitConversionError("BASE_CHANGE_BLOCKED", "The base unit cannot change after historical stock or usage exists");
   }
   await assertCatalogUnit(tx, cid, newBaseId);

@@ -167,6 +167,44 @@ test("a different historical unit still blocks an unlinked first base", () => {
   );
 });
 
+test("company opt-in allows a first base despite conflicting historical unit labels", () => {
+  const decision = validateBaseUnitAssignment({
+    currentBaseUnitId: null,
+    requestedBaseUnitId: 7,
+    rows: [],
+    historicalUsage: true,
+    historicalUnitIds: [8],
+    allowHistoricalChanges: true,
+  });
+  assert.deepEqual(decision, { allowed: true, clearLegacyConflict: false });
+});
+
+test("company opt-in allows changing a base when only history blocks it", () => {
+  const decision = validateBaseUnitAssignment({
+    currentBaseUnitId: 7,
+    requestedBaseUnitId: 8,
+    rows: [],
+    historicalUsage: true,
+    historicalUnitIds: [7],
+    allowHistoricalChanges: true,
+  });
+  assert.deepEqual(decision, { allowed: true, clearLegacyConflict: false });
+});
+
+test("company opt-in does not allow rebasing a unit graph with linked rows", () => {
+  assert.throws(
+    () => validateBaseUnitAssignment({
+      currentBaseUnitId: 7,
+      requestedBaseUnitId: 8,
+      rows: [{ unitId: 7, referenceUnitId: null, relationFactor: "1", isBase: true }],
+      historicalUsage: true,
+      historicalUnitIds: [7],
+      allowHistoricalChanges: true,
+    }),
+    (error: unknown) => error instanceof UnitConversionError && error.code === "BASE_CHANGE_BLOCKED",
+  );
+});
+
 test("only a proven sole legacy base may clear its conflict marker", () => {
   const decision = validateBaseUnitAssignment({
     currentBaseUnitId: null,

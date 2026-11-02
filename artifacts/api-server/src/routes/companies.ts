@@ -420,6 +420,11 @@ router.put("/:id", async (req, res) => {
 router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   const { runWithAgentScope } = await import("../lib/agentScope.js");
   await runWithAgentScope(req, res, async () => {
+  // Older agent databases do not run the central startup schema healing.
+  if (req.query?.agent) {
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS allow_historical_unit_changes boolean DEFAULT false NOT NULL`);
+  }
   const id = parseInt(String(req.params.id), 10);
   // Authorization: only a SuperAdmin or an admin of THIS company may change
   // tenant-wide settings. Without this guard, any authenticated user (even
@@ -435,12 +440,17 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     res.status(403).json({ error: "تفعيل التحكم في الحقول متاح للسوبر أدمن فقط" });
     return;
   }
+  if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "allowHistoricalUnitChanges") && u.role !== "superadmin") {
+    res.status(403).json({ error: "السماح بتعديل الوحدات مع وجود تاريخ متاح للسوبر أدمن فقط" });
+    return;
+  }
   const {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
     decimalPlaces, showZeros, hideQuickAddBar, inputHintColorsEnabled, inputHintColor, showFreeQuantity, showSalesBranchStock, allowNegativeSales, purchaseBatchExpiryEnabled, autoPostingEnabled,
     salesBarcodeEntryEnabled, allowDuplicateInvoiceItems, purchaseDirectExpensesCustodyEnabled, purchaseVatInInventoryCost,
     documentFieldControlsEnabled,
+    allowHistoricalUnitChanges,
     showCustomerDebitNotes, showSupplierCreditNotes,
     allowUnbalancedOpeningBalances, openingBalanceReminderMessage,
     openingBalanceReminderStartTime, openingBalanceReminderRepeatCount,
@@ -504,6 +514,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; inputHintColorsEnabled?: boolean; inputHintColor?: string; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
     salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean; purchaseDirectExpensesCustodyEnabled?: boolean; purchaseVatInInventoryCost?: boolean;
     documentFieldControlsEnabled?: boolean;
+    allowHistoricalUnitChanges?: boolean;
     showCustomerDebitNotes?: boolean; showSupplierCreditNotes?: boolean;
     allowUnbalancedOpeningBalances?: boolean;
     openingBalanceReminderMessage?: string;
@@ -696,6 +707,13 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       return;
     }
     updates.documentFieldControlsEnabled = documentFieldControlsEnabled;
+  }
+  if (allowHistoricalUnitChanges !== undefined) {
+    if (typeof allowHistoricalUnitChanges !== "boolean") {
+      res.status(400).json({ error: "allowHistoricalUnitChanges يجب أن تكون قيمة منطقية" });
+      return;
+    }
+    updates.allowHistoricalUnitChanges = allowHistoricalUnitChanges;
   }
   // Visibility-only controls; reject non-boolean input rather than treating
   // the string "false" as enabled.

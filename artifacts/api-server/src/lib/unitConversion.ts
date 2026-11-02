@@ -287,6 +287,7 @@ export interface InitialBaseAssignmentInput {
   rows: UnitGraphRow[];
   historicalUsage: boolean;
   historicalUnitIds: Array<number | null>;
+  allowHistoricalChanges?: boolean;
 }
 
 export interface InitialBaseAssignmentDecision {
@@ -310,6 +311,7 @@ export function validateBaseUnitAssignment(
     rows,
     historicalUsage,
     historicalUnitIds,
+    allowHistoricalChanges = false,
   } = input;
 
   if (currentBaseUnitId === requestedBaseUnitId) {
@@ -317,7 +319,7 @@ export function validateBaseUnitAssignment(
   }
 
   if (currentBaseUnitId !== null) {
-    if (rows.length > 0 || historicalUsage) {
+    if (rows.length > 0 || (historicalUsage && !allowHistoricalChanges)) {
       throw new UnitConversionError(
         "BASE_CHANGE_BLOCKED",
         "The base unit cannot change after historical stock or usage exists",
@@ -334,7 +336,7 @@ export function validateBaseUnitAssignment(
     // A labelled line is still safe when it already uses the requested unit:
     // assigning that unit as the first base does not rebase the line.  A
     // different label has no relationship to validate without an item graph.
-    if (historicalUnitIds.some((unitId) => unitId !== null && unitId !== requestedBaseUnitId)) {
+    if (!allowHistoricalChanges && historicalUnitIds.some((unitId) => unitId !== null && unitId !== requestedBaseUnitId)) {
       throw new UnitConversionError(
         "BASE_CHANGE_BLOCKED",
         "Cannot assign a first base unit while conflicting labelled historical quantities exist",
@@ -348,7 +350,7 @@ export function validateBaseUnitAssignment(
   // owner explicitly chooses the missing base, preserve those saved factors
   // and connect the flat legacy rows to that root; never rewrite document
   // quantities or guess when a historical unit is absent from this graph.
-  const historicalUnitsFit = historicalUnitIds.every((unitId) =>
+  const historicalUnitsFit = allowHistoricalChanges || historicalUnitIds.every((unitId) =>
     unitId === null || unitId === requestedBaseUnitId || rows.some((row) => row.unitId === unitId),
   );
   const flatLegacyGraph = rows.length > 1
@@ -379,7 +381,7 @@ export function validateBaseUnitAssignment(
     && rows[0].isActive !== false
     && rows[0].referenceUnitId === null
   ) {
-    if (historicalUnitIds.some((unitId) => unitId !== null && unitId !== requestedBaseUnitId)) {
+    if (!allowHistoricalChanges && historicalUnitIds.some((unitId) => unitId !== null && unitId !== requestedBaseUnitId)) {
       throw new UnitConversionError(
         "BASE_CHANGE_BLOCKED",
         "Historical quantities reference a different unit",
@@ -407,7 +409,7 @@ export function validateBaseUnitAssignment(
     );
   }
   const graph = resolveUnitGraph({ baseUnitId: requestedBaseUnitId, rows });
-  if (historicalUnitIds.some((unitId) => unitId !== null && !graph.factors.has(unitId))) {
+  if (!allowHistoricalChanges && historicalUnitIds.some((unitId) => unitId !== null && !graph.factors.has(unitId))) {
     throw new UnitConversionError(
       "BASE_CHANGE_BLOCKED",
       "Historical quantities reference a unit outside the item's unit relationships",
