@@ -5181,6 +5181,15 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   const [quotationShowCurrencyName, setQuotationShowCurrencyName] = useState<boolean>(company.printQuotationShowCurrencyName !== false);
   const [quotationShowCustomerAddress, setQuotationShowCustomerAddress] = useState<boolean>(company.printQuotationShowCustomerAddress !== false);
   const [bankAccountText, setBankAccountText] = useState<string>(company.bankAccountText ?? "");
+  const bankAccountTextDirtyRef = useRef(false);
+  const bankAccountTextValueRef = useRef(bankAccountText);
+  const bankAccountTextCompanyIdRef = useRef(cid);
+
+  const updateBankAccountText = (value: string) => {
+    bankAccountTextDirtyRef.current = true;
+    bankAccountTextValueRef.current = value;
+    setBankAccountText(value);
+  };
 
   // ─── Template visibility / default selection ─────────────────────────
   // The full catalog mirrors SalesPrintModal.TEMPLATES (kept in sync by
@@ -5240,7 +5249,6 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setQuotationShowQr(company.printQuotationShowQr === true);
     setQuotationShowCurrencyName(company.printQuotationShowCurrencyName !== false);
     setQuotationShowCustomerAddress(company.printQuotationShowCustomerAddress !== false);
-    setBankAccountText(company.bankAccountText ?? "");
     const raw = company.printEnabledTemplates;
     setEnabledIds(Array.isArray(raw) && raw.length > 0
       ? new Set(raw.filter((n: any) => ALL_IDS.includes(Number(n))).map(Number))
@@ -5254,6 +5262,21 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setDefaultRetTplId(asTplId(company.printDefaultTemplateReturn));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, company.printQuotationShowQr, company.printQuotationShowCurrencyName, company.printQuotationShowCustomerAddress, company.printEnabledTemplates, company.printThermalTemplates, company.printDefaultTemplate, company.printDefaultTemplateQuotation, company.printDefaultTemplateOrder, company.printDefaultTemplateReturn, DEFAULT_INVOICE, DEFAULT_RETURN]);
+
+  useEffect(() => {
+    if (cid == null) return;
+    if (bankAccountTextCompanyIdRef.current != null && bankAccountTextCompanyIdRef.current !== cid) {
+      bankAccountTextCompanyIdRef.current = cid;
+      bankAccountTextDirtyRef.current = false;
+    } else {
+      bankAccountTextCompanyIdRef.current = cid;
+    }
+    if (!bankAccountTextDirtyRef.current) {
+      const savedText = company.bankAccountText ?? "";
+      bankAccountTextValueRef.current = savedText;
+      setBankAccountText(savedText);
+    }
+  }, [cid, company.bankAccountText]);
 
   useEffect(() => {
     setThermalScales(Object.fromEntries(
@@ -5311,7 +5334,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   };
 
   const saveMut = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (draft: { bankAccountText: string }) => {
       const res = await fetch(`${API}/api/companies/${cid}/general-settings`, {
         method: "PATCH",
         headers,
@@ -5323,7 +5346,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
           printQuotationShowQr: quotationShowQr,
           printQuotationShowCurrencyName: quotationShowCurrencyName,
           printQuotationShowCustomerAddress: quotationShowCustomerAddress,
-          bankAccountText: bankAccountText.trim() || null,
+          bankAccountText: draft.bankAccountText.trim() || null,
           // Send `null` when all templates are enabled so we don't bloat
           // the row with a long array that means the same as the default.
           printEnabledTemplates: enabledIds.size === ALL_IDS.length ? null : Array.from(enabledIds).sort((a,b)=>a-b),
@@ -5338,7 +5361,13 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
       if (!res.ok) throw new Error(json.error ?? t("pages.generalSettings.printFooterSaveError"));
       return json;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, draft) => {
+      if (bankAccountTextValueRef.current === draft.bankAccountText) {
+        const savedText = data.bankAccountText ?? "";
+        bankAccountTextDirtyRef.current = false;
+        bankAccountTextValueRef.current = savedText;
+        setBankAccountText(savedText);
+      }
       if (setUser) {
         setUser((u: any) => ({
           ...u,
@@ -5375,7 +5404,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setQuotationShowQr(false);
     setQuotationShowCurrencyName(true);
     setQuotationShowCustomerAddress(true);
-    setBankAccountText("");
+    updateBankAccountText("");
     setEnabledIds(new Set(ALL_IDS));
     setThermalIds(new Set(nativeThermalIds));
     setDefaultTplId(1);
@@ -5457,7 +5486,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             value={bankAccountText}
             maxLength={500}
             rows={4}
-            onChange={(e) => setBankAccountText(e.target.value)}
+            onChange={(e) => updateBankAccountText(e.target.value)}
             placeholder={"مثال:\nاسم الحساب: شركة أكاونت إنترناشونال\nالبنك: مصرف الراجحي\nرقم الآيبان: SA00 0000 0000 0000 0000 0000"}
             dir="rtl"
           />
@@ -5768,7 +5797,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
           <Repeat className="h-4 w-4 ml-2" />
           {t("pages.generalSettings.printFooterRestoreDefault")}
         </Button>
-        <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || overLimit}>
+        <Button onClick={() => saveMut.mutate({ bankAccountText })} disabled={saveMut.isPending || overLimit}>
           {saveMut.isPending
             ? <><Loader2 className="h-4 w-4 ml-2 animate-spin" />{t("pages.generalSettings.printFooterSaving")}</>
             : <><Save className="h-4 w-4 ml-2" />{t("pages.generalSettings.printFooterSave")}</>}
