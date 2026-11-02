@@ -436,14 +436,34 @@ ${sections}
             doc.receiverEmail, doc.receiverPhone]
             .filter(Boolean).map((x: string) => `<span>${escapeHtml(x)}</span>`).join("")
         : "";
-      const lines = (doc.lines ?? []).map((line: any, index: number) => `
-        <tr><td>${index + 1}</td>
+      const lines = (doc.lines ?? []).map((line: any, index: number) => {
+        const qty = Number(line.qty ?? line.quantity ?? 0);
+        const rate = Math.max(0, Number(line.vatRate ?? 0)) / 100;
+        const percentDiscount = Math.max(0, Math.min(100, Number(line.discount ?? 0)));
+        const lineGross = Math.max(0, qty * Number(line.unitPrice ?? 0) * (1 - percentDiscount / 100));
+        const fixedDiscount = Math.max(0, Number(line.discountAmount ?? 0));
+        const taxableGross = Math.max(0, lineGross - fixedDiscount);
+        const vatAmount = rate === 0 ? 0 : doc.priceIncludesVat
+          ? taxableGross - taxableGross / (1 + rate)
+          : taxableGross * rate;
+        const details = [
+          Number(line.freeQty ?? 0) > 0 ? `كمية مجانية / Free qty: ${fmt(Number(line.freeQty))}` : "",
+          percentDiscount > 0 ? `خصم / Discount: ${fmt(percentDiscount)}%` : "",
+          fixedDiscount > 0
+            ? `خصم مبلغ / Fixed discount: ${fmt(fixedDiscount)} ${escapeHtml(doc.currencyCode ?? "")}`
+            : "",
+          poPrintOptions.showNotes && line.notes ? `ملاحظة / Note: ${escapeHtml(line.notes)}` : "",
+        ].filter(Boolean);
+        const item = escapeHtml(line.itemName ?? line.description ?? `#${line.itemId ?? ""}`);
+        return `<tr><td>${index + 1}</td>
         ${poPrintOptions.showItemCode ? `<td class="code">${escapeHtml(line.itemCode ?? "")}</td>` : ""}
-        <td>${escapeHtml(line.itemName ?? line.description ?? `#${line.itemId ?? ""}`)}</td>
-        <td class="num">${fmt(Number(line.qty ?? line.quantity ?? 0))} ${escapeHtml(line.unit ?? "")}</td>
+        <td>${item}${details.length ? `<div class="line-details">${details.join("<br>")}</div>` : ""}</td>
+        <td class="num">${fmt(qty)} ${escapeHtml(line.unit ?? "")}</td>
         <td class="num">${fmt(Number(line.unitPrice ?? 0))}</td>
-        ${poPrintOptions.showTaxBreakdown ? `<td class="num">${fmt(Number(line.vatAmount ?? 0))}</td>` : ""}
-        <td class="num">${fmt(Number(line.totalAmount ?? line.lineTotal ?? 0))}</td></tr>`).join("");
+        ${poPrintOptions.showTaxBreakdown ? `<td class="num">${fmt(vatAmount)}</td>` : ""}
+        <td class="num">${fmt(Number(line.totalAmount ?? line.lineTotal ?? 0))}</td></tr>`;
+      }).join("");
+      const emptyLineCellCount = 5 + Number(poPrintOptions.showItemCode) + Number(poPrintOptions.showTaxBreakdown);
       const currency = escapeHtml(doc.currencyCode ?? "");
       const terms = poPrintOptions.showTerms && (poPrintOptions.termsAr || poPrintOptions.termsEn)
         ? `<section class="terms"><h2>الشروط والأحكام <small>Terms &amp; Conditions</small></h2>
@@ -460,8 +480,9 @@ ${sections}
           ${poPrintOptions.showDeliveryDate && doc.expectedDeliveryDate ? `<span>التسليم المتوقع / Expected delivery</span><strong>${escapeHtml(doc.expectedDeliveryDate)}</strong>` : ""}</div>
           <div><span>التسليم والمستلم / Delivery</span>${deliveryInfo || "<strong>—</strong>"}</div>
           <div><span>الحالة / Status</span><strong>${escapeHtml(statusLabel(doc.status))}</strong><span>العملة / Currency</span><strong>${currency}</strong></div></div>
-        <table><thead><tr><th>#</th>${poPrintOptions.showItemCode ? "<th>الكود</th>" : ""}<th>الصنف / Description</th><th>الكمية / Qty</th><th>سعر الوحدة / Unit price</th>${poPrintOptions.showTaxBreakdown ? "<th>الضريبة / VAT</th>" : ""}<th>الإجمالي / Total</th></tr></thead><tbody>${lines}</tbody></table>
+        <table><thead><tr><th>#</th>${poPrintOptions.showItemCode ? "<th>الكود</th>" : ""}<th>الصنف / Description</th><th>الكمية / Qty</th><th>سعر الوحدة / Unit price</th>${poPrintOptions.showTaxBreakdown ? "<th>الضريبة / VAT</th>" : ""}<th>الإجمالي / Total</th></tr></thead><tbody>${lines || `<tr><td colspan="${emptyLineCellCount}" style="text-align:center;color:#64748b">لا توجد بنود لهذا الأمر.</td></tr>`}</tbody></table>
         <div class="totals"><div>الإجمالي الفرعي <b>${fmt(Number(doc.subtotal ?? 0))} ${currency}</b></div>
+          ${Number(doc.discountAmount ?? 0) > 0 ? `<div>خصم المستند <b>${fmt(Number(doc.discountAmount))} ${currency}</b></div>` : ""}
           ${poPrintOptions.showTaxBreakdown ? `<div>الضريبة <b>${fmt(Number(doc.vatAmount ?? 0))} ${currency}</b></div>` : ""}
           <div class="grand">الإجمالي الكلي <b>${fmt(Number(doc.totalAmount ?? 0))} ${currency}</b></div></div>
         ${poPrintOptions.showNotes && doc.notes ? `<section class="notes"><b>ملاحظات / Notes</b><p>${escapeHtml(doc.notes)}</p></section>` : ""}
@@ -482,15 +503,17 @@ ${sections}
       .num{text-align:right;font-variant-numeric:tabular-nums;direction:ltr;white-space:nowrap}.code{font-family:monospace}
       .totals{width:52%;margin:18px 0 0 auto;border:1px solid #dbe4ec;border-radius:8px;overflow:hidden}.totals>div{display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e2e8f0;font-size:11px}
       .totals .grand{background:#0f766e;color:white;font-weight:700;font-size:14px}.notes,.terms{border:1px solid #dbe4ec;border-radius:8px;padding:12px;margin-top:18px;font-size:11px}
-      .terms h2{font-size:13px;color:#0f766e;margin:0 0 8px}.terms small{font-weight:400;color:#64748b}.terms p{line-height:1.65;white-space:normal}
+       .line-details{margin-top:4px;color:#64748b;font-size:9px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere}
+       .terms h2{font-size:13px;color:#0f766e;margin:0 0 8px}.terms small{font-weight:400;color:#64748b}.terms p{line-height:1.65;white-space:normal}
       footer{position:absolute;bottom:0;right:0;left:0;border-top:1px solid #cbd5e1;padding-top:6px;color:#64748b;font-size:9px;display:flex;justify-content:space-between}
       @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
     </style><body>${pages}<script>setTimeout(()=>window.print(),350)</script></body></html>`;
   };
 
-  const handleProfessionalPrint = async () => {
+  const handleProfessionalPrint = async (requestedIds?: number[]) => {
     if (!(await gate("print"))) return;
-    const ids = Array.from(layout.selected).map(Number).filter(id => Number.isInteger(id) && id > 0);
+    const ids = (requestedIds ?? Array.from(layout.selected))
+      .map(Number).filter(id => Number.isInteger(id) && id > 0);
     if (!ids.length) { toast({ title: "حدد أمر شراء واحدًا على الأقل", variant: "destructive" }); return; }
     try {
       const docs = await Promise.all(ids.map(async id => {
@@ -664,10 +687,10 @@ ${sections}
             <Plus className="h-4 w-4" />
             {t("purchasingPages.purchaseOrders.newOrder")}
           </Button>
-          <Button type="button" variant="outline" onClick={handleProfessionalPrint}
+          <Button type="button" variant="outline" onClick={() => void handleProfessionalPrint()}
             disabled={layout.selected.size === 0}
             data-testid="button-print-purchase-order-professional">
-            <FileText className="h-4 w-4 me-1.5" />{localizeUiText("النموذج الاحترافي")}
+            <FileText className="h-4 w-4 me-1.5" />{localizeUiText("طباعة تفصيلية للمحدد")}
           </Button>
           {(user?.role === "admin" || user?.role === "superadmin") && user?.company?.id && (
             <Button type="button" variant="outline" onClick={() => setPoPrintSettingsOpen(true)}
@@ -972,6 +995,12 @@ ${sections}
                                 title="عرض التفاصيل"
                                 onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/orders/${ord.id}?view=1`); }}>
                                 <Eye className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-emerald-700 hover:bg-emerald-50"
+                                title="طباعة الأمر بالتفاصيل"
+                                data-testid={`button-print-purchase-order-${ord.id}`}
+                                onClick={(e) => { e.stopPropagation(); void handleProfessionalPrint([Number(ord.id)]); }}>
+                                <Printer className="h-3.5 w-3.5" />
                               </Button>
                               <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
                                 title="نسخة مماثلة"
