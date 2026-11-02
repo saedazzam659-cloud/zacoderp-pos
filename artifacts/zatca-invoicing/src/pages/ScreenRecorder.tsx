@@ -52,6 +52,7 @@ const arabic = {
   estimate: "الحجم التقريبي لمدة 60 دقيقة", estimateVaries: "تقدير تقريبي؛ يختلف حسب المتصفح ومحتوى الشاشة. خفض معدل البت يقلل وضوح النص والتفاصيل.",
   requestedBitrate: "معدل البت المطلوب", audioTab: "طلب صوت علامة التبويب", audioSystem: "طلب صوت النظام / النافذة",
   browserCaptureLimits: "يعرض المتصفح وأنظمة التشغيل مصادر مختلفة. قد لا يظهر خيار الشاشة أو النافذة الأصلية؛ إن لم يظهر، استخدم وضع علامة تبويب المتصفح. اختيار المصدر النهائي والصوت المتاح يخضعان للمتصفح والنظام.",
+  cursorCaptureNote: "يطلب المسجّل إظهار مؤشر الماوس داخل الفيديو. يعتمد ظهوره على المتصفح ونوع المصدر؛ جرّب تسجيلًا قصيرًا أولًا. لا يستطيع المتصفح تسجيل هالات النقرات داخل تطبيق Windows آخر.",
   sourceUnavailable: "لم يتوفر مصدر مشاركة مناسب في المتصفح أو النظام. جرّب وضع علامة تبويب المتصفح أو تحقق من إعدادات المشاركة.",
   switchingNote: "قد يستمر وضع الشاشة أو النافذة عند الانتقال بين تطبيقات Windows، لكن المتصفح يلتقط المصدر المحدد فقط. لا يمكن ضمان الاستمرار إذا أوقفت المشاركة أو غيّر النظام الصلاحية.",
   annotate: "أدوات التوضيح", annotationHelp: "طبقة إرشادية للمعاينة فقط؛ لا تدخل في تركيب الفيديو أو الصورة. إذا سجلت الشاشة أو التبويب الذي تظهر فيه واجهة المسجّل، قد يلتقط المصدر عناصر الواجهة نفسها؛ استخدم نافذة أو تبويب الهدف منفصلًا.", undo: "تراجع", clear: "مسح العلامات",
@@ -90,6 +91,7 @@ const english: typeof arabic = {
   estimate: "Approximate size for 60 minutes", estimateVaries: "Approximate only; browser and screen content affect size. Lower bitrate reduces text and detail clarity.",
   requestedBitrate: "Requested bitrate", audioTab: "Request browser-tab audio", audioSystem: "Request system / window audio",
   browserCaptureLimits: "Browsers and operating systems expose different sources. The native display or window option may not be listed; if unavailable, use browser-tab mode. The browser and OS control the final source and available audio.",
+  cursorCaptureNote: "The recorder requests the mouse pointer in the video. Visibility depends on the browser and capture source, so test a short clip first. The browser cannot add click rings inside another Windows app.",
   sourceUnavailable: "No suitable capture source was available in the browser or OS. Try browser-tab mode or check sharing settings.",
   switchingNote: "Display or window mode may continue while switching Windows apps, but the browser captures only the granted source. Sharing can still stop if you end it or the OS changes permission.",
   annotate: "On-screen guides", annotationHelp: "Guides are preview-only and are not composited into the video or still. If you record the same screen or tab showing the recorder, the capture source may include its UI; use a separate target window or tab.", undo: "Undo", clear: "Clear guides",
@@ -316,7 +318,12 @@ export default function ScreenRecorder() {
     if (!supported) { setErrorMessage(copy.unsupported); setPhase("error"); return; }
     try {
       const nextStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: 30, max: 60 } },
+        video: {
+          frameRate: { ideal: 30, max: 60 },
+          // TypeScript's DOM lib does not yet declare the standardized display
+          // cursor constraint. Browsers may still ignore it for some sources.
+          cursor: "always",
+        } as MediaTrackConstraints & { cursor: "always" },
         audio: includeSystemAudio,
         preferCurrentTab: requestedMode === "tab",
       } as DisplayMediaStreamOptions & { preferCurrentTab?: boolean });
@@ -714,6 +721,7 @@ export default function ScreenRecorder() {
                     </div>
                     <div className="sr-info-note"><ShieldCheck size={15} /><span>{copy.browserNote}</span></div>
                     <div className="sr-tool-note">{captureMode === "desktop" ? copy.switchingNote : copy.tabModeDesc}</div>
+                    <div className="sr-info-note"><MousePointer2 size={14} /><span>{copy.cursorCaptureNote}</span></div>
                     <div className="sr-info-note"><Monitor size={14} /><span>{copy.browserCaptureLimits}</span></div>
                   </div>
                 </section>
