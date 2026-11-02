@@ -47,14 +47,14 @@ function guard(req: any, res: any): number | null {
 }
 
 // Validate parent belongs to same company; detect cycles by walking up the chain.
-async function validateParent(cid: number, selfId: number | null, parentId: number | null): Promise<string | null> {
+async function validateParent(cid: number, selfId: number | null, parentId: number | null, executor: any = db): Promise<string | null> {
   if (!parentId) return null;
   if (selfId && parentId === selfId) return "لا يمكن أن يكون المركز أباً لنفسه";
   let current: number | null = parentId;
   let hops = 0;
   while (current) {
     if (++hops > 50) return "هرم مراكز التكلفة عميق جداً";
-    const [row] = await db.select({ id: costCentersTable.id, parentId: costCentersTable.parentId, companyId: costCentersTable.companyId })
+    const [row]: any[] = await executor.select({ id: costCentersTable.id, parentId: costCentersTable.parentId, companyId: costCentersTable.companyId })
       .from(costCentersTable).where(eq(costCentersTable.id, current));
     if (!row) return "المركز الأب غير موجود";
     if (row.companyId !== cid) return "المركز الأب يخص شركة أخرى";
@@ -62,6 +62,59 @@ async function validateParent(cid: number, selfId: number | null, parentId: numb
     current = row.parentId;
   }
   return null;
+}
+
+/** Derive depth from the parent chain, not stored legacy `level` values. */
+async function levelForParent(cid: number, parentId: number | null, executor: any = db): Promise<number> {
+  let current = parentId;
+  let parentDepth = 0;
+  const visited = new Set<number>();
+  while (current != null) {
+    if (visited.has(current)) throw new Error("لا يمكن إنشاء حلقة في هرم مراكز التكلفة");
+    visited.add(current);
+    const [row]: any[] = await executor.select({
+      id: costCentersTable.id,
+      parentId: costCentersTable.parentId,
+      companyId: costCentersTable.companyId,
+    }).from(costCentersTable).where(eq(costCentersTable.id, current));
+    if (!row || row.companyId !== cid) throw new Error("المركز الأب غير موجود أو يخص شركة أخرى");
+    parentDepth += 1;
+    if (parentDepth >= 50) throw new Error("هرم مراكز التكلفة أعمق من الحد المسموح");
+    current = row.parentId;
+  }
+  return parentDepth + 1;
+}
+
+/** Calculate the affected subtree levels after an explicit parent change. */
+async function levelsForSubtree(
+  cid: number,
+  rootId: number,
+  rootLevel: number,
+  executor: any = db,
+): Promise<Array<{ id: number; level: number }>> {
+  const rows = await executor.select({ id: costCentersTable.id, parentId: costCentersTable.parentId })
+    .from(costCentersTable).where(eq(costCentersTable.companyId, cid));
+  const children = new Map<number, number[]>();
+  for (const row of rows) {
+    if (row.parentId == null) continue;
+    const siblings = children.get(row.parentId) ?? [];
+    siblings.push(row.id);
+    children.set(row.parentId, siblings);
+  }
+  const levels: Array<{ id: number; level: number }> = [];
+  const queue = [{ id: rootId, level: rootLevel }];
+  const seen = new Set<number>();
+  while (queue.length) {
+    const current = queue.shift()!;
+    if (seen.has(current.id)) throw new Error("تعذر تحديث مستويات مركز متصل بهيكل دائري");
+    if (current.level > 50) throw new Error("هرم مراكز التكلفة أعمق من الحد المسموح");
+    seen.add(current.id);
+    levels.push(current);
+    for (const childId of children.get(current.id) ?? []) {
+      queue.push({ id: childId, level: current.level + 1 });
+    }
+  }
+  return levels;
 }
 
 // ─── GET ONE ──────────────────────────────────────────────────────────────────
@@ -97,7 +150,7 @@ async function nextDefaultCode(cid: number): Promise<string> {
 router.post("/", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { code, nameAr, nameEn, parentId, level, isPosting, isActive, notes } = req.body;
+    const { code, nameAr, nameEn, parentId, isPosting, isActive, notes } = req.body;
     if (!nameAr || !String(nameAr).trim()) {
       res.status(400).json({ error: "اسم مركز التكلفة مطلوب" }); return;
     }
@@ -122,12 +175,18 @@ router.post("/", async (req, res) => {
     const parentErr = await validateParent(cid, null, pid);
     if (parentErr) { res.status(400).json({ error: parentErr }); return; }
 
+    let actualLevel: number;
+    try {
+      actualLevel = await levelForParent(cid, pid);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message }); return;
+    }
     const [row] = await db.insert(costCentersTable).values({
       companyId: cid,
       code: finalCode,
       nameAr, nameEn: nameEn || null,
       parentId: pid,
-      level: level ?? (pid ? 2 : 1),
+      level: actualLevel,
       isPosting: isPosting ?? true,
       isActive:  isActive  ?? true,
       notes: notes || null,
@@ -141,32 +200,50 @@ router.put("/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
-    const { code, nameAr, nameEn, parentId, level, isPosting, isActive, notes } = req.body;
-    const pid = parentId ? Number(parentId) : null;
+    const { code, nameAr, nameEn, parentId, isPosting, isActive, notes } = req.body;
+    const [existing] = await db.select().from(costCentersTable)
+      .where(and(eq(costCentersTable.id, id), eq(costCentersTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "مركز التكلفة غير موجود" }); return; }
+    const pid = parentId === undefined ? existing.parentId : parentId ? Number(parentId) : null;
     const parentErr = await validateParent(cid, id, pid);
     if (parentErr) { res.status(400).json({ error: parentErr }); return; }
 
     // If code is changing, ensure uniqueness within company
-    const trimmedCode = String(code).trim();
-    const [existing] = await db.select().from(costCentersTable)
-      .where(and(eq(costCentersTable.id, id), eq(costCentersTable.companyId, cid)));
-    if (!existing) { res.status(404).json({ error: "مركز التكلفة غير موجود" }); return; }
+    const trimmedCode = String(code ?? existing.code).trim();
     if (existing.code !== trimmedCode) {
       const [dup] = await db.select().from(costCentersTable)
         .where(and(eq(costCentersTable.companyId, cid), eq(costCentersTable.code, trimmedCode)));
       if (dup) { res.status(400).json({ error: "كود مركز التكلفة مستخدم بالفعل" }); return; }
     }
 
-    const [row] = await db.update(costCentersTable).set({
-      code: trimmedCode,
-      nameAr, nameEn: nameEn || null,
-      parentId: pid,
-      level: level ?? (pid ? 2 : 1),
-      isPosting: isPosting ?? true,
-      isActive:  isActive  ?? true,
-      notes: notes || null,
-      updatedAt: new Date(),
-    }).where(and(eq(costCentersTable.id, id), eq(costCentersTable.companyId, cid))).returning();
+    const parentChanged = pid !== existing.parentId;
+    let affectedLevels: Array<{ id: number; level: number }> = [];
+    if (parentChanged) {
+      try {
+        const newLevel = await levelForParent(cid, pid);
+        affectedLevels = await levelsForSubtree(cid, id, newLevel);
+      } catch (error: any) {
+        res.status(400).json({ error: error.message }); return;
+      }
+    }
+    const [row] = await db.transaction(async (tx) => {
+      const [updated] = await tx.update(costCentersTable).set({
+        code: trimmedCode,
+        nameAr: nameAr ?? existing.nameAr,
+        nameEn: nameEn === undefined ? existing.nameEn : (nameEn || null),
+        parentId: pid,
+        ...(parentChanged ? { level: affectedLevels[0]?.level ?? 1 } : {}),
+        isPosting: isPosting ?? existing.isPosting,
+        isActive:  isActive  ?? existing.isActive,
+        notes: notes === undefined ? existing.notes : (notes || null),
+        updatedAt: new Date(),
+      }).where(and(eq(costCentersTable.id, id), eq(costCentersTable.companyId, cid))).returning();
+      for (const entry of affectedLevels.slice(1)) {
+        await tx.update(costCentersTable).set({ level: entry.level, updatedAt: new Date() })
+          .where(and(eq(costCentersTable.id, entry.id), eq(costCentersTable.companyId, cid)));
+      }
+      return [updated];
+    });
     if (!row) { res.status(404).json({ error: "مركز التكلفة غير موجود" }); return; }
     res.json(row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

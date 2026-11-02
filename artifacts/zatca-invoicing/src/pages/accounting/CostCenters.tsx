@@ -128,7 +128,6 @@ export default function CostCenters() {
       const body = JSON.stringify({
         ...payload,
         parentId: payload.parentId ? Number(payload.parentId) : null,
-        level: payload.parentId ? 2 : 1,
       });
       const r = await fetch(url, { method, headers, body });
       const d = await r.json();

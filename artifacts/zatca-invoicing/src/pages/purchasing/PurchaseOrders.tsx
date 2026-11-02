@@ -442,7 +442,9 @@ ${sections}
         const percentDiscount = Math.max(0, Math.min(100, Number(line.discount ?? 0)));
         const lineGross = Math.max(0, qty * Number(line.unitPrice ?? 0) * (1 - percentDiscount / 100));
         const fixedDiscount = Math.max(0, Number(line.discountAmount ?? 0));
-        const taxableGross = Math.max(0, lineGross - fixedDiscount);
+        // Match PurchaseOrderForm.calcLine: VAT is calculated after the
+        // percentage discount; the persisted fixed discount remains separate.
+        const taxableGross = lineGross;
         const vatAmount = rate === 0 ? 0 : doc.priceIncludesVat
           ? taxableGross - taxableGross / (1 + rate)
           : taxableGross * rate;
