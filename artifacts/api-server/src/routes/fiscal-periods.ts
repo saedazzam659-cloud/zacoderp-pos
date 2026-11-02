@@ -151,6 +151,14 @@ router.post("/years", async (req, res) => {
     if (endDate <= startDate) {
       res.status(400).json({ error: "تاريخ النهاية يجب أن يكون بعد تاريخ البداية" }); return;
     }
+    const today = new Date().toISOString().slice(0, 10);
+    if (startDate > today) {
+      res.status(400).json({
+        error: "لا يمكن إنشاء سنة مالية مستقبلية يدويًا. أنشئ السنوات السابقة أو الحالية فقط؛ وتُفتح السنة التالية تلقائيًا بعد اعتماد الإقفال النهائي.",
+        automaticRollover: true,
+      });
+      return;
+    }
 
     // No overlap with other fiscal years (string compare on ISO dates is safe & TZ-agnostic)
     const others = await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.companyId, cid));

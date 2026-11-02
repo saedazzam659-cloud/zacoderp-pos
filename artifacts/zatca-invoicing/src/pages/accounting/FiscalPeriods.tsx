@@ -44,6 +44,7 @@ export default function FiscalPeriods() {
   const { isRtl } = useFormatters();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const todayIso = new Date().toISOString().slice(0, 10);
   // For a SuperAdmin we have no own company. Use the impersonated tenant's
   // id (set via the "دخول إلى الشركة" flow) so this page operates on the
   // company the SA is currently fixing. This page uses raw fetch() and so
@@ -255,7 +256,7 @@ export default function FiscalPeriods() {
           onClose={() => setShowForm(false)}
           onSave={() => createYearMut.mutate(yearForm)}
           saving={createYearMut.isPending}
-          saveDisabled={!yearForm.name.trim()}
+           saveDisabled={!yearForm.name.trim() || yearForm.startDate > todayIso}
           saveLabel={t("fiscalPeriods.create")}
         >
           <FormGrid>
@@ -286,7 +287,14 @@ export default function FiscalPeriods() {
           </FormGrid>
           <div className={cn("rounded-md p-3 mt-3 flex gap-2 text-xs text-violet-800 bg-violet-50 border border-violet-200")}>
             <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-            <p>{t("fiscalPeriods.autoSplitNote")}</p>
+            <div className="space-y-1">
+              <p>{t("fiscalPeriods.autoSplitNote")}</p>
+              <p>
+                {isRtl
+                  ? "يمكن إنشاء السنوات السابقة أو السنة الحالية يدويًا. لا يمكن إنشاء سنة مستقبلية؛ ستُفتح تلقائيًا بعد اعتماد إقفال السنة السابقة."
+                  : "You can create past or current years manually. Future years open automatically after the prior year is finally approved and closed."}
+              </p>
+            </div>
           </div>
         </FormPanel>
       )}
