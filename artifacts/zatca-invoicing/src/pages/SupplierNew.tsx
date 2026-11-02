@@ -8,9 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useToast } from "@/hooks/use-toast";
 import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 import { localizeUiText } from "@/lib/localizedUiText";
+import { WORLD_COUNTRIES } from "@/lib/worldCountries";
 import { ArrowRight, Save, Truck, MapPin, Phone, AlertTriangle, BookMarked } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Link } from "wouter";
@@ -274,6 +276,27 @@ export default function SupplierNew() {
                   <FormItem>
                     <FormLabel>الرمز البريدي</FormLabel>
                     <FormControl><Input placeholder="12345" dir="ltr" className="text-left" maxLength={5} {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="country" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{localizeUiText("الدولة")}</FormLabel>
+                    <FormControl>
+                      <SearchCombobox
+                        items={WORLD_COUNTRIES.map(country => ({
+                          value: country.code,
+                          label: country.nameAr,
+                          labelEn: country.nameEn,
+                          code: country.code,
+                        }))}
+                        value={field.value || "SA"}
+                        onValueChange={field.onChange}
+                        placeholder={localizeUiText("اختر الدولة...")}
+                        searchPlaceholder={localizeUiText("ابحث عن دولة...")}
+                        testId="supplier-country"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />

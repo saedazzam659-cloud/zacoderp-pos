@@ -924,7 +924,7 @@ export default function CustomerNew() {
                               searchPlaceholder={localizeUiText("ابحث عن دولة...")}
                             />
                           </FormControl>
-                          <FormDescription>دولة العميل — تُحدِّد ترتيب العنوان في طباعة «النموذج الأصلي» وتُفعّل التسلسل الأجنبي للفواتير والمرتجعات</FormDescription>
+                          <FormDescription>دولة العميل — يُطبع اسمها بالعربية أو الإنجليزية حسب لغة الطباعة، وتُحدِّد ترتيب العنوان في «النموذج الأصلي» والتسلسل الأجنبي للفواتير والمرتجعات</FormDescription>
                           <FormMessage />
                         </FormItem>
                       )} />

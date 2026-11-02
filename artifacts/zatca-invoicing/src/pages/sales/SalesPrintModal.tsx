@@ -659,9 +659,7 @@ function quotationCustomerAddressText(
   const countryCode = String(
     d.customer?.country ?? d.doc?.buyerCountry ?? "SA",
   ).toUpperCase();
-  const countryName = countryCode !== "SA"
-    ? getWorldCountryName(countryCode, language)
-    : undefined;
+  const countryName = getWorldCountryName(countryCode, language);
   return buildQuotationCustomerAddress(d.customer, d.doc, language, countryName);
 }
 
@@ -669,6 +667,8 @@ function customerBlock(cu: any, d?: PrintData) {
   const isQuotation = d?.type === "quotation";
   const language: "ar" | "en" = (d as any)?._lang === "en" ? "en" : "ar";
   const quotationAddress = d ? quotationCustomerAddressText(d, language) : "";
+  const countryCode = String(cu?.country ?? d?.doc?.buyerCountry ?? "SA").trim().toUpperCase();
+  const countryName = getWorldCountryName(countryCode, language);
   const displayName = cu?.nameAr ?? cu?.nameEn ?? d?.doc?.buyerName ?? "—";
   if (!cu && !d?.doc?.buyerName) return "<div>—</div>";
   return `
@@ -678,7 +678,9 @@ function customerBlock(cu: any, d?: PrintData) {
       ${cu?.phone ? `<div>هاتف: ${cu.phone}</div>` : ""}
       ${isQuotation
         ? (quotationAddress ? `<div>${escapePrintHtml(quotationAddress)}</div>` : "")
-        : (cu?.city ? `<div>${cu.city}</div>` : "")}
+        : ([cu?.city, countryName].filter(Boolean).length
+          ? `<div>${[cu?.city, countryName].filter(Boolean).map(value => escapePrintHtml(String(value))).join(" — ")}</div>`
+          : "")}
     </div>`;
 }
 
@@ -1894,9 +1896,14 @@ function template13(d: PrintData): string {
   const { doc, lines, customer, company } = d;
   const isReturn = d.type === "return";
   const isQuot = d.type === "quotation";
+  const printLanguage: "ar" | "en" = (d as any)._lang === "en" ? "en" : "ar";
+  const customerCountryName = getWorldCountryName(
+    String(customer?.country ?? doc?.buyerCountry ?? "SA"),
+    printLanguage,
+  );
   const english = isReturn ? "Sales Return" : isQuot ? "Quotation" : "Sales Invoice";
   const totals = computeFullTotals(doc, lines);
-  const quotationAddress = quotationCustomerAddressText(d, "ar");
+  const quotationAddress = quotationCustomerAddressText(d, printLanguage);
   const quotationCurrencyHtml = totals.currencyName
     ? ` <span class="currency-name">(${escapePrintHtml(totals.currencyName)})</span>`
     : "";
@@ -2061,7 +2068,9 @@ function template13(d: PrintData): string {
         ${customer?.phone     ? `<div><span style="color:${GOLD_DARK}">هاتف:</span> ${customer.phone}</div>` : ""}
         ${isQuot
           ? (quotationAddress ? `<div><span style="color:${GOLD_DARK}">العنوان:</span> ${escapePrintHtml(quotationAddress)}</div>` : "")
-          : (customer?.city ? `<div><span style="color:${GOLD_DARK}">العنوان:</span> ${customer.city}${customer.country ? ` — ${customer.country}` : ""}</div>` : "")}
+          : ([customer?.city, customerCountryName].filter(Boolean).length
+            ? `<div><span style="color:${GOLD_DARK}">العنوان:</span> ${[customer?.city, customerCountryName].filter(Boolean).map(value => escapePrintHtml(String(value))).join(" — ")}</div>`
+            : "")}
       </div>
     </div>
 
@@ -2624,6 +2633,7 @@ export function template14(d: PrintData): string {
           ${(acctCode && t14ShowAcct) ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
           ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
           ${custAddress ? `<div class="row"><b>${L.customerAddress}</b><span>${escapePrintHtml(custAddress)}</span></div>` : ""}
+          <div class="row"><b>${L.country}</b><span class="mono">${custCountryName}</span></div>
         `}
       </div>
     </div>`;

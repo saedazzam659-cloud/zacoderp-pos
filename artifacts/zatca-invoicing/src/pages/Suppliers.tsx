@@ -59,6 +59,7 @@ import {
 } from "@/lib/supplierBulkExcel";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
+import { WORLD_COUNTRIES } from "@/lib/worldCountries";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const SUPPLIER_CLASS_LABELS: Record<string, string> = {
@@ -846,6 +847,22 @@ export default function Suppliers() {
                 <Field label={t("pages.suppliers.district")} value={editForm.district} onChange={v => setEditForm(f => ({ ...f, district: v }))} placeholder={t("pages.suppliers.districtPlaceholder")} />
                 <Field label={t("pages.suppliers.cityLabel")} value={editForm.city} onChange={v => setEditForm(f => ({ ...f, city: v }))} placeholder={t("pages.suppliers.cityPlaceholder")} />
                 <Field label={t("pages.suppliers.postalCode")} value={editForm.postalCode} onChange={v => setEditForm(f => ({ ...f, postalCode: v }))} placeholder="12345" dir="ltr" />
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">{localizeUiText("الدولة")}</label>
+                  <SearchCombobox
+                    items={WORLD_COUNTRIES.map(country => ({
+                      value: country.code,
+                      label: country.nameAr,
+                      labelEn: country.nameEn,
+                      code: country.code,
+                    }))}
+                    value={editForm.country || "SA"}
+                    onValueChange={value => setEditForm(f => ({ ...f, country: value }))}
+                    placeholder={localizeUiText("اختر الدولة...")}
+                    searchPlaceholder={localizeUiText("ابحث عن دولة...")}
+                    testId="supplier-edit-country"
+                  />
+                </div>
               </div>
             </TabsContent>
 
