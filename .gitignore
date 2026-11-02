@@ -3,6 +3,7 @@
 # compiled output
 dist
 tmp
+/generated-artifacts/
 out-tsc
 *.tsbuildinfo
 .expo

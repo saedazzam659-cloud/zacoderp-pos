@@ -728,3 +728,17 @@ mtime_ms = 1793034547524
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/ac3da29e-982d-4d4c-ab75-c630ff2014e5/5fe92fef-4adc-4fd0-b26c-57e2482b91db"
 storage_version_token = "1793034572153416"
 content_type = "application/pdf"
+
+[[outputs]]
+id = "wYuSDxVk6XGG_mdl6PDF0"
+uri = "file://generated-artifacts/zacode-erp-source-bundle.zip"
+type = "unspecified"
+title = "Zacode ERP — سورس المشروع الكامل"
+description = "نسخة ZIP من ملفات السورس الحالية: الواجهات، API، مخططات قاعدة البيانات، إعدادات الحزم والوثائق. لا تحتوي على أسرار أو بيانات شركات فعلية."
+logical_id = "fa61d73d-dfdf-4dde-9518-366392426f52"
+content_hash = "sha256:5d1292cb8d0aed6083e3e1caaff91a435da3655bdee4a679f3bb2124dd049199"
+size = 39534461
+mtime_ms = 1793649204915
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/fa61d73d-dfdf-4dde-9518-366392426f52/6ee5bf99-b50e-47d6-a6dd-29fc0243063c"
+storage_version_token = "1793649226931234"
+content_type = "application/octet-stream"

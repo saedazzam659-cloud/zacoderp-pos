@@ -25,5 +25,6 @@ artifacts/*/node_modules
 node_modules
 .cache
 .pnpm-store
+/generated-artifacts
 *.log
 .git
