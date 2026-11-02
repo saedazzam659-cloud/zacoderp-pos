@@ -366,6 +366,26 @@ export default function PaymentVoucherForm() {
       setForm(p => ({ ...p, branchId: String(defaultBranchId) }));
     }
   }, [isNew, form.branchId, defaultBranchId]);
+  useEffect(() => {
+    if (!isNew || form.paymentType !== "cash") return;
+    const active = (cashBoxes as any[])
+      .filter(box => box.isActive !== false && boxMatchesBranch(box, form.branchId))
+      .sort((a, b) => a.id - b.id);
+    if (active.some(box => String(box.id) === form.cashBoxId)) return;
+    const preferred = active.find(box => String(box.id) === String(user?.company?.defaultPaymentCashBoxId));
+    const selected = preferred ?? active[0];
+    setForm(p => ({ ...p, cashBoxId: selected ? String(selected.id) : "" }));
+  }, [isNew, form.paymentType, form.cashBoxId, form.branchId, cashBoxes, user?.company?.defaultPaymentCashBoxId]);
+  useEffect(() => {
+    if (!isNew || form.paymentType !== "bank") return;
+    const active = (bankAccounts as any[])
+      .filter(account => account.isActive !== false && bankMatchesBranch(account, form.branchId))
+      .sort((a, b) => a.id - b.id);
+    if (active.some(account => String(account.id) === form.bankAccountId)) return;
+    const preferred = active.find(account => String(account.id) === String(user?.company?.defaultPaymentBankAccountId));
+    const selected = preferred ?? active[0];
+    setForm(p => ({ ...p, bankAccountId: selected ? String(selected.id) : "" }));
+  }, [isNew, form.paymentType, form.bankAccountId, form.branchId, bankAccounts, user?.company?.defaultPaymentBankAccountId]);
   // When the user changes the branch, drop any selected cash box / bank
   // that is not linked to the new branch (shared NULL-branch ones are kept).
   const prevBranchRef = useRef<string>("");
