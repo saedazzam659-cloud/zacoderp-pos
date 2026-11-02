@@ -50,7 +50,7 @@
 - [Company quantity precision](company-quantity-precision.md) — manufacturing quantities follow the active company's configured precision without rounding stored values or inputs.
 - [Compact sales branch stock](sales-branch-stock-compact-ui.md) — show branch balances without changing invoice item-field width or line height.
 - [Item import requirements](item-import-requirements.md) — imports require code, Arabic name, and a valid company unit; reject the whole file before writes when required data is incomplete.
-- [Legacy item-unit repair](legacy-item-unit-repair.md) — first-base repair may use saved factors for flat legacy unit links; never rewrite historical movement rows or rebase configured items.
+- [Legacy item-unit repair](legacy-item-unit-repair.md) — preserve flat legacy factors; reroot configured graphs only with company opt-in, without rewriting history.
 - [Company master-data transfer boundary](master-data-transfer-boundary.md) — transfer only setup data; exclude transactions and balances, and remap relationships by company-local codes.
 - [RAGM full company cutover](historical-migration-existing-masters.md) — collect and reconcile the full authorized company dataset before importing; target is to stop relying on RAGM.
 - [Company operational reset boundary](company-operational-reset-boundary.md) — reset only the explicitly named primary tenant; preserve setup/master data and reject demo or ZATCA-linked companies.

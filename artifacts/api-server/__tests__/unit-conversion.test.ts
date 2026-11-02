@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   divideQuantity,
   multiplyQuantity,
+  rebaseUnitGraph,
   resolveUnitGraph,
   roundQuantity,
   toStorageDecimal,
@@ -191,7 +192,7 @@ test("company opt-in allows changing a base when only history blocks it", () => 
   assert.deepEqual(decision, { allowed: true, clearLegacyConflict: false });
 });
 
-test("company opt-in does not allow rebasing a unit graph with linked rows", () => {
+test("company opt-in still requires the new base to be linked in the graph", () => {
   assert.throws(
     () => validateBaseUnitAssignment({
       currentBaseUnitId: 7,
@@ -203,6 +204,51 @@ test("company opt-in does not allow rebasing a unit graph with linked rows", () 
     }),
     (error: unknown) => error instanceof UnitConversionError && error.code === "BASE_CHANGE_BLOCKED",
   );
+});
+
+test("company opt-in marks a valid linked graph for rerooting", () => {
+  const decision = validateBaseUnitAssignment({
+    currentBaseUnitId: 1,
+    requestedBaseUnitId: 2,
+    rows: [
+      { unitId: 1, referenceUnitId: null, relationFactor: "1", isBase: true },
+      { unitId: 2, referenceUnitId: 1, relationFactor: "4" },
+    ],
+    historicalUsage: true,
+    historicalUnitIds: [9],
+    allowHistoricalChanges: true,
+  });
+  assert.deepEqual(decision, { allowed: true, clearLegacyConflict: false, rebaseGraph: true });
+});
+
+test("company opt-in reroots a linked conversion tree without changing terminating ratios", () => {
+  const rows = [
+    { unitId: 1, referenceUnitId: null, relationFactor: "1", isBase: true },
+    { unitId: 2, referenceUnitId: 1, relationFactor: "4" },
+    { unitId: 3, referenceUnitId: 2, relationFactor: "2" },
+    { unitId: 4, referenceUnitId: 1, relationFactor: "5" },
+  ];
+  const rebased = rebaseUnitGraph(1, 2, rows);
+  const graph = resolveUnitGraph({ baseUnitId: 2, rows: rebased });
+  assert.deepEqual(
+    [...graph.factors.entries()].sort(([a], [b]) => a - b),
+    [[1, "0.25"], [2, "1"], [3, "2"], [4, "1.25"]],
+  );
+  assert.equal(rebased.find((row) => row.unitId === 1)?.referenceUnitId, 2);
+  assert.equal(rebased.find((row) => row.unitId === 1)?.relationFactor, "0.250000000000000000");
+  assert.equal(rebased.find((row) => row.unitId === 2)?.isBase, true);
+});
+
+test("company opt-in reroots preserve inactive mappings without using them as conversion edges", () => {
+  const rows = [
+    { unitId: 1, referenceUnitId: null, relationFactor: "1", isBase: true },
+    { unitId: 2, referenceUnitId: 1, relationFactor: "4" },
+    { unitId: 9, referenceUnitId: 1, relationFactor: "7", isActive: false },
+  ];
+  const rebased = rebaseUnitGraph(1, 2, rows);
+  assert.equal(rebased.find((row) => row.unitId === 9)?.referenceUnitId, 1);
+  assert.equal(rebased.find((row) => row.unitId === 9)?.isBase, false);
+  assert.equal(resolveUnitGraph({ baseUnitId: 2, rows: rebased }).factors.get(1), "0.25");
 });
 
 test("only a proven sole legacy base may clear its conflict marker", () => {

@@ -95,6 +95,7 @@ import {
   resolveUnitGraph,
   roundQuantity,
   decimalForStorage,
+  rebaseUnitGraph,
   toStorageDecimal,
   validateBaseUnitAssignment,
   assertUnitGraphTenantOwnership,
@@ -1313,7 +1314,7 @@ async function companyAllowsHistoricalUnitChanges(executor: any, cid: number): P
 
 /**
  * Validate all unit ids already present in an item graph inside the same
- * tenant before changing the item's root.  `unit_id` has a database FK, but
+ * tenant before changing the item's root. `unit_id` has a database FK, but
  * `reference_unit_id` was added to older installations without a tenant FK.
  */
 async function assertItemUnitGraphTenant(
@@ -1338,10 +1339,9 @@ async function assertItemUnitGraphTenant(
 }
 
 /**
- * Fill an item's first missing base in the caller's transaction. Existing
- * bases continue to use the historical-use guard. A legacy item may also
- * supply its first explicit source-to-reference relation as a proposed graph;
- * historical unit labels must resolve through that relation before it is saved.
+ * Fill an item's first missing base or safely reroot an existing graph in the
+ * caller's transaction. Historical conflicts are bypassed only by company
+ * opt-in; structural and tenant checks still apply.
  */
 async function validateAndSyncItemBaseUnit(
   tx: any,
@@ -1350,6 +1350,7 @@ async function validateAndSyncItemBaseUnit(
   oldBaseId: number | null,
   newBaseId: number,
   proposedRows: any[] = [],
+  req?: any,
 ): Promise<void> {
   await assertCatalogUnit(tx, cid, newBaseId);
   const rows = await tx.select().from(itemUnitPricesTable).where(and(
@@ -1368,6 +1369,25 @@ async function validateAndSyncItemBaseUnit(
     historicalUnitIds: history.unitIds,
     allowHistoricalChanges,
   });
+
+  if (decision.rebaseGraph && oldBaseId != null) {
+    const rebasedRows = rebaseUnitGraph(oldBaseId, newBaseId, rows);
+    for (const rebased of rebasedRows) {
+      const current = rows.find((row: any) => row.id === rebased.id);
+      if (!current || current.id == null) continue;
+      const [updated] = await tx.update(itemUnitPricesTable).set({
+        referenceUnitId: rebased.referenceUnitId,
+        relationFactor: rebased.relationFactor,
+        conversionFactor: rebased.conversionFactor ?? current.conversionFactor ?? "1",
+        isBase: rebased.isBase === true,
+      }).where(and(
+        eq(itemUnitPricesTable.id, current.id),
+        eq(itemUnitPricesTable.companyId, cid),
+        eq(itemUnitPricesTable.itemId, itemId),
+      )).returning();
+      if (req && updated) auditSubEntity(req, "item_unit_prices", current.id, "edit", current, updated);
+    }
+  }
 
   if (decision.normalizeLegacyRoots) {
     for (const row of rows) {
@@ -1446,8 +1466,8 @@ async function changeItemBaseUnit(
   itemId: number,
   oldBaseId: number | null,
   newBaseId: number,
-  rows: any[],
   proposedRows: any[] = [],
+  req?: any,
 ): Promise<void> {
   if (oldBaseId === newBaseId) return;
   // Filling an unset legacy base is not a re-base when the existing or
@@ -1455,23 +1475,12 @@ async function changeItemBaseUnit(
   // Unlabelled legacy stock remains unchanged; labelled quantities must be
   // covered by the graph supplied to the central policy.
   if (oldBaseId === null) {
-    await validateAndSyncItemBaseUnit(tx, cid, itemId, null, newBaseId, proposedRows);
+    await validateAndSyncItemBaseUnit(tx, cid, itemId, null, newBaseId, proposedRows, req);
     await tx.update(itemsTable).set({ unitId: newBaseId })
       .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
     return;
   }
-  // Re-basing would require rewriting every edge and can invalidate
-  // historical/document/production snapshots.  Unit links are intentionally
-  // immutable as a base once configured; callers may still edit relation
-  // edges without changing the item's root.
-  if (rows.length > 0) {
-    throw new UnitConversionError("BASE_CHANGE_BLOCKED", "The base unit cannot change while item-unit relationships exist");
-  }
-  if (await itemHasHistoricalUsage(tx, cid, itemId)
-    && !(await companyAllowsHistoricalUnitChanges(tx, cid))) {
-    throw new UnitConversionError("BASE_CHANGE_BLOCKED", "The base unit cannot change after historical stock or usage exists");
-  }
-  await assertCatalogUnit(tx, cid, newBaseId);
+  await validateAndSyncItemBaseUnit(tx, cid, itemId, oldBaseId, newBaseId, [], req);
   await tx.update(itemsTable).set({ unitId: newBaseId })
     .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
 }
@@ -2345,6 +2354,8 @@ router.put("/items/:id", async (req, res) => {
           id,
           lockedExisting.unitId ?? null,
           requestedUnitId,
+          [],
+          req,
         );
       } else if (requestedUnitId !== undefined && requestedUnitId !== null) {
         // Even a no-op PUT must not accept a cross-tenant unit id.
@@ -2552,7 +2563,7 @@ router.post("/items/:id/units", async (req, res) => {
               isActive: values.isActive,
             },
           ];
-          await changeItemBaseUnit(tx, cid, itemId, null, values.referenceUnitId, rows, proposedRows);
+          await changeItemBaseUnit(tx, cid, itemId, null, values.referenceUnitId, proposedRows, req);
           item.unitId = values.referenceUnitId;
         }
       }
@@ -2562,7 +2573,7 @@ router.post("/items/:id/units", async (req, res) => {
       if (values.isBase && item.unitId == null) {
         // Creating the first linked base is still a base assignment and must
         // use the same unlabelled-history/tenant policy as the item editor.
-        await validateAndSyncItemBaseUnit(tx, cid, itemId, null, unitId);
+        await validateAndSyncItemBaseUnit(tx, cid, itemId, null, unitId, [], req);
       }
       if (!values.isBase && item.unitId == null) {
         throw new UnitConversionError("MISSING_BASE", "حدد الوحدة الأساسية للصنف أولًا، أو اختر اعتماد الوحدة المرجعية كوحدة أساسية عند إنشاء أول علاقة.");
@@ -2626,7 +2637,7 @@ router.put("/items/:id/units/:upId", async (req, res) => {
         throw new UnitConversionError("ANCESTOR_IN_USE", "Cannot disable a unit referenced by another active unit");
       }
       const changingBase = values.isBase && (item.unitId !== unitId || !current.isBase);
-      if (changingBase) await changeItemBaseUnit(tx, cid, itemId, item.unitId ?? null, unitId, rows);
+      if (changingBase) await changeItemBaseUnit(tx, cid, itemId, item.unitId ?? null, unitId, [], req);
       if (!values.isBase && current.isBase) {
         throw new UnitConversionError("BASE_REQUIRED", "Select another base unit before disabling this base link");
       }

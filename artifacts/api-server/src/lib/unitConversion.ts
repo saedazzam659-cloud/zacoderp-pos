@@ -295,12 +295,13 @@ export interface InitialBaseAssignmentDecision {
   clearLegacyConflict: boolean;
   markBaseUnit?: boolean;
   normalizeLegacyRoots?: boolean;
+  rebaseGraph?: boolean;
 }
 
 /**
  * Validate a base-unit edit without treating a missing legacy base as a
- * re-base.  Established bases retain the old safety rule: a used item (or an
- * item with linked unit rows) cannot switch roots.
+ * re-base. Established bases can switch roots only with explicit company
+ * opt-in and a valid linked graph to reroot.
  */
 export function validateBaseUnitAssignment(
   input: InitialBaseAssignmentInput,
@@ -319,7 +320,23 @@ export function validateBaseUnitAssignment(
   }
 
   if (currentBaseUnitId !== null) {
-    if (rows.length > 0 || (historicalUsage && !allowHistoricalChanges)) {
+    if (rows.length > 0) {
+      if (!allowHistoricalChanges) {
+        throw new UnitConversionError(
+          "BASE_CHANGE_BLOCKED",
+          "The base unit cannot change while item-unit relationships exist",
+        );
+      }
+      const graph = resolveUnitGraph({ baseUnitId: currentBaseUnitId, rows });
+      if (!graph.factors.has(requestedBaseUnitId)) {
+        throw new UnitConversionError(
+          "BASE_CHANGE_BLOCKED",
+          "The new base must already be linked to the item's valid unit graph",
+        );
+      }
+      return { allowed: true, clearLegacyConflict: false, rebaseGraph: true };
+    }
+    if (historicalUsage && !allowHistoricalChanges) {
       throw new UnitConversionError(
         "BASE_CHANGE_BLOCKED",
         "The base unit cannot change after historical stock or usage exists",
@@ -556,6 +573,76 @@ export function resolveUnitGraph(input: {
     factors: new Map([...factors].map(([id, factor]) => [id, formatRational(factor)])),
     conflict: false,
   };
+}
+
+/**
+ * Reroot a valid conversion tree without changing unit-to-unit ratios.
+ * Reversed edges are stored at the schema's 18-decimal precision; all other
+ * edges remain unchanged. The requested root must already belong to the graph.
+ */
+export function rebaseUnitGraph(
+  currentBaseUnitId: number,
+  requestedBaseUnitId: number,
+  rows: UnitGraphRow[],
+): UnitGraphRow[] {
+  const graph = resolveUnitGraph({ baseUnitId: currentBaseUnitId, rows });
+  if (requestedBaseUnitId === currentBaseUnitId) return rows;
+  if (!graph.factors.has(requestedBaseUnitId)) {
+    throw new UnitConversionError("BASE_CHANGE_BLOCKED", "The new base must be linked to the item's unit graph");
+  }
+
+  const activeByUnit = new Map(rows.filter((row) => row.isActive !== false).map((row) => [row.unitId, row]));
+  if (!activeByUnit.has(currentBaseUnitId)) {
+    throw new UnitConversionError(
+      "BASE_CHANGE_BLOCKED",
+      "The current base must be explicitly linked before safely rerooting the unit graph",
+    );
+  }
+  const path = [requestedBaseUnitId];
+  let cursor = requestedBaseUnitId;
+  while (cursor !== currentBaseUnitId) {
+    const row = activeByUnit.get(cursor);
+    if (!row || row.referenceUnitId == null || path.includes(row.referenceUnitId)) {
+      throw new UnitConversionError("BASE_CHANGE_BLOCKED", "The unit graph cannot be safely rerooted");
+    }
+    cursor = row.referenceUnitId;
+    path.push(cursor);
+  }
+
+  const reversedEdges = new Map<number, { referenceUnitId: number; relationFactor: string }>();
+  for (let index = 1; index < path.length; index++) {
+    const oldChild = path[index - 1];
+    const oldParent = path[index];
+    const edge = activeByUnit.get(oldChild);
+    if (!edge) throw new UnitConversionError("BASE_CHANGE_BLOCKED", "The unit graph cannot be safely rerooted");
+    const inverse = divideRational(
+      { numerator: 1n, denominator: 1n },
+      parseExactDecimal(edge.relationFactor),
+    );
+    reversedEdges.set(oldParent, {
+      referenceUnitId: oldChild,
+      relationFactor: decimalForStorage(formatRational(inverse), 18, "half_up"),
+    });
+  }
+
+  const rebased = rows.map((row) => {
+    if (row.unitId === requestedBaseUnitId) {
+      return { ...row, referenceUnitId: null, relationFactor: "1", isBase: true };
+    }
+    const reversed = row.isActive === false ? undefined : reversedEdges.get(row.unitId);
+    return {
+      ...row,
+      ...(reversed ?? {}),
+      isBase: false,
+    };
+  });
+  const resolved = resolveUnitGraph({ baseUnitId: requestedBaseUnitId, rows: rebased });
+  return rebased.map((row) => {
+    const factor = resolved.factors.get(row.unitId);
+    return factor === undefined
+      ? row
+      : { ...row, conversionFactor: decimalForStorage(factor, 18, "half_up") };
+  });
 }
 
 export interface PreloadedUnitConversionData {

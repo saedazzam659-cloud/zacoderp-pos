@@ -653,7 +653,7 @@ function logoCenterHtml(c: any, maxH = 50, maxW = 150): string {
 
 function quotationCustomerAddressText(
   d: PrintData,
-  language: "ar" | "en" = "ar",
+  language: "ar" | "en" = (d as any)._lang === "en" ? "en" : "ar",
 ): string {
   if (d.type !== "quotation" || !getQuotationPrintOptions(d.company).showCustomerAddress) return "";
   const countryCode = String(
@@ -1180,7 +1180,7 @@ function thermalCompanyDetailsHtml(company: any): string {
 function template6(d: PrintData): string {
   const { doc, lines, customer, company } = d;
   const isReturn = d.type === "return";
-  const quotationAddress = quotationCustomerAddressText(d, "ar");
+  const quotationAddress = quotationCustomerAddressText(d);
   const nationalAddress = customerNationalAddressShort(customer, doc);
   const accent = isReturn ? "#b91c1c" : "#111";
   const { thanks, showTimestamp, showZatcaBrand } = footerSettings(company, isReturn);
@@ -1310,7 +1310,7 @@ function template6(d: PrintData): string {
 function template7(d: PrintData): string {
   const { doc, lines, customer, company } = d;
   const isReturn = d.type === "return";
-  const quotationAddress = quotationCustomerAddressText(d, "ar");
+  const quotationAddress = quotationCustomerAddressText(d);
   const nationalAddress = customerNationalAddressShort(customer, doc);
   const accent = isReturn ? "#dc2626" : "#0f766e";
   const accentSoft = isReturn ? "#fee2e2" : "#ccfbf1";
