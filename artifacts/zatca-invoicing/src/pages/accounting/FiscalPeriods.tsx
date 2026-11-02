@@ -167,10 +167,21 @@ export default function FiscalPeriods() {
       });
       return await safeJson(r, t("fiscalPeriods.updateFailed"));
     },
-    onSuccess: () => {
-      toast({ title: t("fiscalPeriods.yearStatusUpdated") });
+    onSuccess: (d: any, variables: { id: number; status: string }) => {
+      if (variables.status === "permanently_closed" && d?.successorYear) {
+        toast({
+          title: "تم اعتماد إقفال السنة",
+          description: `${d.successorYear.name} — ${d.successorYear.startDate} إلى ${d.successorYear.endDate} — تم فتحها تلقائيًا. الأرصدة مستمرة من الحركات السابقة دون إنشاء قيد افتتاحي مكرر.`,
+        });
+        setSelectedYearId(d.successorYear.id);
+      } else {
+        toast({ title: t("fiscalPeriods.yearStatusUpdated") });
+      }
       qc.invalidateQueries({ queryKey: ["fiscal-years", cid] });
       qc.invalidateQueries({ queryKey: ["fiscal-periods", selectedYearId] });
+      if (d?.successorYear?.id) {
+        qc.invalidateQueries({ queryKey: ["fiscal-periods", d.successorYear.id] });
+      }
     },
     onError: (e: any) => toast({ title: t("fiscalPeriods.error"), description: e.message, variant: "destructive" }),
   });
@@ -381,7 +392,15 @@ export default function FiscalPeriods() {
                             <Unlock className={cn("h-3.5 w-3.5", isRtl ? "ml-1" : "mr-1")} />{t("fiscalPeriods.reopenYear")}
                           </Button>
                           <Button size="sm" variant="outline"
-                            onClick={() => updateYearStatusMut.mutate({ id: selectedYear.id, status: "permanently_closed" })}
+                            disabled={updateYearStatusMut.isPending}
+                            onClick={() => {
+                              const approved = window.confirm(
+                                `اعتماد الإقفال النهائي للسنة «${selectedYear.name}»؟\n\n` +
+                                "سيُعاد فحص القيود والتسويات وأرصدة الإيرادات والمصروفات. عند النجاح ستُفتح السنة التالية تلقائيًا. " +
+                                "الأرصدة تستمر من الحركات السابقة دون إنشاء قيد افتتاحي مكرر. لا يمكن التراجع عن الإقفال النهائي إلا بصلاحية استثنائية."
+                              );
+                              if (approved) updateYearStatusMut.mutate({ id: selectedYear.id, status: "permanently_closed" });
+                            }}
                             className="text-red-700 border-red-300 hover:bg-red-50">
                             <ShieldX className={cn("h-3.5 w-3.5", isRtl ? "ml-1" : "mr-1")} />{t("fiscalPeriods.permanentlyClose")}
                           </Button>

@@ -4,6 +4,7 @@ import {
   fiscalYearsTable, fiscalPeriodsTable,
   journalEntriesTable, journalEntryLinesTable, accountsTable,
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
+  auditLogTable,
 } from "@workspace/db";
 import { eq, and, asc, ne, gte, lte, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -47,6 +48,10 @@ const parseISO = (s: string) => {
   const [y, m, d] = s.split("-").map(Number);
   return { y, m: m - 1, d };
 };
+function addOneYearClamped(isoDate: string): string {
+  const { y, m, d } = parseISO(isoDate);
+  return toISO(y + 1, m, Math.min(d, lastDayOfMonthUTC(y + 1, m)));
+}
 
 // Build monthly periods covering [startDate, endDate] inclusively, no gaps/overlap.
 // Uses pure integer math on (y, m, d) tuples — timezone-agnostic.
@@ -308,7 +313,13 @@ router.patch("/years/:id/status", async (req, res) => {
     // the matching (or stronger) status — meaning the user already ran the
     // wizard for each of them. We don't auto-run the wizard here because
     // each period needs its own P&L summary + retained-earnings selection.
-    const periods = await db.select({ id: fiscalPeriodsTable.id, name: fiscalPeriodsTable.name, status: fiscalPeriodsTable.status })
+    const periods = await db.select({
+      id: fiscalPeriodsTable.id,
+      name: fiscalPeriodsTable.name,
+      status: fiscalPeriodsTable.status,
+      startDate: fiscalPeriodsTable.startDate,
+      endDate: fiscalPeriodsTable.endDate,
+    })
       .from(fiscalPeriodsTable)
       .where(and(
         eq(fiscalPeriodsTable.fiscalYearId, id),
@@ -352,12 +363,233 @@ router.patch("/years/:id/status", async (req, res) => {
       }
     }
 
+    if (status === "permanently_closed") {
+      // Final approval is a year-level operation. Recheck the whole year,
+      // not just the period status flags, before creating the successor.
+      const drafts = await db.select({
+        id: journalEntriesTable.id,
+        docNumber: journalEntriesTable.docNumber,
+        entryDate: journalEntriesTable.entryDate,
+      }).from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.companyId, cid),
+        eq(journalEntriesTable.status, "draft"),
+        gte(journalEntriesTable.entryDate, current.startDate),
+        lte(journalEntriesTable.entryDate, current.endDate),
+      ));
+      if (drafts.length) {
+        res.status(409).json({ error: `لا يمكن اعتماد الإقفال النهائي مع وجود ${drafts.length} قيد غير مرحّل`, drafts: drafts.slice(0, 50) });
+        return;
+      }
+
+      const balances = await db.select({
+        entryId: journalEntryLinesTable.entryId,
+        debit: sql<string>`coalesce(sum(${journalEntryLinesTable.debit}), 0)`,
+        credit: sql<string>`coalesce(sum(${journalEntryLinesTable.credit}), 0)`,
+      }).from(journalEntryLinesTable)
+        .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+        .where(and(
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.status, "posted"),
+          gte(journalEntriesTable.entryDate, current.startDate),
+          lte(journalEntriesTable.entryDate, current.endDate),
+        ))
+        .groupBy(journalEntryLinesTable.entryId);
+      const unbalanced = balances.filter(row =>
+        Math.abs(parseFloat(row.debit || "0") - parseFloat(row.credit || "0")) > 0.01);
+      if (unbalanced.length) {
+        res.status(409).json({ error: `لا يمكن اعتماد الإقفال النهائي مع وجود ${unbalanced.length} قيد غير متوازن`, unbalanced: unbalanced.slice(0, 50) });
+        return;
+      }
+
+      const openingDrafts = await findUnbalancedOpeningDrafts(cid);
+      if (openingDrafts.length) {
+        res.status(409).json({ error: "لا يمكن اعتماد الإقفال النهائي مع وجود مسودة أرصدة افتتاحية غير متوازنة", openingDrafts });
+        return;
+      }
+
+      const adjustments = await db.select().from(accountingAdjustmentsTable).where(and(
+        eq(accountingAdjustmentsTable.companyId, cid),
+        eq(accountingAdjustmentsTable.status, "active"),
+      ));
+      const missingAdjustments: { adjustmentId: number; name: string; missingMonths: string[] }[] = [];
+      for (const adj of adjustments) {
+        const adjStart = adj.startDate < current.startDate ? current.startDate : adj.startDate;
+        const adjEnd = adj.endDate > current.endDate ? current.endDate : adj.endDate;
+        if (adjStart > adjEnd) continue;
+        const monthsNeeded: string[] = [];
+        let [y, m] = adjStart.split("-").map(Number);
+        const [ey, em] = adjEnd.split("-").map(Number);
+        while (y < ey || (y === ey && m <= em)) {
+          monthsNeeded.push(`${y}-${String(m).padStart(2, "0")}`);
+          m++;
+          if (m > 12) { m = 1; y++; }
+        }
+        const runs = await db.select({ ym: accountingAdjustmentRunsTable.periodMonth })
+          .from(accountingAdjustmentRunsTable)
+          .where(eq(accountingAdjustmentRunsTable.adjustmentId, adj.id));
+        const runMonths = new Set(runs.map(run => run.ym));
+        const missing = monthsNeeded.filter(month => !runMonths.has(month));
+        if (missing.length) missingAdjustments.push({ adjustmentId: adj.id, name: adj.name, missingMonths: missing });
+      }
+      if (missingAdjustments.length) {
+        res.status(409).json({
+          error: "لا يمكن اعتماد الإقفال النهائي قبل توليد قيود التسويات الدورية المفقودة",
+          missingAdjustments,
+        });
+        return;
+      }
+
+      for (const period of periods) {
+        const [revenue, expenses] = await Promise.all([
+          balancesByType(cid, period.startDate, period.endDate, "revenue"),
+          balancesByType(cid, period.startDate, period.endDate, "expense"),
+        ]);
+        const openRevenue = revenue.filter(row => Math.abs(row.balance) > 0.005);
+        const openExpenses = expenses.filter(row => Math.abs(row.balance) > 0.005);
+        if (openRevenue.length || openExpenses.length) {
+          res.status(409).json({
+            error: `لا يمكن اعتماد إقفال السنة؛ ما زالت أرصدة إيرادات أو مصروفات مفتوحة في الفترة ${period.name}`,
+            period: { id: period.id, name: period.name },
+            openRevenueAccounts: openRevenue.length,
+            openExpenseAccounts: openExpenses.length,
+          });
+          return;
+        }
+      }
+
+      // The successor dates follow the existing year-end (including
+      // non-calendar years); leap-day year ends clamp to the last valid day.
+      const { y: endY, m: endM, d: endD } = parseISO(current.endDate);
+      const nextStartDateObj = new Date(Date.UTC(endY, endM, endD + 1));
+      const nextStartDate = toISO(
+        nextStartDateObj.getUTCFullYear(),
+        nextStartDateObj.getUTCMonth(),
+        nextStartDateObj.getUTCDate(),
+      );
+      const nextEndDate = addOneYearClamped(current.endDate);
+      const successorName = `السنة المالية ${nextStartDate.slice(0, 4)}`;
+      const [updated, successor, alreadyFinalized] = await db.transaction(async tx => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fiscal-year-rollover'), ${cid})`);
+        const [freshCurrent] = await tx.select().from(fiscalYearsTable).where(and(
+          eq(fiscalYearsTable.id, id), eq(fiscalYearsTable.companyId, cid),
+        ));
+        if (!freshCurrent) throw new Error("السنة المالية غير موجودة");
+        if (freshCurrent.status === "permanently_closed") {
+          const [existing] = await tx.select().from(fiscalYearsTable).where(and(
+            eq(fiscalYearsTable.companyId, cid),
+            eq(fiscalYearsTable.startDate, nextStartDate),
+            eq(fiscalYearsTable.endDate, nextEndDate),
+          ));
+          return [freshCurrent, existing ? { year: existing, created: false } : null, true] as const;
+        }
+        const overlaps = await tx.select().from(fiscalYearsTable).where(and(
+          eq(fiscalYearsTable.companyId, cid),
+          lte(fiscalYearsTable.startDate, nextEndDate),
+          gte(fiscalYearsTable.endDate, nextStartDate),
+        ));
+        const exactSuccessor = overlaps.find(year =>
+          year.startDate === nextStartDate && year.endDate === nextEndDate);
+        if (overlaps.length && !exactSuccessor) {
+          throw new Error("تداخل_سنة_تالية:" + JSON.stringify(overlaps.map(year => ({
+            id: year.id, name: year.name, startDate: year.startDate, endDate: year.endDate,
+          }))));
+        }
+        if (exactSuccessor && exactSuccessor.status !== "open") {
+          throw new Error("السنة_التالية_مغلقة:" + JSON.stringify({
+            id: exactSuccessor.id, name: exactSuccessor.name, status: exactSuccessor.status,
+          }));
+        }
+        const [closedYear] = await tx.update(fiscalYearsTable)
+          .set({ status: "permanently_closed", updatedAt: new Date() })
+          .where(and(eq(fiscalYearsTable.id, id), eq(fiscalYearsTable.companyId, cid)))
+          .returning();
+        let nextYear = exactSuccessor;
+        let createdSuccessor = false;
+        if (!nextYear) {
+          const [insertedNextYear] = await tx.insert(fiscalYearsTable).values({
+            companyId: cid,
+            name: successorName,
+            startDate: nextStartDate,
+            endDate: nextEndDate,
+            status: "open",
+          }).returning();
+          if (!insertedNextYear) throw new Error("تعذر إنشاء السنة المالية التالية");
+          nextYear = insertedNextYear;
+          const nextPeriods = buildMonthlyPeriods(nextStartDate, nextEndDate).map(period => ({
+            ...period,
+            companyId: cid,
+            fiscalYearId: insertedNextYear.id,
+            status: "open" as const,
+          }));
+          await tx.insert(fiscalPeriodsTable).values(nextPeriods);
+          createdSuccessor = true;
+        }
+        if (!nextYear) throw new Error("تعذر تحديد السنة المالية التالية");
+        const rolloverYear = nextYear;
+        await tx.insert(auditLogTable).values({
+          userId: (req as any).authUser?.id ?? null,
+          username: (req as any).authUser?.username ?? null,
+          role: (req as any).authUser?.role ?? null,
+          companyId: cid,
+          module: "accounts",
+          action: "fiscal_year_rollover",
+          method: req.method,
+          path: req.originalUrl,
+          entityType: "fiscal_year",
+          entityId: String(rolloverYear.id),
+          statusCode: 200,
+          ip: req.ip ?? null,
+          userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
+          metadata: {
+            closedYearId: id,
+            closedYearName: current.name,
+            successorYearId: rolloverYear.id,
+            successorYearName: rolloverYear.name,
+            successorStartDate: rolloverYear.startDate,
+            successorEndDate: rolloverYear.endDate,
+            successorCreated: createdSuccessor,
+            balanceCarryForward: "prior_posted_ledger_history",
+            openingJournalCreated: false,
+          },
+        });
+        return [closedYear, { year: rolloverYear, created: createdSuccessor }, false] as const;
+      });
+      if (!successor) {
+        res.status(409).json({ error: "تم اعتماد إقفال السنة، لكن تعذر العثور على السنة التالية؛ راجع تعريف السنوات المالية." });
+        return;
+      }
+      res.json({
+        ok: true,
+        year: updated,
+        successorYear: successor.year,
+        successorCreated: successor.created,
+        alreadyFinalized,
+        balancesCarryForwardFromHistory: true,
+      });
+      return;
+    }
+
     const [updated] = await db.update(fiscalYearsTable)
       .set({ status, updatedAt: new Date() })
-      .where(eq(fiscalYearsTable.id, id)).returning();
+      .where(and(eq(fiscalYearsTable.id, id), eq(fiscalYearsTable.companyId, cid))).returning();
 
     res.json({ ok: true, year: updated });
   } catch (err: any) {
+    const message = String(err?.message ?? "");
+    if (message.startsWith("تداخل_سنة_تالية:")) {
+      res.status(409).json({
+        error: "تعذر إنشاء السنة التالية تلقائيًا لوجود تداخل مع سنة مالية مُعرّفة. راجع تواريخ السنوات ثم أعد الاعتماد.",
+        overlappingYears: JSON.parse(message.slice("تداخل_سنة_تالية:".length)),
+      });
+      return;
+    }
+    if (message.startsWith("السنة_التالية_مغلقة:")) {
+      res.status(409).json({
+        error: "السنة المالية التالية موجودة لكنها ليست مفتوحة. افتحها يدويًا أو عدّلها قبل اعتماد الإقفال النهائي.",
+        successorYear: JSON.parse(message.slice("السنة_التالية_مغلقة:".length)),
+      });
+      return;
+    }
     res.status(500).json({ error: err.message ?? "خطأ" });
   }
 });
