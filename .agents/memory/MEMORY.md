@@ -113,3 +113,4 @@
 - [Company-specific invoice import formats](company-invoice-import-formats.md) — isolate each company's source format adapter and normalize into the shared invoice review flow.
 - [Saved feature scope](saved-feature-scope.md) — invoice item multi-select and Saudi VAT display only for Mahmoud's agent.
 - [Screen recorder boundaries](screen-recorder-boundary.md) — browser-local capture, company/user gates, bitrate estimates, and platform-limited audio.
+- [Public module screenshots](public-module-screenshots.md) — keep login-gallery screenshots public-safe and under SuperAdmin control.

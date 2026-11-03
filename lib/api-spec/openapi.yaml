@@ -33,7 +33,115 @@ tags:
     description: Inventory delivery documents
   - name: userTracking
     description: Authenticated mobile location tracking
+  - name: moduleShowcase
+    description: Public ERP module screenshots managed by SuperAdmin
 paths:
+  /module-showcase:
+    get:
+      operationId: getPublicModuleShowcase
+      tags: [moduleShowcase]
+      summary: List public module screenshots
+      responses:
+        "200":
+          description: Public module screenshot gallery
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleShowcaseList"
+  /module-showcase/images/{id}:
+    get:
+      operationId: getPublicModuleShowcaseImage
+      tags: [moduleShowcase]
+      summary: Get a public module screenshot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Screenshot image
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "404":
+          description: Screenshot not found
+  /admin/module-showcase:
+    get:
+      operationId: listAdminModuleShowcase
+      tags: [moduleShowcase]
+      summary: List screenshots for SuperAdmin management
+      responses:
+        "200":
+          description: Screenshots
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleShowcaseList"
+    post:
+      operationId: createAdminModuleShowcaseImage
+      tags: [moduleShowcase]
+      summary: Add an uploaded screenshot to a module
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModuleShowcaseCreate"
+      responses:
+        "201":
+          description: Screenshot added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleShowcaseImage"
+        "400":
+          description: Invalid image or module
+  /admin/module-showcase/upload-url:
+    post:
+      operationId: getAdminModuleShowcaseUploadUrl
+      tags: [moduleShowcase]
+      summary: Request a screenshot upload URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, size, contentType]
+              properties:
+                name: { type: string, maxLength: 180 }
+                size: { type: integer, minimum: 1, maximum: 12582912 }
+                contentType: { type: string, enum: [image/png, image/jpeg, image/webp] }
+      responses:
+        "200":
+          description: Presigned upload destination
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [uploadURL, objectPath]
+                properties:
+                  uploadURL: { type: string }
+                  objectPath: { type: string }
+        "400":
+          description: Invalid upload request
+  /admin/module-showcase/{id}:
+    delete:
+      operationId: deleteAdminModuleShowcaseImage
+      tags: [moduleShowcase]
+      summary: Delete a module screenshot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Screenshot removed
+        "404":
+          description: Screenshot not found
   /hr-portal/guardian/login:
     post:
       operationId: guardianPortalLogin
@@ -3616,6 +3724,35 @@ paths:
 
 components:
   schemas:
+    ModuleShowcaseImage:
+      type: object
+      required: [id, moduleKey, altText, caption, sortOrder, url]
+      properties:
+        id: { type: string }
+        moduleKey:
+          type: string
+          enum: [accounting, banks, fixedAssets, inventory, sales, purchases, production, projects, contracting, maintenance, hr, hotels, hospitals]
+        altText: { type: string }
+        caption: { type: string }
+        sortOrder: { type: integer, minimum: 0 }
+        url: { type: string }
+    ModuleShowcaseList:
+      type: object
+      required: [images]
+      properties:
+        images:
+          type: array
+          items: { $ref: "#/components/schemas/ModuleShowcaseImage" }
+    ModuleShowcaseCreate:
+      type: object
+      required: [moduleKey, objectPath, altText]
+      properties:
+        moduleKey:
+          type: string
+          enum: [accounting, banks, fixedAssets, inventory, sales, purchases, production, projects, contracting, maintenance, hr, hotels, hospitals]
+        objectPath: { type: string }
+        altText: { type: string, minLength: 1, maxLength: 180 }
+        caption: { type: string, maxLength: 160 }
     MobileTrackingStatus:
       type: object
       required: [enabled]

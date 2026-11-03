@@ -10,7 +10,7 @@ import {
   KeyRound, Smartphone, RefreshCw, ArrowLeft, Clock,
   Wallet, Boxes, ShoppingCart, Truck, Users, Factory,
   Landmark, Building2, FolderKanban, HardHat, Wrench, Hotel, Hospital,
-  Sparkles, TrendingUp, BarChart3, Brain, Globe2, Zap, LayoutGrid,
+  Sparkles, TrendingUp, BarChart3, Brain, Globe2, Zap, LayoutGrid, Camera, X,
 } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { CountrySelector } from "@/components/CountrySelector";
@@ -28,6 +28,7 @@ import {
 import { isMahmoudSaudiVatHost, useVisitorCountry } from "@/lib/useVisitorCountry";
 import { getCountryByCode } from "@/lib/countries";
 import { normalizeAgentUiSettings, type AgentUiSettings } from "@/lib/agentUiSettings";
+import { useGetPublicModuleShowcase } from "@workspace/api-client-react";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -788,20 +789,25 @@ export default function Login() {
   const countryInfo = getCountryByCode(visitorCountry);
 
   const modules = [
-    { icon: Wallet,        label: t("auth.intro.modules.accounting") },
-    { icon: Landmark,      label: t("auth.intro.modules.banks") },
-    { icon: Building2,     label: t("auth.intro.modules.fixedAssets") },
-    { icon: Boxes,         label: t("auth.intro.modules.inventory") },
-    { icon: ShoppingCart,  label: t("auth.intro.modules.sales") },
-    { icon: Truck,         label: t("auth.intro.modules.purchases") },
-    { icon: Factory,       label: t("auth.intro.modules.production") },
-    { icon: FolderKanban,  label: t("auth.intro.modules.projects") },
-    { icon: HardHat,       label: t("auth.intro.modules.contracting") },
-    { icon: Wrench,        label: t("auth.intro.modules.maintenance") },
-    { icon: Users,         label: t("auth.intro.modules.hr") },
-    { icon: Hotel,         label: t("auth.intro.modules.hotels") },
-    { icon: Hospital,      label: t("auth.intro.modules.hospitals") },
+    { key: "accounting", icon: Wallet,        label: t("auth.intro.modules.accounting") },
+    { key: "banks", icon: Landmark,      label: t("auth.intro.modules.banks") },
+    { key: "fixedAssets", icon: Building2,     label: t("auth.intro.modules.fixedAssets") },
+    { key: "inventory", icon: Boxes,         label: t("auth.intro.modules.inventory") },
+    { key: "sales", icon: ShoppingCart,  label: t("auth.intro.modules.sales") },
+    { key: "purchases", icon: Truck,         label: t("auth.intro.modules.purchases") },
+    { key: "production", icon: Factory,       label: t("auth.intro.modules.production") },
+    { key: "projects", icon: FolderKanban,  label: t("auth.intro.modules.projects") },
+    { key: "contracting", icon: HardHat,       label: t("auth.intro.modules.contracting") },
+    { key: "maintenance", icon: Wrench,        label: t("auth.intro.modules.maintenance") },
+    { key: "hr", icon: Users,         label: t("auth.intro.modules.hr") },
+    { key: "hotels", icon: Hotel,        label: t("auth.intro.modules.hotels") },
+    { key: "hospitals", icon: Hospital,     label: t("auth.intro.modules.hospitals") },
   ];
+  const publicShowcase = useGetPublicModuleShowcase();
+  const showcaseImages = publicShowcase.data?.images ?? [];
+  const [showcaseModule, setShowcaseModule] = useState("all");
+  const [previewImage, setPreviewImage] = useState<{ caption: string; altText: string; url: string } | null>(null);
+  const visibleShowcaseImages = showcaseImages.filter(image => showcaseModule === "all" || image.moduleKey === showcaseModule);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4 py-8" style={loginPageStyle}>
@@ -922,6 +928,12 @@ export default function Login() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {previewImage && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/90 p-3 backdrop-blur-sm sm:p-8" role="dialog" aria-modal="true" aria-label={previewImage.caption || "معاينة لقطة النظام"} onClick={() => setPreviewImage(null)} data-testid="dialog-gallery-preview">
+          <button type="button" aria-label="إغلاق المعاينة" onClick={() => setPreviewImage(null)} className="absolute end-4 top-4 grid h-10 w-10 place-items-center rounded-full bg-white/15 text-white hover:bg-white/25" data-testid="button-close-gallery-preview"><X className="h-5 w-5" /></button>
+          <img src={previewImage.url} alt={previewImage.altText} onClick={event => event.stopPropagation()} className="max-h-[88dvh] max-w-full rounded-xl object-contain shadow-2xl" />
+        </div>
+      )}
       <div className="w-full max-w-6xl">
         <div className="flex justify-end items-center gap-2 mb-4">
           {/* Country picker is normally hidden — auto-detection (cookie →
@@ -1007,9 +1019,9 @@ export default function Login() {
                 {t("auth.intro.modulesTitle")}
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                {modules.map(({ icon: Icon, label }) => (
+                {modules.map(({ key, icon: Icon, label }) => (
                   <div
-                    key={label}
+                    key={key}
                     className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-sm hover:border-primary/40 hover:bg-primary/5 transition-colors"
                   >
                     <Icon className="h-4 w-4 text-primary shrink-0" />
@@ -1018,6 +1030,42 @@ export default function Login() {
                 ))}
               </div>
             </div>
+
+            <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm" aria-labelledby="module-gallery-title" data-testid="public-module-showcase">
+              <div className="relative overflow-hidden bg-[linear-gradient(120deg,#153f3c,#187768)] px-5 py-5 text-white sm:px-6">
+                <div className="absolute -start-10 -top-12 h-36 w-36 rounded-full border border-white/15" />
+                <div className="relative flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 text-emerald-100"><Camera className="h-4 w-4" /><span className="text-xs font-bold tracking-wide">من داخل النظام</span></div>
+                    <h3 id="module-gallery-title" className="mt-2 text-lg font-bold">شاهد وحدات Zacod ERP</h3>
+                    <p className="mt-1 text-xs leading-6 text-white/75">لقطات حقيقية توضح تفاصيل العمل اليومي في كل وحدة.</p>
+                  </div>
+                  <span className="hidden rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs text-white/85 sm:block">{showcaseImages.length} لقطة</span>
+                </div>
+                {showcaseImages.length > 0 && <div className="relative mt-4 flex gap-2 overflow-x-auto pb-1">
+                  <button type="button" onClick={() => setShowcaseModule("all")} className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${showcaseModule === "all" ? "border-white bg-white text-emerald-900" : "border-white/25 bg-white/10 text-white hover:bg-white/20"}`} data-testid="button-gallery-filter-all">الكل</button>
+                  {modules.filter(module => showcaseImages.some(image => image.moduleKey === module.key)).map(module => <button type="button" key={module.key} onClick={() => setShowcaseModule(module.key)} className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${showcaseModule === module.key ? "border-white bg-white text-emerald-900" : "border-white/25 bg-white/10 text-white hover:bg-white/20"}`} data-testid={`button-gallery-filter-${module.key}`}>{module.label}</button>)}
+                </div>}
+              </div>
+              {visibleShowcaseImages.length > 0 ? <div className="grid grid-cols-1 gap-3 bg-muted/30 p-4 sm:grid-cols-2">
+                {visibleShowcaseImages.map((image, index) => {
+                  const moduleLabel = modules.find(module => module.key === image.moduleKey)?.label ?? "";
+                  return <button type="button" key={image.id} onClick={() => setPreviewImage(image)} className={`group relative overflow-hidden rounded-xl border border-border bg-background text-right ${index === 0 && visibleShowcaseImages.length > 2 ? "sm:row-span-2" : ""}`} data-testid={`button-gallery-image-${image.id}`}>
+                    <div className={`${index === 0 && visibleShowcaseImages.length > 2 ? "aspect-[4/3] sm:aspect-auto sm:h-full sm:min-h-[300px]" : "aspect-[16/10]"} overflow-hidden bg-muted`}>
+                      <img src={`${API_BASE}${image.url}`} alt={image.altText} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.025]" />
+                    </div>
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/85 via-slate-950/45 to-transparent px-4 pb-3 pt-10 text-white">
+                      <p className="text-[10px] font-semibold text-emerald-100">{moduleLabel}</p>
+                      <p className="mt-0.5 truncate text-sm font-bold">{image.caption || moduleLabel}</p>
+                    </div>
+                  </button>;
+                })}
+              </div> : <div className="bg-card px-5 py-8 text-center">
+                <div className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary"><LayoutGrid className="h-5 w-5" /></div>
+                <p className="mt-3 text-sm font-semibold">نعرض لك وحدات النظام من الداخل</p>
+                <p className="mt-1 text-xs leading-6 text-muted-foreground">ستظهر هنا لقطات الواجهات فور إضافتها من إدارة النظام.</p>
+              </div>}
+            </section>
 
             {/* AI capabilities strip */}
             <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent border border-primary/20 rounded-2xl p-5">

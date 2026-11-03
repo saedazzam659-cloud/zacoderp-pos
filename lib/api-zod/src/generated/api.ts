@@ -9,6 +9,115 @@ import * as zod from 'zod';
 
 
 /**
+ * @summary List public module screenshots
+ */
+export const getPublicModuleShowcaseResponseImagesItemSortOrderMin = 0;
+
+
+
+export const GetPublicModuleShowcaseResponse = zod.object({
+  "images": zod.array(zod.object({
+  "id": zod.string(),
+  "moduleKey": zod.enum(['accounting', 'banks', 'fixedAssets', 'inventory', 'sales', 'purchases', 'production', 'projects', 'contracting', 'maintenance', 'hr', 'hotels', 'hospitals']),
+  "altText": zod.string(),
+  "caption": zod.string(),
+  "sortOrder": zod.number().min(getPublicModuleShowcaseResponseImagesItemSortOrderMin),
+  "url": zod.string()
+}))
+})
+
+
+/**
+ * @summary Get a public module screenshot
+ */
+export const GetPublicModuleShowcaseImageParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const GetPublicModuleShowcaseImageResponse = zod.unknown()
+
+
+/**
+ * @summary List screenshots for SuperAdmin management
+ */
+export const listAdminModuleShowcaseResponseImagesItemSortOrderMin = 0;
+
+
+
+export const ListAdminModuleShowcaseResponse = zod.object({
+  "images": zod.array(zod.object({
+  "id": zod.string(),
+  "moduleKey": zod.enum(['accounting', 'banks', 'fixedAssets', 'inventory', 'sales', 'purchases', 'production', 'projects', 'contracting', 'maintenance', 'hr', 'hotels', 'hospitals']),
+  "altText": zod.string(),
+  "caption": zod.string(),
+  "sortOrder": zod.number().min(listAdminModuleShowcaseResponseImagesItemSortOrderMin),
+  "url": zod.string()
+}))
+})
+
+
+/**
+ * @summary Add an uploaded screenshot to a module
+ */
+export const createAdminModuleShowcaseImageBodyAltTextMax = 180;
+
+export const createAdminModuleShowcaseImageBodyCaptionMax = 160;
+
+
+
+export const CreateAdminModuleShowcaseImageBody = zod.object({
+  "moduleKey": zod.enum(['accounting', 'banks', 'fixedAssets', 'inventory', 'sales', 'purchases', 'production', 'projects', 'contracting', 'maintenance', 'hr', 'hotels', 'hospitals']),
+  "objectPath": zod.string(),
+  "altText": zod.string().min(1).max(createAdminModuleShowcaseImageBodyAltTextMax),
+  "caption": zod.string().max(createAdminModuleShowcaseImageBodyCaptionMax).optional()
+})
+
+export const createAdminModuleShowcaseImageResponseSortOrderMin = 0;
+
+
+
+export const CreateAdminModuleShowcaseImageResponse = zod.object({
+  "id": zod.string(),
+  "moduleKey": zod.enum(['accounting', 'banks', 'fixedAssets', 'inventory', 'sales', 'purchases', 'production', 'projects', 'contracting', 'maintenance', 'hr', 'hotels', 'hospitals']),
+  "altText": zod.string(),
+  "caption": zod.string(),
+  "sortOrder": zod.number().min(createAdminModuleShowcaseImageResponseSortOrderMin),
+  "url": zod.string()
+})
+
+
+/**
+ * @summary Request a screenshot upload URL
+ */
+export const getAdminModuleShowcaseUploadUrlBodyNameMax = 180;
+
+export const getAdminModuleShowcaseUploadUrlBodySizeMax = 12582912;
+
+
+
+export const GetAdminModuleShowcaseUploadUrlBody = zod.object({
+  "name": zod.string().max(getAdminModuleShowcaseUploadUrlBodyNameMax),
+  "size": zod.number().min(1).max(getAdminModuleShowcaseUploadUrlBodySizeMax),
+  "contentType": zod.enum(['image/png', 'image/jpeg', 'image/webp'])
+})
+
+export const GetAdminModuleShowcaseUploadUrlResponse = zod.object({
+  "uploadURL": zod.string(),
+  "objectPath": zod.string()
+})
+
+
+/**
+ * @summary Delete a module screenshot
+ */
+export const DeleteAdminModuleShowcaseImageParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const DeleteAdminModuleShowcaseImageResponse = zod.unknown()
+
+
+/**
  * @summary Sign a guardian into the ZacodeHR family portal
  */
 export const guardianPortalLoginBodyCompanyCodeMax = 80;

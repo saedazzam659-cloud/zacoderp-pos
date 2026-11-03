@@ -59,6 +59,14 @@ import { resolveCountryForIp, resolveLocationForIp, type IpLocation } from "../m
 import { persistSnapshot, restoreFromSnapshotPayload } from "./backup.js";
 import { randomBytes } from "crypto";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
+import { ObjectStorageService } from "../lib/objectStorage.js";
+import {
+  MODULE_SHOWCASE_KEYS,
+  MODULE_SHOWCASE_SETTING_KEY,
+  parseModuleShowcase,
+  publicModuleShowcaseImage,
+  type ModuleShowcaseImage,
+} from "../lib/moduleShowcase.js";
 import { logAiUsage } from "../middleware/requireAiFeature.js";
 import {
   createDemoPairCode,
@@ -77,6 +85,7 @@ import { setCompanySequenceProtectionEnabled } from "../lib/sequenceProtection.j
 import { previewCompanyReset, resetCompanyOperationalData } from "../lib/companyReset.js";
 
 const router = Router();
+const moduleShowcaseStorage = new ObjectStorageService();
   // ─────────────────────────────────────────────────────────────────────────
   // Gemini-first transparent redirect (see notes in routes/ai.ts).
   // Re-binds OPENAI_BASE/KEY (declared elsewhere in this file) to a sentinel
@@ -947,6 +956,155 @@ router.get("/subscriptions/usage", requireSuperAdmin, async (req, res) => {
 // ─── Global system settings ────────────────────────────────────────────────
 const AUTO_SUSPEND_KEY = "auto_suspend_expired";
 const NEW_COMPANY_PURCHASE_VAT_COST_KEY = "new_company_purchase_vat_in_inventory_cost";
+
+// ─── Public module screenshots ────────────────────────────────────────────
+async function readModuleShowcase(): Promise<ModuleShowcaseImage[]> {
+  const [row] = await centralDb.select({ value: systemSettingsTable.value })
+    .from(systemSettingsTable)
+    .where(eq(systemSettingsTable.key, MODULE_SHOWCASE_SETTING_KEY))
+    .limit(1);
+  return parseModuleShowcase(row?.value);
+}
+
+async function writeModuleShowcase(images: ModuleShowcaseImage[]): Promise<void> {
+  await centralDb.execute(sql`
+    INSERT INTO system_settings (key, value, updated_at)
+    VALUES (${MODULE_SHOWCASE_SETTING_KEY}, ${JSON.stringify(images)}, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+  `);
+}
+
+router.get("/module-showcase", requireSuperAdmin, async (_req, res): Promise<void> => {
+  try {
+    const images = (await readModuleShowcase())
+      .sort((a, b) => a.moduleKey.localeCompare(b.moduleKey) || a.sortOrder - b.sortOrder);
+    res.json({ images: images.map(publicModuleShowcaseImage) });
+  } catch (error) {
+    res.status(500).json({ error: "تعذر تحميل صور تعريف الوحدات" });
+  }
+});
+
+router.post("/module-showcase/upload-url", requireSuperAdmin, async (req, res): Promise<void> => {
+  const { name, size, contentType } = req.body ?? {};
+  const allowedTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
+  if (
+    typeof name !== "string" || name.length < 1 || name.length > 180 ||
+    !Number.isSafeInteger(size) || size <= 0 || size > 12 * 1024 * 1024 ||
+    typeof contentType !== "string" || !allowedTypes.has(contentType)
+  ) {
+    res.status(400).json({ error: "اختر صورة PNG أو JPG أو WebP بحجم لا يتجاوز 12 ميجابايت" });
+    return;
+  }
+  try {
+    const uploadURL = await moduleShowcaseStorage.getObjectEntityUploadURL();
+    res.json({
+      uploadURL,
+      objectPath: moduleShowcaseStorage.normalizeObjectEntityPath(uploadURL),
+    });
+  } catch (error) {
+    req.log.error({ err: error }, "Failed to create module showcase upload URL");
+    res.status(500).json({ error: "تعذر تجهيز رفع الصورة" });
+  }
+});
+
+router.post("/module-showcase", requireSuperAdmin, async (req, res): Promise<void> => {
+  const { moduleKey, objectPath, altText, caption } = req.body ?? {};
+  if (
+    typeof moduleKey !== "string" || !MODULE_SHOWCASE_KEYS.includes(moduleKey as typeof MODULE_SHOWCASE_KEYS[number]) ||
+    typeof objectPath !== "string" || !/^\/objects\/uploads\/[0-9a-f-]{36}$/i.test(objectPath) ||
+    typeof altText !== "string" || !altText.trim() || altText.length > 180 ||
+    (caption !== undefined && (typeof caption !== "string" || caption.length > 160))
+  ) {
+    res.status(400).json({ error: "بيانات الصورة أو الوحدة غير صالحة" });
+    return;
+  }
+
+  try {
+    const objectFile = await moduleShowcaseStorage.getObjectEntityFile(objectPath);
+    const [metadata] = await objectFile.getMetadata();
+    const contentType = String(metadata.contentType ?? "").toLowerCase();
+    const size = Number(metadata.size ?? 0);
+    if (!["image/png", "image/jpeg", "image/webp"].includes(contentType) || !Number.isSafeInteger(size) || size <= 0 || size > 12 * 1024 * 1024) {
+      res.status(400).json({ error: "الصورة المرفوعة غير مدعومة أو تجاوزت الحجم المسموح" });
+      return;
+    }
+
+    const images = await readModuleShowcase();
+    if (images.some(image => image.objectPath === objectPath)) {
+      res.status(409).json({ error: "تمت إضافة هذه الصورة بالفعل" });
+      return;
+    }
+    const moduleImages = images.filter(image => image.moduleKey === moduleKey);
+    const image: ModuleShowcaseImage = {
+      id: randomUUID(),
+      moduleKey: moduleKey as ModuleShowcaseImage["moduleKey"],
+      objectPath,
+      altText: altText.trim(),
+      caption: typeof caption === "string" ? caption.trim() : "",
+      sortOrder: moduleImages.length,
+      createdAt: new Date().toISOString(),
+    };
+    await writeModuleShowcase([...images, image]);
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: null,
+      module: "system",
+      action: "create",
+      entityType: "module_showcase_image",
+      entityId: image.id,
+      metadata: { moduleKey, size, contentType },
+    });
+    res.status(201).json(publicModuleShowcaseImage(image));
+  } catch (error) {
+    req.log.error({ err: error }, "Failed to save module showcase image");
+    res.status(500).json({ error: "تعذر حفظ الصورة في معرض الوحدات" });
+  }
+});
+
+router.delete("/module-showcase/:id", requireSuperAdmin, async (req, res): Promise<void> => {
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  if (typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id)) {
+    res.status(400).json({ error: "معرّف الصورة غير صالح" });
+    return;
+  }
+  try {
+    const images = await readModuleShowcase();
+    const target = images.find(image => image.id === id);
+    if (!target) {
+      res.status(404).json({ error: "الصورة غير موجودة" });
+      return;
+    }
+    let nextOrder = 0;
+    const remaining = images
+      .filter(image => image.id !== id)
+      .map(image => image.moduleKey === target.moduleKey ? { ...image, sortOrder: nextOrder++ } : image);
+    await writeModuleShowcase(remaining);
+    try {
+      const file = await moduleShowcaseStorage.getObjectEntityFile(target.objectPath);
+      await file.delete({ ignoreNotFound: true });
+    } catch (error) {
+      req.log.warn({ err: error, imageId: id }, "Removed module showcase entry but could not delete stored image");
+    }
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: null,
+      module: "system",
+      action: "delete",
+      entityType: "module_showcase_image",
+      entityId: id,
+      metadata: { moduleKey: target.moduleKey },
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    req.log.error({ err: error }, "Failed to delete module showcase image");
+    res.status(500).json({ error: "تعذر حذف الصورة" });
+  }
+});
+
 router.get("/system-settings/purchase-vat-cost-default", requireSuperAdmin, async (_req, res) => {
   const [row] = await centralDb.select().from(systemSettingsTable)
     .where(eq(systemSettingsTable.key, NEW_COMPANY_PURCHASE_VAT_COST_KEY));

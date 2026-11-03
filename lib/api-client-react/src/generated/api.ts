@@ -62,6 +62,8 @@ import type {
   GetAdditionalAccountingReportParams,
   GetAdditionalPurchaseReportParams,
   GetAdditionalSalesReportParams,
+  GetAdminModuleShowcaseUploadUrl200,
+  GetAdminModuleShowcaseUploadUrlBody,
   GetCashExpenseReportParams,
   GetCashExpensesParams,
   GetCashTransfersParams,
@@ -127,6 +129,9 @@ import type {
   MobileLocationPointResult,
   MobileTrackingManagerReport,
   MobileTrackingStatus,
+  ModuleShowcaseCreate,
+  ModuleShowcaseImage,
+  ModuleShowcaseList,
   MonthlyStat,
   OkResponse,
   PosItemGroup,
@@ -242,6 +247,450 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetPublicModuleShowcaseUrl = () => {
+
+
+
+
+  return `/api/module-showcase`
+}
+
+/**
+ * @summary List public module screenshots
+ */
+export const getPublicModuleShowcase = async ( options?: RequestInit): Promise<ModuleShowcaseList> => {
+
+  return customFetch<ModuleShowcaseList>(getGetPublicModuleShowcaseUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPublicModuleShowcaseQueryKey = () => {
+    return [
+    `/api/module-showcase`
+    ] as const;
+    }
+
+
+export const getGetPublicModuleShowcaseQueryOptions = <TData = Awaited<ReturnType<typeof getPublicModuleShowcase>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicModuleShowcase>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPublicModuleShowcaseQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPublicModuleShowcase>>> = ({ signal }) => getPublicModuleShowcase({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPublicModuleShowcase>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPublicModuleShowcaseQueryResult = NonNullable<Awaited<ReturnType<typeof getPublicModuleShowcase>>>
+export type GetPublicModuleShowcaseQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List public module screenshots
+ */
+
+export function useGetPublicModuleShowcase<TData = Awaited<ReturnType<typeof getPublicModuleShowcase>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicModuleShowcase>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPublicModuleShowcaseQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetPublicModuleShowcaseImageUrl = (id: string,) => {
+
+
+
+
+  return `/api/module-showcase/images/${id}`
+}
+
+/**
+ * @summary Get a public module screenshot
+ */
+export const getPublicModuleShowcaseImage = async (id: string, options?: RequestInit): Promise<Blob> => {
+
+  return customFetch<Blob>(getGetPublicModuleShowcaseImageUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPublicModuleShowcaseImageQueryKey = (id: string,) => {
+    return [
+    `/api/module-showcase/images/${id}`
+    ] as const;
+    }
+
+
+export const getGetPublicModuleShowcaseImageQueryOptions = <TData = Awaited<ReturnType<typeof getPublicModuleShowcaseImage>>, TError = ErrorType<void>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicModuleShowcaseImage>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPublicModuleShowcaseImageQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPublicModuleShowcaseImage>>> = ({ signal }) => getPublicModuleShowcaseImage(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPublicModuleShowcaseImage>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPublicModuleShowcaseImageQueryResult = NonNullable<Awaited<ReturnType<typeof getPublicModuleShowcaseImage>>>
+export type GetPublicModuleShowcaseImageQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a public module screenshot
+ */
+
+export function useGetPublicModuleShowcaseImage<TData = Awaited<ReturnType<typeof getPublicModuleShowcaseImage>>, TError = ErrorType<void>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicModuleShowcaseImage>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPublicModuleShowcaseImageQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListAdminModuleShowcaseUrl = () => {
+
+
+
+
+  return `/api/admin/module-showcase`
+}
+
+/**
+ * @summary List screenshots for SuperAdmin management
+ */
+export const listAdminModuleShowcase = async ( options?: RequestInit): Promise<ModuleShowcaseList> => {
+
+  return customFetch<ModuleShowcaseList>(getListAdminModuleShowcaseUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminModuleShowcaseQueryKey = () => {
+    return [
+    `/api/admin/module-showcase`
+    ] as const;
+    }
+
+
+export const getListAdminModuleShowcaseQueryOptions = <TData = Awaited<ReturnType<typeof listAdminModuleShowcase>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminModuleShowcase>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminModuleShowcaseQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminModuleShowcase>>> = ({ signal }) => listAdminModuleShowcase({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminModuleShowcase>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminModuleShowcaseQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminModuleShowcase>>>
+export type ListAdminModuleShowcaseQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List screenshots for SuperAdmin management
+ */
+
+export function useListAdminModuleShowcase<TData = Awaited<ReturnType<typeof listAdminModuleShowcase>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminModuleShowcase>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminModuleShowcaseQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAdminModuleShowcaseImageUrl = () => {
+
+
+
+
+  return `/api/admin/module-showcase`
+}
+
+/**
+ * @summary Add an uploaded screenshot to a module
+ */
+export const createAdminModuleShowcaseImage = async (moduleShowcaseCreate: ModuleShowcaseCreate, options?: RequestInit): Promise<ModuleShowcaseImage> => {
+
+  return customFetch<ModuleShowcaseImage>(getCreateAdminModuleShowcaseImageUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(moduleShowcaseCreate)
+  }
+);}
+
+
+
+
+
+export const getCreateAdminModuleShowcaseImageMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdminModuleShowcaseImage>>, TError,{data: BodyType<ModuleShowcaseCreate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAdminModuleShowcaseImage>>, TError,{data: BodyType<ModuleShowcaseCreate>}, TContext> => {
+
+const mutationKey = ['createAdminModuleShowcaseImage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAdminModuleShowcaseImage>>, {data: BodyType<ModuleShowcaseCreate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createAdminModuleShowcaseImage(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAdminModuleShowcaseImageMutationResult = NonNullable<Awaited<ReturnType<typeof createAdminModuleShowcaseImage>>>
+    export type CreateAdminModuleShowcaseImageMutationBody = BodyType<ModuleShowcaseCreate>
+    export type CreateAdminModuleShowcaseImageMutationError = ErrorType<void>
+
+    /**
+ * @summary Add an uploaded screenshot to a module
+ */
+export const useCreateAdminModuleShowcaseImage = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdminModuleShowcaseImage>>, TError,{data: BodyType<ModuleShowcaseCreate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAdminModuleShowcaseImage>>,
+        TError,
+        {data: BodyType<ModuleShowcaseCreate>},
+        TContext
+      > => {
+      return useMutation(getCreateAdminModuleShowcaseImageMutationOptions(options));
+    }
+
+export const getGetAdminModuleShowcaseUploadUrlUrl = () => {
+
+
+
+
+  return `/api/admin/module-showcase/upload-url`
+}
+
+/**
+ * @summary Request a screenshot upload URL
+ */
+export const getAdminModuleShowcaseUploadUrl = async (getAdminModuleShowcaseUploadUrlBody: GetAdminModuleShowcaseUploadUrlBody, options?: RequestInit): Promise<GetAdminModuleShowcaseUploadUrl200> => {
+
+  return customFetch<GetAdminModuleShowcaseUploadUrl200>(getGetAdminModuleShowcaseUploadUrlUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(getAdminModuleShowcaseUploadUrlBody)
+  }
+);}
+
+
+
+
+
+export const getGetAdminModuleShowcaseUploadUrlMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof getAdminModuleShowcaseUploadUrl>>, TError,{data: BodyType<GetAdminModuleShowcaseUploadUrlBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof getAdminModuleShowcaseUploadUrl>>, TError,{data: BodyType<GetAdminModuleShowcaseUploadUrlBody>}, TContext> => {
+
+const mutationKey = ['getAdminModuleShowcaseUploadUrl'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof getAdminModuleShowcaseUploadUrl>>, {data: BodyType<GetAdminModuleShowcaseUploadUrlBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  getAdminModuleShowcaseUploadUrl(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GetAdminModuleShowcaseUploadUrlMutationResult = NonNullable<Awaited<ReturnType<typeof getAdminModuleShowcaseUploadUrl>>>
+    export type GetAdminModuleShowcaseUploadUrlMutationBody = BodyType<GetAdminModuleShowcaseUploadUrlBody>
+    export type GetAdminModuleShowcaseUploadUrlMutationError = ErrorType<void>
+
+    /**
+ * @summary Request a screenshot upload URL
+ */
+export const useGetAdminModuleShowcaseUploadUrl = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof getAdminModuleShowcaseUploadUrl>>, TError,{data: BodyType<GetAdminModuleShowcaseUploadUrlBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof getAdminModuleShowcaseUploadUrl>>,
+        TError,
+        {data: BodyType<GetAdminModuleShowcaseUploadUrlBody>},
+        TContext
+      > => {
+      return useMutation(getGetAdminModuleShowcaseUploadUrlMutationOptions(options));
+    }
+
+export const getDeleteAdminModuleShowcaseImageUrl = (id: string,) => {
+
+
+
+
+  return `/api/admin/module-showcase/${id}`
+}
+
+/**
+ * @summary Delete a module screenshot
+ */
+export const deleteAdminModuleShowcaseImage = async (id: string, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteAdminModuleShowcaseImageUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAdminModuleShowcaseImageMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminModuleShowcaseImage>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAdminModuleShowcaseImage>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteAdminModuleShowcaseImage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAdminModuleShowcaseImage>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteAdminModuleShowcaseImage(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAdminModuleShowcaseImageMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAdminModuleShowcaseImage>>>
+
+    export type DeleteAdminModuleShowcaseImageMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete a module screenshot
+ */
+export const useDeleteAdminModuleShowcaseImage = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAdminModuleShowcaseImage>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAdminModuleShowcaseImage>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteAdminModuleShowcaseImageMutationOptions(options));
+    }
 
 export const getGuardianPortalLoginUrl = () => {
 

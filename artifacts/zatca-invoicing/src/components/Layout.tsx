@@ -304,6 +304,7 @@ const ACCOUNTING_REPORTS_PERMS  = ["accounting_reports"];
 
 const superAdminNav: NavDef[] = [
   { nameKey: "nav.infoBoard",            href: "/",                         icon: LayoutDashboard, exact: true },
+  { nameKey: "nav.moduleShowcase", name: "معرض لقطات الوحدات", href: "/admin/module-showcase", icon: Camera },
   { nameKey: "nav.deletedRecordsRestore",href: "/admin/deleted-records",    icon: RotateCcw },
   { nameKey: "nav.demoAnalytics",        href: "/admin/demo-analytics",     icon: Gauge },
   { nameKey: "nav.enterCompany",         href: "/admin/enter-company",      icon: LogIn },

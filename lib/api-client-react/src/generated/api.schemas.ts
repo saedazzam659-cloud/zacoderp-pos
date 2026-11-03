@@ -5,6 +5,70 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export type ModuleShowcaseImageModuleKey = typeof ModuleShowcaseImageModuleKey[keyof typeof ModuleShowcaseImageModuleKey];
+
+
+export const ModuleShowcaseImageModuleKey = {
+  accounting: 'accounting',
+  banks: 'banks',
+  fixedAssets: 'fixedAssets',
+  inventory: 'inventory',
+  sales: 'sales',
+  purchases: 'purchases',
+  production: 'production',
+  projects: 'projects',
+  contracting: 'contracting',
+  maintenance: 'maintenance',
+  hr: 'hr',
+  hotels: 'hotels',
+  hospitals: 'hospitals',
+} as const;
+
+export interface ModuleShowcaseImage {
+  id: string;
+  moduleKey: ModuleShowcaseImageModuleKey;
+  altText: string;
+  caption: string;
+  /** @minimum 0 */
+  sortOrder: number;
+  url: string;
+}
+
+export interface ModuleShowcaseList {
+  images: ModuleShowcaseImage[];
+}
+
+export type ModuleShowcaseCreateModuleKey = typeof ModuleShowcaseCreateModuleKey[keyof typeof ModuleShowcaseCreateModuleKey];
+
+
+export const ModuleShowcaseCreateModuleKey = {
+  accounting: 'accounting',
+  banks: 'banks',
+  fixedAssets: 'fixedAssets',
+  inventory: 'inventory',
+  sales: 'sales',
+  purchases: 'purchases',
+  production: 'production',
+  projects: 'projects',
+  contracting: 'contracting',
+  maintenance: 'maintenance',
+  hr: 'hr',
+  hotels: 'hotels',
+  hospitals: 'hospitals',
+} as const;
+
+export interface ModuleShowcaseCreate {
+  moduleKey: ModuleShowcaseCreateModuleKey;
+  objectPath: string;
+  /**
+     * @minLength 1
+     * @maxLength 180
+     */
+  altText: string;
+  /** @maxLength 160 */
+  caption?: string;
+}
+
 export interface MobileTrackingStatus {
   enabled: boolean;
 }
@@ -3372,6 +3436,31 @@ export interface PurchaseVatCostDefaultUpdateResponse {
   ok: boolean;
   enabled: boolean;
 }
+
+export type GetAdminModuleShowcaseUploadUrlBodyContentType = typeof GetAdminModuleShowcaseUploadUrlBodyContentType[keyof typeof GetAdminModuleShowcaseUploadUrlBodyContentType];
+
+
+export const GetAdminModuleShowcaseUploadUrlBodyContentType = {
+  'image/png': 'image/png',
+  'image/jpeg': 'image/jpeg',
+  'image/webp': 'image/webp',
+} as const;
+
+export type GetAdminModuleShowcaseUploadUrlBody = {
+  /** @maxLength 180 */
+  name: string;
+  /**
+     * @minimum 1
+     * @maximum 12582912
+     */
+  size: number;
+  contentType: GetAdminModuleShowcaseUploadUrlBodyContentType;
+};
+
+export type GetAdminModuleShowcaseUploadUrl200 = {
+  uploadURL: string;
+  objectPath: string;
+};
 
 export type GetSchoolEnrollmentPromotionPlanParams = {
 /**

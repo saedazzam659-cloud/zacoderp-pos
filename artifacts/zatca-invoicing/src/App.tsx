@@ -22,6 +22,7 @@ import UserTrackingLive from "@/pages/admin/UserTrackingLive";
 import UserAttendanceReport from "@/pages/admin/UserAttendanceReport";
 import UserMovementReport from "@/pages/admin/UserMovementReport";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
+import ModuleShowcase from "@/pages/admin/ModuleShowcase";
 import PurchaseInventoryCostDefault from "@/pages/PurchaseInventoryCostDefault";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import InvoiceFieldPolicies from "@/pages/admin/InvoiceFieldPolicies";
@@ -915,6 +916,7 @@ function AppRoutes() {
             {!localSuperadminRouteAllowed ? <NotFound /> : <Switch>
               {/* Superadmin routes */}
               {isSuperAdmin && <Route path="/" component={SuperAdminDashboard} />}
+              {isSuperAdmin && <Route path="/admin/module-showcase" component={ModuleShowcase} />}
               {isSuperAdmin && <Route path="/admin/demo-analytics/:id" component={AdminDemoAnalyticsDetail} />}
               {isSuperAdmin && <Route path="/admin/demo-analytics" component={AdminDemoAnalyticsDashboard} />}
               {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/demo-analytics/:id" module="demo_analytics" component={CompanyDemoAnalyticsDetail} />}
