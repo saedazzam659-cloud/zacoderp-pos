@@ -176,6 +176,59 @@ export interface SequencePeriodMatch {
   fiscalYearLabel: string | null;
 }
 
+type SequenceSqlExec = { execute: (query: any) => Promise<{ rows?: Array<any> }> };
+
+export async function getFiscalYearSequencePolicy(
+  exec: SequenceSqlExec,
+  companyId: number,
+  fiscalYearId: number | null,
+): Promise<"continue" | "reset" | null> {
+  if (fiscalYearId == null) return null;
+  const rows = await exec.execute(sql`
+    SELECT value FROM system_settings
+    WHERE key = ${`fiscal_year_sequence_policy:${companyId}:${fiscalYearId}`}
+    LIMIT 1
+  `);
+  const value = rows.rows?.[0]?.value;
+  return value === "continue" || value === "reset" ? value : null;
+}
+
+export async function priorFiscalYearNextNumber(
+  exec: SequenceSqlExec,
+  companyId: number,
+  fiscalYearId: number,
+  sequenceId: number,
+  transactionType: string,
+  branchId: number,
+): Promise<number | null> {
+  const currentRows = await exec.execute(sql`
+    SELECT start_date FROM fiscal_years WHERE id = ${fiscalYearId} AND company_id = ${companyId} LIMIT 1
+  `);
+  const currentStart = String(currentRows.rows?.[0]?.start_date ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(currentStart)) return null;
+  const [year, month, day] = currentStart.split("-").map(Number);
+  const priorEnd = new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+  const priorRows = await exec.execute(sql`
+    SELECT id, start_date, end_date FROM fiscal_years
+    WHERE company_id = ${companyId} AND end_date = ${priorEnd}
+    ORDER BY id DESC LIMIT 1
+  `);
+  const prior = priorRows.rows?.[0];
+  if (!prior?.id || !prior.start_date || !prior.end_date) return null;
+  const annualBucket = `FY-${prior.id}-TX-${transactionType}`;
+  const firstMonth = String(prior.start_date).slice(0, 7);
+  const lastMonth = String(prior.end_date).slice(0, 7);
+  const counters = await exec.execute(sql`
+    SELECT MAX(current_number)::int AS current_number
+    FROM sequence_counters
+    WHERE sequence_id = ${sequenceId} AND branch_id = ${branchId}
+      AND (period = ${annualBucket} OR period = ''
+        OR (period >= ${firstMonth} AND period <= ${lastMonth}))
+  `);
+  const nextNumber = counters.rows?.[0]?.current_number;
+  return nextNumber == null ? null : Number(nextNumber);
+}
+
 /** Resolve the exact period + all same-year period ids for `dateStr`
  *  ("YYYY-MM-DD"). Works with either `db` or a transaction handle. */
 export async function resolveSequencePeriodMatch(
@@ -381,6 +434,7 @@ export async function nextSequenceNumber(
     })();
     const periodDateStr = `${periodResolveDate.getUTCFullYear()}-${String(periodResolveDate.getUTCMonth() + 1).padStart(2, "0")}-${String(periodResolveDate.getUTCDate()).padStart(2, "0")}`;
     const pm = await resolveSequencePeriodMatch(tx, companyId, periodDateStr);
+    const fiscalYearPolicy = await getFiscalYearSequencePolicy(tx, companyId, pm.fiscalYearId);
 
     // 1. Lock the candidate master sequence row.
     //    Resolution preference (mirrors /peek/:txType):
@@ -415,14 +469,19 @@ export async function nextSequenceNumber(
     //      • monthly_reset ON  → a per-month row keyed by "YYYY-MM", so each
     //        month is an independent stream that out-of-order / backdated entry
     //        can never disturb.
-    const monthlyReset  = seq.monthly_reset === true;
+    const configuredMonthlyReset = seq.monthly_reset === true;
+    const configuredAnnualReset = seq.annual_reset === true && !configuredMonthlyReset;
+    const protectedZatcaNumber = /^(sales_invoice|sales_return)(_|$)/.test(transactionType);
+    const applyFiscalYearPolicy = fiscalYearPolicy != null && !protectedZatcaNumber;
+    const monthlyReset  = applyFiscalYearPolicy ? false : configuredMonthlyReset;
     // The sales invoice/return identifiers are part of the electronic
     // issuance stream in Saudi companies. Keep those visible identifiers
     // continuous as well as preserving their separate ICV/PIH chain.
-    const annualReset = seq.annual_reset === true && !monthlyReset
-      && !/^(sales_invoice|sales_return)(_|$)/.test(transactionType);
+    const annualReset = applyFiscalYearPolicy || (configuredAnnualReset && !protectedZatcaNumber);
     // Annual identifiers are unique company-wide, not separately per branch.
-    const counterBranchKey = annualReset ? 0 : branchKey;
+    const counterBranchKey = applyFiscalYearPolicy
+      ? (configuredAnnualReset ? 0 : branchKey)
+      : annualReset ? 0 : branchKey;
     const currentPeriod = periodKey(effectiveDate);          // "YYYY-MM"
     const fiscalYearBucket = `FY-${pm.fiscalYearId ?? `CAL-${periodDateStr.slice(0, 4)}`}-TX-${transactionType}`;
     const annualYearLabel = pm.fiscalYearLabel ?? periodDateStr.slice(0, 4);
@@ -431,7 +490,7 @@ export async function nextSequenceNumber(
       : annualReset ? fiscalYearBucket : ""; // bucket key
     const effectivePrefix = ctx.prefixOverride != null ? ctx.prefixOverride : (seq.prefix ?? "");
     const renderedPrefix = `${effectivePrefix}${annualReset ? `${annualYearLabel}-` : ""}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
-    const journalEntryHighWater = ctx.refTable === "journal_entries"
+    const journalEntryHighWater = !applyFiscalYearPolicy && ctx.refTable === "journal_entries"
       ? await journalEntrySequenceHighWater(
           tx,
           companyId,
@@ -462,6 +521,12 @@ export async function nextSequenceNumber(
       issuedNumber = journalEntryHighWater != null
         ? Math.max(existingCounter.current_number, journalEntryHighWater.number + 1)
         : existingCounter.current_number;
+      if (applyFiscalYearPolicy && fiscalYearPolicy === "continue" && pm.fiscalYearId != null) {
+        const previous = await priorFiscalYearNextNumber(
+          tx, companyId, pm.fiscalYearId, seq.id, transactionType, counterBranchKey,
+        );
+        if (previous != null) issuedNumber = Math.max(issuedNumber, previous);
+      }
     } else {
       // First issuance into this bucket — compute the seed.
       let seed: number;
@@ -503,11 +568,17 @@ export async function nextSequenceNumber(
         seed = seq.start_number;
         const logMax = await maxIssuedForPeriod(tx, seq.id, renderedPrefix, transactionType);
         if (logMax != null) seed = Math.max(seed, logMax + 1);
+        if (applyFiscalYearPolicy && fiscalYearPolicy === "continue" && pm.fiscalYearId != null) {
+          const previous = await priorFiscalYearNextNumber(
+            tx, companyId, pm.fiscalYearId, seq.id, transactionType, counterBranchKey,
+          );
+          if (previous != null) seed = Math.max(seed, previous);
+        }
         const today = new Date();
         const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
         const todayMatch = await resolveSequencePeriodMatch(tx, companyId, todayIso);
         const todayBucket = `FY-${todayMatch.fiscalYearId ?? `CAL-${todayIso.slice(0, 4)}`}-TX-${transactionType}`;
-        if (todayBucket === fiscalYearBucket) {
+        if (!applyFiscalYearPolicy && todayBucket === fiscalYearBucket) {
           const legacyRows = await tx.execute<{ current_number: number }>(sql`
             SELECT current_number FROM sequence_counters
             WHERE sequence_id = ${seq.id} AND branch_id = ${counterBranchKey} AND period = ''

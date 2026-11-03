@@ -109,6 +109,7 @@ export default function FiscalPeriods() {
   const [closingPeriod, setClosingPeriod] = useState<FiscalPeriod | null>(null);
   const [openingBalanceDifferences, setOpeningBalanceDifferences] = useState<OpeningBalanceDifference[]>([]);
   const [closePreviousOnly, setClosePreviousOnly] = useState(false);
+  const [sequenceNumberingPolicy, setSequenceNumberingPolicy] = useState<"continue" | "reset" | null>(null);
 
   const { data: years = [], isLoading: yearsLoading } = useQuery<FiscalYear[]>({
     queryKey: ["fiscal-years", cid],
@@ -150,7 +151,10 @@ export default function FiscalPeriods() {
       year.status === "open",
     ) ?? null;
   }, [selectedYear, years]);
-  useEffect(() => setClosePreviousOnly(false), [selectedYearId]);
+  useEffect(() => {
+    setClosePreviousOnly(false);
+    setSequenceNumberingPolicy(null);
+  }, [selectedYearId]);
   const openYearForm = () => {
     if (yearPolicy?.mode === "custom" && yearPolicy.startDate && yearPolicy.endDate) {
       setYearForm({
@@ -218,9 +222,15 @@ export default function FiscalPeriods() {
   });
 
   const updateYearStatusMut = useMutation({
-    mutationFn: async ({ id, status, closePreviousOnly: closeOnly = false }: { id: number; status: string; closePreviousOnly?: boolean }) => {
+    mutationFn: async ({ id, status, closePreviousOnly: closeOnly = false, sequenceNumberingPolicy: policy }: {
+      id: number; status: string; closePreviousOnly?: boolean; sequenceNumberingPolicy?: "continue" | "reset" | null;
+    }) => {
       const r = await fetch(`${API}/api/fiscal/years/${id}/status`, {
-        method: "PATCH", headers, body: JSON.stringify({ status, ...(closeOnly ? { closePreviousOnly: true } : {}) }),
+        method: "PATCH", headers, body: JSON.stringify({
+          status,
+          ...(closeOnly ? { closePreviousOnly: true } : {}),
+          ...(!closeOnly && policy ? { sequenceNumberingPolicy: policy } : {}),
+        }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -232,7 +242,9 @@ export default function FiscalPeriods() {
       }
       return data;
     },
-    onSuccess: (d: any, variables: { id: number; status: string; closePreviousOnly?: boolean }) => {
+    onSuccess: (d: any, variables: {
+      id: number; status: string; closePreviousOnly?: boolean; sequenceNumberingPolicy?: "continue" | "reset" | null;
+    }) => {
       setOpeningBalanceDifferences([]);
       if (variables.status === "permanently_closed" && d?.successorYear) {
         if (d.successorUnaffected) {
@@ -480,13 +492,13 @@ export default function FiscalPeriods() {
                             <Unlock className={cn("h-3.5 w-3.5", isRtl ? "ml-1" : "mr-1")} />{t("fiscalPeriods.reopenYear")}
                           </Button>
                           <Button size="sm" variant="outline"
-                            disabled={updateYearStatusMut.isPending}
+                            disabled={updateYearStatusMut.isPending || (!closePreviousOnly && !sequenceNumberingPolicy)}
                             onClick={() => {
                               const approved = window.confirm(
                                 `اعتماد الإقفال النهائي للسنة «${selectedYear.name}»؟\n\n` +
                                 (closePreviousOnly
                                   ? "سيُقفل العام السابق فقط. لن تُنشأ السنة التالية ولن يتم تعديلها أو إعادة ترحيل أرصدتها الافتتاحية. "
-                                  : "سيُعاد فحص القيود والتسويات وأرصدة الإيرادات والمصروفات. عند النجاح ستُفتح السنة التالية تلقائيًا. ") +
+                                  : `سيُعاد فحص القيود والتسويات. عند النجاح ستُفتح السنة التالية مع ${sequenceNumberingPolicy === "continue" ? "استمرار أرقام المسلسلات الداخلية" : "بدء المسلسلات الداخلية من إعداداتها"}. `) +
                                 (closePreviousOnly
                                   ? "لا يمكن التراجع عن الإقفال النهائي إلا بصلاحية استثنائية."
                                   : "الأرصدة تستمر من الحركات السابقة دون إنشاء قيد افتتاحي مكرر. لا يمكن التراجع عن الإقفال النهائي إلا بصلاحية استثنائية.")
@@ -495,6 +507,7 @@ export default function FiscalPeriods() {
                                 id: selectedYear.id,
                                 status: "permanently_closed",
                                 closePreviousOnly,
+                                sequenceNumberingPolicy,
                               });
                             }}
                             className="text-red-700 border-red-300 hover:bg-red-50">
@@ -531,6 +544,30 @@ export default function FiscalPeriods() {
                         </span>
                       </span>
                     </label>
+                  )}
+                  {selectedYear.status === "closed" && !closePreviousOnly && (
+                    <fieldset className="rounded-md border border-violet-200 bg-white p-3">
+                      <legend className="px-1 text-sm font-semibold">
+                        طريقة تسلسل المستندات في السنة التالية
+                      </legend>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <button type="button" aria-pressed={sequenceNumberingPolicy === "continue"}
+                          onClick={() => setSequenceNumberingPolicy("continue")}
+                          className={cn("rounded-md border p-3 text-start text-sm", sequenceNumberingPolicy === "continue" ? "border-violet-500 bg-violet-50 ring-1 ring-violet-300" : "border-slate-200 hover:bg-slate-50")}>
+                          <span className="block font-medium">استمرار التسلسل</span>
+                          <span className="mt-1 block text-xs text-muted-foreground">يكمل كل مسلسل داخلي من آخر رقم سابق.</span>
+                        </button>
+                        <button type="button" aria-pressed={sequenceNumberingPolicy === "reset"}
+                          onClick={() => setSequenceNumberingPolicy("reset")}
+                          className={cn("rounded-md border p-3 text-start text-sm", sequenceNumberingPolicy === "reset" ? "border-violet-500 bg-violet-50 ring-1 ring-violet-300" : "border-slate-200 hover:bg-slate-50")}>
+                          <span className="block font-medium">تصفير التسلسل</span>
+                          <span className="mt-1 block text-xs text-muted-foreground">يبدأ من أرقام البداية المضبوطة للشركة.</span>
+                        </button>
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        يسري الاختيار على المسلسلات الداخلية للسنة التالية فقط. لا يتغير أي رقم سابق أو تسلسل ZATCA و ICV/PIH.
+                      </p>
+                    </fieldset>
                   )}
 
                   {/* Period stats */}

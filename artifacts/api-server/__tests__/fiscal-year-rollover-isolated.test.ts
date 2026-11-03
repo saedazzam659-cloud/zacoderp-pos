@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import http from "node:http";
 import { after, test } from "node:test";
 import bcrypt from "bcryptjs";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, like } from "drizzle-orm";
 import {
   accountsTable,
   auditLogTable,
@@ -16,10 +16,14 @@ import {
   fiscalYearsTable,
   journalEntriesTable,
   journalEntryLinesTable,
+  sequencesTable,
+  sequenceCountersTable,
+  systemSettingsTable,
   pool,
   usersTable,
 } from "@workspace/db";
 import app from "../src/app.ts";
+import { nextSequenceNumber } from "../src/lib/sequences.ts";
 
 const armed = process.env.FISCAL_YEAR_ROLLOVER_TEST === "1";
 after(async () => { await pool.end().catch(() => {}); });
@@ -274,6 +278,9 @@ test("full annual close zeros revenue/expense reports and creates one open succe
         });
       }
       if (companyId != null) {
+        await db.delete(systemSettingsTable)
+          .where(like(systemSettingsTable.key, `fiscal_year_sequence_policy:${companyId}:%`))
+          .catch(() => {});
         await db.delete(auditLogTable).where(eq(auditLogTable.companyId, companyId)).catch(() => {});
         const allEntries = await db.select({ id: journalEntriesTable.id }).from(journalEntriesTable)
           .where(eq(journalEntriesTable.companyId, companyId)).catch(() => []);
@@ -355,6 +362,27 @@ test("existing open successor is reused and mismatched opening balances block ap
         { entryId: openingEntry.id, accountId: accounts[0].id, debit: "90.00", credit: "0", sortOrder: 0 },
         { entryId: openingEntry.id, accountId: accounts[1].id, debit: "0", credit: "90.00", sortOrder: 1 },
       ]);
+      const [purchaseOrderSequence] = await db.insert(sequencesTable).values({
+        companyId, code: `${tag}_po`, nameAr: "مسلسل مشتريات اختبار", prefix: "PO-",
+        startNumber: 1, currentNumber: 1, endNumber: 999999, padLength: 4,
+        isActive: true, monthlyReset: false, annualReset: true,
+        transactionTypes: ["purchase_order"], branchIds: [], fiscalPeriodIds: [],
+      }).returning();
+      await db.insert(sequenceCountersTable).values({
+        sequenceId: purchaseOrderSequence.id,
+        branchId: 0,
+        period: `FY-${priorYear.id}-TX-purchase_order`,
+        currentNumber: 27,
+      });
+      const [salesInvoiceSequence] = await db.insert(sequencesTable).values({
+        companyId, code: `${tag}_sales_invoice`, nameAr: "مسلسل فاتورة اختبار", prefix: "SI-",
+        startNumber: 1, currentNumber: 1, endNumber: 999999, padLength: 4,
+        isActive: true, monthlyReset: false, annualReset: true,
+        transactionTypes: ["sales_invoice"], branchIds: [], fiscalPeriodIds: [],
+      }).returning();
+      await db.insert(sequenceCountersTable).values({
+        sequenceId: salesInvoiceSequence.id, branchId: 0, period: "", currentNumber: 42,
+      });
 
       const [previousOnlyYear] = await db.insert(fiscalYearsTable).values({
         companyId, name: `السنة السابقة فقط ${tag}`, startDate: "2023-01-01", endDate: "2023-12-31", status: "closed",
@@ -405,13 +433,18 @@ test("existing open successor is reused and mismatched opening balances block ap
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("test API server did not bind");
       const baseUrl = `http://127.0.0.1:${address.port}`;
-      const finalize = async (targetYear = priorYear, closePreviousOnly = false) => {
+      const finalize = async (
+        targetYear = priorYear,
+        closePreviousOnly = false,
+        policy?: "continue" | "reset",
+      ) => {
         const response = await fetch(`${baseUrl}/api/fiscal/years/${targetYear.id}/status?companyId=${companyId}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             status: "permanently_closed",
             ...(closePreviousOnly ? { closePreviousOnly: true } : {}),
+            ...(policy ? { sequenceNumberingPolicy: policy } : {}),
           }),
         });
         return { status: response.status, body: await response.json() as any };
@@ -432,11 +465,21 @@ test("existing open successor is reused and mismatched opening balances block ap
         { entryId: openingEntry.id, accountId: accounts[0].id, debit: "100.00", credit: "0", sortOrder: 0 },
         { entryId: openingEntry.id, accountId: accounts[1].id, debit: "0", credit: "100.00", sortOrder: 1 },
       ]);
-      const approved = await finalize();
+      const approved = await finalize(priorYear, false, "continue");
       assert.equal(approved.status, 200, JSON.stringify(approved.body));
       assert.equal(approved.body.successorCreated, false);
       assert.equal(approved.body.successorYear.id, successorYear.id);
       assert.equal(approved.body.openingBalanceReconciliation.status, "matched");
+      const continuedNumber = await nextSequenceNumber(companyId, "purchase_order", {
+        branchId: null,
+        docDate: "2026-02-01",
+      });
+      assert.equal(continuedNumber, "PO-2026-0027");
+      const untouchedSalesNumber = await nextSequenceNumber(companyId, "sales_invoice", {
+        branchId: null,
+        docDate: "2026-02-01",
+      });
+      assert.equal(untouchedSalesNumber, "SI-0042", "sales/ZATCA-facing sequence stays continuous");
 
       assert.equal((await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.companyId, companyId))).length, 4);
       assert.equal((await db.select().from(fiscalPeriodsTable).where(eq(fiscalPeriodsTable.companyId, companyId))).length, 4);

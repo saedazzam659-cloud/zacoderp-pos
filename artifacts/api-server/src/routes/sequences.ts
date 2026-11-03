@@ -14,6 +14,8 @@ import {
   subTypeFor,
   foreignSubTypeFor,
   resolveSequencePeriodMatch,
+  getFiscalYearSequencePolicy,
+  priorFiscalYearNextNumber,
   periodMatchWhereSql,
   periodMatchRankSql,
   journalEntrySequenceHighWater,
@@ -133,6 +135,7 @@ router.get("/peek/:txType", async (req: any, res) => {
   // universal) — MUST mirror nextSequenceNumber so the previewed number
   // matches the one issuance will actually draw.
   const pm = await resolveSequencePeriodMatch(db, cid, dateStr);
+  const fiscalYearPolicy = await getFiscalYearSequencePolicy(db, cid, pm.fiscalYearId);
 
   // Read the company-wide date-source setting (same column the issuance
   // helper consults). When the tenant has switched to "document", the
@@ -181,10 +184,15 @@ router.get("/peek/:txType", async (req: any, res) => {
     // issuance helper:
     //   • monthly_reset OFF → the single continuous "" sentinel row.
     //   • monthly_reset ON  → the per-month "YYYY-MM" row for the previewed date.
-    const monthlyReset  = seq.monthly_reset === true;
-    const annualReset = seq.annual_reset === true && !monthlyReset
-      && !/^(sales_invoice|sales_return)(_|$)/.test(qType);
-    const counterBranchKey = annualReset ? 0 : branchKey;
+    const configuredMonthlyReset = seq.monthly_reset === true;
+    const configuredAnnualReset = seq.annual_reset === true && !configuredMonthlyReset;
+    const protectedZatcaNumber = /^(sales_invoice|sales_return)(_|$)/.test(qType);
+    const applyFiscalYearPolicy = fiscalYearPolicy != null && !protectedZatcaNumber;
+    const monthlyReset = applyFiscalYearPolicy ? false : configuredMonthlyReset;
+    const annualReset = applyFiscalYearPolicy || (configuredAnnualReset && !protectedZatcaNumber);
+    const counterBranchKey = applyFiscalYearPolicy
+      ? (configuredAnnualReset ? 0 : branchKey)
+      : annualReset ? 0 : branchKey;
     const previewPeriod = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, "0")}`;
     const fiscalYearBucket = `FY-${pm.fiscalYearId ?? `CAL-${dateStr.slice(0, 4)}`}-TX-${qType}`;
     const annualYearLabel = pm.fiscalYearLabel ?? dateStr.slice(0, 4);
@@ -208,6 +216,12 @@ router.get("/peek/:txType", async (req: any, res) => {
     if (bucketCurrent != null) {
       // Bucket already exists — preview its running number directly.
       previewNumber = bucketCurrent;
+      if (applyFiscalYearPolicy && fiscalYearPolicy === "continue" && pm.fiscalYearId != null) {
+        const previous = await priorFiscalYearNextNumber(
+          db, cid as number, pm.fiscalYearId as number, seq.id, qType, counterBranchKey,
+        );
+        if (previous != null) previewNumber = Math.max(previewNumber, previous);
+      }
     } else if (monthlyReset) {
       // No counter for this month yet — mirror the helper's seed: start_number,
       // but never below what was already issued this month (logs) nor below a
@@ -245,11 +259,17 @@ router.get("/peek/:txType", async (req: any, res) => {
           AND generated_number LIKE ${escaped + "%"} ESCAPE '\\'
       `);
       let seed = Math.max(seq.start_number, (logRows.rows?.[0]?.mx ?? 0) + (logRows.rows?.[0]?.mx == null ? 0 : 1));
+      if (applyFiscalYearPolicy && fiscalYearPolicy === "continue" && pm.fiscalYearId != null) {
+        const previous = await priorFiscalYearNextNumber(
+          db, cid as number, pm.fiscalYearId as number, seq.id, qType, counterBranchKey,
+        );
+        if (previous != null) seed = Math.max(seed, previous);
+      }
       const today = new Date();
       const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
       const todayMatch = await resolveSequencePeriodMatch(db, cid as number, todayIso);
       const todayBucket = `FY-${todayMatch.fiscalYearId ?? `CAL-${todayIso.slice(0, 4)}`}-TX-${qType}`;
-      if (todayBucket === fiscalYearBucket) {
+      if (!applyFiscalYearPolicy && todayBucket === fiscalYearBucket) {
         const legacy = await db.execute<{ current_number: number | null }>(sql`
           SELECT current_number FROM sequence_counters
           WHERE sequence_id = ${seq.id} AND branch_id = ${counterBranchKey} AND period = ''

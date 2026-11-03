@@ -313,9 +313,13 @@ router.patch("/years/:id/status", async (req, res) => {
     const id = Number(req.params.id);
     const { status } = req.body ?? {};
     const closePreviousOnly = req.body?.closePreviousOnly === true;
+    const sequenceNumberingPolicy = req.body?.sequenceNumberingPolicy;
     if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
     if (!["open", "closed", "permanently_closed"].includes(status)) {
       res.status(400).json({ error: "حالة غير صالحة" }); return;
+    }
+    if (sequenceNumberingPolicy != null && !["continue", "reset"].includes(sequenceNumberingPolicy)) {
+      res.status(400).json({ error: "سياسة تسلسل المستندات غير صالحة" }); return;
     }
 
     const [current] = await db.select().from(fiscalYearsTable)
@@ -701,6 +705,17 @@ router.patch("/years/:id/status", async (req, res) => {
           }
         }
 
+        if (sequenceNumberingPolicy && !closePreviousOnly) {
+          await tx.insert(systemSettingsTable).values({
+            key: `fiscal_year_sequence_policy:${cid}:${nextYear.id}`,
+            value: sequenceNumberingPolicy,
+            updatedAt: new Date(),
+          }).onConflictDoUpdate({
+            target: systemSettingsTable.key,
+            set: { value: sequenceNumberingPolicy, updatedAt: new Date() },
+          });
+        }
+
         const rolloverYear = nextYear;
         await tx.insert(auditLogTable).values({
           userId: (req as any).authUser?.id ?? null,
@@ -727,6 +742,7 @@ router.patch("/years/:id/status", async (req, res) => {
             balanceCarryForward: "prior_posted_ledger_history",
             openingJournalCreated: false,
             openingBalanceReconciliation,
+            sequenceNumberingPolicy: closePreviousOnly ? null : sequenceNumberingPolicy ?? null,
           },
         });
         return [closedYear, {

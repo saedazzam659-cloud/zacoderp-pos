@@ -94,6 +94,8 @@ before(async () => {
     currentNumber:    1,
     padLength:        4,
     isActive:         true,
+    monthlyReset:     false,
+    annualReset:      false,
     transactionTypes: ["sales_invoice"],
   }).returning();
   freshSeqId = freshSeq.id;
@@ -115,6 +117,8 @@ before(async () => {
     currentNumber:    500,
     padLength:        4,
     isActive:         true,
+    monthlyReset:     false,
+    annualReset:      false,
     transactionTypes: ["purchase_invoice"],
   }).returning();
   migratedSeqId = migSeq.id;
