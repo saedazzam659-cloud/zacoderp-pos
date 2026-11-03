@@ -197,7 +197,6 @@ export default function Pricing() {
     <div dir="rtl" className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-muted">
       <Helmet>
         <html lang="ar" dir="rtl" />
-        <title>باقات وأسعار زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA</title>
         <meta name="description" content="باقات زاكود المحاسبي — نظام محاسبة سعودي معتمد من ZATCA: مبتدئ، احترافي، ومؤسسي. أسعار شفافة بالشهر والسنة، فترة تجريبية فورية بدون بطاقة دفع، توقيع رقمي UBL 2.1، نقاط بيع، مخزون، ومحاسبة." />
         <link rel="canonical" href={canonical} />
         <meta name="keywords" content="باقات زاكود, أسعار زاكود المحاسبي, Zacoderp pricing, باقات نظام محاسبة سعودي, أسعار ZATCA, اشتراك فاتورة إلكترونية, خصم سنوي" />
