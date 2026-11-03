@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -30,6 +30,8 @@ import {
   Settings,
   Users,
   RotateCcw,
+  Package2,
+  AlertCircle,
 } from "lucide-react";
 import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
 import PosAiPanel from "@/components/PosAiPanel";
@@ -137,31 +139,9 @@ function imageSrc(item: Item): string | null {
   return imageSrcFromUrl(item.imageUrl);
 }
 
-function emojiFor(item: Item): string {
-  const name = (item.nameAr || "").toLowerCase();
-  if (/قهوة|coffee/.test(name)) return "☕";
-  if (/شاي|tea/.test(name)) return "🍵";
-  if (/خبز|عيش|bread/.test(name)) return "🥖";
-  if (/تمر|date/.test(name)) return "🌴";
-  if (/حليب|milk/.test(name)) return "🥛";
-  if (/ماء|water/.test(name)) return "💧";
-  if (/عصير|juice/.test(name)) return "🧃";
-  if (/أرز|rice/.test(name)) return "🍚";
-  if (/دجاج|chicken/.test(name)) return "🍗";
-  if (/لحم|meat/.test(name)) return "🥩";
-  if (/برج|burger/.test(name)) return "🍔";
-  if (/ساندو/.test(name)) return "🥪";
-  if (/شوكو|chocolate/.test(name)) return "🍫";
-  if (/كيك|cake/.test(name)) return "🍰";
-  if (/فاكهة|fruit/.test(name)) return "🍎";
-  if (/خضار/.test(name)) return "🥦";
-  if (/ملابس|قميص/.test(name)) return "👕";
-  if (/جوال|هاتف/.test(name)) return "📱";
-  return "📦";
-}
-
 export default function CashierPage() {
   const [, navigate] = useLocation();
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
   const [items, setItems] = useState<Item[]>([]);
   const [groups, setGroups] = useState<PosItemGroup[]>([]);
@@ -191,6 +171,7 @@ export default function CashierPage() {
   const [online, setOnline] = useState(
     typeof navigator !== "undefined" ? navigator.onLine : true,
   );
+  const [queuedInvoices, setQueuedInvoices] = useState(0);
   const [time, setTime] = useState(new Date());
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [restaurantOpen, setRestaurantOpen] = useState(false);
@@ -222,11 +203,16 @@ export default function CashierPage() {
     const onO = () => {
       setOnline(true);
       // Auto-sync any queued offline invoices.
-      void syncNow(getToken()).catch(() => {});
+      void syncNow(getToken()).then(() => countQueued()).then(setQueuedInvoices).catch(() => {});
     };
     const onF = () => setOnline(false);
     // On mount, attempt sync if any queued ops exist.
-    void countQueued().then((n) => { if (n > 0 && navigator.onLine) void syncNow(getToken()).catch(() => {}); });
+    void countQueued().then((n) => {
+      setQueuedInvoices(n);
+      if (n > 0 && navigator.onLine) {
+        void syncNow(getToken()).then(() => countQueued()).then(setQueuedInvoices).catch(() => {});
+      }
+    });
     window.addEventListener("online", onO);
     window.addEventListener("offline", onF);
     const t = setInterval(() => setTime(new Date()), 1000);
@@ -620,6 +606,7 @@ export default function CashierPage() {
           // Offline fallback: queue locally and show a soft receipt.
           if (!navigator.onLine || /Failed to fetch|NetworkError|الاتصال/.test(netErr?.message || "")) {
             const op = await enqueueInvoice(invoiceBody as any);
+            void countQueued().then(setQueuedInvoices).catch(() => {});
             setLastInvoice({
               id: 0, docNumber: `OFFLINE-${op.clientId.slice(0, 8)}`,
               invoiceDate: today, totalAmount: String(grandTotal), status: "queued_offline",
@@ -660,37 +647,46 @@ export default function CashierPage() {
   return (
     <div
       dir="rtl"
-      className="h-screen w-full bg-background text-foreground flex flex-col overflow-hidden"
+      className="h-[100dvh] w-full bg-background text-foreground flex flex-col overflow-hidden"
     >
       {/* TOP BAR */}
-      <header className="h-16 border-b border-border bg-card/80 backdrop-blur-xl px-4 lg:px-6 flex items-center justify-between gap-4 sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-chart-2 grid place-items-center shadow-lg shadow-primary/30">
-            <Store className="w-5 h-5 text-primary-foreground" strokeWidth={2.4} />
+      <header className="relative z-30 flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-border/80 bg-card px-3 py-2 shadow-[0_4px_18px_-16px_hsl(var(--foreground)/.4)] sm:px-5 lg:px-7">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-md shadow-primary/20 ring-1 ring-primary/15">
+            <Store className="w-5 h-5" strokeWidth={2.4} />
           </div>
-          <div className="hidden sm:block">
-            <p className="text-sm font-extrabold leading-tight">
-              زاكود <span className="text-primary">POS</span>
+          <div className="hidden min-w-0 sm:block">
+            <p className="truncate text-sm font-black leading-tight tracking-tight">
+              زاكود <span className="text-primary">نقاط البيع</span>
             </p>
-            <p className="text-[10px] text-muted-foreground leading-tight">
-              {branchName} • {user?.company?.nameAr || ""}
+            <p className="mt-0.5 max-w-48 truncate text-[10px] leading-tight text-muted-foreground">
+              {branchName} <span aria-hidden="true">·</span> {user?.company?.nameAr || ""}
             </p>
           </div>
         </div>
 
-        <div className="flex-1 max-w-xs">
+        <div className="min-w-0 flex-1 sm:max-w-md lg:max-w-lg">
           <div className="relative">
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
+              ref={searchInputRef}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="ابحث باسم المنتج أو الباركود..."
-              className="h-10 pr-10 pl-12 text-sm font-medium rounded-xl"
+              aria-label="البحث عن منتج بالاسم أو الرمز أو الباركود"
+              data-testid="input-pos-product-search"
+              className="h-11 rounded-xl border-border/80 bg-background pr-10 pl-12 text-sm font-medium shadow-inner shadow-foreground/[0.02] focus-visible:ring-primary/25"
             />
             <button
               type="button"
               title="مسح الباركود"
-              className="absolute left-1.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg bg-muted text-foreground grid place-items-center hover-elevate active-elevate-2"
+              aria-label="تفعيل حقل البحث لمسح الباركود"
+              data-testid="button-focus-barcode-search"
+              onClick={() => {
+                searchInputRef.current?.focus();
+                searchInputRef.current?.select();
+              }}
+              className="absolute left-1 top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               <ScanBarcode className="w-4 h-4" />
             </button>
@@ -699,7 +695,10 @@ export default function CashierPage() {
 
         <div className="flex items-center gap-2">
           <div
-            className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] font-bold border ${
+            role="status"
+            data-testid="status-pos-connection"
+            title={online ? "نقطة البيع متصلة بالإنترنت" : "نقطة البيع تعمل دون اتصال"}
+            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-1.5 text-[10px] font-bold sm:px-2.5 sm:text-[11px] ${
               online
                 ? "bg-primary/10 text-primary border-primary/20"
                 : "bg-destructive/10 text-destructive border-destructive/20"
@@ -710,13 +709,20 @@ export default function CashierPage() {
             ) : (
               <WifiOff className="w-3 h-3" />
             )}
-            {online ? "متصل" : "دون اتصال"}
+            <span className="hidden sm:inline">{online ? "متصل" : "دون اتصال"}</span>
+            {queuedInvoices > 0 && (
+              <span className="inline-flex items-center gap-1 border-r border-current/20 pr-1.5 sm:pr-2" data-testid="status-pos-queued-invoices">
+                <Receipt className="size-3" />
+                {queuedInvoices}
+              </span>
+            )}
           </div>
           <div className="hidden lg:flex items-center gap-2 text-xs font-semibold text-muted-foreground font-mono px-2.5 py-1.5 rounded-full bg-muted">
             {timeStr}
           </div>
           <button
             title={user?.username || "حساب"}
+            aria-label={`حساب المستخدم ${user?.username || ""}`}
             className="w-10 h-10 rounded-xl border border-border bg-card grid place-items-center hover-elevate active-elevate-2"
           >
             <UserIcon className="w-4 h-4" />
@@ -741,7 +747,7 @@ export default function CashierPage() {
               <button
                 onClick={() => navigate("/waiter")}
                 title="تطبيق النادل (الطاولات)"
-                className="h-10 px-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden md:flex"
+                className="h-10 px-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
                 data-testid="svc-waiter"
               >
                 <Users className="w-4 h-4" /> النادل
@@ -749,7 +755,7 @@ export default function CashierPage() {
               <button
                 onClick={() => setRestaurantOpen(true)}
                 title="طلبات الصالة (المطعم)"
-                className="h-10 px-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden md:flex"
+                className="h-10 px-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
                 data-testid="svc-waiter-orders"
               >
                 <ChefHat className="w-4 h-4" /> طلبات الصالة
@@ -760,7 +766,7 @@ export default function CashierPage() {
             <button
               onClick={() => navigate("/kitchen")}
               title="شاشة المطبخ"
-              className="h-10 px-3 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden md:flex"
+              className="h-10 px-3 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
               data-testid="svc-kitchen"
             >
               <CookingPot className="w-4 h-4" /> المطبخ
@@ -770,7 +776,7 @@ export default function CashierPage() {
             <button
               onClick={() => navigate("/restaurant-ai")}
               title="تحليلات الذكاء الاصطناعي"
-              className="h-10 px-3 rounded-xl border border-violet-300 bg-violet-50 text-violet-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden md:flex"
+              className="h-10 px-3 rounded-xl border border-violet-300 bg-violet-50 text-violet-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
               data-testid="svc-analytics"
             >
               <Sparkles className="w-4 h-4" /> الذكاء
@@ -780,7 +786,7 @@ export default function CashierPage() {
             <button
               onClick={() => navigate("/restaurant-settings")}
               title="إعدادات المطعم"
-              className="w-10 h-10 rounded-xl border border-border bg-card grid place-items-center hover-elevate active-elevate-2 hidden md:flex"
+              className="w-10 h-10 rounded-xl border border-border bg-card grid place-items-center hover-elevate active-elevate-2 hidden xl:flex"
               data-testid="svc-settings"
             >
               <Settings className="w-4 h-4" />
@@ -790,10 +796,10 @@ export default function CashierPage() {
             <button
               onClick={() => navigate("/super")}
               title="نمط سوبر ماركت"
-              className="h-10 px-3 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-semibold grid place-items-center hover-elevate active-elevate-2 hidden md:flex"
+              className="h-10 px-3 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-semibold grid place-items-center hover-elevate active-elevate-2 hidden xl:flex"
               data-testid="svc-supermarket"
             >
-              🛒 سوبر ماركت
+              سوبر ماركت
             </button>
           )}
           <button
@@ -804,8 +810,11 @@ export default function CashierPage() {
             <LogOut className="w-4 h-4" />
           </button>
           <button
+            type="button"
             onClick={() => setMobileCartOpen(true)}
-            className="lg:hidden relative w-10 h-10 rounded-xl border border-border bg-card grid place-items-center hover-elevate active-elevate-2"
+            aria-label={`فتح السلة، ${itemCount} صنف`}
+            data-testid="button-open-mobile-cart"
+            className="lg:hidden relative grid size-10 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10"
           >
             <ShoppingBag className="w-4 h-4" />
             {itemCount > 0 && (
@@ -817,12 +826,53 @@ export default function CashierPage() {
         </div>
       </header>
 
+      {(canShowService("waiter") || canShowService("kitchen") || canShowService("supermarket")) && (
+        <nav aria-label="اختصارات التشغيل" className="flex shrink-0 gap-2 overflow-x-auto border-b border-border/70 bg-card/70 px-3 py-2 xl:hidden">
+          {canShowService("waiter") && (
+            <>
+              <button type="button" onClick={() => navigate("/waiter")} title="تطبيق النادل والطاولات" data-testid="svc-waiter-mobile"
+                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-primary/15 bg-primary/[0.06] px-3 text-xs font-bold text-primary">
+                <Users className="size-4" /> النادل والطاولات
+              </button>
+              <button type="button" onClick={() => setRestaurantOpen(true)} title="طلبات الصالة" data-testid="svc-waiter-orders-mobile"
+                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-background px-3 text-xs font-bold">
+                <ChefHat className="size-4" /> طلبات الصالة
+              </button>
+            </>
+          )}
+          {canShowService("kitchen") && (
+            <button type="button" onClick={() => navigate("/kitchen")} title="شاشة المطبخ" data-testid="svc-kitchen-mobile"
+              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 text-xs font-bold text-rose-800">
+              <CookingPot className="size-4" /> المطبخ
+            </button>
+          )}
+          {canShowService("supermarket") && (
+            <button type="button" onClick={() => navigate("/super")} title="نمط سوبر ماركت" data-testid="svc-supermarket-mobile"
+              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-800">
+              <ShoppingBag className="size-4" /> سوبر ماركت
+            </button>
+          )}
+        </nav>
+      )}
+
       <div className="flex-1 grid lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem] 2xl:grid-cols-[minmax(0,1fr)_32rem] min-h-0">
         {/* LEFT — products */}
         <section className="flex flex-col min-h-0 min-w-0">
           {/* Categories */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-background/80 px-4 py-3 lg:px-6">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-primary">نقطة البيع</p>
+              <h1 className="mt-0.5 truncate text-base font-black tracking-tight sm:text-lg">الأصناف</h1>
+            </div>
+            <div className="hidden shrink-0 items-center gap-2 text-xs text-muted-foreground sm:flex">
+              <span className="rounded-full border border-border bg-card px-3 py-1.5 font-semibold">{filtered.length} منتج</span>
+              <span className="text-border">|</span>
+              <span className="font-semibold">{branchName}</span>
+            </div>
+          </div>
+
           {categories.length > 1 && (
-            <div className="px-4 lg:px-6 py-3 border-b border-border overflow-x-auto">
+            <div className="shrink-0 overflow-x-auto border-b border-border/70 bg-card/60 px-4 py-3 lg:px-6">
               <div className="flex items-center gap-2 min-w-max">
                 {categories.map((c) => {
                   const active = activeCat === c.id;
@@ -832,10 +882,10 @@ export default function CashierPage() {
                       onClick={() => { setActiveCat(c.id as any); setActiveSubgroup("all"); }}
                       aria-pressed={active}
                       data-testid={`button-pos-display-group-${String(c.id)}`}
-                      className={`flex items-center gap-2 px-4 h-11 rounded-xl border font-bold text-sm whitespace-nowrap transition-all hover-elevate active-elevate-2 ${
+                      className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-bold whitespace-nowrap transition-colors ${
                         active
-                          ? "bg-primary text-primary-foreground border-primary shadow-md shadow-primary/25"
-                          : "bg-card border-border text-foreground"
+                          ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                          : "border-border/80 bg-background text-foreground hover:border-primary/30 hover:bg-primary/[0.04]"
                       }`}
                     >
                       {c.id !== "all" && (imageSrcFromUrl(c.imageUrl) ? (
@@ -861,17 +911,17 @@ export default function CashierPage() {
           )}
 
           {availableSubgroups.length > 0 && (
-            <div className="border-b border-border px-4 py-2 lg:px-6">
+            <div className="shrink-0 border-b border-border/70 bg-background px-4 py-2 lg:px-6">
               <div className="flex items-center gap-2 overflow-x-auto">
                 <span className="shrink-0 text-xs font-bold text-muted-foreground">المجموعات الفرعية</span>
                 <button type="button" data-testid="button-pos-subgroup-all" aria-pressed={activeSubgroup === "all"}
                   onClick={() => setActiveSubgroup("all")}
-                  className={`flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-semibold ${activeSubgroup === "all" ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card"}`}>
+                  className={`flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-colors ${activeSubgroup === "all" ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:border-primary/30"}`}>
                   الكل
                 </button>
                 {availableSubgroups.map((group) => <button type="button" key={group.id} data-testid={`button-pos-subgroup-${group.id}`}
                   aria-pressed={activeSubgroup === group.id} onClick={() => setActiveSubgroup(group.id)}
-                  className={`flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-semibold ${activeSubgroup === group.id ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card"}`}>
+                  className={`flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-colors ${activeSubgroup === group.id ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:border-primary/30"}`}>
                   {group.imageUrl && <img src={imageSrcFromUrl(group.imageUrl) ?? undefined} alt="" className="h-6 w-6 rounded object-cover" loading="lazy" />}
                   <span>{group.nameAr}</span>
                 </button>)}
@@ -880,18 +930,21 @@ export default function CashierPage() {
           )}
 
           {/* Products grid */}
-          <div className="flex-1 overflow-y-auto p-4 lg:p-6">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
             {loading ? (
-              <div className="h-full grid place-items-center text-muted-foreground py-20">
-                <div className="text-center">
-                  <Loader2 className="w-8 h-8 mx-auto animate-spin text-primary mb-2" />
-                  <p className="font-bold">جاري تحميل المنتجات...</p>
-                </div>
+              <div role="status" aria-label="جاري تحميل المنتجات" className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                {Array.from({ length: 10 }, (_, index) => (
+                  <div key={index} className="animate-pulse rounded-2xl border border-border/70 bg-card p-3">
+                    <div className="aspect-square rounded-xl bg-muted" />
+                    <div className="mt-3 h-4 w-3/4 rounded bg-muted" />
+                    <div className="mt-2 h-3 w-1/3 rounded bg-muted" />
+                  </div>
+                ))}
               </div>
             ) : loadError ? (
               <div className="h-full grid place-items-center text-center py-20">
                 <div className="max-w-md">
-                  <div className="text-5xl mb-3">⚠️</div>
+                  <AlertCircle className="mx-auto mb-3 size-10 text-destructive" />
                   <p className="font-bold text-destructive">{loadError}</p>
                   {(user?.role === "superadmin" || !user?.companyId) && (
                     <p className="text-sm text-muted-foreground mt-3">
@@ -922,7 +975,7 @@ export default function CashierPage() {
             ) : filtered.length === 0 ? (
               <div className="h-full grid place-items-center text-center text-muted-foreground py-20">
                 <div>
-                  <div className="text-5xl mb-3">🔍</div>
+                  <Search className="mx-auto mb-3 size-9 text-primary/60" />
                   <p className="font-bold">
                     {items.length === 0
                       ? "لا توجد أصناف معرّفة بعد"
@@ -936,7 +989,7 @@ export default function CashierPage() {
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {filtered.map((p) => {
                   const inCart = cart.find((l) => l.item.id === p.id);
                   return (
@@ -945,32 +998,39 @@ export default function CashierPage() {
                       layout
                       whileTap={{ scale: 0.97 }}
                       onClick={() => addToCart(p)}
-                      className={`relative text-right rounded-2xl border bg-card p-3 hover-elevate active-elevate-2 transition-all ${
+                      aria-label={`إضافة ${p.nameAr} إلى السلة، ${formatSAR(Number(p.salePrice))} ريال`}
+                      data-testid={`button-add-product-${p.id}`}
+                      className={`group relative min-w-0 rounded-2xl border bg-card p-2.5 text-right shadow-[0_5px_18px_-16px_hsl(var(--foreground)/.35)] transition-all sm:p-3 ${
                         inCart
-                          ? "border-primary ring-2 ring-primary/20"
-                          : "border-card-border"
+                          ? "border-primary ring-2 ring-primary/15"
+                          : "border-card-border hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md"
                       }`}
                     >
                       {inCart && (
-                        <div className="absolute top-2 left-2 min-w-6 h-6 px-1.5 rounded-full bg-primary text-primary-foreground text-[11px] font-black grid place-items-center shadow">
+                        <div className="absolute left-2 top-2 z-10 grid h-7 min-w-7 place-items-center rounded-full bg-primary px-1.5 text-[11px] font-black text-primary-foreground shadow-md ring-2 ring-card">
                           {inCart.qty}
                         </div>
                       )}
-                      <div className="aspect-square rounded-xl bg-gradient-to-br from-muted to-muted/30 grid place-items-center text-5xl mb-2 overflow-hidden">
+                      <div className="relative mb-2 aspect-[1.12/1] overflow-hidden rounded-xl bg-gradient-to-br from-primary/[0.09] via-muted to-chart-2/[0.08]">
                         {imageSrc(p) ? (
-                          <img src={imageSrc(p)!} alt="" className="w-full h-full object-cover" />
+                          <img src={imageSrc(p)!} alt="" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
                         ) : (
-                          emojiFor(p)
+                          <div className="grid h-full w-full place-items-center text-primary/65">
+                            <Package2 className="size-9 stroke-[1.5]" aria-hidden="true" />
+                          </div>
                         )}
+                        <span className="absolute bottom-2 left-2 grid size-7 place-items-center rounded-lg border border-white/60 bg-card/90 text-[10px] font-black text-primary shadow-sm">
+                          {(p.nameAr || "ص").slice(0, 1)}
+                        </span>
                       </div>
-                      <p className="font-bold text-sm leading-snug line-clamp-2 min-h-[2.5rem]">
+                      <p className="min-h-[2.5rem] text-sm font-extrabold leading-snug line-clamp-2">
                         {p.nameAr}
                       </p>
-                      <div className="mt-2 flex items-baseline justify-between gap-1">
+                      <div className="mt-2 flex items-baseline justify-between gap-1 border-t border-border/60 pt-2">
                         <span className="text-[10px] text-muted-foreground font-mono">
                           {p.code}
                         </span>
-                        <span className="text-base font-black text-primary">
+                        <span className="text-sm font-black tabular-nums text-primary sm:text-base">
                           {formatSAR(Number(p.salePrice))}
                           <span className="text-[10px] text-muted-foreground font-bold mr-0.5">
                             ر.س
@@ -986,7 +1046,7 @@ export default function CashierPage() {
         </section>
 
         {/* RIGHT — cart panel (desktop) */}
-        <aside className="hidden lg:flex min-h-0 min-w-0 flex-col border-r border-border bg-card/60 backdrop-blur-xl">
+        <aside className="hidden min-h-0 min-w-0 flex-col border-r border-border/80 bg-card lg:flex">
           <CartPanel
             cart={cart}
             updateQty={updateQty}
@@ -1028,10 +1088,13 @@ export default function CashierPage() {
               transition={{ type: "spring", damping: 25, stiffness: 250 }}
               className="fixed inset-y-0 right-0 w-full max-w-md min-h-0 bg-card z-50 flex flex-col lg:hidden"
             >
-              <div className="h-14 px-4 border-b border-border flex items-center justify-between">
+              <div className="h-14 shrink-0 border-b border-border px-4 flex items-center justify-between">
                 <p className="font-extrabold">السلة</p>
                 <button
+                  type="button"
                   onClick={() => setMobileCartOpen(false)}
+                  aria-label="إغلاق السلة"
+                  data-testid="button-close-mobile-cart"
                   className="w-9 h-9 rounded-lg grid place-items-center hover-elevate active-elevate-2"
                 >
                   <X className="w-5 h-5" />
@@ -1346,11 +1409,11 @@ function CartPanel(props: {
   return (
     <>
       {/* Header */}
-      <div className="shrink-0 px-3 py-2 border-b border-border flex items-center justify-between">
+      <div className="shrink-0 border-b border-border/80 bg-card px-4 py-3 flex items-center justify-between">
         <div>
-          <p className="text-sm font-extrabold">فاتورة جديدة</p>
-          <p className="text-[11px] text-muted-foreground">
-            {itemCount} صنف
+          <p className="text-sm font-black">السلة الحالية</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {itemCount} صنف في الفاتورة
           </p>
         </div>
         <div className="flex items-center gap-1.5">
@@ -1366,10 +1429,9 @@ function CartPanel(props: {
               مرتجع
             </button>
           )}
-          <button className="px-2.5 h-8 rounded-lg border border-border bg-card text-xs font-bold inline-flex items-center gap-1 hover-elevate active-elevate-2">
-            <UserIcon className="w-3 h-3" />
-            عميل
-          </button>
+          <span className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-muted/70 px-2.5 text-[10px] font-bold text-muted-foreground">
+            <Receipt className="size-3.5" /> بيع مباشر
+          </span>
         </div>
       </div>
 
@@ -1378,11 +1440,11 @@ function CartPanel(props: {
         {cart.length === 0 ? (
           <div className="h-full grid place-items-center text-center text-muted-foreground p-6">
             <div>
-              <div className="w-16 h-16 mx-auto rounded-2xl bg-muted grid place-items-center text-3xl mb-3">
-                🛒
+              <div className="mb-3 grid size-16 place-items-center rounded-2xl border border-primary/10 bg-primary/[0.06] text-primary">
+                <ShoppingBag className="size-7" strokeWidth={1.7} />
               </div>
-              <p className="font-bold text-sm">السلة فارغة</p>
-              <p className="text-xs mt-1">اضغط على المنتج لإضافته</p>
+              <p className="text-sm font-extrabold text-foreground">ابدأ الفاتورة بإضافة صنف</p>
+              <p className="mt-1 text-xs">اختر من القائمة أو امسح الباركود</p>
             </div>
           </div>
         ) : (
@@ -1395,10 +1457,14 @@ function CartPanel(props: {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, x: 30 }}
-                  className="rounded-xl bg-card border border-border p-2 flex items-center gap-2"
+                  className="flex items-center gap-2 rounded-xl border border-border/80 bg-card p-2 shadow-[0_3px_12px_-12px_hsl(var(--foreground)/.5)]"
                 >
-                  <div className="w-9 h-9 rounded-lg bg-muted grid place-items-center text-lg shrink-0">
-                    {emojiFor(l.item)}
+                  <div className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-primary/[0.06] text-primary">
+                    {imageSrc(l.item) ? (
+                      <img src={imageSrc(l.item)!} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <Package2 className="size-5" />
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold leading-tight line-clamp-1">
@@ -1412,8 +1478,10 @@ function CartPanel(props: {
                       <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
                         <button
                           onClick={() => updateQty(l.item.id, -1)}
-                          className="w-7 h-7 rounded-md grid place-items-center hover-elevate active-elevate-2"
+                          type="button"
+                          className="grid size-8 place-items-center rounded-lg hover:bg-card hover:text-primary"
                           aria-label="إنقاص"
+                          data-testid={`button-decrease-quantity-${l.item.id}`}
                         >
                           <Minus className="w-3.5 h-3.5" />
                         </button>
@@ -1422,8 +1490,10 @@ function CartPanel(props: {
                         </span>
                         <button
                           onClick={() => updateQty(l.item.id, 1)}
-                          className="w-7 h-7 rounded-md grid place-items-center hover-elevate active-elevate-2"
+                          type="button"
+                          className="grid size-8 place-items-center rounded-lg hover:bg-card hover:text-primary"
                           aria-label="زيادة"
+                          data-testid={`button-increase-quantity-${l.item.id}`}
                         >
                           <Plus className="w-3.5 h-3.5" />
                         </button>
@@ -1438,8 +1508,10 @@ function CartPanel(props: {
                   </div>
                   <button
                     onClick={() => removeLine(l.item.id)}
-                    className="w-7 h-7 rounded-md grid place-items-center text-muted-foreground hover:text-destructive hover-elevate active-elevate-2"
+                    type="button"
+                    className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     aria-label="حذف"
+                    data-testid={`button-remove-cart-line-${l.item.id}`}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -1451,7 +1523,7 @@ function CartPanel(props: {
       </div>
 
       {/* Totals + Pay */}
-      <div className="shrink-0 border-t border-border bg-gradient-to-b from-card to-muted/30 p-3 space-y-2">
+      <div className="shrink-0 space-y-2.5 border-t border-border/80 bg-background p-3 sm:p-4">
         {submitError && (
           <div className="max-h-12 overflow-y-auto text-xs font-semibold text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
             {submitError}
@@ -1472,7 +1544,9 @@ function CartPanel(props: {
                 setDiscountPct(Math.max(0, Math.min(100, +e.target.value || 0)))
               }
               placeholder="0"
-              className="flex-1 bg-transparent outline-none text-sm font-bold text-end"
+              aria-label="نسبة الخصم"
+              data-testid="input-pos-discount"
+              className="flex-1 bg-transparent text-end text-sm font-bold outline-none"
             />
             <span className="text-xs text-muted-foreground">%</span>
           </div>
@@ -1504,10 +1578,10 @@ function CartPanel(props: {
             <span className="text-muted-foreground">ضريبة القيمة المضافة 15%</span>
             <span className="font-bold">{formatSAR(vatAmount)} ر.س</span>
           </div>
-          <div className="h-px bg-border my-2" />
-          <div className="flex items-center justify-between">
+          <div className="my-2 h-px bg-border" />
+          <div className="flex items-center justify-between rounded-xl bg-primary/[0.055] px-3 py-2">
             <span className="font-extrabold">الإجمالي</span>
-            <span className="text-xl font-black text-primary tabular-nums">
+            <span className="text-xl font-black tabular-nums text-primary">
               {formatSAR(grandTotal)}
               <span className="text-sm text-muted-foreground font-bold mr-1">ر.س</span>
             </span>
@@ -1560,7 +1634,7 @@ function CartPanel(props: {
           onClick={() => pay("cash")}
           data-testid="button-complete-cash"
           title={!methods.cash ? "اربط صندوقاً نقدياً من إعدادات نقاط البيع." : undefined}
-          className="w-full h-11 py-2 text-sm font-extrabold rounded-xl bg-gradient-to-l from-primary via-primary to-chart-2 text-primary-foreground pos-glow disabled:opacity-50 disabled:pos-glow-none"
+          className="w-full h-12 rounded-xl bg-primary text-sm font-extrabold text-primary-foreground shadow-md shadow-primary/15 hover:bg-primary/95 disabled:opacity-50"
         >
           <span className="inline-flex items-center gap-2">
             {submitting ? (
@@ -1605,7 +1679,7 @@ function PayButton({
       disabled={disabled}
       aria-label={disabledReason ? `${label}، ${disabledReason}` : label}
       title={disabledReason || (disabled ? "أضف صنفاً إلى السلة لتفعيل الدفع." : undefined)}
-      className="h-10 min-w-0 rounded-xl border border-border bg-card px-1 font-bold text-xs inline-flex items-center justify-center gap-1 disabled:opacity-40 hover-elevate active-elevate-2"
+      className="h-11 min-w-0 rounded-xl border border-border bg-card px-1 text-xs font-bold transition-colors hover:border-primary/30 hover:bg-primary/[0.04] disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-card"
     >
       <span className="flex flex-col items-center leading-none">
         <span className="inline-flex items-center gap-1">
@@ -1715,7 +1789,7 @@ function ReceiptModal(props: {
         <div className="p-6 space-y-3">
           {warning && (
             <div className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 dark:text-amber-200 dark:bg-amber-900/30 dark:border-amber-800/50">
-              ⚠ {warning}
+              <span className="inline-flex items-start gap-1.5"><AlertCircle className="mt-0.5 size-3.5 shrink-0" />{warning}</span>
             </div>
           )}
           <div className="text-center">
