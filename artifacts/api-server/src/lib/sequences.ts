@@ -501,7 +501,7 @@ export async function nextSequenceNumber(
         // when annual numbering is first enabled, adopt the old continuous
         // counter so an in-progress year never reissues an already-used number.
         seed = seq.start_number;
-        const logMax = await maxIssuedForPeriod(tx, seq.id, renderedPrefix);
+        const logMax = await maxIssuedForPeriod(tx, seq.id, renderedPrefix, transactionType);
         if (logMax != null) seed = Math.max(seed, logMax + 1);
         const today = new Date();
         const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
