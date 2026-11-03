@@ -99,6 +99,7 @@ export async function seedNewCompanyDefaults(
         padLength: 5,
         isActive: true,
         monthlyReset: false,
+        annualReset: true,
         applySourcePrefixes: false,
         branchIds: [],
         fiscalPeriodIds: [],

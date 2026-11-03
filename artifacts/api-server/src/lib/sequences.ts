@@ -97,10 +97,18 @@ function renderMonthPattern(pattern: string | null | undefined, now: Date = new 
     .replace(/\{YY\}/g,   YY);
 }
 
-function format(prefix: string, n: number, padLength: number, monthPattern: string | null | undefined, effectiveDate: Date): string {
+function format(
+  prefix: string,
+  n: number,
+  padLength: number,
+  monthPattern: string | null | undefined,
+  effectiveDate: Date,
+  annualYear?: string | null,
+): string {
   const padded = padLength > 0 ? String(n).padStart(padLength, "0") : String(n);
   const month  = renderMonthPattern(monthPattern, effectiveDate);
-  return `${prefix ?? ""}${month}${padded}`;
+  const year = annualYear ? `${annualYear}-` : "";
+  return `${prefix ?? ""}${year}${month}${padded}`;
 }
 
 /** Permanent, additive uniqueness registry for newly allocated JE numbers.
@@ -164,6 +172,8 @@ function escapeLike(s: string): string {
 export interface SequencePeriodMatch {
   periodId: number | null;
   yearPeriodIds: number[];
+  fiscalYearId: number | null;
+  fiscalYearLabel: string | null;
 }
 
 /** Resolve the exact period + all same-year period ids for `dateStr`
@@ -174,14 +184,17 @@ export async function resolveSequencePeriodMatch(
   dateStr: string,
 ): Promise<SequencePeriodMatch> {
   const periodRows = await exec.execute(sql`
-    SELECT id FROM fiscal_periods
-    WHERE company_id = ${companyId}
-      AND start_date <= ${dateStr}
-      AND end_date   >= ${dateStr}
-    ORDER BY id ASC
+    SELECT fp.id, fp.fiscal_year_id, fy.start_date AS fiscal_year_start
+    FROM fiscal_periods fp
+    JOIN fiscal_years fy ON fy.id = fp.fiscal_year_id AND fy.company_id = fp.company_id
+    WHERE fp.company_id = ${companyId}
+      AND fp.start_date <= ${dateStr}
+      AND fp.end_date   >= ${dateStr}
+    ORDER BY fp.id ASC
     LIMIT 1
   `);
-  const periodId = periodRows.rows?.[0]?.id ?? null;
+  const exact = periodRows.rows?.[0] as { id?: number; fiscal_year_id?: number; fiscal_year_start?: string } | undefined;
+  const periodId = exact?.id ?? null;
   const year = String(dateStr).slice(0, 4);
   const yearRows = /^\d{4}$/.test(year)
     ? await exec.execute(sql`
@@ -195,6 +208,10 @@ export async function resolveSequencePeriodMatch(
   return {
     periodId,
     yearPeriodIds: (yearRows.rows ?? []).map(r => Number(r.id)).filter(n => Number.isInteger(n) && n > 0),
+    fiscalYearId: exact?.fiscal_year_id == null ? null : Number(exact.fiscal_year_id),
+    fiscalYearLabel: exact?.fiscal_year_start
+      ? String(exact.fiscal_year_start).slice(0, 4)
+      : null,
   };
 }
 
@@ -245,13 +262,16 @@ async function maxIssuedForPeriod(
   exec: { execute: (q: any) => Promise<{ rows?: Array<{ mx: number | null }> }> },
   sequenceId: number,
   renderedPrefix: string,
+  transactionType?: string,
 ): Promise<number | null> {
   const like = `${escapeLike(renderedPrefix)}%`;
+  const typeWhere = transactionType == null ? sql`` : sql`AND transaction_type = ${transactionType}`;
   const r = await exec.execute(sql`
     SELECT MAX((regexp_match(generated_number, '(\\d+)$'))[1]::int) AS mx
     FROM sequence_logs
     WHERE sequence_id = ${sequenceId}
       AND generated_number LIKE ${like} ESCAPE '\\'
+      ${typeWhere}
   `);
   return r.rows?.[0]?.mx ?? null;
 }
@@ -371,9 +391,9 @@ export async function nextSequenceNumber(
     const seqRows = await tx.execute<{
       id: number; prefix: string; start_number: number; current_number: number;
       end_number: number; pad_length: number; code: string; month_pattern: string | null;
-      monthly_reset: boolean;
+      monthly_reset: boolean; annual_reset: boolean;
     }>(sql`
-      SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern, monthly_reset
+      SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern, monthly_reset, annual_reset
       FROM sequences
       WHERE company_id = ${companyId}
         AND is_active = true
@@ -396,10 +416,21 @@ export async function nextSequenceNumber(
     //        month is an independent stream that out-of-order / backdated entry
     //        can never disturb.
     const monthlyReset  = seq.monthly_reset === true;
+    // The sales invoice/return identifiers are part of the electronic
+    // issuance stream in Saudi companies. Keep those visible identifiers
+    // continuous as well as preserving their separate ICV/PIH chain.
+    const annualReset = seq.annual_reset === true && !monthlyReset
+      && !/^(sales_invoice|sales_return)(_|$)/.test(transactionType);
+    // Annual identifiers are unique company-wide, not separately per branch.
+    const counterBranchKey = annualReset ? 0 : branchKey;
     const currentPeriod = periodKey(effectiveDate);          // "YYYY-MM"
-    const counterPeriod = monthlyReset ? currentPeriod : ""; // bucket key
+    const fiscalYearBucket = `FY-${pm.fiscalYearId ?? `CAL-${periodDateStr.slice(0, 4)}`}-TX-${transactionType}`;
+    const annualYearLabel = pm.fiscalYearLabel ?? periodDateStr.slice(0, 4);
+    const counterPeriod = monthlyReset
+      ? currentPeriod
+      : annualReset ? fiscalYearBucket : ""; // bucket key
     const effectivePrefix = ctx.prefixOverride != null ? ctx.prefixOverride : (seq.prefix ?? "");
-    const renderedPrefix = `${effectivePrefix}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
+    const renderedPrefix = `${effectivePrefix}${annualReset ? `${annualYearLabel}-` : ""}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
     const journalEntryHighWater = ctx.refTable === "journal_entries"
       ? await journalEntrySequenceHighWater(
           tx,
@@ -416,7 +447,7 @@ export async function nextSequenceNumber(
     const counterRows = await tx.execute<{ id: number; current_number: number }>(sql`
       SELECT id, current_number
       FROM sequence_counters
-      WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ${counterPeriod}
+      WHERE sequence_id = ${seq.id} AND branch_id = ${counterBranchKey} AND period = ${counterPeriod}
       FOR UPDATE
     `);
 
@@ -440,7 +471,7 @@ export async function nextSequenceNumber(
         // being adopted on a monthly_reset toggle (see below).
         seed = seq.start_number;
 
-        const logMax = await maxIssuedForPeriod(tx, seq.id, renderedPrefix);
+        const logMax = await maxIssuedForPeriod(tx, seq.id, renderedPrefix, transactionType);
         if (logMax != null) seed = Math.max(seed, logMax + 1);
         if (journalEntryHighWater != null) seed = Math.max(seed, journalEntryHighWater.number + 1);
 
@@ -453,7 +484,7 @@ export async function nextSequenceNumber(
         const legacyRows = await tx.execute<{ id: number; current_number: number; last_period: string | null }>(sql`
           SELECT id, current_number, last_period
           FROM sequence_counters
-          WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ''
+            WHERE sequence_id = ${seq.id} AND branch_id = ${counterBranchKey} AND period = ''
           FOR UPDATE
         `);
         const legacy = legacyRows.rows?.[0];
@@ -464,6 +495,25 @@ export async function nextSequenceNumber(
             SET last_period = ${counterPeriod}, updated_at = NOW()
             WHERE id = ${legacy.id}
           `);
+        }
+      } else if (annualReset) {
+        // New fiscal years start at start_number. For the fiscal year active
+        // when annual numbering is first enabled, adopt the old continuous
+        // counter so an in-progress year never reissues an already-used number.
+        seed = seq.start_number;
+        const logMax = await maxIssuedForPeriod(tx, seq.id, renderedPrefix);
+        if (logMax != null) seed = Math.max(seed, logMax + 1);
+        const today = new Date();
+        const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+        const todayMatch = await resolveSequencePeriodMatch(tx, companyId, todayIso);
+        const todayBucket = `FY-${todayMatch.fiscalYearId ?? `CAL-${todayIso.slice(0, 4)}`}-TX-${transactionType}`;
+        if (todayBucket === fiscalYearBucket) {
+          const legacyRows = await tx.execute<{ current_number: number }>(sql`
+            SELECT current_number FROM sequence_counters
+            WHERE sequence_id = ${seq.id} AND branch_id = ${counterBranchKey} AND period = ''
+            FOR UPDATE
+          `);
+          seed = Math.max(seed, seq.current_number, legacyRows.rows?.[0]?.current_number ?? 0);
         }
       } else {
         // Non-reset: identical seeding to the pre-period engine.
@@ -485,7 +535,7 @@ export async function nextSequenceNumber(
 
       const inserted = await tx.execute<{ id: number; current_number: number }>(sql`
         INSERT INTO sequence_counters (sequence_id, branch_id, period, current_number, last_period, created_at, updated_at)
-        VALUES (${seq.id}, ${branchKey}, ${counterPeriod}, ${seed}, ${counterPeriod === "" ? null : counterPeriod}, NOW(), NOW())
+        VALUES (${seq.id}, ${counterBranchKey}, ${counterPeriod}, ${seed}, ${counterPeriod === "" ? null : counterPeriod}, NOW(), NOW())
         RETURNING id, current_number
       `);
       const newRow = inserted.rows?.[0];
@@ -499,13 +549,41 @@ export async function nextSequenceNumber(
       throw new SequenceCapacityExceededError(seq.code);
     }
 
-    const generated = format(
+    let generated = format(
       effectivePrefix,
       issuedNumber,
       Math.max(seq.pad_length ?? 0, journalEntryHighWater?.digitWidth ?? 0),
       seq.month_pattern,
       effectiveDate,
+      annualReset ? annualYearLabel : null,
     );
+
+    if (annualReset) {
+      // Serialize annual allocations even when administrators configured
+      // separate branch-scoped sequences for the same transaction type.
+      const annualLockKey = `annual-sequence:${companyId}:${transactionType}:${fiscalYearBucket}`;
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${annualLockKey}, 0))`);
+      for (;;) {
+        const duplicate = await tx.execute(sql`
+          SELECT 1 FROM sequence_logs
+          WHERE company_id = ${companyId}
+            AND transaction_type = ${transactionType}
+            AND generated_number = ${generated}
+          LIMIT 1
+        `);
+        if (!duplicate.rows?.length) break;
+        issuedNumber += 1;
+        if (issuedNumber > seq.end_number) throw new SequenceCapacityExceededError(seq.code);
+        generated = format(
+          effectivePrefix,
+          issuedNumber,
+          Math.max(seq.pad_length ?? 0, journalEntryHighWater?.digitWidth ?? 0),
+          seq.month_pattern,
+          effectiveDate,
+          annualYearLabel,
+        );
+      }
+    }
 
     if (ctx.refTable === "journal_entries") {
       await ensureJournalNumberClaimsTable(tx);

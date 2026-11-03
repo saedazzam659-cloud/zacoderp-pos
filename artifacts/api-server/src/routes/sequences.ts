@@ -67,10 +67,11 @@ function fmt(
   padLength: number | null | undefined,
   monthPattern?: string | null,
   effectiveDate: Date = new Date(),
+  annualYear?: string | null,
 ): string {
   const pad = padLength ?? 0;
   const padded = pad > 0 ? String(n).padStart(pad, "0") : String(n);
-  return `${prefix ?? ""}${renderMonthPattern(monthPattern, effectiveDate)}${padded}`;
+  return `${prefix ?? ""}${annualYear ? `${annualYear}-` : ""}${renderMonthPattern(monthPattern, effectiveDate)}${padded}`;
 }
 
 // Mirror of `resolveEffectiveDate` in `lib/sequences.ts`. When the company
@@ -160,9 +161,9 @@ router.get("/peek/:txType", async (req: any, res) => {
       id: number;
       prefix: string | null; start_number: number; current_number: number;
       end_number: number; pad_length: number | null; code: string;
-      month_pattern: string | null; monthly_reset: boolean;
+      month_pattern: string | null; monthly_reset: boolean; annual_reset: boolean;
     }>(sql`
-      SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern, monthly_reset
+      SELECT id, prefix, start_number, current_number, end_number, pad_length, code, month_pattern, monthly_reset, annual_reset
       FROM sequences
       WHERE company_id = ${cid}
         AND is_active = true
@@ -181,8 +182,13 @@ router.get("/peek/:txType", async (req: any, res) => {
     //   • monthly_reset OFF → the single continuous "" sentinel row.
     //   • monthly_reset ON  → the per-month "YYYY-MM" row for the previewed date.
     const monthlyReset  = seq.monthly_reset === true;
+    const annualReset = seq.annual_reset === true && !monthlyReset
+      && !/^(sales_invoice|sales_return)(_|$)/.test(qType);
+    const counterBranchKey = annualReset ? 0 : branchKey;
     const previewPeriod = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, "0")}`;
-    const counterPeriod = monthlyReset ? previewPeriod : "";
+    const fiscalYearBucket = `FY-${pm.fiscalYearId ?? `CAL-${dateStr.slice(0, 4)}`}-TX-${qType}`;
+    const annualYearLabel = pm.fiscalYearLabel ?? dateStr.slice(0, 4);
+    const counterPeriod = monthlyReset ? previewPeriod : annualReset ? fiscalYearBucket : "";
 
     // Pull the bucket counter (if any) and an "any counter exists?" flag in a
     // single round-trip. The flag drives the non-reset seeding heuristic.
@@ -191,7 +197,7 @@ router.get("/peek/:txType", async (req: any, res) => {
     }>(sql`
       SELECT
         (SELECT current_number FROM sequence_counters
-          WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey} AND period = ${counterPeriod}) AS bucket_current,
+          WHERE sequence_id = ${seq.id} AND branch_id = ${counterBranchKey} AND period = ${counterPeriod}) AS bucket_current,
         EXISTS(SELECT 1 FROM sequence_counters WHERE sequence_id = ${seq.id}) AS any_exists
     `);
     const cRow = counterRows.rows?.[0];
@@ -209,7 +215,7 @@ router.get("/peek/:txType", async (req: any, res) => {
       // preview never retires the legacy row — only the real issuance does.)
       let seed = seq.start_number;
       const effPrefix = prefixOverride != null ? prefixOverride : (seq.prefix ?? "");
-      const renderedPrefix = `${effPrefix}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
+      const renderedPrefix = `${effPrefix}${annualReset ? `${annualYearLabel}-` : ""}${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
       const escaped = renderedPrefix.replace(/([\\%_])/g, "\\$1");
       const logRows = await db.execute<{ mx: number | null }>(sql`
         SELECT MAX((regexp_match(generated_number, '(\\d+)$'))[1]::int) AS mx
@@ -228,6 +234,29 @@ router.get("/peek/:txType", async (req: any, res) => {
         seed = Math.max(seed, legacy.current_number);
       }
       previewNumber = seed;
+    } else if (annualReset) {
+      const effPrefix = prefixOverride != null ? prefixOverride : (seq.prefix ?? "");
+      const renderedPrefix = `${effPrefix}${annualYearLabel}-${renderMonthPattern(seq.month_pattern, effectiveDate)}`;
+      const escaped = renderedPrefix.replace(/([\\%_])/g, "\\$1");
+      const logRows = await db.execute<{ mx: number | null }>(sql`
+        SELECT MAX((regexp_match(generated_number, '(\\d+)$'))[1]::int) AS mx
+        FROM sequence_logs WHERE sequence_id = ${seq.id}
+          AND transaction_type = ${qType}
+          AND generated_number LIKE ${escaped + "%"} ESCAPE '\\'
+      `);
+      let seed = Math.max(seq.start_number, (logRows.rows?.[0]?.mx ?? 0) + (logRows.rows?.[0]?.mx == null ? 0 : 1));
+      const today = new Date();
+      const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      const todayMatch = await resolveSequencePeriodMatch(db, cid as number, todayIso);
+      const todayBucket = `FY-${todayMatch.fiscalYearId ?? `CAL-${todayIso.slice(0, 4)}`}-TX-${qType}`;
+      if (todayBucket === fiscalYearBucket) {
+        const legacy = await db.execute<{ current_number: number | null }>(sql`
+          SELECT current_number FROM sequence_counters
+          WHERE sequence_id = ${seq.id} AND branch_id = ${counterBranchKey} AND period = ''
+        `);
+        seed = Math.max(seed, seq.current_number, legacy.rows?.[0]?.current_number ?? 0);
+      }
+      previewNumber = seed;
     } else {
       // Non-reset, no "" row yet — identical to the pre-period seeding rule.
       previewNumber = anyExists ? seq.start_number : Math.max(seq.start_number, seq.current_number);
@@ -238,7 +267,7 @@ router.get("/peek/:txType", async (req: any, res) => {
     // This also makes the read-only form preview self-heal after restoring a
     // backup whose sequence counters/logs lag behind the real journal rows.
     const effectivePrefix = prefixOverride != null ? prefixOverride : (seq.prefix ?? "");
-    const journalHighWater = qType === "journal_entry"
+    const journalHighWater = qType === "journal_entry" && !annualReset
       ? await journalEntrySequenceHighWater(
           db,
           cid as number,
@@ -257,6 +286,7 @@ router.get("/peek/:txType", async (req: any, res) => {
         Math.max(seq.pad_length ?? 0, journalHighWater?.digitWidth ?? 0),
         seq.month_pattern,
         effectiveDate,
+        annualReset ? annualYearLabel : null,
       ),
       hasSequence: true,
       sequenceCode: seq.code,
@@ -746,6 +776,7 @@ router.post("/", audit("sequences", "create"), async (req, res) => {
         // the beginning of each calendar month. Defaults to false (legacy
         // continuous numbering) when the client omits it.
         monthlyReset:     !!req.body.monthlyReset,
+        annualReset:      req.body.annualReset !== false && !req.body.monthlyReset,
         // "الطريقة العالمية" — unified JE counter with per-source prefixes.
         // Only meaningful when this sequence is bound to journal_entry.
         applySourcePrefixes: !!req.body.applySourcePrefixes,
@@ -836,6 +867,7 @@ router.post("/seed-payment-split", audit("sequences", "create"), async (req, res
           padLength:        4,
           isActive:         true,
           monthlyReset:     false,
+          annualReset:      true,
           transactionTypes: [d.type],
           branchIds:        [],
           fiscalPeriodIds:  [],
@@ -881,6 +913,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
       existing.isActive      = existing.is_active      ?? existing.isActive;
       existing.transactionTypes = existing.transaction_types ?? existing.transactionTypes;
       existing.monthlyReset  = existing.monthly_reset  ?? existing.monthlyReset ?? false;
+      existing.annualReset   = existing.annual_reset   ?? existing.annualReset ?? true;
       existing.branchIds     = existing.branch_ids     ?? existing.branchIds ?? [];
       existing.fiscalPeriodIds = existing.fiscal_period_ids ?? existing.fiscalPeriodIds ?? [];
       existing.nameAr        = existing.name_ar        ?? existing.nameAr;
@@ -907,6 +940,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         padLength:        req.body.padLength        ?? existing.padLength,
         isActive:         req.body.isActive         ?? existing.isActive,
         monthlyReset:     req.body.monthlyReset     ?? existing.monthlyReset,
+        annualReset:      req.body.annualReset      ?? existing.annualReset,
         applySourcePrefixes: typeof req.body.applySourcePrefixes === "boolean"
           ? req.body.applySourcePrefixes
           : (existing as any).applySourcePrefixes,
@@ -1008,6 +1042,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         padLength:        Number(merged.padLength),
         isActive:         !!merged.isActive,
         monthlyReset:     !!merged.monthlyReset,
+        annualReset:      !!merged.annualReset && !merged.monthlyReset,
         applySourcePrefixes: !!(merged as any).applySourcePrefixes,
         transactionTypes: merged.transactionTypes,
         // Same dedupe-and-coerce normalization as CREATE keeps the column
@@ -1063,6 +1098,12 @@ router.post("/:id/reset", audit("sequences", "edit"), async (req, res) => {
       const lockedArr = (Array.isArray(lockedValue) ? lockedValue : []) as Array<Record<string, unknown>>;
       const existing = lockedArr[0];
       if (!existing) return { status: 404, body: { error: "المسلسل غير موجود" } };
+      if (existing.annual_reset === true && existing.monthly_reset !== true) {
+        return {
+          status: 409,
+          body: { error: "لا يمكن إعادة ضبط مسلسل سنوي؛ لكل سنة مالية عداد مستقل محفوظ." },
+        };
+      }
       const startNumber = Number(existing.start_number ?? existing.startNumber);
 
       // The reset is allowed ONLY when this sequence is no longer linked to

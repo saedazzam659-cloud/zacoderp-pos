@@ -38,6 +38,8 @@ import {
   sequenceLogsTable,
   sequenceCountersTable,
   journalEntriesTable,
+  fiscalYearsTable,
+  fiscalPeriodsTable,
 } from "@workspace/db";
 
 import { nextJeSubSequence, nextSequenceNumber } from "../src/lib/sequences.ts";
@@ -113,6 +115,7 @@ before(async () => {
     padLength:        4,
     isActive:         true,
     monthlyReset:     false,
+    annualReset:      false,
     transactionTypes: ["purchase_invoice"],
   }).returning();
   contSeqId = contSeq.id;
@@ -161,6 +164,70 @@ const FEB = "2026-02-15T12:00:00";
 const MAR = "2026-03-15T12:00:00";
 const APR = "2026-04-15T12:00:00";
 const MAY = "2026-05-15T12:00:00";
+
+test("annual sequence follows the document fiscal year, including backdated documents", async () => {
+  const [fy25] = await db.insert(fiscalYearsTable).values({
+    companyId: testCompanyId, name: "FY 2025/26", startDate: "2025-07-01", endDate: "2026-06-30",
+  }).returning();
+  const [fy26] = await db.insert(fiscalYearsTable).values({
+    companyId: testCompanyId, name: "FY 2026/27", startDate: "2026-07-01", endDate: "2027-06-30",
+  }).returning();
+  await db.insert(fiscalPeriodsTable).values([
+    { companyId: testCompanyId, fiscalYearId: fy25.id, name: "FY25", startDate: "2025-07-01", endDate: "2026-06-30", sequence: 1 },
+    { companyId: testCompanyId, fiscalYearId: fy26.id, name: "FY26", startDate: "2026-07-01", endDate: "2027-06-30", sequence: 1 },
+  ]);
+  const [seq] = await db.insert(sequencesTable).values({
+    companyId: testCompanyId,
+    code: `${TEST_TAG}_ANNUAL`,
+    nameAr: `مسلسل سنوي ${TEST_TAG}`,
+    prefix: "AR-",
+    startNumber: 1,
+    endNumber: 9999,
+    currentNumber: 1,
+    padLength: 4,
+    isActive: true,
+    annualReset: true,
+    transactionTypes: ["purchase_order", "goods_receipt"],
+  }).returning();
+  insertedSequenceIds.push(seq.id);
+
+  const issue = (docDate: string) =>
+    nextSequenceNumber(testCompanyId, "purchase_order", { branchId: branchAId, docDate });
+
+  assert.equal(await issue("2026-02-10"), "AR-2025-0001");
+  assert.equal(await issue("2025-11-10"), "AR-2025-0002");
+  assert.equal(await issue("2026-03-10"), "AR-2025-0003");
+  assert.equal(await nextSequenceNumber(testCompanyId, "goods_receipt", { branchId: branchAId, docDate: "2026-02-11" }), "AR-2025-0001",
+    "each transaction type has an independent annual counter");
+
+  const concurrent = await Promise.all(
+    Array.from({ length: 12 }, () => issue("2027-01-10")),
+  );
+  assert.deepEqual(
+    concurrent.slice().sort(),
+    Array.from({ length: 12 }, (_, i) => `AR-2026-${String(i + 1).padStart(4, "0")}`),
+    "concurrent issuances must reserve distinct annual numbers",
+  );
+});
+
+test("sales invoice/return document identifiers stay continuous for ZATCA", async () => {
+  const [seq] = await db.insert(sequencesTable).values({
+    companyId: testCompanyId,
+    code: `${TEST_TAG}_ZATCA`,
+    nameAr: `مسلسل زاتكا ${TEST_TAG}`,
+    prefix: "ZT-",
+    startNumber: 1,
+    endNumber: 9999,
+    currentNumber: 1,
+    padLength: 4,
+    isActive: true,
+    annualReset: true,
+    transactionTypes: ["sales_invoice_mobile"],
+  }).returning();
+  insertedSequenceIds.push(seq.id);
+  assert.equal(await nextSequenceNumber(testCompanyId, "sales_invoice_mobile", { branchId: branchAId, docDate: "2025-12-31" }), "ZT-0001");
+  assert.equal(await nextSequenceNumber(testCompanyId, "sales_invoice_mobile", { branchId: branchAId, docDate: "2026-01-01" }), "ZT-0002");
+});
 
 test("monthly_reset restarts the counter at start_number on a new month", async () => {
   // January: two issuances → 0001, 0002 (month token = 01).
@@ -268,6 +335,7 @@ test("journal numbering self-heals a stale restored counter from existing journa
     padLength:        4,
     isActive:         true,
     monthlyReset:     false,
+    annualReset:      false,
     transactionTypes: ["journal_entry"],
   }).returning();
   insertedSequenceIds.push(seq.id);

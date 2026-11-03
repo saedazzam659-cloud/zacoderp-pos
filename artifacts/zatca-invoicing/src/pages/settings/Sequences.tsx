@@ -41,6 +41,7 @@ const EMPTY_FORM = {
   // When true the running counter restarts at startNumber at the start of each
   // calendar month. Default false = continuous numbering (legacy behaviour).
   monthlyReset: false,
+  annualReset: true,
   applySourcePrefixes: false,
   transactionTypes: [] as string[],
   branchIds: [] as number[],
@@ -193,7 +194,7 @@ function BranchMultiSelect({
 //     render as unchecked + a "(partial)" hint, so editing such a row
 //     doesn't silently drop the unselected periods on the next save —
 //     we keep them in `value` until the user toggles the year off.
-type FiscalYearOption = { id: number; name: string; periodIds: number[] };
+type FiscalYearOption = { id: number; name: string; startDate: string; endDate: string; periodIds: number[] };
 
 async function fetchFiscalYearsWithPeriods(): Promise<FiscalYearOption[]> {
   const headers: Record<string, string> = {};
@@ -202,7 +203,7 @@ async function fetchFiscalYearsWithPeriods(): Promise<FiscalYearOption[]> {
   const base = import.meta.env.VITE_API_URL ?? "";
   const yearsRes = await fetch(`${base}/api/fiscal/years`, { headers });
   if (!yearsRes.ok) throw new Error(await yearsRes.text());
-  const years = (await yearsRes.json()) as Array<{ id: number; name: string }>;
+  const years = (await yearsRes.json()) as Array<{ id: number; name: string; startDate: string; endDate: string }>;
   // Fetch every year's periods in parallel so the picker doesn't block on
   // a serial fan-out (typical tenant has 1–5 years; that's a handful of
   // small parallel requests, well within HTTP/2 multiplexing).
@@ -213,6 +214,8 @@ async function fetchFiscalYearsWithPeriods(): Promise<FiscalYearOption[]> {
     return {
       id: y.id,
       name: y.name,
+      startDate: y.startDate,
+      endDate: y.endDate,
       periodIds: (body.periods ?? []).map((p) => Number(p.id)),
     };
   }));
@@ -390,9 +393,10 @@ function formatPreview(
   n: number,
   padLength: number,
   monthPattern?: string | null,
+  annualYear?: string | null,
 ): string {
   const padded = padLength > 0 ? String(n).padStart(padLength, "0") : String(n);
-  return `${prefix ?? ""}${renderMonthPattern(monthPattern)}${padded}`;
+  return `${prefix ?? ""}${annualYear ? `${annualYear}-` : ""}${renderMonthPattern(monthPattern)}${padded}`;
 }
 
 export default function Sequences() {
@@ -458,6 +462,9 @@ export default function Sequences() {
     queryFn:  fetchFiscalYearsWithPeriods,
     enabled:  !!user && !!cid,
   });
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const currentFiscalYearLabel = yearsWithPeriods.find(y => y.startDate <= todayIso && y.endDate >= todayIso)
+    ?.startDate.slice(0, 4) ?? String(new Date().getFullYear());
 
   const { data: logs = [] } = useQuery<SequenceLogRow[]>({
     queryKey: ["sequence-logs", logsId],
@@ -544,6 +551,7 @@ export default function Sequences() {
       padLength:        r.padLength,
       isActive:         r.isActive,
       monthlyReset:     r.monthlyReset ?? false,
+      annualReset:      r.annualReset ?? true,
       applySourcePrefixes: r.applySourcePrefixes ?? false,
       transactionTypes: Array.isArray(r.transactionTypes) ? r.transactionTypes : [],
       // Coerce in case the column round-trips strings (older rows or when
@@ -603,6 +611,9 @@ export default function Sequences() {
     form.currentNumber || form.startNumber,
     form.padLength,
     form.monthPattern,
+    form.annualReset && !form.monthlyReset && !form.transactionTypes.some(x => /^(sales_invoice|sales_return)(_|$)/.test(x))
+      ? currentFiscalYearLabel
+      : null,
   );
 
   return (
@@ -664,7 +675,9 @@ export default function Sequences() {
                   {rows.map(r => {
                     const pct  = r.usedPct ?? 0;
                     const warn = pct >= 80;
-                    const next = formatPreview(r.prefix, r.currentNumber, r.padLength, r.monthPattern);
+                        const protectZatca = r.transactionTypes.some(x => /^(sales_invoice|sales_return)(_|$)/.test(x));
+                        const next = formatPreview(r.prefix, r.currentNumber, r.padLength, r.monthPattern,
+                          r.annualReset && !r.monthlyReset && !protectZatca ? currentFiscalYearLabel : null);
                     return (
                       <tr key={r.id} className="border-b hover:bg-muted/20" data-testid={`row-sequence-${r.id}`}>
                         <td className="px-3 py-2 font-mono">{r.code}</td>
@@ -799,8 +812,19 @@ export default function Sequences() {
                 </div>
                 <div className="md:col-span-2">
                   <div className="flex items-center gap-2">
+                    <Switch checked={form.annualReset && !form.monthlyReset}
+                            onCheckedChange={v => setForm({ ...form, annualReset: v, monthlyReset: v ? false : form.monthlyReset })}
+                            data-testid="switch-annual-reset" />
+                    <Label>{t("sequences.annualReset")}</Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t("sequences.annualResetHelp")}
+                  </p>
+                </div>
+                <div className="md:col-span-2">
+                  <div className="flex items-center gap-2">
                     <Switch checked={form.monthlyReset}
-                            onCheckedChange={v => setForm({ ...form, monthlyReset: v })}
+                            onCheckedChange={v => setForm({ ...form, monthlyReset: v, annualReset: v ? false : form.annualReset })}
                             data-testid="switch-monthly-reset" />
                     <Label>{t("sequences.monthlyReset")}</Label>
                   </div>
