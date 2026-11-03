@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Plus, Pencil, Trash2, Calendar, Lock, Unlock, ShieldX, Clock, AlertCircle, Sparkles, ShieldCheck } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { PeriodClosingWizard } from "./PeriodClosingWizard";
 import { DateField } from "@/components/ui/date-field";
@@ -46,6 +47,17 @@ const EMPTY_YEAR = {
   endDate: `${new Date().getUTCFullYear()}-12-31`,
   periodCount: 12,
 };
+
+function successorRange(endDate: string) {
+  const [year, month, day] = endDate.split("-").map(Number);
+  const start = new Date(Date.UTC(year, month - 1, day + 1));
+  const nextYear = year + 1;
+  const endDay = Math.min(day, new Date(Date.UTC(nextYear, month, 0)).getUTCDate());
+  return {
+    startDate: start.toISOString().slice(0, 10),
+    endDate: `${nextYear}-${String(month).padStart(2, "0")}-${String(endDay).padStart(2, "0")}`,
+  };
+}
 
 export default function FiscalPeriods() {
   const { user, token, actingCompanyId } = useAuth() as any;
@@ -96,6 +108,7 @@ export default function FiscalPeriods() {
   const [confirmDelId, setConfirmDelId] = useState<number | null>(null);
   const [closingPeriod, setClosingPeriod] = useState<FiscalPeriod | null>(null);
   const [openingBalanceDifferences, setOpeningBalanceDifferences] = useState<OpeningBalanceDifference[]>([]);
+  const [closePreviousOnly, setClosePreviousOnly] = useState(false);
 
   const { data: years = [], isLoading: yearsLoading } = useQuery<FiscalYear[]>({
     queryKey: ["fiscal-years", cid],
@@ -128,6 +141,16 @@ export default function FiscalPeriods() {
   });
 
   const selectedYear = useMemo(() => years.find(y => y.id === selectedYearId) ?? null, [years, selectedYearId]);
+  const openSuccessor = useMemo(() => {
+    if (!selectedYear || selectedYear.status !== "closed") return null;
+    const range = successorRange(selectedYear.endDate);
+    return years.find(year =>
+      year.startDate === range.startDate &&
+      year.endDate === range.endDate &&
+      year.status === "open",
+    ) ?? null;
+  }, [selectedYear, years]);
+  useEffect(() => setClosePreviousOnly(false), [selectedYearId]);
   const openYearForm = () => {
     if (yearPolicy?.mode === "custom" && yearPolicy.startDate && yearPolicy.endDate) {
       setYearForm({
@@ -195,9 +218,9 @@ export default function FiscalPeriods() {
   });
 
   const updateYearStatusMut = useMutation({
-    mutationFn: async ({ id, status }: { id: number; status: string }) => {
+    mutationFn: async ({ id, status, closePreviousOnly: closeOnly = false }: { id: number; status: string; closePreviousOnly?: boolean }) => {
       const r = await fetch(`${API}/api/fiscal/years/${id}/status`, {
-        method: "PATCH", headers, body: JSON.stringify({ status }),
+        method: "PATCH", headers, body: JSON.stringify({ status, ...(closeOnly ? { closePreviousOnly: true } : {}) }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -209,20 +232,27 @@ export default function FiscalPeriods() {
       }
       return data;
     },
-    onSuccess: (d: any, variables: { id: number; status: string }) => {
+    onSuccess: (d: any, variables: { id: number; status: string; closePreviousOnly?: boolean }) => {
       setOpeningBalanceDifferences([]);
       if (variables.status === "permanently_closed" && d?.successorYear) {
-        toast({
-          title: "تم اعتماد إقفال السنة",
-          description: `${d.successorYear.name} — ${d.successorYear.startDate} إلى ${d.successorYear.endDate} — ${d.successorCreated ? "تم إنشاؤها وفتحها" : "تم استخدام السنة المفتوحة الموجودة"}. الأرصدة مستمرة من الحركات السابقة دون إنشاء قيد افتتاحي مكرر.`,
-        });
-        setSelectedYearId(d.successorYear.id);
+        if (d.successorUnaffected) {
+          toast({
+            title: "تم إقفال السنة السابقة فقط",
+            description: `تم الاحتفاظ بالسنة التالية «${d.successorYear.name}» دون تعديل أو إعادة مطابقة للأرصدة الافتتاحية.`,
+          });
+        } else {
+          toast({
+            title: "تم اعتماد إقفال السنة",
+            description: `${d.successorYear.name} — ${d.successorYear.startDate} إلى ${d.successorYear.endDate} — ${d.successorCreated ? "تم إنشاؤها وفتحها" : "تم استخدام السنة المفتوحة الموجودة"}. الأرصدة مستمرة من الحركات السابقة دون إنشاء قيد افتتاحي مكرر.`,
+          });
+          setSelectedYearId(d.successorYear.id);
+        }
       } else {
         toast({ title: t("fiscalPeriods.yearStatusUpdated") });
       }
       qc.invalidateQueries({ queryKey: ["fiscal-years", cid] });
       qc.invalidateQueries({ queryKey: ["fiscal-periods", selectedYearId] });
-      if (d?.successorYear?.id) {
+      if (d?.successorYear?.id && !d.successorUnaffected) {
         qc.invalidateQueries({ queryKey: ["fiscal-periods", d.successorYear.id] });
       }
     },
@@ -454,10 +484,18 @@ export default function FiscalPeriods() {
                             onClick={() => {
                               const approved = window.confirm(
                                 `اعتماد الإقفال النهائي للسنة «${selectedYear.name}»؟\n\n` +
-                                "سيُعاد فحص القيود والتسويات وأرصدة الإيرادات والمصروفات. عند النجاح ستُفتح السنة التالية تلقائيًا. " +
-                                "الأرصدة تستمر من الحركات السابقة دون إنشاء قيد افتتاحي مكرر. لا يمكن التراجع عن الإقفال النهائي إلا بصلاحية استثنائية."
+                                (closePreviousOnly
+                                  ? "سيُقفل العام السابق فقط. لن تُنشأ السنة التالية ولن يتم تعديلها أو إعادة ترحيل أرصدتها الافتتاحية. "
+                                  : "سيُعاد فحص القيود والتسويات وأرصدة الإيرادات والمصروفات. عند النجاح ستُفتح السنة التالية تلقائيًا. ") +
+                                (closePreviousOnly
+                                  ? "لا يمكن التراجع عن الإقفال النهائي إلا بصلاحية استثنائية."
+                                  : "الأرصدة تستمر من الحركات السابقة دون إنشاء قيد افتتاحي مكرر. لا يمكن التراجع عن الإقفال النهائي إلا بصلاحية استثنائية.")
                               );
-                              if (approved) updateYearStatusMut.mutate({ id: selectedYear.id, status: "permanently_closed" });
+                              if (approved) updateYearStatusMut.mutate({
+                                id: selectedYear.id,
+                                status: "permanently_closed",
+                                closePreviousOnly,
+                              });
                             }}
                             className="text-red-700 border-red-300 hover:bg-red-50">
                             <ShieldX className={cn("h-3.5 w-3.5", isRtl ? "ml-1" : "mr-1")} />{t("fiscalPeriods.permanentlyClose")}
@@ -478,6 +516,22 @@ export default function FiscalPeriods() {
                       )}
                     </div>
                   </div>
+                  {openSuccessor && selectedYear.status === "closed" && (
+                    <label className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50/70 p-3 text-sm cursor-pointer">
+                      <Checkbox
+                        checked={closePreviousOnly}
+                        onCheckedChange={(checked) => setClosePreviousOnly(checked === true)}
+                        aria-label="إقفال السنة السابقة فقط دون التأثير على السنة التالية"
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="font-medium text-blue-900">إقفال السنة السابقة فقط دون التأثير على السنة التالية</span>
+                        <span className="block text-xs text-blue-800 mt-1">
+                          السنة التالية «{openSuccessor.name}» موجودة ومفتوحة؛ عند التفعيل لن تُنشأ أو تُعدّل ولن تُراجع أرصدتها الافتتاحية.
+                        </span>
+                      </span>
+                    </label>
+                  )}
 
                   {/* Period stats */}
                   <div className="grid grid-cols-3 gap-2">

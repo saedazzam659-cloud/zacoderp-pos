@@ -356,17 +356,63 @@ test("existing open successor is reused and mismatched opening balances block ap
         { entryId: openingEntry.id, accountId: accounts[1].id, debit: "0", credit: "90.00", sortOrder: 1 },
       ]);
 
+      const [previousOnlyYear] = await db.insert(fiscalYearsTable).values({
+        companyId, name: `السنة السابقة فقط ${tag}`, startDate: "2023-01-01", endDate: "2023-12-31", status: "closed",
+      }).returning();
+      const previousOnlyAccounts = await db.insert(accountsTable).values([
+        { companyId, code: `${tag}_previous_only_asset`, nameAr: "أصل إقفال مستقل", accountType: "asset", isPosting: true, level: 4 },
+        { companyId, code: `${tag}_previous_only_equity`, nameAr: "حقوق ملكية إقفال مستقل", accountType: "equity", isPosting: true, level: 4 },
+      ]).returning();
+      const [untouchedSuccessorYear] = await db.insert(fiscalYearsTable).values({
+        companyId, name: `السنة التالية المحفوظة ${tag}`, startDate: "2024-01-01", endDate: "2024-12-31", status: "open",
+      }).returning();
+      const [previousOnlyPeriod] = await db.insert(fiscalPeriodsTable).values({
+        companyId, fiscalYearId: previousOnlyYear.id, name: "ديسمبر 2023",
+        startDate: "2023-01-01", endDate: "2023-12-31", sequence: 1, status: "permanently_closed",
+      }).returning();
+      const [untouchedSuccessorPeriod] = await db.insert(fiscalPeriodsTable).values({
+        companyId, fiscalYearId: untouchedSuccessorYear.id, name: "السنة 2024",
+        startDate: "2024-01-01", endDate: "2024-12-31", sequence: 1, status: "open",
+      }).returning();
+      const [previousOnlyEntry] = await db.insert(journalEntriesTable).values({
+        companyId, entryDate: "2023-12-31", currency: "SAR", exchangeRate: "1",
+        description: `رصيد ختامي ${tag}`, entryType: "general", status: "posted", periodId: previousOnlyPeriod.id,
+      }).returning();
+      await db.insert(journalEntryLinesTable).values([
+        { entryId: previousOnlyEntry.id, accountId: previousOnlyAccounts[0].id, debit: "100.00", credit: "0", sortOrder: 0 },
+        { entryId: previousOnlyEntry.id, accountId: previousOnlyAccounts[1].id, debit: "0", credit: "100.00", sortOrder: 1 },
+      ]);
+      const [untouchedOpeningEntry] = await db.insert(journalEntriesTable).values({
+        companyId, entryDate: "2024-01-01", currency: "SAR", exchangeRate: "1",
+        description: `رصيد افتتاحي محفوظ ${tag}`, entryType: "opening", status: "posted", periodId: untouchedSuccessorPeriod.id,
+      }).returning();
+      await db.insert(journalEntryLinesTable).values([
+        { entryId: untouchedOpeningEntry.id, accountId: previousOnlyAccounts[0].id, debit: "90.00", credit: "0", sortOrder: 0 },
+        { entryId: untouchedOpeningEntry.id, accountId: previousOnlyAccounts[1].id, debit: "0", credit: "90.00", sortOrder: 1 },
+      ]);
+      const [neutralizingEntry] = await db.insert(journalEntriesTable).values({
+        companyId, entryDate: "2024-12-31", currency: "SAR", exchangeRate: "1",
+        description: `تسوية فصل بيانات الاختبار ${tag}`, entryType: "general", status: "posted", periodId: untouchedSuccessorPeriod.id,
+      }).returning();
+      await db.insert(journalEntryLinesTable).values([
+        { entryId: neutralizingEntry.id, accountId: previousOnlyAccounts[0].id, debit: "0", credit: "190.00", sortOrder: 0 },
+        { entryId: neutralizingEntry.id, accountId: previousOnlyAccounts[1].id, debit: "190.00", credit: "0", sortOrder: 1 },
+      ]);
+
       await new Promise<void>((resolve) => {
         server = app.listen(0, "127.0.0.1", () => resolve());
       });
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("test API server did not bind");
       const baseUrl = `http://127.0.0.1:${address.port}`;
-      const finalize = async () => {
-        const response = await fetch(`${baseUrl}/api/fiscal/years/${priorYear.id}/status?companyId=${companyId}`, {
+      const finalize = async (targetYear = priorYear, closePreviousOnly = false) => {
+        const response = await fetch(`${baseUrl}/api/fiscal/years/${targetYear.id}/status?companyId=${companyId}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "permanently_closed" }),
+          body: JSON.stringify({
+            status: "permanently_closed",
+            ...(closePreviousOnly ? { closePreviousOnly: true } : {}),
+          }),
         });
         return { status: response.status, body: await response.json() as any };
       };
@@ -392,8 +438,8 @@ test("existing open successor is reused and mismatched opening balances block ap
       assert.equal(approved.body.successorYear.id, successorYear.id);
       assert.equal(approved.body.openingBalanceReconciliation.status, "matched");
 
-      assert.equal((await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.companyId, companyId))).length, 2);
-      assert.equal((await db.select().from(fiscalPeriodsTable).where(eq(fiscalPeriodsTable.companyId, companyId))).length, 2);
+      assert.equal((await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.companyId, companyId))).length, 4);
+      assert.equal((await db.select().from(fiscalPeriodsTable).where(eq(fiscalPeriodsTable.companyId, companyId))).length, 4);
       const [preservedOpening] = await db.select().from(journalEntriesTable)
         .where(eq(journalEntriesTable.id, openingEntry.id));
       assert.equal(preservedOpening.status, "posted");
@@ -401,7 +447,43 @@ test("existing open successor is reused and mismatched opening balances block ap
       assert.equal((await db.select().from(journalEntriesTable).where(and(
         eq(journalEntriesTable.companyId, companyId),
         eq(journalEntriesTable.entryType, "opening"),
-      ))).length, 1);
+      ))).length, 2);
+
+      const successorBeforePreviousOnlyClose = await db.select().from(fiscalYearsTable)
+        .where(eq(fiscalYearsTable.id, untouchedSuccessorYear.id));
+      const successorPeriodBeforePreviousOnlyClose = await db.select().from(fiscalPeriodsTable)
+        .where(eq(fiscalPeriodsTable.id, untouchedSuccessorPeriod.id));
+      const openingBeforePreviousOnlyClose = await db.select().from(journalEntriesTable)
+        .where(eq(journalEntriesTable.id, untouchedOpeningEntry.id));
+      const openingLinesBeforePreviousOnlyClose = await db.select().from(journalEntryLinesTable)
+        .where(eq(journalEntryLinesTable.entryId, untouchedOpeningEntry.id));
+
+      const previousOnlyApproved = await finalize(previousOnlyYear, true);
+      assert.equal(previousOnlyApproved.status, 200, JSON.stringify(previousOnlyApproved.body));
+      assert.equal(previousOnlyApproved.body.year.status, "permanently_closed");
+      assert.equal(previousOnlyApproved.body.successorCreated, false);
+      assert.equal(previousOnlyApproved.body.successorUnaffected, true);
+      assert.equal(previousOnlyApproved.body.openingBalanceReconciliation.status, "not_checked");
+      assert.equal(previousOnlyApproved.body.successorYear.id, untouchedSuccessorYear.id);
+      assert.equal(previousOnlyApproved.body.balancesCarryForwardFromHistory, false);
+      assert.deepEqual(
+        await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.id, untouchedSuccessorYear.id)),
+        successorBeforePreviousOnlyClose,
+      );
+      assert.deepEqual(
+        await db.select().from(fiscalPeriodsTable).where(eq(fiscalPeriodsTable.id, untouchedSuccessorPeriod.id)),
+        successorPeriodBeforePreviousOnlyClose,
+      );
+      assert.deepEqual(
+        await db.select().from(journalEntriesTable).where(eq(journalEntriesTable.id, untouchedOpeningEntry.id)),
+        openingBeforePreviousOnlyClose,
+      );
+      assert.deepEqual(
+        await db.select().from(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, untouchedOpeningEntry.id)),
+        openingLinesBeforePreviousOnlyClose,
+      );
+      assert.equal((await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.companyId, companyId))).length, 4,
+        "previous-only close must not create a fiscal year");
     } finally {
       if (server) {
         await new Promise<void>((resolve) => {

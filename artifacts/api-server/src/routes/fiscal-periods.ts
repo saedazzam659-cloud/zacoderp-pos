@@ -312,6 +312,7 @@ router.patch("/years/:id/status", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const { status } = req.body ?? {};
+    const closePreviousOnly = req.body?.closePreviousOnly === true;
     if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
     if (!["open", "closed", "permanently_closed"].includes(status)) {
       res.status(400).json({ error: "حالة غير صالحة" }); return;
@@ -517,7 +518,7 @@ router.patch("/years/:id/status", async (req, res) => {
             eq(fiscalYearsTable.endDate, nextEndDate),
           ));
           return [freshCurrent, existing ? {
-            year: existing, created: false, reconciliation: { status: "already_finalized" as const },
+            year: existing, created: false, reconciliation: { status: "already_finalized" as const }, unaffected: false,
           } : null, true] as const;
         }
         const overlaps = await tx.select().from(fiscalYearsTable).where(and(
@@ -536,6 +537,9 @@ router.patch("/years/:id/status", async (req, res) => {
           throw new Error("السنة_التالية_مغلقة:" + JSON.stringify({
             id: exactSuccessor.id, name: exactSuccessor.name, status: exactSuccessor.status,
           }));
+        }
+        if (closePreviousOnly && !exactSuccessor) {
+          throw new Error("لا_توجد_سنة_تالية_مفتوحة");
         }
         const [closedYear] = await tx.update(fiscalYearsTable)
           .set({ status: "permanently_closed", updatedAt: new Date() })
@@ -565,12 +569,49 @@ router.patch("/years/:id/status", async (req, res) => {
         if (!nextYear) throw new Error("تعذر تحديد السنة المالية التالية");
 
         let openingBalanceReconciliation:
-          | { status: "no_opening_entries" | "matched"; openingEntryCount: number; comparedAccountCount: number }
+          | { status: "no_opening_entries" | "matched" | "not_checked"; openingEntryCount: number; comparedAccountCount: number }
           | { status: "not_applicable"; openingEntryCount: 0; comparedAccountCount: 0 } = {
             status: exactSuccessor ? "no_opening_entries" : "not_applicable",
             openingEntryCount: 0,
             comparedAccountCount: 0,
           };
+
+        if (closePreviousOnly) {
+          openingBalanceReconciliation = {
+            status: "not_checked",
+            openingEntryCount: 0,
+            comparedAccountCount: 0,
+          };
+          await tx.insert(auditLogTable).values({
+            userId: (req as any).authUser?.id ?? null,
+            username: (req as any).authUser?.username ?? null,
+            role: (req as any).authUser?.role ?? null,
+            companyId: cid,
+            module: "accounts",
+            action: "fiscal_year_close_previous_only",
+            method: req.method,
+            path: req.originalUrl,
+            entityType: "fiscal_year",
+            entityId: String(id),
+            statusCode: 200,
+            ip: req.ip ?? null,
+            userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
+            metadata: {
+              closedYearId: id,
+              closedYearName: freshCurrent.name,
+              successorYearId: exactSuccessor!.id,
+              successorYearName: exactSuccessor!.name,
+              successorWasModified: false,
+              openingBalanceReconciliation: "skipped_by_user",
+            },
+          });
+          return [closedYear, {
+            year: exactSuccessor!,
+            created: false,
+            reconciliation: openingBalanceReconciliation,
+            unaffected: true,
+          }, false] as const;
+        }
 
         if (exactSuccessor) {
           const priorBalances = await tx.select({
@@ -689,7 +730,7 @@ router.patch("/years/:id/status", async (req, res) => {
           },
         });
         return [closedYear, {
-          year: rolloverYear, created: createdSuccessor, reconciliation: openingBalanceReconciliation,
+          year: rolloverYear, created: createdSuccessor, reconciliation: openingBalanceReconciliation, unaffected: false,
         }, false] as const;
       });
       if (!successor) {
@@ -701,8 +742,9 @@ router.patch("/years/:id/status", async (req, res) => {
         year: updated,
         successorYear: successor.year,
         successorCreated: successor.created,
+        successorUnaffected: successor.unaffected,
         alreadyFinalized,
-        balancesCarryForwardFromHistory: true,
+        balancesCarryForwardFromHistory: !successor.unaffected,
         openingBalanceReconciliation: successor.reconciliation,
       });
       return;
@@ -726,6 +768,12 @@ router.patch("/years/:id/status", async (req, res) => {
       res.status(409).json({
         error: "السنة المالية التالية موجودة لكنها ليست مفتوحة. افتحها يدويًا أو عدّلها قبل اعتماد الإقفال النهائي.",
         successorYear: JSON.parse(message.slice("السنة_التالية_مغلقة:".length)),
+      });
+      return;
+    }
+    if (message === "لا_توجد_سنة_تالية_مفتوحة") {
+      res.status(409).json({
+        error: "خيار إقفال السنة السابقة فقط متاح عند وجود سنة تالية مفتوحة ومطابقة للتواريخ.",
       });
       return;
     }
