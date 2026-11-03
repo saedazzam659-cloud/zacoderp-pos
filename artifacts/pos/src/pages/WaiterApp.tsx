@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  ChevronRight, Plus, Send, Trash2, Loader2, Users, Clock, X, Check, RefreshCw,
+  ChevronRight, Plus, Send, Trash2, Loader2, Users, Clock, X, Check, RefreshCw, Settings,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -99,6 +99,22 @@ export default function WaiterApp() {
     return arr;
   }, [itemsQ.data, activeCat, search]);
 
+  const tableAreas = useMemo(() => {
+    const grouped = new Map<string, RTable[]>();
+    for (const table of tablesQ.data ?? []) {
+      const area = table.area?.trim() || "الصالة";
+      grouped.set(area, [...(grouped.get(area) ?? []), table]);
+    }
+    return [...grouped.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, "ar"))
+      .map(([area, tables]) => ({
+        area,
+        tables: tables.sort((a, b) => a.code.localeCompare(b.code, "ar")),
+      }));
+  }, [tablesQ.data]);
+
+  const freeTableCount = (tablesQ.data ?? []).filter(table => table.status === "free").length;
+
   const tableColor = (t: RTable) => {
     switch (t.status) {
       case "free":     return "bg-emerald-500/20 border-emerald-400 text-emerald-100";
@@ -117,9 +133,14 @@ export default function WaiterApp() {
           </Button>
           <div className="font-bold">تطبيق النادل — {user?.username}</div>
         </div>
-        <Button variant="ghost" size="sm" onClick={() => qc.invalidateQueries({ queryKey: ["r-tables"] })}>
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setLocation("/restaurant-settings?tab=tables")} aria-label="إعدادات الطاولات">
+            <Settings className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => qc.invalidateQueries({ queryKey: ["r-tables"] })} aria-label="تحديث الطاولات">
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
       </header>
 
       {!activeOrder ? (
@@ -159,22 +180,42 @@ export default function WaiterApp() {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-              {tablesQ.data!.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => setOpenTableId(t.id)}
-                  className={`rounded-xl border-2 p-4 text-center hover:scale-105 transition ${tableColor(t)}`}
-                >
-                  <div className="text-xs opacity-80">{t.code}</div>
-                  <div className="text-lg font-bold mt-1">{t.nameAr}</div>
-                  <div className="text-[11px] opacity-70 mt-1 flex items-center justify-center gap-1">
-                    <Users className="h-3 w-3" /> {t.capacity}
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-slate-900 px-4 py-3">
+                <div>
+                  <div className="font-bold">خريطة الطاولات</div>
+                  <div className="text-xs text-white/50">اختر الطاولة لبدء الطلب أو متابعة الطلب المفتوح</div>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-emerald-200">{freeTableCount} متاحة</span>
+                  <span className="rounded-full bg-rose-500/15 px-2.5 py-1 text-rose-200">{(tablesQ.data?.length ?? 0) - freeTableCount} مستخدمة</span>
+                </div>
+              </div>
+              {tableAreas.map(({ area, tables }) => (
+                <section key={area} aria-label={`منطقة ${area}`}>
+                  <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-2">
+                    <h2 className="font-bold text-amber-200">{area}</h2>
+                    <span className="text-xs text-white/50">{tables.length} طاولة</span>
                   </div>
-                  <div className="text-[10px] mt-1 opacity-90">
-                    {t.status === "free" ? "متاحة" : t.status === "occupied" ? "مشغولة" : t.status === "reserved" ? "محجوزة" : "تنظيف"}
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-6">
+                    {tables.map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => setOpenTableId(t.id)}
+                        className={`min-h-28 rounded-2xl border-2 p-3 text-center shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl ${tableColor(t)}`}
+                      >
+                        <div className="text-[11px] font-bold opacity-75">{t.code}</div>
+                        <div className="mt-1 text-base font-black">{t.nameAr}</div>
+                        <div className="mt-1 flex items-center justify-center gap-1 text-[11px] opacity-75">
+                          <Users className="h-3 w-3" /> {t.capacity} مقاعد
+                        </div>
+                        <div className="mt-2 text-[10px] font-bold">
+                          {t.status === "free" ? "متاحة" : t.status === "occupied" ? "مشغولة" : t.status === "reserved" ? "محجوزة" : "تنظيف"}
+                        </div>
+                      </button>
+                    ))}
                   </div>
-                </button>
+                </section>
               ))}
             </div>
           )}

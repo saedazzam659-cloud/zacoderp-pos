@@ -10,10 +10,12 @@ import {
   salesInvoicesTable,
   usersTable,
   stockBalanceTable,
+  branchesTable,
 } from "@workspace/db";
 import { and, eq, sql, desc, asc, isNull, gte, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
+import { generateRestaurantTables } from "../lib/posRestaurantTableBatch.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -106,6 +108,67 @@ router.post("/tables", async (req, res) => {
   } catch (e: any) {
     req.log.error({ err: e }, "create table failed");
     res.status(400).json({ error: e?.message ?? "فشل الإنشاء" });
+  }
+});
+
+router.post("/tables/batch", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const body = req.body ?? {};
+  const branchId = Number(body.branchId);
+  const capacity = Number(body.capacity ?? 4);
+  const area = String(body.area ?? "الصالة").trim();
+  if (!Number.isInteger(branchId) || branchId <= 0) {
+    res.status(400).json({ error: "يجب اختيار فرع صحيح" }); return;
+  }
+  if (!Number.isInteger(capacity) || capacity < 1 || capacity > 50) {
+    res.status(400).json({ error: "سعة الطاولة يجب أن تكون بين 1 و50" }); return;
+  }
+  if (area.length > 80) {
+    res.status(400).json({ error: "اسم المنطقة يجب ألا يتجاوز 80 حرفاً" }); return;
+  }
+
+  const [branch] = await db.select({ id: branchesTable.id })
+    .from(branchesTable)
+    .where(and(
+      eq(branchesTable.id, branchId),
+      eq(branchesTable.companyId, cid),
+      eq(branchesTable.status, "active"),
+    ));
+  if (!branch) { res.status(400).json({ error: "الفرع غير موجود أو غير نشط" }); return; }
+
+  try {
+    const rows = await db.transaction(async (tx) => {
+      // Serialize numbering for this company so two setup screens cannot
+      // reserve the same table codes at the same time.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, 821704)`);
+      const existing = await tx.select({ code: posTablesTable.code })
+        .from(posTablesTable)
+        .where(eq(posTablesTable.companyId, cid));
+      const generated = generateRestaurantTables({
+        count: Number(body.count),
+        startNumber: Number(body.startNumber ?? 1),
+        codePrefix: String(body.codePrefix ?? "T"),
+        namePrefix: String(body.namePrefix ?? "طاولة"),
+      }, existing.map((table) => table.code));
+
+      return tx.insert(posTablesTable).values(generated.map((table) => ({
+        companyId: cid,
+        branchId,
+        code: table.code,
+        nameAr: table.nameAr,
+        capacity,
+        area: area || null,
+      }))).returning();
+    });
+    res.status(201).json(rows);
+  } catch (e: any) {
+    if (e instanceof Error && /عدد الطاولات|رقم البداية|بادئة الرمز|اسم الطاولة|الحد الأقصى/.test(e.message)) {
+      res.status(400).json({ error: e.message }); return;
+    }
+    req.log.error({ err: e }, "create restaurant table batch failed");
+    res.status(e?.code === "23505" ? 409 : 400).json({
+      error: e?.code === "23505" ? "تعارض في ترقيم الطاولات؛ أعد المحاولة" : (e?.message ?? "فشل إنشاء الطاولات"),
+    });
   }
 });
 

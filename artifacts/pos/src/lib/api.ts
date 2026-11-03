@@ -437,6 +437,15 @@ export const api = {
   rTables: () => req<RTable[]>("GET", "/api/pos-restaurant/tables"),
   rCreateTable: (b: Partial<RTable> & { branchId: number; code: string; nameAr: string }) =>
     req<RTable>("POST", "/api/pos-restaurant/tables", b),
+  rCreateTablesBatch: (b: {
+    branchId: number;
+    count: number;
+    startNumber: number;
+    codePrefix: string;
+    namePrefix: string;
+    capacity: number;
+    area: string;
+  }) => req<RTable[]>("POST", "/api/pos-restaurant/tables/batch", b),
   rUpdateTable: (id: number, b: Partial<RTable>) =>
     req<RTable>("PUT", `/api/pos-restaurant/tables/${id}`, b),
   rDeleteTable: (id: number) =>
