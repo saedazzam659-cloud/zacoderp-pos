@@ -2001,19 +2001,14 @@ router.post("/register", async (req, res) => {
   });
 
   // ── DEFAULT FISCAL YEAR ────────────────────────────────────────────
-  // Every accounting system in the world (SAP, Oracle, Odoo, NetSuite)
-  // seeds a default fiscal year on company creation, because no journal
-  // entry can post without an open fiscal period — the period guard we
-  // built will block the very first invoice otherwise. Default = current
-  // Gregorian calendar year, Jan 1 → Dec 31, with 12 OPEN monthly
-  // periods. Matches the ZATCA / GAZT default tax year for KSA.
-  // The user can edit/replace it from the Fiscal Periods page if their
-  // business uses a shifted fiscal calendar (e.g. Apr → Mar). Failures
-  // are logged but never block registration — admins can create the
-  // year manually from the Fiscal Periods page if anything goes wrong.
+  // Start the first fiscal year on the effective subscription date. A
+  // company activated mid-year gets only a stub period from activation
+  // through December 31; no pre-subscription months are created. Older
+  // operations remain an explicit migration/import by the company.
+  // Failures are logged but never block registration.
   try {
     const { seedDefaultFiscalYear } = await import("../lib/seedDefaultFiscalYear.js");
-    const fy = await seedDefaultFiscalYear({ companyId: company.id });
+    const fy = await seedDefaultFiscalYear({ companyId: company.id, startDate: startDate ?? today });
     if (fy.created) {
       req.log?.info?.({ companyId: company.id, fiscalYearId: fy.fiscalYearId, periods: fy.periodCount },
         "default fiscal year seeded");

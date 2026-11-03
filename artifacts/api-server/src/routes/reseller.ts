@@ -264,7 +264,7 @@ router.post("/clients", requireResellerPermission("add_companies"), async (req, 
   // Seed default fiscal year + chart of accounts (best-effort).
   try {
     const { seedDefaultFiscalYear } = await import("../lib/seedDefaultFiscalYear.js");
-    await seedDefaultFiscalYear({ companyId: company.id });
+    await seedDefaultFiscalYear({ companyId: company.id, startDate: start });
   } catch (err) { logger.warn({ err, companyId: company.id }, "reseller add-client: fiscal year seed failed"); }
   try { await seedDefaultChartOfAccounts(company.id); }
   catch (err) { logger.warn({ err, companyId: company.id }, "reseller add-client: COA seed failed"); }
