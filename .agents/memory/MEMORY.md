@@ -39,6 +39,7 @@
 - [Source-linked JE reuse](je-number-reuse-on-repost.md) — protected unpost/repost keeps the same linked JE row and number; reservations remain for legacy paths.
 - [Journal-entry reversals](journal-entry-reversal-boundary.md) — create independent drafts for manual entries; keep source-document entries on their native reversal paths.
 - [Document lifecycle locking](document-lifecycle-locking.md) — use PostgreSQL advisory locks keyed by type, tenant, and document across posting and cancel/restore.
+- [Fiscal-year policy boundary](fiscal-year-policy-boundary.md) — calendar year is the new-company default, custom cycles repeat, and existing fiscal-year records are never silently rewritten.
 - [Additional accounting report boundary](additional-accounting-reports-boundary.md) — only genuinely new reports join the default-off selector; preserve existing report surfaces and fail closed on unsupported audit scope.
 - [Operational report rendering boundary](operational-report-rendering-boundary.md) — reuse the journal grid and branded exports; suppress monetary totals for mixed or unknown currencies.
 - [Platform and security index](platform-ops-index.md) — tenant isolation, permissions, agents, mobile/HR, storage, infrastructure, and operational safeguards.

@@ -4,7 +4,7 @@ import {
   fiscalYearsTable, fiscalPeriodsTable,
   journalEntriesTable, journalEntryLinesTable, accountsTable,
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
-  auditLogTable,
+  auditLogTable, systemSettingsTable,
 } from "@workspace/db";
 import { eq, and, asc, ne, gte, lte, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -110,6 +110,34 @@ router.get("/years", async (req, res) => {
       .where(eq(fiscalYearsTable.companyId, cid))
       .orderBy(asc(fiscalYearsTable.startDate));
     res.json(rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message ?? "خطأ" });
+  }
+});
+
+// Company-scoped fiscal policy is a default template for manual year creation;
+// existing fiscal-year records remain the source of truth for their dates.
+router.get("/year-policy", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const [setting] = await db.select({ value: systemSettingsTable.value })
+      .from(systemSettingsTable)
+      .where(eq(systemSettingsTable.key, `fiscal_year_policy:${cid}`))
+      .limit(1);
+    if (!setting?.value) {
+      res.json({ mode: "calendar", startDate: "", endDate: "" });
+      return;
+    }
+    try {
+      const parsed = JSON.parse(setting.value);
+      if (parsed?.mode === "custom" && isISO(parsed.startDate) && isISO(parsed.endDate)) {
+        res.json({ mode: "custom", startDate: parsed.startDate, endDate: parsed.endDate });
+        return;
+      }
+    } catch {
+      // Ignore invalid stored configuration and keep the backward-compatible default.
+    }
+    res.json({ mode: "calendar", startDate: "", endDate: "" });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "خطأ" });
   }

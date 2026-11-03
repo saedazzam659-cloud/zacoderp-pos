@@ -1780,7 +1780,92 @@ router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
     : Object.fromEntries(
         Object.entries(company).filter(([key]) => !AGENT_COMPANY_ZATCA_SECRET_FIELDS.has(key)),
       );
-  res.json({ company: companyResponse, subscription: subscription ?? null, users, counts: { invoices: invoiceCount, customers: customerCount, suppliers: supplierCount } });
+  const [policySetting] = await db.select({ value: systemSettingsTable.value })
+    .from(systemSettingsTable)
+    .where(eq(systemSettingsTable.key, `fiscal_year_policy:${id}`))
+    .limit(1);
+  let fiscalYearPolicy = { mode: "calendar", startDate: "", endDate: "" };
+  if (policySetting?.value) {
+    try {
+      const parsed = JSON.parse(policySetting.value);
+      if (parsed?.mode === "custom" && typeof parsed.startDate === "string" && typeof parsed.endDate === "string") {
+        fiscalYearPolicy = { mode: "custom", startDate: parsed.startDate, endDate: parsed.endDate };
+      }
+    } catch {
+      // A malformed legacy setting must not prevent the company profile loading.
+    }
+  }
+  res.json({ company: companyResponse, subscription: subscription ?? null, users, counts: { invoices: invoiceCount, customers: customerCount, suppliers: supplierCount }, fiscalYearPolicy });
+  });
+});
+
+// PUT /api/admin/companies/:id/fiscal-year-policy — store the company-specific
+// annual cycle template. Existing fiscal-year rows are intentionally untouched.
+router.put("/companies/:id/fiscal-year-policy", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف الشركة غير صحيح" });
+      return;
+    }
+    const mode = req.body?.mode;
+    let policy: { mode: "calendar" | "custom"; startDate: string; endDate: string };
+    if (mode === "calendar") {
+      policy = { mode: "calendar", startDate: "", endDate: "" };
+    } else if (mode === "custom") {
+      const startDate = String(req.body?.startDate ?? "");
+      const endDate = String(req.body?.endDate ?? "");
+      const validDate = (value: string) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+        const parsed = new Date(`${value}T00:00:00.000Z`);
+        return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+      };
+      if (!validDate(startDate) || !validDate(endDate)) {
+        res.status(400).json({ error: "أدخل تاريخ بداية ونهاية صحيحين" });
+        return;
+      }
+      const days = (Date.parse(`${endDate}T00:00:00.000Z`) - Date.parse(`${startDate}T00:00:00.000Z`)) / 86_400_000;
+      if (days < 364 || days > 365) {
+        res.status(400).json({ error: "يجب أن تغطي السنة المالية دورة سنوية واحدة" });
+        return;
+      }
+      policy = { mode: "custom", startDate, endDate };
+    } else {
+      res.status(400).json({ error: "سياسة السنة المالية غير صحيحة" });
+      return;
+    }
+    const [company] = await db.select({ id: companiesTable.id }).from(companiesTable)
+      .where(and(eq(companiesTable.id, id), eq(companiesTable.isInternalDemoWorkspace, false))).limit(1);
+    if (!company) {
+      res.status(404).json({ error: "الشركة غير موجودة" });
+      return;
+    }
+    const key = `fiscal_year_policy:${id}`;
+    const [previous] = await db.select({ value: systemSettingsTable.value })
+      .from(systemSettingsTable).where(eq(systemSettingsTable.key, key)).limit(1);
+    await db.insert(systemSettingsTable).values({ key, value: JSON.stringify(policy), updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: systemSettingsTable.key,
+        set: { value: JSON.stringify(policy), updatedAt: new Date() },
+      });
+    await db.insert(auditLogTable).values({
+      userId: (req as any).authUser?.id ?? null,
+      username: (req as any).authUser?.username ?? null,
+      role: (req as any).authUser?.role ?? null,
+      companyId: id,
+      module: "accounts",
+      action: "fiscal_year_policy_updated",
+      method: req.method,
+      path: req.originalUrl,
+      entityType: "company_fiscal_year_policy",
+      entityId: String(id),
+      statusCode: 200,
+      ip: req.ip ?? null,
+      userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
+      metadata: { previous: previous?.value ?? null, current: policy },
+    });
+    res.json({ ok: true, fiscalYearPolicy: policy });
   });
 });
 

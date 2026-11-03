@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -95,6 +95,11 @@ export default function CompanyDetails() {
   const [resetPassDialog, setResetPassDialog] = useState<any | null>(null);
   const [newPass, setNewPass] = useState("");
   const [demoDevicesUser, setDemoDevicesUser] = useState<any | null>(null);
+  const [fiscalPolicyDraft, setFiscalPolicyDraft] = useState({
+    mode: "calendar" as "calendar" | "custom",
+    startDate: "",
+    endDate: "",
+  });
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -112,6 +117,15 @@ export default function CompanyDetails() {
   const subscription = data?.subscription;
   const users       = data?.users ?? [];
   const counts      = data?.counts ?? { invoices: 0, customers: 0, suppliers: 0 };
+  useEffect(() => {
+    if (data?.fiscalYearPolicy) {
+      setFiscalPolicyDraft({
+        mode: data.fiscalYearPolicy.mode === "custom" ? "custom" : "calendar",
+        startDate: data.fiscalYearPolicy.startDate ?? "",
+        endDate: data.fiscalYearPolicy.endDate ?? "",
+      });
+    }
+  }, [data?.fiscalYearPolicy]);
 
   // «النطاق الموطن» — SA-only: home the company on a gateway (agent/main) domain
   const { data: domainsData } = useQuery({
@@ -165,6 +179,24 @@ export default function CompanyDetails() {
       });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const fiscalYearPolicyMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API}/api/admin/companies/${id}/fiscal-year-policy${agentQS}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(fiscalPolicyDraft),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "تعذّر حفظ سياسة السنة المالية");
+      return json;
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["admin-company", id, agentId] });
+      toast({ title: "تم حفظ سياسة السنة المالية" });
+    },
+    onError: (error: any) => toast({ title: error.message, variant: "destructive" }),
   });
 
   const documentFieldControlsMutation = useMutation({
@@ -437,6 +469,9 @@ export default function CompanyDetails() {
         <TabBtn active={tab === "overview"} onClick={() => setTab("overview")}>
           <Building2 className="h-4 w-4" />نظرة عامة
         </TabBtn>
+        <TabBtn active={tab === "fiscal"} onClick={() => setTab("fiscal")}>
+          <Calendar className="h-4 w-4" />السنة المالية والإقفال
+        </TabBtn>
         <TabBtn active={tab === "users"} onClick={() => setTab("users")} count={users.length}>
           <Users className="h-4 w-4" />المستخدمون
         </TabBtn>
@@ -526,6 +561,84 @@ export default function CompanyDetails() {
             </div>
           </div>
         </div>
+      )}
+
+      {tab === "fiscal" && (
+        <section className="max-w-4xl rounded-xl border bg-card p-5 space-y-5">
+          <div>
+            <h2 className="font-semibold">إعدادات السنة المالية والإقفال السنوي</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              السياسة تخص هذه الشركة. لا تغيّر السنوات والفترات المسجلة، ولا تلغي إنشاء السنوات التاريخية يدويًا.
+            </p>
+          </div>
+
+          <fieldset className="space-y-3">
+            <legend className="mb-2 text-sm font-medium">سياسة السنة المالية</legend>
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3">
+              <input
+                type="radio"
+                name="fiscal-year-policy"
+                checked={fiscalPolicyDraft.mode === "calendar"}
+                onChange={() => setFiscalPolicyDraft((current) => ({ ...current, mode: "calendar" }))}
+              />
+              <span>
+                <span className="block text-sm font-medium">السنة الميلادية — 1 يناير إلى 31 ديسمبر</span>
+                <span className="block text-xs text-muted-foreground">الخيار الافتراضي للشركات الجديدة.</span>
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3">
+              <input
+                type="radio"
+                name="fiscal-year-policy"
+                checked={fiscalPolicyDraft.mode === "custom"}
+                onChange={() => setFiscalPolicyDraft((current) => ({ ...current, mode: "custom" }))}
+              />
+              <span>
+                <span className="block text-sm font-medium">دورة سنوية مخصصة</span>
+                <span className="block text-xs text-muted-foreground">تتكرر سنويًا بنفس المدة؛ تواريخ السنوات القائمة لا تتغير.</span>
+              </span>
+            </label>
+          </fieldset>
+
+          {fiscalPolicyDraft.mode === "custom" && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="fiscal-year-start">بداية الدورة السنوية</Label>
+                <Input
+                  id="fiscal-year-start"
+                  type="date"
+                  value={fiscalPolicyDraft.startDate}
+                  onChange={(event) => setFiscalPolicyDraft((current) => ({ ...current, startDate: event.target.value }))}
+                  dir="ltr"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="fiscal-year-end">نهاية الدورة السنوية</Label>
+                <Input
+                  id="fiscal-year-end"
+                  type="date"
+                  value={fiscalPolicyDraft.endDate}
+                  onChange={(event) => setFiscalPolicyDraft((current) => ({ ...current, endDate: event.target.value }))}
+                  dir="ltr"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3 text-xs leading-6 text-blue-950">
+            هذه السياسة قالب افتراضي لإنشاء السنوات يدويًا؛ السنوات المسجلة لا تتغير. الإقفال النهائي يفتح سنة تالية وفق تواريخ السنة التي تُقفل، لذلك طابق القالب مع تواريخها قبل الاعتماد. التنبيه تذكيري فقط، والإقفال يحتاج اعتمادًا مخوّلًا. تبقى الأرصدة مستندة إلى القيود المرحلة دون إنشاء قيد افتتاحي مكرر.
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              onClick={() => fiscalYearPolicyMutation.mutate()}
+              disabled={fiscalYearPolicyMutation.isPending || (fiscalPolicyDraft.mode === "custom" && (!fiscalPolicyDraft.startDate || !fiscalPolicyDraft.endDate))}
+            >
+              {fiscalYearPolicyMutation.isPending ? "جارٍ الحفظ..." : "حفظ السياسة"}
+            </Button>
+          </div>
+        </section>
       )}
 
       {/* ─── Users Tab ─── */}

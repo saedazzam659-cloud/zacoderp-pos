@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import {
-  notificationsTable, notificationReadsTable, notificationDismissalsTable,
+  notificationsTable, notificationReadsTable, notificationDismissalsTable, fiscalYearsTable,
   companiesTable, employeesTable, employeeMedicalInsurancePoliciesTable, fixedAssetsTable,
 } from "@workspace/db";
-import { and, desc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { extractAuth } from "../middleware/auth.js";
 import { findUnbalancedOpeningDrafts } from "../lib/openingBalances.js";
 import { ensureProductionCertificateExpiryNotifications } from "../lib/productionLifecycleReminders.js";
@@ -69,6 +69,49 @@ function saudiBusinessDate(): string {
 function addDateOnlyDays(date: string, days: number): string {
   const ms = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)));
   return new Date(ms + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+// Annual-close notices are materialized when the user's notification bell is
+// read. Stable source keys prevent duplicate reminders across concurrent polls.
+async function ensureFiscalYearCloseReminders(companyId: number | null | undefined): Promise<void> {
+  if (!companyId) return;
+  const today = saudiBusinessDate();
+  const horizon = addDateOnlyDays(today, 30);
+  const years = await db.select({
+    id: fiscalYearsTable.id,
+    name: fiscalYearsTable.name,
+    endDate: fiscalYearsTable.endDate,
+    status: fiscalYearsTable.status,
+  }).from(fiscalYearsTable).where(and(
+    eq(fiscalYearsTable.companyId, companyId),
+    ne(fiscalYearsTable.status, "permanently_closed"),
+    lte(fiscalYearsTable.endDate, horizon),
+  )).orderBy(desc(fiscalYearsTable.endDate)).limit(20);
+
+  const rows = years.flatMap((year) => {
+    const daysUntil = (Date.parse(`${year.endDate}T00:00:00.000Z`) - Date.parse(`${today}T00:00:00.000Z`)) / 86_400_000;
+    const stage = daysUntil <= 0 ? "overdue" : daysUntil <= 7 ? "7d" : "30d";
+    const title = daysUntil <= 0
+      ? "موعد الإقفال السنوي مستحق"
+      : daysUntil <= 7
+      ? "اقترب موعد الإقفال السنوي"
+      : "تذكير بموعد الإقفال السنوي";
+    const body = daysUntil <= 0
+      ? `انتهت السنة المالية ${year.name} في ${year.endDate}. راجع المستندات والقيود، ثم اعتمد الإقفال إذا كانت الشركة جاهزة.`
+      : `تنتهي السنة المالية ${year.name} في ${year.endDate} (متبقي ${daysUntil} يومًا). راجع المستندات والقيود قبل الإقفال.`;
+    return [{
+      companyId,
+      userId: null,
+      title,
+      body,
+      severity: daysUntil <= 7 ? "high" : "medium",
+      category: "fiscal_year_close",
+      sourceKey: `fiscal_year_close:${year.id}:${stage}`,
+      moduleKey: "accounts",
+      branchId: null,
+    }];
+  });
+  if (rows.length) await db.insert(notificationsTable).values(rows).onConflictDoNothing();
 }
 
 // Materialize due reminders lazily when users poll the bell. This keeps the
@@ -231,6 +274,7 @@ async function ensureInsuranceExpiryNotifications(companyId: number | null | und
 //   flag computed from the notification_reads table (broadcast-safe).
 router.get("/", async (req, res) => {
   try {
+    await ensureFiscalYearCloseReminders(req.authUser!.companyId);
     await ensureOpeningBalanceReminders(req.authUser!.companyId);
     await ensureInsuranceExpiryNotifications(req.authUser!.companyId);
     await ensureProductionCertificateExpiryNotifications(req.authUser!.companyId);
@@ -283,6 +327,7 @@ router.get("/", async (req, res) => {
 // GET /api/notifications/unread-count
 router.get("/unread-count", async (req, res) => {
   try {
+    await ensureFiscalYearCloseReminders(req.authUser!.companyId);
     await ensureOpeningBalanceReminders(req.authUser!.companyId);
     await ensureInsuranceExpiryNotifications(req.authUser!.companyId);
     await ensureProductionCertificateExpiryNotifications(req.authUser!.companyId);

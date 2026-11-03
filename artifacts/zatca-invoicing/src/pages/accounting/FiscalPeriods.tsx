@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useFormatters } from "@/lib/format";
@@ -33,8 +33,8 @@ type FiscalPeriod = {
 
 const EMPTY_YEAR = {
   name: "",
-  startDate: new Date().toISOString().slice(0, 10),
-  endDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1) - 1).toISOString().slice(0, 10),
+  startDate: `${new Date().getUTCFullYear()}-01-01`,
+  endDate: `${new Date().getUTCFullYear()}-12-31`,
   periodCount: 12,
 };
 
@@ -96,6 +96,16 @@ export default function FiscalPeriods() {
     },
   });
 
+  const { data: yearPolicy } = useQuery<{ mode: "calendar" | "custom"; startDate: string; endDate: string }>({
+    queryKey: ["fiscal-year-policy", cid],
+    enabled: !!cid,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/fiscal/year-policy?companyId=${cid}`, { headers });
+      if (!r.ok) throw new Error("تعذر تحميل سياسة السنة المالية");
+      return r.json();
+    },
+  });
+
   const { data: periods = [] } = useQuery<FiscalPeriod[]>({
     queryKey: ["fiscal-periods", selectedYearId],
     enabled: !!selectedYearId,
@@ -108,6 +118,19 @@ export default function FiscalPeriods() {
   });
 
   const selectedYear = useMemo(() => years.find(y => y.id === selectedYearId) ?? null, [years, selectedYearId]);
+  const openYearForm = () => {
+    if (yearPolicy?.mode === "custom" && yearPolicy.startDate && yearPolicy.endDate) {
+      setYearForm({
+        name: `السنة المالية ${yearPolicy.startDate.slice(0, 4)}`,
+        startDate: yearPolicy.startDate,
+        endDate: yearPolicy.endDate,
+        periodCount: 12,
+      });
+    } else {
+      setYearForm(EMPTY_YEAR);
+    }
+    setShowForm(true);
+  };
 
   const periodStats = useMemo(() => {
     const open = periods.filter(p => p.status === "open").length;
@@ -238,7 +261,7 @@ export default function FiscalPeriods() {
         </div>
         <Button
           size="lg"
-          onClick={() => { setYearForm(EMPTY_YEAR); setShowForm(true); }}
+          onClick={openYearForm}
           className="gap-2 bg-gradient-to-l from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 shadow-md"
         >
           <Plus className="h-5 w-5" />
@@ -313,7 +336,7 @@ export default function FiscalPeriods() {
               <Calendar className="h-10 w-10 mx-auto mb-2 opacity-20" />
               <p className="text-sm font-semibold mb-1">{t("fiscalPeriods.noYears")}</p>
               <p className="text-xs text-muted-foreground mb-3">{t("fiscalPeriods.noYearsHint")}</p>
-              <Button size="sm" variant="outline" onClick={() => { setYearForm(EMPTY_YEAR); setShowForm(true); }}>
+              <Button size="sm" variant="outline" onClick={openYearForm}>
                 <Plus className={cn("h-4 w-4", isRtl ? "ml-1" : "mr-1")} />{t("fiscalPeriods.createYear")}
               </Button>
             </Card>
