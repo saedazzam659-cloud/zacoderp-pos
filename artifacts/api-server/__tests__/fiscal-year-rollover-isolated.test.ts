@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import http from "node:http";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import bcrypt from "bcryptjs";
 import { and, eq, inArray } from "drizzle-orm";
 import {
@@ -22,6 +22,7 @@ import {
 import app from "../src/app.ts";
 
 const armed = process.env.FISCAL_YEAR_ROLLOVER_TEST === "1";
+after(async () => { await pool.end().catch(() => {}); });
 
 test("full annual close zeros revenue/expense reports and creates one open successor",
   { skip: !armed }, async () => {
@@ -287,6 +288,141 @@ test("full annual close zeros revenue/expense reports and creates one open succe
         if (adminId != null) await db.delete(usersTable).where(eq(usersTable.id, adminId)).catch(() => {});
         await db.delete(companiesTable).where(eq(companiesTable.id, companyId)).catch(() => {});
       }
-      await pool.end().catch(() => {});
+    }
+  });
+
+test("existing open successor is reused and mismatched opening balances block approval",
+  { skip: !armed }, async () => {
+    const tag = `fyreconcile_${randomBytes(6).toString("hex")}`;
+    let companyId: number | undefined;
+    let adminId: number | undefined;
+    let server: http.Server | undefined;
+
+    try {
+      const [company] = await db.insert(companiesTable).values({
+        nameAr: `اختبار مطابقة الأرصدة ${tag}`,
+        nameEn: `Opening balance reconciliation ${tag}`,
+        vatNumber: `3${randomBytes(7).toString("hex").slice(0, 13)}`,
+        crNumber: `CR-${tag}`,
+        city: "Riyadh",
+        street: "Test",
+        buildingNumber: "1",
+        postalCode: "12345",
+      }).returning();
+      companyId = company.id;
+
+      const token = randomBytes(32).toString("hex");
+      const [admin] = await db.insert(usersTable).values({
+        username: `${tag}_admin`,
+        passwordHash: await bcrypt.hash("test-only", 4),
+        role: "admin",
+        companyId,
+        sessionToken: token,
+      }).returning({ id: usersTable.id });
+      adminId = admin.id;
+
+      const accounts = await db.insert(accountsTable).values([
+        { companyId, code: `${tag}_asset`, nameAr: "أصل اختبار", accountType: "asset", isPosting: true, level: 4 },
+        { companyId, code: `${tag}_equity`, nameAr: "حقوق ملكية اختبار", accountType: "equity", isPosting: true, level: 4 },
+      ]).returning();
+      const [priorYear] = await db.insert(fiscalYearsTable).values({
+        companyId, name: `السنة السابقة ${tag}`, startDate: "2025-01-01", endDate: "2025-12-31", status: "closed",
+      }).returning();
+      const [successorYear] = await db.insert(fiscalYearsTable).values({
+        companyId, name: `السنة التالية ${tag}`, startDate: "2026-01-01", endDate: "2026-12-31", status: "open",
+      }).returning();
+      const [priorPeriod] = await db.insert(fiscalPeriodsTable).values({
+        companyId, fiscalYearId: priorYear.id, name: "ديسمبر 2025",
+        startDate: "2025-01-01", endDate: "2025-12-31", sequence: 1, status: "permanently_closed",
+      }).returning();
+      const [successorPeriod] = await db.insert(fiscalPeriodsTable).values({
+        companyId, fiscalYearId: successorYear.id, name: "السنة 2026",
+        startDate: "2026-01-01", endDate: "2026-12-31", sequence: 1, status: "open",
+      }).returning();
+      const [priorEntry] = await db.insert(journalEntriesTable).values({
+        companyId, entryDate: "2025-12-31", currency: "SAR", exchangeRate: "1",
+        description: `رصيد ختامي ${tag}`, entryType: "general", status: "posted", periodId: priorPeriod.id,
+      }).returning();
+      await db.insert(journalEntryLinesTable).values([
+        { entryId: priorEntry.id, accountId: accounts[0].id, debit: "100.00", credit: "0", sortOrder: 0 },
+        { entryId: priorEntry.id, accountId: accounts[1].id, debit: "0", credit: "100.00", sortOrder: 1 },
+      ]);
+      const [openingEntry] = await db.insert(journalEntriesTable).values({
+        companyId, entryDate: "2026-01-01", currency: "SAR", exchangeRate: "1",
+        description: `رصيد افتتاحي قائم ${tag}`, entryType: "opening", status: "posted", periodId: successorPeriod.id,
+      }).returning();
+      await db.insert(journalEntryLinesTable).values([
+        { entryId: openingEntry.id, accountId: accounts[0].id, debit: "90.00", credit: "0", sortOrder: 0 },
+        { entryId: openingEntry.id, accountId: accounts[1].id, debit: "0", credit: "90.00", sortOrder: 1 },
+      ]);
+
+      await new Promise<void>((resolve) => {
+        server = app.listen(0, "127.0.0.1", () => resolve());
+      });
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test API server did not bind");
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const finalize = async () => {
+        const response = await fetch(`${baseUrl}/api/fiscal/years/${priorYear.id}/status?companyId=${companyId}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "permanently_closed" }),
+        });
+        return { status: response.status, body: await response.json() as any };
+      };
+
+      const blocked = await finalize();
+      assert.equal(blocked.status, 409, JSON.stringify(blocked.body));
+      assert.equal(blocked.body.openingEntryCount, 1);
+      assert.equal(blocked.body.openingBalanceDifferences.length, 2);
+      assert.ok(blocked.body.openingBalanceDifferences.every((row: any) => Math.abs(row.difference) === 10));
+      const [untouchedPrior] = await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.id, priorYear.id));
+      const [untouchedSuccessor] = await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.id, successorYear.id));
+      assert.equal(untouchedPrior.status, "closed");
+      assert.equal(untouchedSuccessor.status, "open");
+
+      await db.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, openingEntry.id));
+      await db.insert(journalEntryLinesTable).values([
+        { entryId: openingEntry.id, accountId: accounts[0].id, debit: "100.00", credit: "0", sortOrder: 0 },
+        { entryId: openingEntry.id, accountId: accounts[1].id, debit: "0", credit: "100.00", sortOrder: 1 },
+      ]);
+      const approved = await finalize();
+      assert.equal(approved.status, 200, JSON.stringify(approved.body));
+      assert.equal(approved.body.successorCreated, false);
+      assert.equal(approved.body.successorYear.id, successorYear.id);
+      assert.equal(approved.body.openingBalanceReconciliation.status, "matched");
+
+      assert.equal((await db.select().from(fiscalYearsTable).where(eq(fiscalYearsTable.companyId, companyId))).length, 2);
+      assert.equal((await db.select().from(fiscalPeriodsTable).where(eq(fiscalPeriodsTable.companyId, companyId))).length, 2);
+      const [preservedOpening] = await db.select().from(journalEntriesTable)
+        .where(eq(journalEntriesTable.id, openingEntry.id));
+      assert.equal(preservedOpening.status, "posted");
+      assert.equal(preservedOpening.entryType, "opening");
+      assert.equal((await db.select().from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.companyId, companyId),
+        eq(journalEntriesTable.entryType, "opening"),
+      ))).length, 1);
+    } finally {
+      if (server) {
+        await new Promise<void>((resolve) => {
+          server!.close(() => resolve());
+          server!.closeAllConnections?.();
+        });
+      }
+      if (companyId != null) {
+        await db.delete(auditLogTable).where(eq(auditLogTable.companyId, companyId)).catch(() => {});
+        const allEntries = await db.select({ id: journalEntriesTable.id }).from(journalEntriesTable)
+          .where(eq(journalEntriesTable.companyId, companyId)).catch(() => []);
+        const allEntryIds = allEntries.map((item) => item.id);
+        if (allEntryIds.length) {
+          await db.delete(journalEntryLinesTable).where(inArray(journalEntryLinesTable.entryId, allEntryIds)).catch(() => {});
+          await db.delete(journalEntriesTable).where(inArray(journalEntriesTable.id, allEntryIds)).catch(() => {});
+        }
+        await db.delete(fiscalPeriodsTable).where(eq(fiscalPeriodsTable.companyId, companyId)).catch(() => {});
+        await db.delete(fiscalYearsTable).where(eq(fiscalYearsTable.companyId, companyId)).catch(() => {});
+        await db.delete(accountsTable).where(eq(accountsTable.companyId, companyId)).catch(() => {});
+        if (adminId != null) await db.delete(usersTable).where(eq(usersTable.id, adminId)).catch(() => {});
+        await db.delete(companiesTable).where(eq(companiesTable.id, companyId)).catch(() => {});
+      }
     }
   });

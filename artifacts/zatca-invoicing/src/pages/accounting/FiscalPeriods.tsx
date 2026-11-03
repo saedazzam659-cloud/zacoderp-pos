@@ -31,6 +31,15 @@ type FiscalPeriod = {
   status: "open" | "closed" | "permanently_closed";
 };
 
+type OpeningBalanceDifference = {
+  accountId: number;
+  accountCode: string;
+  accountName: string;
+  priorClosingBalance: number;
+  successorOpeningBalance: number;
+  difference: number;
+};
+
 const EMPTY_YEAR = {
   name: "",
   startDate: `${new Date().getUTCFullYear()}-01-01`,
@@ -86,6 +95,7 @@ export default function FiscalPeriods() {
   const [selectedYearId, setSelectedYearId] = useState<number | null>(null);
   const [confirmDelId, setConfirmDelId] = useState<number | null>(null);
   const [closingPeriod, setClosingPeriod] = useState<FiscalPeriod | null>(null);
+  const [openingBalanceDifferences, setOpeningBalanceDifferences] = useState<OpeningBalanceDifference[]>([]);
 
   const { data: years = [], isLoading: yearsLoading } = useQuery<FiscalYear[]>({
     queryKey: ["fiscal-years", cid],
@@ -189,13 +199,22 @@ export default function FiscalPeriods() {
       const r = await fetch(`${API}/api/fiscal/years/${id}/status`, {
         method: "PATCH", headers, body: JSON.stringify({ status }),
       });
-      return await safeJson(r, t("fiscalPeriods.updateFailed"));
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const error = new Error(data?.error || t("fiscalPeriods.updateFailed")) as Error & {
+          openingBalanceDifferences?: OpeningBalanceDifference[];
+        };
+        error.openingBalanceDifferences = data?.openingBalanceDifferences;
+        throw error;
+      }
+      return data;
     },
     onSuccess: (d: any, variables: { id: number; status: string }) => {
+      setOpeningBalanceDifferences([]);
       if (variables.status === "permanently_closed" && d?.successorYear) {
         toast({
           title: "تم اعتماد إقفال السنة",
-          description: `${d.successorYear.name} — ${d.successorYear.startDate} إلى ${d.successorYear.endDate} — تم فتحها تلقائيًا. الأرصدة مستمرة من الحركات السابقة دون إنشاء قيد افتتاحي مكرر.`,
+          description: `${d.successorYear.name} — ${d.successorYear.startDate} إلى ${d.successorYear.endDate} — ${d.successorCreated ? "تم إنشاؤها وفتحها" : "تم استخدام السنة المفتوحة الموجودة"}. الأرصدة مستمرة من الحركات السابقة دون إنشاء قيد افتتاحي مكرر.`,
         });
         setSelectedYearId(d.successorYear.id);
       } else {
@@ -207,7 +226,12 @@ export default function FiscalPeriods() {
         qc.invalidateQueries({ queryKey: ["fiscal-periods", d.successorYear.id] });
       }
     },
-    onError: (e: any) => toast({ title: t("fiscalPeriods.error"), description: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      if (Array.isArray(e?.openingBalanceDifferences)) {
+        setOpeningBalanceDifferences(e.openingBalanceDifferences);
+      }
+      toast({ title: t("fiscalPeriods.error"), description: e.message, variant: "destructive" });
+    },
   });
 
   // SuperAdmin-only recovery for periods that were prematurely hard-closed
@@ -469,6 +493,48 @@ export default function FiscalPeriods() {
                   </div>
                 </CardContent>
               </Card>
+
+              {openingBalanceDifferences.length > 0 && (
+                <Card className="border-red-300 bg-red-50/70">
+                  <CardContent className="p-4 space-y-3">
+                    <div>
+                      <h3 className="font-semibold text-red-800">
+                        {isRtl ? "تم إيقاف الإقفال لوجود فروقات افتتاحية" : "Year close paused due to opening-balance differences"}
+                      </h3>
+                      <p className="text-xs text-red-700 mt-1">
+                        {isRtl
+                          ? "لم يتم تعديل أي قيد أو سنة. راجع الفروقات وسوِّها يدويًا ثم أعد اعتماد الإقفال."
+                          : "No entry or fiscal year was changed. Review and resolve the differences, then retry final approval."}
+                      </p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-start">
+                        <thead>
+                          <tr className="border-b border-red-200 text-red-800">
+                            <th className="py-2 px-2">{isRtl ? "الحساب" : "Account"}</th>
+                            <th className="py-2 px-2">{isRtl ? "ختامي السنة السابقة" : "Prior closing"}</th>
+                            <th className="py-2 px-2">{isRtl ? "افتتاحي السنة التالية" : "Successor opening"}</th>
+                            <th className="py-2 px-2">{isRtl ? "الفرق" : "Difference"}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {openingBalanceDifferences.map(row => (
+                            <tr key={row.accountId} className="border-b border-red-100">
+                              <td className="py-2 px-2">
+                                <span className="font-mono">{row.accountCode}</span>
+                                <span className={cn("ms-2", "text-red-900")}>{row.accountName}</span>
+                              </td>
+                              <td className="py-2 px-2 tabular-nums" dir="ltr">{row.priorClosingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="py-2 px-2 tabular-nums" dir="ltr">{row.successorOpeningBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="py-2 px-2 tabular-nums font-semibold" dir="ltr">{row.difference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Periods list */}
               <Card>

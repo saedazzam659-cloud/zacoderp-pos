@@ -516,7 +516,9 @@ router.patch("/years/:id/status", async (req, res) => {
             eq(fiscalYearsTable.startDate, nextStartDate),
             eq(fiscalYearsTable.endDate, nextEndDate),
           ));
-          return [freshCurrent, existing ? { year: existing, created: false } : null, true] as const;
+          return [freshCurrent, existing ? {
+            year: existing, created: false, reconciliation: { status: "already_finalized" as const },
+          } : null, true] as const;
         }
         const overlaps = await tx.select().from(fiscalYearsTable).where(and(
           eq(fiscalYearsTable.companyId, cid),
@@ -561,6 +563,103 @@ router.patch("/years/:id/status", async (req, res) => {
           createdSuccessor = true;
         }
         if (!nextYear) throw new Error("تعذر تحديد السنة المالية التالية");
+
+        let openingBalanceReconciliation:
+          | { status: "no_opening_entries" | "matched"; openingEntryCount: number; comparedAccountCount: number }
+          | { status: "not_applicable"; openingEntryCount: 0; comparedAccountCount: 0 } = {
+            status: exactSuccessor ? "no_opening_entries" : "not_applicable",
+            openingEntryCount: 0,
+            comparedAccountCount: 0,
+          };
+
+        if (exactSuccessor) {
+          const priorBalances = await tx.select({
+            accountId: journalEntryLinesTable.accountId,
+            accountCode: accountsTable.code,
+            accountName: accountsTable.nameAr,
+            balance: sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit}), 0)`,
+          }).from(journalEntryLinesTable)
+            .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+            .innerJoin(accountsTable, eq(journalEntryLinesTable.accountId, accountsTable.id))
+            .where(and(
+              eq(journalEntriesTable.companyId, cid),
+              eq(journalEntriesTable.status, "posted"),
+              lte(journalEntriesTable.entryDate, freshCurrent.endDate),
+            ))
+            .groupBy(journalEntryLinesTable.accountId, accountsTable.code, accountsTable.nameAr);
+
+          const openingBalances = await tx.select({
+            accountId: journalEntryLinesTable.accountId,
+            accountCode: accountsTable.code,
+            accountName: accountsTable.nameAr,
+            balance: sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit} - ${journalEntryLinesTable.credit}), 0)`,
+            entryCount: sql<number>`COUNT(DISTINCT ${journalEntriesTable.id})::int`,
+          }).from(journalEntryLinesTable)
+            .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+            .innerJoin(accountsTable, eq(journalEntryLinesTable.accountId, accountsTable.id))
+            .where(and(
+              eq(journalEntriesTable.companyId, cid),
+              eq(journalEntriesTable.status, "posted"),
+              eq(journalEntriesTable.entryType, "opening"),
+              gte(journalEntriesTable.entryDate, nextStartDate),
+              lte(journalEntriesTable.entryDate, nextEndDate),
+            ))
+            .groupBy(journalEntryLinesTable.accountId, accountsTable.code, accountsTable.nameAr);
+
+          const openingEntryCount = Number(openingBalances[0]?.entryCount ?? 0);
+          if (openingEntryCount > 0) {
+            const previousByAccount = new Map(priorBalances.map(row => [
+              Number(row.accountId),
+              {
+                code: row.accountCode,
+                name: row.accountName,
+                balance: Number(row.balance || 0),
+              },
+            ]));
+            const openingByAccount = new Map(openingBalances.map(row => [
+              Number(row.accountId),
+              {
+                code: row.accountCode,
+                name: row.accountName,
+                balance: Number(row.balance || 0),
+              },
+            ]));
+            const allAccountIds = new Set([...previousByAccount.keys(), ...openingByAccount.keys()]);
+            const differences = [...allAccountIds].flatMap(accountId => {
+              const previous = previousByAccount.get(accountId);
+              const opening = openingByAccount.get(accountId);
+              const closingBalance = previous?.balance ?? 0;
+              const openingBalance = opening?.balance ?? 0;
+              const difference = Math.round((openingBalance - closingBalance) * 100) / 100;
+              if (Math.abs(difference) <= 0.005) return [];
+              return [{
+                accountId,
+                accountCode: previous?.code ?? opening?.code ?? "",
+                accountName: previous?.name ?? opening?.name ?? "",
+                priorClosingBalance: Math.round(closingBalance * 100) / 100,
+                successorOpeningBalance: Math.round(openingBalance * 100) / 100,
+                difference,
+              }];
+            });
+            if (differences.length > 0) {
+              throw new Error("فروقات_الأرصدة_الافتتاحية:" + JSON.stringify({
+                successorYear: {
+                  id: nextYear.id, name: nextYear.name,
+                  startDate: nextYear.startDate, endDate: nextYear.endDate,
+                },
+                openingEntryCount,
+                differenceCount: differences.length,
+                differences: differences.slice(0, 100),
+              }));
+            }
+            openingBalanceReconciliation = {
+              status: "matched",
+              openingEntryCount,
+              comparedAccountCount: allAccountIds.size,
+            };
+          }
+        }
+
         const rolloverYear = nextYear;
         await tx.insert(auditLogTable).values({
           userId: (req as any).authUser?.id ?? null,
@@ -586,9 +685,12 @@ router.patch("/years/:id/status", async (req, res) => {
             successorCreated: createdSuccessor,
             balanceCarryForward: "prior_posted_ledger_history",
             openingJournalCreated: false,
+            openingBalanceReconciliation,
           },
         });
-        return [closedYear, { year: rolloverYear, created: createdSuccessor }, false] as const;
+        return [closedYear, {
+          year: rolloverYear, created: createdSuccessor, reconciliation: openingBalanceReconciliation,
+        }, false] as const;
       });
       if (!successor) {
         res.status(409).json({ error: "تم اعتماد إقفال السنة، لكن تعذر العثور على السنة التالية؛ راجع تعريف السنوات المالية." });
@@ -601,6 +703,7 @@ router.patch("/years/:id/status", async (req, res) => {
         successorCreated: successor.created,
         alreadyFinalized,
         balancesCarryForwardFromHistory: true,
+        openingBalanceReconciliation: successor.reconciliation,
       });
       return;
     }
@@ -623,6 +726,16 @@ router.patch("/years/:id/status", async (req, res) => {
       res.status(409).json({
         error: "السنة المالية التالية موجودة لكنها ليست مفتوحة. افتحها يدويًا أو عدّلها قبل اعتماد الإقفال النهائي.",
         successorYear: JSON.parse(message.slice("السنة_التالية_مغلقة:".length)),
+      });
+      return;
+    }
+    if (message.startsWith("فروقات_الأرصدة_الافتتاحية:")) {
+      const reconciliation = JSON.parse(message.slice("فروقات_الأرصدة_الافتتاحية:".length));
+      const { differences, ...details } = reconciliation;
+      res.status(409).json({
+        error: `تم إيقاف الإقفال: يوجد ${reconciliation.differenceCount} فرق في الأرصدة الافتتاحية للسنة التالية. راجع الفروقات قبل إعادة المحاولة.`,
+        ...details,
+        openingBalanceDifferences: differences,
       });
       return;
     }
