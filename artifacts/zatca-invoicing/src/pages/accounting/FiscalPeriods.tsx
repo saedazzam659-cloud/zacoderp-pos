@@ -373,7 +373,10 @@ export default function FiscalPeriods() {
                 return (
                   <Card
                     key={y.id}
-                    onClick={() => setSelectedYearId(y.id)}
+                    onClick={() => {
+                      setSelectedYearId(y.id);
+                      setOpeningBalanceDifferences([]);
+                    }}
                     className={cn(
                       "cursor-pointer transition-all hover:shadow-md",
                       isSelected && "ring-2 ring-violet-500 shadow-md",
