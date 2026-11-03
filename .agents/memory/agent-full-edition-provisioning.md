@@ -7,7 +7,7 @@ description: Invariants for the «نسخة كاملة» agent edition, its relea
 `agent_instances.mode`: `frontend_only`, `full_shell`, `full`. `full` runs the whole api-server bundle locally on the agent server (systemd `zacod-app` on 127.0.0.1:8080); Caddy serves the local SPA from the installed `public/` directory and proxies backend paths only. The other two modes are served from central.
 
 ## Release channel
-- `lib/agentRelease.ts` tars the server's OWN `dist/` (version = sha256(index.mjs)[:16]) → every central Publish is automatically a new agent release. `dist/public/` SPA assets ride along only in the PRODUCTION build — dev dist has no UI, so full-edition install tests must pull from prod.
+- `lib/agentRelease.ts` tars the server's OWN `dist/` (version = sha256(index.mjs)[:16]) → every central Publish is automatically a new agent release. Production snapshots include the ERP SPA at `public/` and the POS SPA at `public/pos`; full-agent releases fail closed if either existing artifact has no complete build.
 - Public routes `/api/agent/release/manifest|bundle` auth by installationId+licenseKey and require mode=full, status=active, unexpired license — the kill-switch also stops updates. Updater = cron every 10 min comparing manifest version; heredoc for the updater must stay quoted (`<<'ZACOD_UPD'`).
 
 ## Provision pipeline invariants
@@ -19,6 +19,7 @@ description: Invariants for the «نسخة كاملة» agent edition, its relea
 - Full agents cannot use the central Outlook connector. Seed SMTP_* into the remote mode-0600 app.env on first install and preserve it on reinstall. Also provide an SSH-backed per-agent SMTP repair/test using operator-entered provider credentials; never print them in logs.
 - Progress streams into deployLog (reused column, no DDL); UI polls the list every 3s while deploying.
 - Full-mode Caddy must route `/api*` (and backend utility paths) to local Node, while static files and the SPA fallback come from the installed frontend. A catch-all reverse proxy produces `Cannot GET /` even though DNS/TLS and the app service are healthy.
+- Full-mode Caddy routes `/pos/*` to `public/pos/index.html` and serves `/pos/assets/*` without SPA fallback; `/pos/entry` is the cashier redirect target.
 
 ## خيارات التسطيب (variants)
 - `/provision` body: `{variant: full|no_db|upload, encryptBundle}` — الافتراضي يطابق السلوك القديم تمامًا.

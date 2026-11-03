@@ -3016,6 +3016,22 @@ ${caddyCrawlPolicy()}
     file_server
   }
 
+  handle /pos/assets/* {
+    root * /opt/zacod/app/public
+    header Cache-Control "public, max-age=31536000, immutable"
+    file_server
+  }
+
+  @posApp {
+    path /pos /pos/*
+  }
+  handle @posApp {
+    root * /opt/zacod/app/public
+    try_files {path} /pos/index.html
+    header Cache-Control "no-cache, no-store, must-revalidate"
+    file_server
+  }
+
   handle {
     root * /opt/zacod/app/public
     try_files {path} /index.html

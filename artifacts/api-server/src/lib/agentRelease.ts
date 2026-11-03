@@ -72,17 +72,49 @@ async function webSource(distDir: string): Promise<string> {
   return path.join(distDir, "public");
 }
 
-async function validateWeb(publicDir: string): Promise<void> {
+async function posWebSource(distDir: string): Promise<string | null> {
+  const apiArtifact = path.dirname(path.resolve(distDir));
+  const isMonorepo = path.basename(apiArtifact) === "api-server"
+    && path.basename(path.dirname(apiArtifact)) === "artifacts";
+  const workspaceRoot = isMonorepo
+    ? path.resolve(apiArtifact, "..", "..")
+    : path.dirname(path.resolve(distDir));
+  const artifactDir = path.join(workspaceRoot, "artifacts", "pos");
+  try {
+    if (!(await fs.stat(artifactDir)).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  const publicDir = path.join(artifactDir, "dist", "public");
+  try {
+    if (!(await fs.stat(publicDir)).isDirectory()) {
+      throw new Error("POS public build directory is missing");
+    }
+  } catch (error: any) {
+    throw new Error(`حزمة نقاط البيع غير مكتملة — ابنِ تطبيق POS أولًا (${error?.message ?? error})`);
+  }
+  return publicDir;
+}
+
+async function validateWeb(publicDir: string, basePath = "/"): Promise<void> {
   let html: string;
   try {
     html = await fs.readFile(path.join(publicDir, "index.html"), "utf8");
     if (!html.trim()) throw new Error("empty index");
     // Every hashed Vite asset named by the entry page must exist in the
     // captured tree. A missing chunk must not be hidden by an older snapshot.
-    for (const match of html.matchAll(/(?:src|href)=["']\/?(assets\/[^"'?#]+)(?:[?#][^"']*)?["']/g)) {
-      const asset = path.resolve(publicDir, match[1]);
+    const prefix = basePath.replace(/^\/+|\/+$/g, "");
+    const expectedAssetPrefix = prefix ? `${prefix}/assets/` : "assets/";
+    for (const match of html.matchAll(/(?:src|href)=["']([^"'?#]+)(?:[?#][^"']*)?["']/g)) {
+      const reference = match[1].replace(/^\/+/, "");
+      if (!reference.includes("assets/")) continue;
+      if (!reference.startsWith(expectedAssetPrefix)) {
+        throw new Error(`asset path does not match base path: ${reference}`);
+      }
+      const relativeAsset = prefix ? reference.slice(prefix.length + 1) : reference;
+      const asset = path.resolve(publicDir, relativeAsset);
       if (!asset.startsWith(path.resolve(publicDir) + path.sep) || !(await fs.stat(asset)).isFile()) {
-        throw new Error(`missing asset: ${match[1]}`);
+        throw new Error(`missing asset: ${reference}`);
       }
     }
   } catch (error: any) {
@@ -148,11 +180,20 @@ export async function buildReleaseFromDist(distDir: string, releaseDir = "/tmp")
   try {
     const snapshot = path.join(workDir, "dist");
     const publicSource = await webSource(distDir);
+    const posSource = await posWebSource(distDir);
     await validateWeb(publicSource);
+    if (posSource) await validateWeb(posSource, "/pos/");
     await fs.cp(distDir, snapshot, { recursive: true, filter: (source) =>
       source !== path.join(distDir, "public") && !source.endsWith(".map") });
     await fs.cp(publicSource, path.join(snapshot, "public"), { recursive: true, filter: (source) => !source.endsWith(".map") });
+    if (posSource) {
+      await fs.cp(posSource, path.join(snapshot, "public", "pos"), {
+        recursive: true,
+        filter: (source) => !source.endsWith(".map"),
+      });
+    }
     await validateWeb(path.join(snapshot, "public"));
+    if (posSource) await validateWeb(path.join(snapshot, "public", "pos"), "/pos/");
     const key = `${path.resolve(releaseDir)}:${await fingerprint(snapshot)}`;
     let pending = flights.get(key);
     if (!pending) {

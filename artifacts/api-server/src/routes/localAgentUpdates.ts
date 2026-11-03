@@ -349,6 +349,22 @@ ${caddyCrawlPolicy()}
     file_server
   }
 
+  handle /pos/assets/* {
+    root * /opt/zacod/app/public
+    header Cache-Control "public, max-age=31536000, immutable"
+    file_server
+  }
+
+  @posApp {
+    path /pos /pos/*
+  }
+  handle @posApp {
+    root * /opt/zacod/app/public
+    try_files {path} /pos/index.html
+    header Cache-Control "no-cache, no-store, must-revalidate"
+    file_server
+  }
+
   handle {
     root * /opt/zacod/app/public
     try_files {path} /index.html
@@ -453,6 +469,7 @@ mkdir -p "$NEW_DIR"
 tar -xzf "$BUNDLE_FILE" -C "$NEW_DIR"
 [ -f "$NEW_DIR/index.mjs" ]
 [ -f "$NEW_DIR/public/index.html" ]
+[ -f "$NEW_DIR/public/pos/index.html" ]
 echo "$TARGET_VERSION" > "$NEW_DIR/VERSION"
 
 # Keep exactly one previous generation of hashed Vite assets. Browsers that
@@ -462,20 +479,22 @@ echo "$TARGET_VERSION" > "$NEW_DIR/VERSION"
 # retained files from accumulating across later updates.
 RETAINED_LIST="$NEW_DIR/.retained-update-assets"
 : > "$RETAINED_LIST"
-if [ -d "$APP_DIR/public/assets" ]; then
-  OLD_RETAINED="$APP_DIR/.retained-update-assets"
-  while IFS= read -r -d '' old_asset; do
-    rel_asset=\${old_asset#"$APP_DIR/public/"}
-    if [ -f "$OLD_RETAINED" ] && grep -Fqx "$rel_asset" "$OLD_RETAINED"; then
-      continue
-    fi
-    if [ ! -e "$NEW_DIR/public/$rel_asset" ]; then
-      mkdir -p "$(dirname "$NEW_DIR/public/$rel_asset")"
-      cp -p "$old_asset" "$NEW_DIR/public/$rel_asset"
-      printf '%s\\n' "$rel_asset" >> "$RETAINED_LIST"
-    fi
-  done < <(find "$APP_DIR/public/assets" -type f -print0)
-fi
+OLD_RETAINED="$APP_DIR/.retained-update-assets"
+for asset_root in "$APP_DIR/public/assets" "$APP_DIR/public/pos/assets"; do
+  if [ -d "$asset_root" ]; then
+    while IFS= read -r -d '' old_asset; do
+      rel_asset=\${old_asset#"$APP_DIR/public/"}
+      if [ -f "$OLD_RETAINED" ] && grep -Fqx "$rel_asset" "$OLD_RETAINED"; then
+        continue
+      fi
+      if [ ! -e "$NEW_DIR/public/$rel_asset" ]; then
+        mkdir -p "$(dirname "$NEW_DIR/public/$rel_asset")"
+        cp -p "$old_asset" "$NEW_DIR/public/$rel_asset"
+        printf '%s\\n' "$rel_asset" >> "$RETAINED_LIST"
+      fi
+    done < <(find "$asset_root" -type f -print0)
+  fi
+done
 
 rm -rf "$OLD_DIR" "$FAILED_DIR"
 mv "$APP_DIR" "$OLD_DIR"

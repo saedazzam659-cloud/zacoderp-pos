@@ -255,17 +255,23 @@ async function updaterFixture(failFirstHealthCheck: boolean, manifestSizeDelta =
   const healthCount = path.join(root, "health-count");
   const capturedAuth = path.join(root, "captured-auth.curl");
   await fs.mkdir(path.join(appDir, "public", "assets"), { recursive: true });
+  await fs.mkdir(path.join(appDir, "public", "pos", "assets"), { recursive: true });
   await fs.writeFile(path.join(appDir, "OLD"), "old");
   await fs.writeFile(path.join(appDir, "index.mjs"), "old-index");
   await fs.writeFile(path.join(appDir, "public", "index.html"), "old-html");
+  await fs.writeFile(path.join(appDir, "public", "pos", "index.html"), "old-pos-html");
   await fs.writeFile(path.join(appDir, "public", "assets", "old-current.js"), "old-current");
   await fs.writeFile(path.join(appDir, "public", "assets", "retained-older.js"), "retained-older");
+  await fs.writeFile(path.join(appDir, "public", "pos", "assets", "old-pos-current.js"), "old-pos-current");
   await fs.writeFile(path.join(appDir, ".retained-update-assets"), "assets/retained-older.js\n");
   await fs.mkdir(path.join(payloadDir, "public", "assets"), { recursive: true });
+  await fs.mkdir(path.join(payloadDir, "public", "pos", "assets"), { recursive: true });
   await fs.writeFile(path.join(payloadDir, "NEW"), "new");
   await fs.writeFile(path.join(payloadDir, "index.mjs"), "new-index");
   await fs.writeFile(path.join(payloadDir, "public", "index.html"), "new-html");
+  await fs.writeFile(path.join(payloadDir, "public", "pos", "index.html"), "new-pos-html");
   await fs.writeFile(path.join(payloadDir, "public", "assets", "new-current.js"), "new-current");
+  await fs.writeFile(path.join(payloadDir, "public", "pos", "assets", "new-pos-current.js"), "new-pos-current");
   await execFileAsync("tar", ["-czf", bundle, "-C", payloadDir, "."]);
   const sha256 = createHash("sha256").update(await fs.readFile(bundle)).digest("hex");
 
@@ -329,6 +335,9 @@ exit 0
   assert.equal(script.includes("license-test-123"), false);
   assert.match(script, /--max-filesize "\$MAX_BUNDLE_SIZE"/);
   assert.match(script, /try_files \{path\} \/index\.html/);
+  assert.match(script, /path \/pos \/pos\/\*/);
+  assert.match(script, /try_files \{path\} \/pos\/index\.html/);
+  assert.match(script, /handle \/pos\/assets\/\*/);
   assert.match(script, /handle \/assets\/\*/);
   assert.match(script, /public, max-age=31536000, immutable/);
   assert.match(script, /header Cache-Control "no-cache, no-store, must-revalidate"/);
@@ -336,7 +345,7 @@ exit 0
   assert.match(script, /healthz\/agent-update\?version=\$TARGET_VERSION/);
   assert.match(script, /health_ok basic/);
   assert.match(script, /\.retained-update-assets/);
-  assert.match(script, /find "\$APP_DIR\/public\/assets" -type f -print0/);
+  assert.match(script, /find "\$asset_root" -type f -print0/);
   await fs.writeFile(scriptPath, script, { mode: 0o700 });
 
   const env = {
@@ -373,8 +382,11 @@ test("manual updater installs and health-checks the approved bundle", async () =
     assert.equal(await fs.readFile(`${fixture.appDir}.old/OLD`, "utf8"), "old");
     assert.equal(await fs.readFile(path.join(fixture.appDir, "public", "assets", "old-current.js"), "utf8"), "old-current");
     assert.equal(await fs.readFile(path.join(fixture.appDir, "public", "assets", "new-current.js"), "utf8"), "new-current");
+    assert.equal(await fs.readFile(path.join(fixture.appDir, "public", "pos", "index.html"), "utf8"), "new-pos-html");
+    assert.equal(await fs.readFile(path.join(fixture.appDir, "public", "pos", "assets", "old-pos-current.js"), "utf8"), "old-pos-current");
+    assert.equal(await fs.readFile(path.join(fixture.appDir, "public", "pos", "assets", "new-pos-current.js"), "utf8"), "new-pos-current");
     await assert.rejects(fs.access(path.join(fixture.appDir, "public", "assets", "retained-older.js")));
-    assert.equal(await fs.readFile(path.join(fixture.appDir, ".retained-update-assets"), "utf8"), "assets/old-current.js\n");
+    assert.equal(await fs.readFile(path.join(fixture.appDir, ".retained-update-assets"), "utf8"), "assets/old-current.js\npos/assets/old-pos-current.js\n");
     assert.match(fixture.systemctlLog, /restart zacod-app/);
     assert.match(fixture.capturedAuth, /X-Zacod-Installation-Id: installation-test-123/);
     assert.match(fixture.capturedAuth, /X-Zacod-License-Key: license-test-123/);
