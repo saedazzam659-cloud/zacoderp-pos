@@ -1711,7 +1711,9 @@ export default function GeneralSettings() {
       {/* ─── Tabs Header — modern wrap-pill layout (RTL-aware, no text overlap) ─ */}
       <Tabs defaultValue="general" dir="rtl" className="w-full">
         <TabsList className={cn(
-          "flex flex-wrap h-auto w-full justify-start gap-1.5 bg-muted/40 border border-border/50 p-1.5 rounded-xl shadow-sm",
+          "grid grid-cols-2 gap-2 h-auto w-full bg-muted/40 border border-border/50 p-2 rounded-xl shadow-sm",
+          "[&>button]:!min-w-0 [&>button]:!h-auto [&>button]:!min-h-12 [&>button]:!w-full [&>button]:!flex-none [&>button]:!justify-start [&>button]:!whitespace-normal [&>button]:!px-3 [&>button]:!py-2 [&>button]:!text-start",
+          "[&>button>span]:!min-w-0 [&>button>span]:!flex-1 [&>button>span]:!whitespace-normal [&>button>span]:!overflow-visible [&>button>span]:!text-clip [&>button>span]:break-words [&>button>span]:leading-snug",
           agentShortcutIcons && [
             "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3 bg-transparent border-0 p-0 shadow-none",
             "[&>button]:min-w-0 [&>button]:h-auto [&>button]:min-h-[84px] [&>button]:w-full [&>button]:flex-none",
@@ -2047,6 +2049,29 @@ export default function GeneralSettings() {
             <span className="block text-sm font-semibold">طلب تكلفة عند البيع بالسالب</span>
             <span className="block text-xs text-muted-foreground leading-relaxed">
               عند التفعيل، إذا لم توجد تكلفة مخزون أو شراء أو تكلفة بطاقة، سيُطلب من المستخدم إدخال تكلفة تقديرية في سطر فاتورة البيع قبل الترحيل. تعمل التكلفة لهذه الفاتورة فقط ولا تغيّر بطاقة الصنف.
+            </span>
+          </span>
+        </label>
+        <label
+          data-testid="sales-price-floor-toggle"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.enforceSalesPriceFloor
+              ? "border-primary/50 bg-primary/5 shadow-sm"
+              : "border-border hover:border-primary/30 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 accent-primary cursor-pointer"
+            checked={user?.company?.enforceSalesPriceFloor === true}
+            disabled={postingSaving}
+            onChange={e => togglePostingMode({ enforceSalesPriceFloor: e.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">التحقق من الحد الأدنى لسعر البيع</span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              مغلق افتراضيًا ليبقى السعر مفتوحًا. عند التفعيل، يمنع إدخال سعر يدوي أقل من السعر الأساسي أو البديل المحدد للصنف. العروض المعتمدة لا تتأثر.
             </span>
           </span>
         </label>

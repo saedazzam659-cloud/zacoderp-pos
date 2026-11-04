@@ -90,6 +90,8 @@ export const companiesTable = pgTable("companies", {
   // warehouse policy nor an invoice-level override may post stock below zero.
   allowNegativeSales: boolean("allow_negative_sales").notNull().default(false),
   negativeStockCostEnforced: boolean("negative_stock_cost_enforced").notNull().default(false),
+  // Optional web invoice floor: false keeps manual sales pricing open.
+  enforceSalesPriceFloor: boolean("enforce_sales_price_floor").notNull().default(false),
   // New companies opt out of batch/expiry capture until enabled in settings.
   // Existing companies are backfilled to true to preserve their current forms.
   purchaseBatchExpiryEnabled: boolean("purchase_batch_expiry_enabled").notNull().default(false),

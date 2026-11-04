@@ -1547,6 +1547,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   }
 
   function enforceLinePriceFloor(lineId: string) {
+    if ((user as any)?.company?.enforceSalesPriceFloor !== true) return;
     const line = lines.find(candidate => candidate._id === lineId);
     if (!line || (line.engineUnitPrice !== null && line.engineUnitPrice === line.unitPrice)) return;
     const minimum = Number(line.minimumAllowedUnitPrice ?? line.unitPrice);
@@ -2538,7 +2539,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // React Query's pending state updates on a render; this ref closes the
     // same-tick double-click/Enter window before a second mutation can POST.
     if (saveInFlightRef.current || saveMut.isPending) return;
-    if (isInvoice) {
+    if (isInvoice && (user as any)?.company?.enforceSalesPriceFloor === true) {
       const underpricedLine = lines.find(line => {
         if (!line.itemId || (line.engineUnitPrice !== null && line.engineUnitPrice === line.unitPrice)) return false;
         const minimum = Number(line.minimumAllowedUnitPrice ?? 0);

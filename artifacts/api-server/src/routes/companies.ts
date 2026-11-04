@@ -141,6 +141,7 @@ router.post("/", async (req, res) => {
     isSandbox: data.isSandbox ?? false,
     sequenceProtectionEnabled: true,
     negativeStockCostEnforced: !(data.isSandbox ?? false),
+    enforceSalesPriceFloor: false,
     serialNumber: data.serialNumber,
     deviceSerial1: data.deviceSerial1,
     deviceSerial2: data.deviceSerial2,
@@ -448,7 +449,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   const {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
-    decimalPlaces, showZeros, hideQuickAddBar, inputHintColorsEnabled, inputHintColor, showFreeQuantity, showSalesBranchStock, allowNegativeSales, negativeStockCostEnforced, purchaseBatchExpiryEnabled, autoPostingEnabled,
+    decimalPlaces, showZeros, hideQuickAddBar, inputHintColorsEnabled, inputHintColor, showFreeQuantity, showSalesBranchStock, allowNegativeSales, negativeStockCostEnforced, enforceSalesPriceFloor, purchaseBatchExpiryEnabled, autoPostingEnabled,
     salesBarcodeEntryEnabled, allowDuplicateInvoiceItems, purchaseDirectExpensesCustodyEnabled, purchaseVatInInventoryCost,
     documentFieldControlsEnabled,
     allowHistoricalUnitChanges,
@@ -512,7 +513,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   } = req.body as {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
-    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; inputHintColorsEnabled?: boolean; inputHintColor?: string; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; negativeStockCostEnforced?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
+    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; inputHintColorsEnabled?: boolean; inputHintColor?: string; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; negativeStockCostEnforced?: boolean; enforceSalesPriceFloor?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
     salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean; purchaseDirectExpensesCustodyEnabled?: boolean; purchaseVatInInventoryCost?: boolean;
     documentFieldControlsEnabled?: boolean;
     allowHistoricalUnitChanges?: boolean;
@@ -701,6 +702,13 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       return;
     }
     updates.negativeStockCostEnforced = negativeStockCostEnforced;
+  }
+  if (enforceSalesPriceFloor !== undefined) {
+    if (typeof enforceSalesPriceFloor !== "boolean") {
+      res.status(400).json({ error: "enforceSalesPriceFloor يجب أن تكون قيمة منطقية" });
+      return;
+    }
+    updates.enforceSalesPriceFloor = enforceSalesPriceFloor;
   }
   if (purchaseBatchExpiryEnabled !== undefined) {
     if (typeof purchaseBatchExpiryEnabled !== "boolean") {
