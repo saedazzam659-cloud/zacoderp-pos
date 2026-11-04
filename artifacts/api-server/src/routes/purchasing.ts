@@ -3023,7 +3023,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
             eq(negativeStockCostSettlementsTable.purchaseInvoiceId, id),
             eq(negativeStockCostSettlementsTable.status, "reversed"),
           ))
-          .orderBy(desc(negativeStockCostSettlementsTable.id))
+          .orderBy(asc(negativeStockCostSettlementsTable.id))
           .limit(1);
         costAdjustmentJournalId = await createJournalEntry({
           companyId: cid,
@@ -3333,40 +3333,43 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
       const children = await db.select({ id: purchaseReturnsTable.id }).from(purchaseReturnsTable)
         .where(and(eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnsTable.invoiceId, id), eq(purchaseReturnsTable.status, "posted")));
       if (children.length) throw new Error("يجب فك ترحيل مرتجعات الفاتورة قبل عكس تكلفتها المحملة");
-      await lockStockBalances(ledger.map(row => ({ companyId: cid, itemId: row.itemId, warehouseId: row.warehouseId })), db);
-    }
-    for (const row of ledger) {
-      const qty = Number(row.qty);
-      // Reverse: subtract the qty that was added (cost stays at current avg)
-      const [bal] = await db.select().from(stockBalanceTable)
-        .where(and(
-          eq(stockBalanceTable.companyId, cid),
-          eq(stockBalanceTable.itemId, row.itemId),
-          eq(stockBalanceTable.warehouseId, row.warehouseId),
-        ));
-      if (internalCapitalized && !bal) throw new Error("رصيد المخزون المرتبط بالتكلفة المحملة غير موجود");
-      if (bal) {
-        const remainingQty = Number(bal.qty) - qty;
-        const remainingValue = Number(bal.qty) * Number(bal.avgCost) - Number(row.totalCost);
-        const roundingTolerance = Math.abs(Number(bal.qty)) * 0.00005 + 0.01; // stock WAC is stored at four decimals
-        if (internalCapitalized && (remainingQty < -0.000001 || remainingValue < -roundingTolerance || (Math.abs(remainingQty) < 0.000001 && Math.abs(remainingValue) > roundingTolerance)))
-          throw new Error("تعذر عكس التكلفة المحملة بعد استهلاك أو تغير تكلفة المخزون؛ اعكس الحركات اللاحقة أولاً");
-        await db.update(stockBalanceTable)
-          .set({ qty: String(remainingQty), ...(internalCapitalized ? { avgCost: remainingQty > 0 ? String(Math.max(0, remainingValue) / remainingQty) : "0" } : {}), updatedAt: new Date() })
-          .where(eq(stockBalanceTable.id, bal.id));
-        if (internalCapitalized) await refreshItemCost(cid, row.itemId);
-      }
-    }
-    if (!grnSourced) {
-      await db.delete(stockLedgerTable)
-        .where(and(
-          eq(stockLedgerTable.companyId, cid),
-          eq(stockLedgerTable.refType, "purchase_invoice"),
-          eq(stockLedgerTable.refId, id),
-        ));
     }
 
     const updated = await db.transaction(async (tx) => {
+      await lockStockBalances(
+        ledger.map((row) => ({ companyId: cid, itemId: row.itemId, warehouseId: row.warehouseId })),
+        tx,
+      );
+      for (const row of ledger) {
+        const qty = Number(row.qty);
+        const [bal] = await tx.select().from(stockBalanceTable)
+          .where(and(
+            eq(stockBalanceTable.companyId, cid),
+            eq(stockBalanceTable.itemId, row.itemId),
+            eq(stockBalanceTable.warehouseId, row.warehouseId),
+          ));
+        if (internalCapitalized && !bal) throw new Error("رصيد المخزون المرتبط بالتكلفة المحملة غير موجود");
+        if (bal) {
+          const remainingQty = Number(bal.qty) - qty;
+          const remainingValue = Number(bal.qty) * Number(bal.avgCost) - Number(row.totalCost);
+          const roundingTolerance = Math.abs(Number(bal.qty)) * 0.00005 + 0.01;
+          if (internalCapitalized && (remainingQty < -0.000001 || remainingValue < -roundingTolerance || (Math.abs(remainingQty) < 0.000001 && Math.abs(remainingValue) > roundingTolerance)))
+            throw new Error("تعذر عكس التكلفة المحملة بعد استهلاك أو تغير تكلفة المخزون؛ اعكس الحركات اللاحقة أولاً");
+          await tx.update(stockBalanceTable)
+            .set({ qty: String(remainingQty), ...(internalCapitalized ? { avgCost: remainingQty > 0 ? String(Math.max(0, remainingValue) / remainingQty) : "0" } : {}), updatedAt: new Date() })
+            .where(eq(stockBalanceTable.id, bal.id));
+          if (internalCapitalized) await refreshItemCost(cid, row.itemId, tx);
+        }
+      }
+      if (!grnSourced) {
+        await tx.delete(stockLedgerTable)
+          .where(and(
+            eq(stockLedgerTable.companyId, cid),
+            eq(stockLedgerTable.refType, "purchase_invoice"),
+            eq(stockLedgerTable.refId, id),
+          ));
+      }
+
       const activeCostSettlements = await tx.select().from(negativeStockCostSettlementsTable)
         .where(and(
           eq(negativeStockCostSettlementsTable.companyId, cid),

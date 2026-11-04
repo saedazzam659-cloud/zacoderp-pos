@@ -57,6 +57,7 @@ import {
   lockStockBalances,
   readBatchRemainingBulk,
   type BatchPick,
+  type BatchRemaining,
 } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber, nextSequenceForPayment, nextPosStationNumber, resolveJeNumber, reserveJeNumberFromEntry } from "../lib/sequences.js";
@@ -4140,7 +4141,7 @@ async function postSalesInvoiceHandler(
           // Consume the preloaded plan in line order. The allocator mutates the
           // pair plan so repeated lines never re-use the same lot.
           try {
-            const batchPlan = batchPlans.get(`${line.itemId}:${line.warehouseId}`) ?? [];
+            const batchPlan: BatchRemaining[] = batchPlans.get(`${line.itemId}:${line.warehouseId}`) ?? [];
             if (hasManualBatchAllocation) {
               // A manually specified lot allocation remains exact; the
               // provisional negative layer is only used for automatic FIFO/
