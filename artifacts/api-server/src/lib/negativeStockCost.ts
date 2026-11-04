@@ -34,3 +34,20 @@ export function returnCostAdjustmentPerUnit(
 ): number {
   return soldQuantity > 0 ? totalAdjustment / soldQuantity : 0;
 }
+
+export function untrackedNegativeStockEstimate(
+  negativeBalanceQuantity: number,
+  trackedPendingQuantity: number,
+  averageCost: number,
+): { negativeQuantity: number; untrackedQuantity: number; estimatedValue: number } {
+  const negativeQuantity = Math.max(0, Math.abs(negativeBalanceQuantity));
+  const untrackedQuantity = Math.max(
+    0,
+    negativeQuantity - Math.max(0, trackedPendingQuantity),
+  );
+  return {
+    negativeQuantity,
+    untrackedQuantity,
+    estimatedValue: untrackedQuantity * Math.max(0, averageCost),
+  };
+}

@@ -9,6 +9,8 @@ Linked sales returns reverse the settled cost proportionally. Unpost posted retu
 
 When a batched receipt covers a previously unbatched shortage, reattribute the covered units with equal-and-opposite batch ledger movements. This preserves total quantity and value while preventing the received lot from appearing fully available again.
 
+Historical preview is read-only: show currently negative stock not represented by pending layers, estimate value from the current average cost, and do not post or backfill journals without explicit approval. This does not claim to identify shortages already covered by later receipts.
+
 **Why:** Rewriting posted sales or losing the link between provisional layers and receipt costs breaks fiscal history, batch availability, and unpost/repost idempotency.
 
-**How to apply:** Preserve company and warehouse scope, existing negative-stock precedence, period guards, line provenance, and additive schema reconciliation in any related inventory-cost change.
+**How to apply:** Preserve company and warehouse scope, existing negative-stock precedence, period guards, line provenance, and additive schema reconciliation in any related inventory-cost change. Treat preview estimates as advisory, not as posted valuation.

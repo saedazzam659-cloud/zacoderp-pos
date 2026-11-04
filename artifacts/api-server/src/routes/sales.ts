@@ -95,7 +95,10 @@ import {
 } from "../lib/invoiceCreateIdempotency.js";
 import { documentMutationLock, withDocumentMutationLock } from "../lib/document-mutation-lock.js";
 import { normalizeManualPrintPartyName } from "../lib/manualPrintPartyName.js";
-import { returnCostAdjustmentPerUnit } from "../lib/negativeStockCost.js";
+import {
+  returnCostAdjustmentPerUnit,
+  untrackedNegativeStockEstimate,
+} from "../lib/negativeStockCost.js";
 
 function hasSalesZatcaArtifacts(invoice: any): boolean {
   const zatcaStatus = String(invoice?.zatcaStatus ?? "").trim().toLowerCase();
@@ -1598,6 +1601,101 @@ async function getAvgCost(companyId: number, itemId: number, warehouseId: number
 // ═══════════════════════════════════════════════
 // SALES INVOICES
 // ═══════════════════════════════════════════════
+router.get(
+  "/sales-invoices/negative-stock-cost-preview",
+  requirePermission("sales_invoices", "view"),
+  async (req, res) => {
+    try {
+      const cid = getCid(req);
+      if (!cid) {
+        res.status(400).json({ error: "الشركة غير محددة" });
+        return;
+      }
+
+      const negativeBalances = await db.select({
+        itemId: stockBalanceTable.itemId,
+        itemCode: itemsTable.code,
+        itemNameAr: itemsTable.nameAr,
+        warehouseId: stockBalanceTable.warehouseId,
+        warehouseNameAr: warehousesTable.nameAr,
+        quantity: stockBalanceTable.qty,
+        averageCost: stockBalanceTable.avgCost,
+      }).from(stockBalanceTable)
+        .innerJoin(itemsTable, and(
+          eq(itemsTable.id, stockBalanceTable.itemId),
+          eq(itemsTable.companyId, cid),
+        ))
+        .innerJoin(warehousesTable, and(
+          eq(warehousesTable.id, stockBalanceTable.warehouseId),
+          eq(warehousesTable.companyId, cid),
+        ))
+        .where(and(
+          eq(stockBalanceTable.companyId, cid),
+          sql`${stockBalanceTable.qty} < 0`,
+          ...branchScopeSpread(req, warehousesTable.branchId, undefined),
+        ))
+        .orderBy(asc(itemsTable.code), asc(warehousesTable.nameAr))
+        .limit(2000);
+
+      const pendingLayers = negativeBalances.length
+        ? await db.select({
+            itemId: negativeStockCostSettlementsTable.itemId,
+            warehouseId: negativeStockCostSettlementsTable.warehouseId,
+            quantity: sql<string>`coalesce(sum(${negativeStockCostSettlementsTable.quantity}), 0)`,
+          }).from(negativeStockCostSettlementsTable).where(and(
+            eq(negativeStockCostSettlementsTable.companyId, cid),
+            eq(negativeStockCostSettlementsTable.status, "pending"),
+          )).groupBy(
+            negativeStockCostSettlementsTable.itemId,
+            negativeStockCostSettlementsTable.warehouseId,
+          )
+        : [];
+      const pendingByPair = new Map(
+        pendingLayers.map((layer) => [
+          `${layer.itemId}:${layer.warehouseId}`,
+          Number(layer.quantity) || 0,
+        ]),
+      );
+      const rows = negativeBalances.map((balance) => {
+        const averageCost = Number(balance.averageCost) || 0;
+        const trackedPendingQuantity = pendingByPair.get(
+          `${balance.itemId}:${balance.warehouseId}`,
+        ) ?? 0;
+        const estimate = untrackedNegativeStockEstimate(
+          Number(balance.quantity) || 0,
+          trackedPendingQuantity,
+          averageCost,
+        );
+        return {
+          itemId: balance.itemId,
+          itemCode: balance.itemCode,
+          itemNameAr: balance.itemNameAr,
+          warehouseId: balance.warehouseId,
+          warehouseNameAr: balance.warehouseNameAr,
+          negativeQuantity: estimate.negativeQuantity,
+          trackedPendingQuantity,
+          untrackedQuantity: estimate.untrackedQuantity,
+          averageCost,
+          estimatedValue: estimate.estimatedValue,
+        };
+      }).filter((row) => row.untrackedQuantity > 0.0001);
+
+      res.json({
+        readOnly: true,
+        previewOnly: true,
+        asOf: new Date().toISOString(),
+        untrackedLayerCount: rows.length,
+        totalUntrackedQuantity: rows.reduce((sum, row) => sum + row.untrackedQuantity, 0),
+        estimatedTotalValue: rows.reduce((sum, row) => sum + row.estimatedValue, 0),
+        items: rows,
+      });
+    } catch (error) {
+      logger.error({ err: error }, "Negative-stock cost preview failed");
+      res.status(500).json({ error: "تعذر إنشاء معاينة تكلفة المخزون السالب" });
+    }
+  },
+);
+
 router.get("/sales-invoices", requirePermission("sales_invoices", "view"), async (req, res) => {
   try {
     const cid = getCid(req);
