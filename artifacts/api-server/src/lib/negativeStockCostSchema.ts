@@ -32,6 +32,20 @@ export async function ensureNegativeStockCostSchema(): Promise<void> {
     )
   `));
   await db.execute(sql.raw(`
+    ALTER TABLE negative_stock_cost_settlements
+      ALTER COLUMN purchase_invoice_id DROP NOT NULL,
+      ALTER COLUMN purchase_line_id DROP NOT NULL,
+      ADD COLUMN IF NOT EXISTS original_quantity NUMERIC(18,4) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS cogs_account_id INTEGER,
+      ADD COLUMN IF NOT EXISTS inventory_account_id INTEGER,
+      ADD COLUMN IF NOT EXISTS cost_center TEXT
+  `));
+  await db.execute(sql.raw(`
+    UPDATE negative_stock_cost_settlements
+    SET original_quantity = quantity
+    WHERE original_quantity = 0 AND purchase_invoice_id IS NULL
+  `));
+  await db.execute(sql.raw(`
     CREATE UNIQUE INDEX IF NOT EXISTS negative_stock_cost_active_purchase_sale_uq
       ON negative_stock_cost_settlements(company_id, purchase_line_id, sales_line_id)
       WHERE status = 'active'

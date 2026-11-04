@@ -6665,6 +6665,55 @@ router.patch("/sales-returns/:id/unpost", requireUnpostRight("sales"), async (re
         reversalDate: new Date().toISOString().slice(0, 10),
         docNumber: ret.docNumber,
       });
+      if (ret.invoiceId) {
+        const returnLines = await tx.select().from(salesReturnLinesTable)
+          .where(eq(salesReturnLinesTable.returnId, id));
+        for (const line of returnLines) {
+          if (!line.itemId || !line.warehouseId) continue;
+          const balanceQty = await getBalance(cid, line.itemId, line.warehouseId, tx);
+          let remainingDeficit = Math.max(0, -balanceQty);
+          const layers = await tx.select().from(negativeStockCostSettlementsTable)
+            .where(and(
+              eq(negativeStockCostSettlementsTable.companyId, cid),
+              eq(negativeStockCostSettlementsTable.itemId, line.itemId),
+              eq(negativeStockCostSettlementsTable.warehouseId, line.warehouseId),
+              or(
+                eq(negativeStockCostSettlementsTable.status, "pending"),
+                eq(negativeStockCostSettlementsTable.status, "closed"),
+              ),
+            ))
+            .orderBy(asc(negativeStockCostSettlementsTable.id))
+            .for("update");
+          const allocations = await tx.select({
+            salesLineId: negativeStockCostSettlementsTable.salesLineId,
+            quantity: negativeStockCostSettlementsTable.quantity,
+          }).from(negativeStockCostSettlementsTable).where(and(
+            eq(negativeStockCostSettlementsTable.companyId, cid),
+            eq(negativeStockCostSettlementsTable.itemId, line.itemId),
+            eq(negativeStockCostSettlementsTable.warehouseId, line.warehouseId),
+            eq(negativeStockCostSettlementsTable.status, "active"),
+          ));
+          const coveredBySaleLine = new Map<number, number>();
+          for (const allocation of allocations) {
+            coveredBySaleLine.set(
+              allocation.salesLineId,
+              (coveredBySaleLine.get(allocation.salesLineId) ?? 0) + Number(allocation.quantity),
+            );
+          }
+          for (const layer of layers) {
+            const maxPending = Math.max(
+              0,
+              Number(layer.originalQuantity) - (coveredBySaleLine.get(layer.salesLineId) ?? 0),
+            );
+            const pendingQty = Math.min(maxPending, remainingDeficit);
+            await tx.update(negativeStockCostSettlementsTable).set({
+              quantity: String(pendingQty),
+              status: pendingQty > 0.0001 ? "pending" : "closed",
+            }).where(eq(negativeStockCostSettlementsTable.id, layer.id));
+            remainingDeficit -= pendingQty;
+          }
+        }
+      }
 
       let retainLinkedJournalEntry = false;
       if (ret.journalEntryId) {
