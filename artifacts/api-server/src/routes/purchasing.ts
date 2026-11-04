@@ -2904,6 +2904,9 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
             const layerQty = Math.max(0, Number(layer.quantity));
             const coveredQty = Math.min(layerQty, uncoveredQty);
             if (coveredQty <= 0.0001) continue;
+            if (!layer.cogsAccountId || !layer.inventoryAccountId) {
+              throw Object.assign(new Error("تعذر تسوية تكلفة البيع السالب لعدم اكتمال حسابات التكلفة أو المخزون."), { status: 409 });
+            }
             const provisionalUnitCost = Number(layer.provisionalUnitCost);
             const adjustmentAmount = Number(((costUnit - provisionalUnitCost) * coveredQty).toFixed(2));
             await tx.insert(negativeStockCostSettlementsTable).values({
