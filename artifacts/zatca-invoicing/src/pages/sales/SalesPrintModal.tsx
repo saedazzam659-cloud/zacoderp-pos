@@ -2380,7 +2380,10 @@ export function template14(d: PrintData): string {
   // invoice). For longer/multi-page invoices we stay in plain block flow so
   // the lines table paginates reliably (Chrome print fragmentation inside a
   // flex container is unreliable). ~12 rows is a conservative single-page cap.
-  const anchorBottom = lines.length <= 12;
+  // Quotation headers may be taller (especially with a full customer address).
+  // Keep their totals in normal flow so the summary cannot be pushed onto a
+  // mostly empty second page by the single-page spacer.
+  const anchorBottom = lines.length <= 12 && d.type !== "quotation";
 
   const docHead = `<!DOCTYPE html><html dir="${dir}"><head><meta charset="UTF-8"><title>${titleMain} — ${docNo}</title>
   ${baseStyles("#0f172a")}
