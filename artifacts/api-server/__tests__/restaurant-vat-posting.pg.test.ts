@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import http from "node:http";
 import { after, before, test } from "node:test";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   accountsTable,
   branchesTable,
@@ -10,8 +10,14 @@ import {
   companiesTable,
   db,
   itemsTable,
+  journalEntriesTable,
+  journalEntryLinesTable,
   pool,
+  posMenuCategoriesTable,
+  posMenuItemsTable,
+  posOrdersTable,
   salesInvoicesTable,
+  salesInvoiceLinesTable,
   unitsTable,
   usersTable,
 } from "@workspace/db";
@@ -61,6 +67,7 @@ before(async () => {
     invoiceType: "both",
     status: "active",
     isInternalDemoWorkspace: false,
+    menuPermissions: JSON.stringify({ invoices: true, pos_waiter: true }),
   }).returning({ id: companiesTable.id });
   companyId = company.id;
 
@@ -126,22 +133,20 @@ before(async () => {
     itemIds.push(erpItem.id);
   }
 
-  const category = await api("/api/pos-restaurant/menu/categories", "POST", {
+  const [category] = await db.insert(posMenuCategoriesTable).values({
+    companyId,
     code: `${TEST_TAG}-CAT`,
     nameAr: "اختبار ضريبة المطعم",
-  });
-  assert.equal(category.status, 201, JSON.stringify(category.body));
-  for (let i = 0; i < rates.length; i++) {
-    const menuItem = await api("/api/pos-restaurant/menu/items", "POST", {
-      categoryId: category.body.id,
-      code: `${TEST_TAG}-${rates[i].code}`,
-      nameAr: rates[i].name,
-      price: rates[i].price,
-      itemId: itemIds[i],
-      vatIncluded: rates[i].vatIncluded,
-    });
-    assert.equal(menuItem.status, 201, JSON.stringify(menuItem.body));
-  }
+  }).returning({ id: posMenuCategoriesTable.id });
+  await db.insert(posMenuItemsTable).values(rates.map((item, index) => ({
+      companyId,
+      categoryId: category.id,
+      code: `${TEST_TAG}-${item.code}`,
+      nameAr: item.name,
+      price: item.price,
+      itemId: itemIds[index],
+      vatIncluded: item.vatIncluded,
+  })));
 
   // Ensure the post path uses the tenant-owned revenue mapping.
   assert.ok(revenue.id > 0);
@@ -150,7 +155,35 @@ before(async () => {
 after(async () => {
   try {
     if (companyId) {
-      // Every fixture and document is scoped to this uniquely tagged tenant.
+      // Remove only rows owned by this uniquely tagged disposable tenant.
+      await db.execute(sql`DELETE FROM pos_order_items WHERE order_id IN
+        (SELECT id FROM pos_orders WHERE company_id = ${companyId})`);
+      await db.delete(posOrdersTable).where(eq(posOrdersTable.companyId, companyId));
+      await db.delete(posMenuItemsTable).where(eq(posMenuItemsTable.companyId, companyId));
+      await db.delete(posMenuCategoriesTable).where(eq(posMenuCategoriesTable.companyId, companyId));
+      await db.delete(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.companyId, companyId));
+      const invoices = await db.select({
+        id: salesInvoicesTable.id,
+        journalEntryId: salesInvoicesTable.journalEntryId,
+      }).from(salesInvoicesTable).where(eq(salesInvoicesTable.companyId, companyId));
+      const journalEntryIds = [...new Set(invoices
+        .map(invoice => invoice.journalEntryId)
+        .filter((id): id is number => id != null))];
+      if (journalEntryIds.length) {
+        await db.update(salesInvoicesTable).set({ journalEntryId: null })
+          .where(inArray(salesInvoicesTable.id, invoices.map(invoice => invoice.id)));
+        await db.delete(journalEntryLinesTable).where(inArray(journalEntryLinesTable.entryId, journalEntryIds));
+      }
+      await db.delete(salesInvoicesTable).where(eq(salesInvoicesTable.companyId, companyId));
+      if (journalEntryIds.length) {
+        await db.delete(journalEntriesTable).where(inArray(journalEntriesTable.id, journalEntryIds));
+      }
+      await db.delete(cashBoxesTable).where(eq(cashBoxesTable.companyId, companyId));
+      await db.delete(itemsTable).where(eq(itemsTable.companyId, companyId));
+      await db.delete(unitsTable).where(eq(unitsTable.companyId, companyId));
+      await db.delete(accountsTable).where(eq(accountsTable.companyId, companyId));
+      await db.delete(usersTable).where(eq(usersTable.companyId, companyId));
+      await db.delete(branchesTable).where(eq(branchesTable.companyId, companyId));
       await db.delete(companiesTable).where(and(
         eq(companiesTable.id, companyId),
         eq(companiesTable.nameEn, `${TEST_TAG} owned disposable tenant`),
@@ -227,6 +260,12 @@ test("restaurant order VAT matches a posted sales invoice and the billed order",
   assert.equal(Number(invoice.subtotal), pricing.subtotal);
   assert.equal(Number(invoice.vatAmount), pricing.vatAmount);
   assert.equal(Number(invoice.totalAmount), pricing.totalAmount);
+  const invoiceLines = await db.select({
+    itemId: salesInvoiceLinesTable.itemId,
+    vatRate: salesInvoiceLinesTable.vatRate,
+  }).from(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, invoiceId));
+  assert.equal(invoiceLines.length, 3);
+  assert.deepEqual(invoiceLines.map(line => Number(line.vatRate)).sort((a, b) => a - b), [0, 15, 15]);
 
   const billedOrder = await api(`/api/pos-restaurant/orders/${orderId}`, "GET");
   assert.equal(billedOrder.status, 200, JSON.stringify(billedOrder.body));
