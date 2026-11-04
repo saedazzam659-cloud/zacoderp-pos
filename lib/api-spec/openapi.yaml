@@ -1449,6 +1449,80 @@ paths:
         "204":
           description: Deleted
 
+  /companies/{id}/party-identity-settings:
+    get:
+      operationId: getPartyIdentitySettings
+      tags: [companies]
+      summary: Read shared party identity setting
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Shared identity setting
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PartyIdentitySettings" }
+    put:
+      operationId: updatePartyIdentitySettings
+      tags: [companies]
+      summary: Update shared party identity setting
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PartyIdentitySettingsUpdate" }
+      responses:
+        "200":
+          description: Updated setting
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PartyIdentitySettings" }
+
+  /customers/party-identities:
+    get:
+      operationId: listPartyIdentities
+      tags: [customers]
+      summary: List linked customer and supplier identities
+      parameters:
+        - name: companyId
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Linked identities
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PartyIdentityLink" }
+
+  /customers/link-party-identity:
+    post:
+      operationId: linkPartyIdentity
+      tags: [customers]
+      summary: Link existing customer and supplier records
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PartyIdentityLinkInput" }
+      responses:
+        "201":
+          description: Linked identity
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PartyIdentityLinkResult" }
+        "409":
+          description: A record is already linked or identity data conflicts
+
   /customers:
     get:
       operationId: listCustomers
@@ -3778,6 +3852,46 @@ paths:
 
 components:
   schemas:
+    PartyIdentitySettings:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    PartyIdentitySettingsUpdate:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    PartyIdentityLink:
+      type: object
+      required: [id, code, nameAr, customerId, supplierId]
+      properties:
+        id: { type: integer }
+        code: { type: string }
+        nameAr: { type: string }
+        customerId: { type: ["integer", "null"] }
+        supplierId: { type: ["integer", "null"] }
+    PartyIdentityLinkInput:
+      type: object
+      required: [companyId, customerId, supplierId]
+      properties:
+        companyId: { type: integer, minimum: 1 }
+        customerId: { type: integer, minimum: 1 }
+        supplierId: { type: integer, minimum: 1 }
+    PartyIdentityLinkResult:
+      type: object
+      required: [identity, customerId, supplierId]
+      properties:
+        identity: { $ref: "#/components/schemas/PartyIdentityRecord" }
+        customerId: { type: integer }
+        supplierId: { type: integer }
+    PartyIdentityRecord:
+      type: object
+      required: [id, code, nameAr]
+      properties:
+        id: { type: integer }
+        code: { type: string }
+        nameAr: { type: string }
     ModuleShowcaseImage:
       type: object
       required: [id, moduleKey, altText, caption, sortOrder, url]

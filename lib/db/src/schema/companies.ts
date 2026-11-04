@@ -97,6 +97,7 @@ export const companiesTable = pgTable("companies", {
   // Opt-in gate for company-admin document-field controls. Only SuperAdmin
   // may change this flag; false keeps the manager-facing controls unavailable.
   documentFieldControlsEnabled: boolean("document_field_controls_enabled").notNull().default(false),
+  sharedPartyIdentityEnabled: boolean("shared_party_identity_enabled").notNull().default(false),
   // Explicit SuperAdmin opt-in to bypass historical-unit-label conflicts
   // when assigning/changing an item's base unit. Structural graph checks remain.
   allowHistoricalUnitChanges: boolean("allow_historical_unit_changes").notNull().default(false),

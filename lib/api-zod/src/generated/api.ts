@@ -2358,6 +2358,76 @@ export const DeleteCompanyResponse = zod.void()
 
 
 /**
+ * @summary Read shared party identity setting
+ */
+export const GetPartyIdentitySettingsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetPartyIdentitySettingsResponse = zod.object({
+  "enabled": zod.boolean()
+})
+
+
+/**
+ * @summary Update shared party identity setting
+ */
+export const UpdatePartyIdentitySettingsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdatePartyIdentitySettingsBody = zod.object({
+  "enabled": zod.boolean()
+})
+
+export const UpdatePartyIdentitySettingsResponse = zod.object({
+  "enabled": zod.boolean()
+})
+
+
+/**
+ * @summary List linked customer and supplier identities
+ */
+export const ListPartyIdentitiesQueryParams = zod.object({
+  "companyId": zod.coerce.number().optional()
+})
+
+export const ListPartyIdentitiesResponseItem = zod.object({
+  "id": zod.number(),
+  "code": zod.string(),
+  "nameAr": zod.string(),
+  "customerId": zod.number().nullable(),
+  "supplierId": zod.number().nullable()
+})
+export const ListPartyIdentitiesResponse = zod.array(ListPartyIdentitiesResponseItem)
+
+
+/**
+ * @summary Link existing customer and supplier records
+ */
+
+
+
+
+
+export const LinkPartyIdentityBody = zod.object({
+  "companyId": zod.number().min(1),
+  "customerId": zod.number().min(1),
+  "supplierId": zod.number().min(1)
+})
+
+export const LinkPartyIdentityResponse = zod.object({
+  "identity": zod.object({
+  "id": zod.number(),
+  "code": zod.string(),
+  "nameAr": zod.string()
+}),
+  "customerId": zod.number(),
+  "supplierId": zod.number()
+})
+
+
+/**
  * @summary List all customers
  */
 export const ListCustomersQueryParams = zod.object({

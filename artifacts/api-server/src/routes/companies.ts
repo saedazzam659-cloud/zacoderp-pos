@@ -1148,6 +1148,28 @@ function senderSettingsGuard(req: Request, res: Response): number | null {
 }
 
 // GET /:id/sender-settings — current sender config (password NEVER included).
+router.get("/:id/party-identity-settings", async (req, res) => {
+  const id = senderSettingsGuard(req, res); if (id == null) return;
+  try {
+    const [row] = await db.select({ enabled: companiesTable.sharedPartyIdentityEnabled })
+      .from(companiesTable).where(eq(companiesTable.id, id));
+    if (!row) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+    res.json({ enabled: row.enabled === true });
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "تعذر قراءة الإعداد" }); }
+});
+
+router.put("/:id/party-identity-settings", async (req, res) => {
+  const id = senderSettingsGuard(req, res); if (id == null) return;
+  if (typeof req.body?.enabled !== "boolean") { res.status(400).json({ error: "قيمة التفعيل غير صحيحة" }); return; }
+  try {
+    const [row] = await db.update(companiesTable)
+      .set({ sharedPartyIdentityEnabled: req.body.enabled, updatedAt: new Date() })
+      .where(eq(companiesTable.id, id)).returning({ id: companiesTable.id });
+    if (!row) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+    res.json({ enabled: req.body.enabled });
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "تعذر حفظ الإعداد" }); }
+});
+
 router.get("/:id/sender-settings", async (req, res) => {
   const id = senderSettingsGuard(req, res); if (id == null) return;
   try {

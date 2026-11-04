@@ -3,6 +3,7 @@ import { localizeUiText } from "@/lib/localizedUiText";
 import { Children, isValidElement, useState, useRef, useCallback, useEffect, type ComponentProps, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { SharedPartyIdentityTab } from "./SharedPartyIdentityTab";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -1920,6 +1921,16 @@ export default function GeneralSettings() {
             >
               <Send className="h-4 w-4 shrink-0" />
               <span className="truncate">ضبط المرسلات</span>
+            </TabsTrigger>
+          )}
+          {isArchiveAdmin && (
+            <TabsTrigger
+              value="partyIdentity"
+              className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md"
+              data-testid="tab-trigger-party-identity"
+            >
+              <UsersIcon className="h-4 w-4 shrink-0" />
+              <span className="truncate">هوية العميل والمورد</span>
             </TabsTrigger>
           )}
         </TabsList>
@@ -4743,6 +4754,14 @@ export default function GeneralSettings() {
             token={token ?? null}
           />
         </TabsContent>
+        )}
+        {isArchiveAdmin && (
+          <TabsContent value="partyIdentity" className="mt-5">
+            <SharedPartyIdentityTab
+              companyId={Number(user?.company?.id ?? user?.companyId ?? 0)}
+              token={token ?? null}
+            />
+          </TabsContent>
         )}
         {user?.role === "admin" && user?.company?.documentFieldControlsEnabled === true && (
           <TabsContent value="documentFields" className="mt-5">

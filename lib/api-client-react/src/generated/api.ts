@@ -117,6 +117,7 @@ import type {
   ListInvoicesParams,
   ListOwnerBillTaxMappings200,
   ListOwnerBillTaxMappingsParams,
+  ListPartyIdentitiesParams,
   ListRiskAssessmentsParams,
   ListSecurityActiveCompaniesParams,
   ListSuppliersParams,
@@ -137,6 +138,11 @@ import type {
   ModuleShowcaseList,
   MonthlyStat,
   OkResponse,
+  PartyIdentityLink,
+  PartyIdentityLinkInput,
+  PartyIdentityLinkResult,
+  PartyIdentitySettings,
+  PartyIdentitySettingsUpdate,
   PosItemGroup,
   PosItemGroupInput,
   PurchaseInvoiceConversionInput,
@@ -5312,6 +5318,310 @@ export const useDeleteCompany = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getDeleteCompanyMutationOptions(options));
+    }
+
+export const getGetPartyIdentitySettingsUrl = (id: number,) => {
+
+
+
+
+  return `/api/companies/${id}/party-identity-settings`
+}
+
+/**
+ * @summary Read shared party identity setting
+ */
+export const getPartyIdentitySettings = async (id: number, options?: RequestInit): Promise<PartyIdentitySettings> => {
+
+  return customFetch<PartyIdentitySettings>(getGetPartyIdentitySettingsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPartyIdentitySettingsQueryKey = (id: number,) => {
+    return [
+    `/api/companies/${id}/party-identity-settings`
+    ] as const;
+    }
+
+
+export const getGetPartyIdentitySettingsQueryOptions = <TData = Awaited<ReturnType<typeof getPartyIdentitySettings>>, TError = ErrorType<unknown>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPartyIdentitySettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPartyIdentitySettingsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPartyIdentitySettings>>> = ({ signal }) => getPartyIdentitySettings(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPartyIdentitySettings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPartyIdentitySettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getPartyIdentitySettings>>>
+export type GetPartyIdentitySettingsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Read shared party identity setting
+ */
+
+export function useGetPartyIdentitySettings<TData = Awaited<ReturnType<typeof getPartyIdentitySettings>>, TError = ErrorType<unknown>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPartyIdentitySettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPartyIdentitySettingsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdatePartyIdentitySettingsUrl = (id: number,) => {
+
+
+
+
+  return `/api/companies/${id}/party-identity-settings`
+}
+
+/**
+ * @summary Update shared party identity setting
+ */
+export const updatePartyIdentitySettings = async (id: number,
+    partyIdentitySettingsUpdate: PartyIdentitySettingsUpdate, options?: RequestInit): Promise<PartyIdentitySettings> => {
+
+  return customFetch<PartyIdentitySettings>(getUpdatePartyIdentitySettingsUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(partyIdentitySettingsUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdatePartyIdentitySettingsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePartyIdentitySettings>>, TError,{id: number;data: BodyType<PartyIdentitySettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updatePartyIdentitySettings>>, TError,{id: number;data: BodyType<PartyIdentitySettingsUpdate>}, TContext> => {
+
+const mutationKey = ['updatePartyIdentitySettings'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePartyIdentitySettings>>, {id: number;data: BodyType<PartyIdentitySettingsUpdate>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updatePartyIdentitySettings(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdatePartyIdentitySettingsMutationResult = NonNullable<Awaited<ReturnType<typeof updatePartyIdentitySettings>>>
+    export type UpdatePartyIdentitySettingsMutationBody = BodyType<PartyIdentitySettingsUpdate>
+    export type UpdatePartyIdentitySettingsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update shared party identity setting
+ */
+export const useUpdatePartyIdentitySettings = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePartyIdentitySettings>>, TError,{id: number;data: BodyType<PartyIdentitySettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updatePartyIdentitySettings>>,
+        TError,
+        {id: number;data: BodyType<PartyIdentitySettingsUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdatePartyIdentitySettingsMutationOptions(options));
+    }
+
+export const getListPartyIdentitiesUrl = (params?: ListPartyIdentitiesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/customers/party-identities?${stringifiedParams}` : `/api/customers/party-identities`
+}
+
+/**
+ * @summary List linked customer and supplier identities
+ */
+export const listPartyIdentities = async (params?: ListPartyIdentitiesParams, options?: RequestInit): Promise<PartyIdentityLink[]> => {
+
+  return customFetch<PartyIdentityLink[]>(getListPartyIdentitiesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPartyIdentitiesQueryKey = (params?: ListPartyIdentitiesParams,) => {
+    return [
+    `/api/customers/party-identities`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListPartyIdentitiesQueryOptions = <TData = Awaited<ReturnType<typeof listPartyIdentities>>, TError = ErrorType<unknown>>(params?: ListPartyIdentitiesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPartyIdentities>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPartyIdentitiesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPartyIdentities>>> = ({ signal }) => listPartyIdentities(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPartyIdentities>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListPartyIdentitiesQueryResult = NonNullable<Awaited<ReturnType<typeof listPartyIdentities>>>
+export type ListPartyIdentitiesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List linked customer and supplier identities
+ */
+
+export function useListPartyIdentities<TData = Awaited<ReturnType<typeof listPartyIdentities>>, TError = ErrorType<unknown>>(
+ params?: ListPartyIdentitiesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPartyIdentities>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListPartyIdentitiesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getLinkPartyIdentityUrl = () => {
+
+
+
+
+  return `/api/customers/link-party-identity`
+}
+
+/**
+ * @summary Link existing customer and supplier records
+ */
+export const linkPartyIdentity = async (partyIdentityLinkInput: PartyIdentityLinkInput, options?: RequestInit): Promise<PartyIdentityLinkResult> => {
+
+  return customFetch<PartyIdentityLinkResult>(getLinkPartyIdentityUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(partyIdentityLinkInput)
+  }
+);}
+
+
+
+
+
+export const getLinkPartyIdentityMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof linkPartyIdentity>>, TError,{data: BodyType<PartyIdentityLinkInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof linkPartyIdentity>>, TError,{data: BodyType<PartyIdentityLinkInput>}, TContext> => {
+
+const mutationKey = ['linkPartyIdentity'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof linkPartyIdentity>>, {data: BodyType<PartyIdentityLinkInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  linkPartyIdentity(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LinkPartyIdentityMutationResult = NonNullable<Awaited<ReturnType<typeof linkPartyIdentity>>>
+    export type LinkPartyIdentityMutationBody = BodyType<PartyIdentityLinkInput>
+    export type LinkPartyIdentityMutationError = ErrorType<void>
+
+    /**
+ * @summary Link existing customer and supplier records
+ */
+export const useLinkPartyIdentity = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof linkPartyIdentity>>, TError,{data: BodyType<PartyIdentityLinkInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof linkPartyIdentity>>,
+        TError,
+        {data: BodyType<PartyIdentityLinkInput>},
+        TContext
+      > => {
+      return useMutation(getLinkPartyIdentityMutationOptions(options));
     }
 
 export const getListCustomersUrl = (params?: ListCustomersParams,) => {

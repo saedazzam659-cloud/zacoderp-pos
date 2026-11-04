@@ -5,6 +5,45 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export interface PartyIdentitySettings {
+  enabled: boolean;
+}
+
+export interface PartyIdentitySettingsUpdate {
+  enabled: boolean;
+}
+
+export interface PartyIdentityLink {
+  id: number;
+  code: string;
+  nameAr: string;
+  /** @nullable */
+  customerId: number | null;
+  /** @nullable */
+  supplierId: number | null;
+}
+
+export interface PartyIdentityLinkInput {
+  /** @minimum 1 */
+  companyId: number;
+  /** @minimum 1 */
+  customerId: number;
+  /** @minimum 1 */
+  supplierId: number;
+}
+
+export interface PartyIdentityRecord {
+  id: number;
+  code: string;
+  nameAr: string;
+}
+
+export interface PartyIdentityLinkResult {
+  identity: PartyIdentityRecord;
+  customerId: number;
+  supplierId: number;
+}
+
 export type ModuleShowcaseImageModuleKey = typeof ModuleShowcaseImageModuleKey[keyof typeof ModuleShowcaseImageModuleKey];
 
 
@@ -3674,6 +3713,10 @@ search?: string;
 
 export type GetSecurityActiveCompanySessionsParams = {
 source: string;
+};
+
+export type ListPartyIdentitiesParams = {
+companyId?: number;
 };
 
 export type ListCustomersParams = {
