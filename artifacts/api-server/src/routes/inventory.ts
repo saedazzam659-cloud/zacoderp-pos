@@ -4330,7 +4330,10 @@ router.get("/stock-ledger", async (req, res) => {
       inArray(stockLedgerTable.refType, ["sales_invoice", "sales_invoice_unposted", "sales_invoice_unpost"]),
       inArray(stockLedgerTable.refId, invIdList),
     ));
-    if (retIdList.length) parts.push(and(eq(stockLedgerTable.refType, "sales_return"),  inArray(stockLedgerTable.refId, retIdList)));
+    if (retIdList.length) parts.push(and(
+      inArray(stockLedgerTable.refType, ["sales_return", "sales_return_unposted", "sales_return_unpost"]),
+      inArray(stockLedgerTable.refId, retIdList),
+    ));
     if (parts.length === 0) { res.json(wantsPaged ? emptyPage : []); return; }
     conditions.push(parts.length === 1 ? parts[0] : or(...parts)!);
   }
@@ -4397,7 +4400,11 @@ router.get("/stock-ledger", async (req, res) => {
     ...idsFor("sales_invoice_unpost"),
   ])];
   const purchaseInvoiceIds = idsFor("purchase_invoice");
-  const salesReturnIds = idsFor("sales_return");
+  const salesReturnIds = [...new Set([
+    ...idsFor("sales_return"),
+    ...idsFor("sales_return_unposted"),
+    ...idsFor("sales_return_unpost"),
+  ])];
   const purchaseReturnIds = idsFor("purchase_return");
   const transferIds = idsFor("transfer");
   const adjustmentIds = idsFor("adjustment");
@@ -4557,11 +4564,14 @@ router.get("/stock-ledger", async (req, res) => {
     });
   }
   for (const doc of salesReturnDocs) {
-    sourceRefs.set(`sales_return:${doc.id}`, {
+    const source = {
       documentNumber: doc.docNumber,
       documentPath: "/sales/returns",
       notes: doc.notes,
-    });
+    };
+    for (const refType of ["sales_return", "sales_return_unposted", "sales_return_unpost"]) {
+      sourceRefs.set(`${refType}:${doc.id}`, source);
+    }
   }
   for (const doc of purchaseReturnDocs) {
     sourceRefs.set(`purchase_return:${doc.id}`, {

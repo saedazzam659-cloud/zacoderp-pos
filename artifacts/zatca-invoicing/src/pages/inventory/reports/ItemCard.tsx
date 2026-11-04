@@ -42,6 +42,8 @@ export default function ItemCard() {
   const movementLabel = (row: any) => {
     if (row.refType === "sales_invoice_unposted") return txLabel("sales_invoice_unposted");
     if (row.refType === "sales_invoice_unpost") return txLabel("sales_invoice_unpost");
+    if (row.refType === "sales_return_unposted") return txLabel("sales_return_unposted");
+    if (row.refType === "sales_return_unpost") return txLabel("sales_return_unpost");
     return txLabel(row.txType);
   };
 
@@ -395,7 +397,7 @@ export default function ItemCard() {
       {applied.itemId && item && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="rounded-xl border bg-slate-50 border-slate-200 p-4">
-            <p className="text-xs text-slate-700">{t("inventoryReports.itemCard.openingBalance")}</p>
+            <p className="text-xs text-slate-700">{t(applied.customerId ? "inventoryReports.itemCard.customerOpeningBalance" : "inventoryReports.itemCard.openingBalance")}</p>
             <p className="text-2xl font-bold text-slate-700 tabular-nums mt-1">{fmtQty(balanceSummary.opening)}</p>
           </div>
           <div className="rounded-xl border bg-green-50 border-green-200 p-4">
@@ -407,7 +409,7 @@ export default function ItemCard() {
             <p className="text-2xl font-bold text-red-700 tabular-nums mt-1">{fmtQty(totals.out)}</p>
           </div>
           <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
-            <p className="text-xs text-muted-foreground">{t("inventoryReports.itemCard.finalBalance")}</p>
+            <p className="text-xs text-muted-foreground">{t(applied.customerId ? "inventoryReports.itemCard.customerFinalBalance" : "inventoryReports.itemCard.finalBalance")}</p>
             <p className="text-2xl font-bold tabular-nums mt-1">{fmtQty(balanceSummary.final)}</p>
           </div>
         </div>
