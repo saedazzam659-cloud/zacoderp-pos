@@ -1,8 +1,7 @@
-import { pgTable, serial, text, integer, timestamp, numeric, boolean, unique } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, numeric, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { companiesTable } from "./companies";
-import { partyIdentitiesTable } from "./partyIdentities";
 
 export const suppliersTable = pgTable("suppliers", {
   id:                  serial("id").primaryKey(),
@@ -11,7 +10,6 @@ export const suppliersTable = pgTable("suppliers", {
   nameAr:              text("name_ar").notNull(),
   /** Null denotes an unclassified legacy party; new choices treat it as an ordinary supplier. */
   partyClassification: text("party_classification"),
-  partyIdentityId: integer("party_identity_id").references(() => partyIdentitiesTable.id, { onDelete: "set null" }),
   nameEn:              text("name_en"),
   vatNumber:           text("vat_number"),
   crNumber:            text("cr_number"),
@@ -41,9 +39,7 @@ export const suppliersTable = pgTable("suppliers", {
   /** Mirror of customers.includeInStatements — see that field for full rationale. */
   includeInStatements: boolean("include_in_statements").notNull().default(true),
   createdAt:           timestamp("created_at").defaultNow().notNull(),
-}, (t) => ({
-  partyIdentityUnique: unique("suppliers_party_identity_uq").on(t.companyId, t.partyIdentityId),
-}));
+});
 
 export const insertSupplierSchema = createInsertSchema(suppliersTable).omit({ id: true, createdAt: true });
 export type InsertSupplier = z.infer<typeof insertSupplierSchema>;

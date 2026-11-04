@@ -3,7 +3,6 @@ import { pgTable, serial, text, integer, timestamp, numeric, boolean, unique } f
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { companiesTable } from "./companies";
-import { partyIdentitiesTable } from "./partyIdentities";
 
 export const customersTable = pgTable("customers", {
   id: serial("id").primaryKey(),
@@ -11,7 +10,6 @@ export const customersTable = pgTable("customers", {
   nameAr: text("name_ar").notNull(),
   /** Null denotes an unclassified legacy party; new choices treat it as an ordinary customer. */
   partyClassification: text("party_classification"),
-  partyIdentityId: integer("party_identity_id").references(() => partyIdentitiesTable.id, { onDelete: "set null" }),
   nameEn: text("name_en"),
   vatNumber: text("vat_number"),
   crNumber: text("cr_number"),
@@ -75,7 +73,6 @@ export const customersTable = pgTable("customers", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => ({
   companyIdIdUq: unique("customers_company_id_id_uq").on(t.companyId, t.id),
-  partyIdentityUnique: unique("customers_party_identity_uq").on(t.companyId, t.partyIdentityId),
 }));
 
 export const insertCustomerSchema = createInsertSchema(customersTable).omit({ id: true, createdAt: true });

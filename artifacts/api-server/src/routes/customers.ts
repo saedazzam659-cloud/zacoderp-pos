@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
 import { db } from "@workspace/db";
-import { customersTable, customerGroupsTable, suppliersTable, partyIdentitiesTable, companiesTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable, accountsTable, journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
+import { customersTable, customerGroupsTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, branchesTable, accountsTable, journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import { and, asc, eq, sql, gte, lte, inArray, notInArray } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
@@ -164,24 +164,6 @@ router.get("/balances", async (req, res) => {
 // ═══════════════════════════════════════════════
 // CUSTOMER GROUPS  (registered before "/:id" so the literal is not swallowed)
 // ═══════════════════════════════════════════════
-router.get("/party-identities", async (req, res) => {
-  try {
-    const auth = (req as any).authUser;
-    if (!auth || !["admin", "superadmin"].includes(auth.role)) { res.status(403).json({ error: "صلاحية مدير الشركة مطلوبة" }); return; }
-    const companyId = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
-    if (!companyId) { res.json([]); return; }
-    const rows = await db.select({
-      id: partyIdentitiesTable.id, code: partyIdentitiesTable.code, nameAr: partyIdentitiesTable.nameAr,
-      nameEn: partyIdentitiesTable.nameEn, vatNumber: partyIdentitiesTable.vatNumber, crNumber: partyIdentitiesTable.crNumber,
-      customerId: customersTable.id, supplierId: suppliersTable.id,
-    }).from(partyIdentitiesTable)
-      .leftJoin(customersTable, and(eq(customersTable.partyIdentityId, partyIdentitiesTable.id), eq(customersTable.companyId, companyId)))
-      .leftJoin(suppliersTable, and(eq(suppliersTable.partyIdentityId, partyIdentitiesTable.id), eq(suppliersTable.companyId, companyId)))
-      .where(eq(partyIdentitiesTable.companyId, companyId));
-    res.json(rows);
-  } catch (e: any) { res.status(500).json({ error: e?.message ?? "تعذر تحميل هويات الأطراف" }); }
-});
-
 router.get("/customer-groups", async (req, res) => {
   try {
     const cid = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
@@ -211,71 +193,6 @@ router.post("/customer-groups", async (req, res) => {
     }).returning();
     res.status(201).json(row);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
-});
-
-// Link one existing customer profile and one existing supplier profile under
-// a new shared identity. The role rows, IDs, accounts and historical documents
-// are intentionally preserved.
-router.post("/link-party-identity", async (req, res) => {
-  try {
-    const auth = (req as any).authUser;
-    if (!auth || !["admin", "superadmin"].includes(auth.role)) {
-      res.status(403).json({ error: "ربط هوية العميل والمورد متاح لمدير الشركة فقط" }); return;
-    }
-    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
-    const customerId = Number(req.body.customerId);
-    const supplierId = Number(req.body.supplierId);
-    if (!companyId || !Number.isInteger(customerId) || customerId <= 0 || !Number.isInteger(supplierId) || supplierId <= 0) {
-      res.status(400).json({ error: "اختر عميلًا وموردًا صحيحين" }); return;
-    }
-    const [company] = await db.select({ enabled: companiesTable.sharedPartyIdentityEnabled })
-      .from(companiesTable).where(eq(companiesTable.id, companyId));
-    if (!company?.enabled) { res.status(403).json({ error: "فعّل ميزة هوية الطرف أولاً من الإعدادات العامة" }); return; }
-    const [customer] = await db.select().from(customersTable).where(and(
-      eq(customersTable.id, customerId), eq(customersTable.companyId, companyId),
-    ));
-    const [supplier] = await db.select().from(suppliersTable).where(and(
-      eq(suppliersTable.id, supplierId), eq(suppliersTable.companyId, companyId),
-    ));
-    if (!customer || !supplier) { res.status(404).json({ error: "العميل أو المورد غير موجود في الشركة الحالية" }); return; }
-    if (customer.partyIdentityId || supplier.partyIdentityId) {
-      res.status(409).json({ error: "أحد السجلين مرتبط بهوية موحدة بالفعل" }); return;
-    }
-    const vatCustomer = String(customer.vatNumber ?? "").trim();
-    const vatSupplier = String(supplier.vatNumber ?? "").trim();
-    const crCustomer = String(customer.crNumber ?? "").trim();
-    const crSupplier = String(supplier.crNumber ?? "").trim();
-    if ((vatCustomer && vatSupplier && vatCustomer !== vatSupplier) ||
-        (crCustomer && crSupplier && crCustomer !== crSupplier)) {
-      res.status(409).json({ error: "رقم الضريبة أو السجل التجاري مختلف؛ راجع السجلين قبل الربط" }); return;
-    }
-    const codes = await db.select({ code: partyIdentitiesTable.code }).from(partyIdentitiesTable)
-      .where(eq(partyIdentitiesTable.companyId, companyId));
-    const code = nextEntityCode("PTY", codes.map(row => row.code));
-    const linked = await db.transaction(async (tx) => {
-      const [lockedCustomer] = await tx.select().from(customersTable).where(and(
-        eq(customersTable.id, customerId), eq(customersTable.companyId, companyId),
-      )).for("update");
-      const [lockedSupplier] = await tx.select().from(suppliersTable).where(and(
-        eq(suppliersTable.id, supplierId), eq(suppliersTable.companyId, companyId),
-      )).for("update");
-      if (!lockedCustomer || !lockedSupplier || lockedCustomer.partyIdentityId || lockedSupplier.partyIdentityId) {
-        throw Object.assign(new Error("تم ربط أحد السجلين بهوية أخرى؛ حدّث الصفحة وحاول مجددًا"), { status: 409 });
-      }
-      const [identity] = await tx.insert(partyIdentitiesTable).values({
-        companyId, code, nameAr: customer.nameAr,
-        nameEn: customer.nameEn || supplier.nameEn || null,
-        vatNumber: vatCustomer || vatSupplier || null,
-        crNumber: crCustomer || crSupplier || null,
-      }).returning();
-      await tx.update(customersTable).set({ partyIdentityId: identity.id })
-        .where(and(eq(customersTable.id, customerId), eq(customersTable.companyId, companyId)));
-      await tx.update(suppliersTable).set({ partyIdentityId: identity.id })
-        .where(and(eq(suppliersTable.id, supplierId), eq(suppliersTable.companyId, companyId)));
-      return identity;
-    });
-    res.status(201).json({ identity: linked, customerId, supplierId });
-  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e?.message ?? "تعذر ربط سجلي العميل والمورد" }); }
 });
 
 router.put("/customer-groups/:id", async (req, res) => {
