@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, cashBoxesTable, bankAccountsTable, accountsTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, cashBoxesTable, bankAccountsTable, accountsTable, negativeStockCostSettlementsTable, stockBalanceTable } from "@workspace/db";
 import { eq, and, isNull, asc, sql } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
 import { z } from "zod";
@@ -141,6 +141,7 @@ router.post("/", async (req, res) => {
     isSandbox: data.isSandbox ?? false,
     sequenceProtectionEnabled: true,
     negativeStockCostEnforced: !(data.isSandbox ?? false),
+    deferNegativeStockCostToPurchases: false,
     enforceSalesPriceFloor: false,
     serialNumber: data.serialNumber,
     deviceSerial1: data.deviceSerial1,
@@ -426,6 +427,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   if (req.query?.agent) {
     const { sql } = await import("drizzle-orm");
     await db.execute(sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS allow_historical_unit_changes boolean DEFAULT false NOT NULL`);
+    await db.execute(sql`ALTER TABLE companies ADD COLUMN IF NOT EXISTS defer_negative_stock_cost_to_purchases boolean DEFAULT false NOT NULL`);
   }
   const id = parseInt(String(req.params.id), 10);
   // Authorization: only a SuperAdmin or an admin of THIS company may change
@@ -449,7 +451,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   const {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
-    decimalPlaces, showZeros, hideQuickAddBar, inputHintColorsEnabled, inputHintColor, showFreeQuantity, showSalesBranchStock, allowNegativeSales, negativeStockCostEnforced, enforceSalesPriceFloor, purchaseBatchExpiryEnabled, autoPostingEnabled,
+    decimalPlaces, showZeros, hideQuickAddBar, inputHintColorsEnabled, inputHintColor, showFreeQuantity, showSalesBranchStock, allowNegativeSales, negativeStockCostEnforced, deferNegativeStockCostToPurchases, enforceSalesPriceFloor, purchaseBatchExpiryEnabled, autoPostingEnabled,
     salesBarcodeEntryEnabled, allowDuplicateInvoiceItems, purchaseDirectExpensesCustodyEnabled, purchaseVatInInventoryCost,
     documentFieldControlsEnabled,
     allowHistoricalUnitChanges,
@@ -513,7 +515,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   } = req.body as {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
-    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; inputHintColorsEnabled?: boolean; inputHintColor?: string; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; negativeStockCostEnforced?: boolean; enforceSalesPriceFloor?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
+    decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; inputHintColorsEnabled?: boolean; inputHintColor?: string; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; negativeStockCostEnforced?: boolean; deferNegativeStockCostToPurchases?: boolean; enforceSalesPriceFloor?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
     salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean; purchaseDirectExpensesCustodyEnabled?: boolean; purchaseVatInInventoryCost?: boolean;
     documentFieldControlsEnabled?: boolean;
     allowHistoricalUnitChanges?: boolean;
@@ -702,6 +704,35 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       return;
     }
     updates.negativeStockCostEnforced = negativeStockCostEnforced;
+  }
+  if (deferNegativeStockCostToPurchases !== undefined) {
+    if (typeof deferNegativeStockCostToPurchases !== "boolean") {
+      res.status(400).json({ error: "deferNegativeStockCostToPurchases يجب أن تكون قيمة منطقية" });
+      return;
+    }
+    if (deferNegativeStockCostToPurchases) {
+      const [pendingLayer] = await db.select({ id: negativeStockCostSettlementsTable.id })
+        .from(negativeStockCostSettlementsTable)
+        .where(and(
+          eq(negativeStockCostSettlementsTable.companyId, id),
+          eq(negativeStockCostSettlementsTable.status, "pending"),
+        ))
+        .limit(1);
+      const [negativeBalance] = await db.select({ id: stockBalanceTable.id })
+        .from(stockBalanceTable)
+        .where(and(
+          eq(stockBalanceTable.companyId, id),
+          sql`${stockBalanceTable.qty} < 0`,
+        ))
+        .limit(1);
+      if (pendingLayer || negativeBalance) {
+        res.status(409).json({
+          error: "سوِّ أرصدة المخزون السالبة وتسويات التكلفة المعلّقة قبل تفعيل التسوية من المشتريات؛ الإعداد لا يعيد معالجة الحركات السابقة.",
+        });
+        return;
+      }
+    }
+    updates.deferNegativeStockCostToPurchases = deferNegativeStockCostToPurchases;
   }
   if (enforceSalesPriceFloor !== undefined) {
     if (typeof enforceSalesPriceFloor !== "boolean") {

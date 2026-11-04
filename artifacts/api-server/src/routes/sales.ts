@@ -4193,6 +4193,7 @@ async function postSalesInvoiceHandler(
       warehouseId: number;
       qty: number;
       avgCost: number;
+      stockedCost: number;
       shortageQty: number;
       shortageUnitCost: number;
       notes: string | null;
@@ -4296,6 +4297,7 @@ async function postSalesInvoiceHandler(
           return;
         }
         let avgCost: number;
+        let stockedCost: number;
         let picks: BatchPick[] | null;
         let shortageQty = 0;
         let shortageUnitCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
@@ -4308,6 +4310,7 @@ async function postSalesInvoiceHandler(
           const issuedFromStock = Math.min(qty, available);
           shortageQty = qty - issuedFromStock;
           availableByPair.set(pairKey, Math.max(0, available - issuedFromStock));
+          stockedCost = issuedFromStock * warehouseAverageCost;
           shortageUnitCost = shortageQty > 0
             ? resolveShortageCost(line.itemId, line.warehouseId, warehouseAverageCost, false)
             : warehouseAverageCost;
@@ -4336,6 +4339,7 @@ async function postSalesInvoiceHandler(
             return;
           }
           const lineCost = picks.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
+          stockedCost = lineCost;
           const warehouseAverageCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
           shortageUnitCost = shortageQty > 0
             ? resolveShortageCost(line.itemId, line.warehouseId, warehouseAverageCost, true)
@@ -4353,6 +4357,7 @@ async function postSalesInvoiceHandler(
           warehouseId: line.warehouseId,
           qty,
           avgCost,
+          stockedCost,
           shortageQty,
           shortageUnitCost,
           notes: line.notes ?? null,
@@ -4361,14 +4366,30 @@ async function postSalesInvoiceHandler(
       }
     }
     timing?.mark("costing");
-    const uncostedShortages = stockOps.filter((op) => op.shortageQty > 0.0001 && op.shortageUnitCost <= 0);
-    const [negativeStockCostPolicy] = uncostedShortages.length
-      ? await tx.select({ enforced: companiesTable.negativeStockCostEnforced })
+    const hasNegativeShortage = stockOps.some((op) => op.shortageQty > 0.0001);
+    const [negativeStockCostPolicy] = hasNegativeShortage
+      ? await tx.select({
+          enforced: companiesTable.negativeStockCostEnforced,
+          deferToPurchases: companiesTable.deferNegativeStockCostToPurchases,
+        })
         .from(companiesTable)
         .where(eq(companiesTable.id, cid))
         .limit(1)
       : [];
-    if (uncostedShortages.length && shouldRejectUncostedNegativeStock(
+    const deferNegativeStockCostToPurchases = negativeStockCostPolicy?.deferToPurchases === true;
+    if (deferNegativeStockCostToPurchases) {
+      totalCogs = 0;
+      for (const warehouseId of Object.keys(cogsByWarehouse)) delete cogsByWarehouse[Number(warehouseId)];
+      for (const op of stockOps) {
+        op.shortageUnitCost = 0;
+        op.avgCost = op.qty > 0 ? op.stockedCost / op.qty : 0;
+        const lineCogs = Number(multiplyQuantity(String(op.qty), String(op.avgCost)));
+        totalCogs += lineCogs;
+        cogsByWarehouse[op.warehouseId] = (cogsByWarehouse[op.warehouseId] ?? 0) + lineCogs;
+      }
+    }
+    const uncostedShortages = stockOps.filter((op) => op.shortageQty > 0.0001 && op.shortageUnitCost <= 0);
+    if (uncostedShortages.length && !deferNegativeStockCostToPurchases && shouldRejectUncostedNegativeStock(
       negativeStockCostPolicy?.enforced ?? false,
       true,
     )) {
@@ -4400,7 +4421,7 @@ async function postSalesInvoiceHandler(
       });
       return;
     }
-    if (uncostedShortages.length) {
+    if (uncostedShortages.length && !deferNegativeStockCostToPurchases) {
       logger.warn({
         companyId: cid,
         shortages: uncostedShortages.map((op) => ({

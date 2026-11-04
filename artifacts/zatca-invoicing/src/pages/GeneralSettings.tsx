@@ -2053,6 +2053,29 @@ export default function GeneralSettings() {
           </span>
         </label>
         <label
+          data-testid="defer-negative-stock-cost-toggle"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.deferNegativeStockCostToPurchases
+              ? "border-primary/50 bg-primary/5 shadow-sm"
+              : "border-border hover:border-primary/30 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 accent-primary cursor-pointer"
+            checked={user?.company?.deferNegativeStockCostToPurchases === true}
+            disabled={postingSaving}
+            onChange={e => togglePostingMode({ deferNegativeStockCostToPurchases: e.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">تسوية تكلفة البيع بالسالب عند الشراء</span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              مغلق افتراضيًا. عند التفعيل لا تُسجل تكلفة تقديرية عند البيع بالسالب؛ تُثبت التكلفة الفعلية عند ترحيل المشتريات التي تغطي العجز. لا يعيد معالجة الأرصدة أو التسويات السابقة، ويلزم تصفية السالب قبل التفعيل.
+            </span>
+          </span>
+        </label>
+        <label
           data-testid="sales-price-floor-toggle"
           className={cn(
             "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
