@@ -19,6 +19,9 @@ type Tab = typeof TABS[number]["id"];
 
 export default function RestaurantSettings() {
   const [, setLocation] = useLocation();
+  const returnTo = new URLSearchParams(window.location.search).get("returnTo") === "waiter"
+    ? "/waiter"
+    : "/restaurant";
   const [tab, setTab] = useState<Tab>(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
     return TABS.some(item => item.id === requested) ? requested as Tab : "tables";
@@ -39,7 +42,7 @@ export default function RestaurantSettings() {
     <div dir="rtl" className="min-h-[100dvh] bg-background text-foreground">
       <header className="sticky top-0 z-20 flex min-h-16 items-center gap-3 border-b border-border/80 bg-card px-3 py-2 shadow-sm sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setLocation("/restaurant")} aria-label="العودة إلى المطعم" data-testid="button-settings-back">
+          <Button variant="ghost" size="sm" onClick={() => setLocation(returnTo)} aria-label="العودة إلى المطعم" data-testid="button-settings-back">
             <ChevronRight className="h-4 w-4 ml-1" /> رجوع
           </Button>
           <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm"><Settings className="h-5 w-5" /></div>
@@ -71,8 +74,14 @@ export default function RestaurantSettings() {
       </nav>
 
       <main className="mx-auto max-w-6xl p-4 sm:p-6">
-        {branchesQ.isError && tab === "tables" && <p role="alert" className="mb-4 flex items-center gap-2 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"><AlertCircle className="h-4 w-4" />تعذّر تحميل الفروع. أعد المحاولة من تحديث الصفحة.</p>}
-        {tab === "tables" && <TablesTab branches={branchesQ.data ?? []} />}
+        {tab === "tables" && (
+          <TablesTab
+            branches={branchesQ.data ?? []}
+            branchesLoading={branchesQ.isLoading}
+            branchesError={branchesQ.isError}
+            retryBranches={() => { void branchesQ.refetch(); }}
+          />
+        )}
         {tab === "cats"   && <CategoriesTab />}
         {tab === "items"  && <ItemsTab companyId={cid} />}
       </main>
@@ -81,7 +90,17 @@ export default function RestaurantSettings() {
 }
 
 // ─── Tables ──────────────────────────────────────────────────────────────
-function TablesTab({ branches }: { branches: Branch[] }) {
+function TablesTab({
+  branches,
+  branchesLoading,
+  branchesError,
+  retryBranches,
+}: {
+  branches: Branch[];
+  branchesLoading: boolean;
+  branchesError: boolean;
+  retryBranches: () => void;
+}) {
   const qc = useQueryClient();
   const tablesQ = useQuery({ queryKey: ["r-tables-all"], queryFn: () => api.rTables() });
   const [batch, setBatch] = useState({
@@ -94,6 +113,7 @@ function TablesTab({ branches }: { branches: Branch[] }) {
     area: "الصالة",
   });
   const [batchMessage, setBatchMessage] = useState("");
+  const [manualError, setManualError] = useState("");
   const [draft, setDraft] = useState({
     branchId: "" as string | number, code: "", nameAr: "", capacity: 4, area: "",
   });
@@ -139,9 +159,10 @@ function TablesTab({ branches }: { branches: Branch[] }) {
     }),
     onSuccess: () => {
       setDraft({ branchId: "", code: "", nameAr: "", capacity: 4, area: "" });
+      setManualError("");
       invalidate();
     },
-    onError: (e: any) => alert(e?.message ?? "فشل الإنشاء"),
+    onError: (e: any) => setManualError(e?.message ?? "فشل إنشاء الطاولة"),
   });
 
   const update = useMutation({
@@ -159,10 +180,11 @@ function TablesTab({ branches }: { branches: Branch[] }) {
   const previewEnd = Number(batch.startNumber) + Number(batch.count) - 1;
   const batchValid = Boolean(batch.branchId)
     && Number.isInteger(Number(batch.count)) && Number(batch.count) >= 1 && Number(batch.count) <= 100
-    && Number.isInteger(Number(batch.startNumber)) && Number(batch.startNumber) >= 1
+    && Number.isInteger(Number(batch.startNumber)) && Number(batch.startNumber) >= 1 && Number(batch.startNumber) <= 999999
     && Number.isInteger(Number(batch.capacity)) && Number(batch.capacity) >= 1 && Number(batch.capacity) <= 50
     && /^[\p{L}\p{N}_-]{1,12}$/u.test(batch.codePrefix.trim())
-    && batch.namePrefix.trim().length > 0;
+    && batch.namePrefix.trim().length > 0 && batch.namePrefix.trim().length <= 40
+    && batch.area.trim().length <= 80;
 
   return (
     <div className="space-y-4">
@@ -186,10 +208,24 @@ function TablesTab({ branches }: { branches: Branch[] }) {
               onChange={e => { setBatch({ ...batch, branchId: e.target.value }); setBatchMessage(""); }}
               aria-label="فرع الطاولات"
               data-testid="select-batch-branch"
+              disabled={branchesLoading || branchesError || branches.length === 0}
               className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
               <option value="">اختر الفرع</option>
               {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.nameAr}</option>)}
             </select>
+            {branchesLoading && <span className="block pt-1 font-normal">جارٍ تحميل الفروع...</span>}
+            {branchesError && (
+              <span className="flex items-center gap-2 pt-1 font-normal text-destructive" role="alert">
+                تعذّر تحميل الفروع.
+                <button type="button" className="font-bold underline" onClick={retryBranches}>إعادة المحاولة</button>
+              </span>
+            )}
+            {!branchesLoading && !branchesError && branches.length === 0 && (
+              <span className="block pt-1 font-normal text-destructive" role="alert">لا توجد فروع نشطة لإنشاء الطاولات.</span>
+            )}
+            {!branchesLoading && !branchesError && branches.length > 1 && !batch.branchId && (
+              <span className="block pt-1 font-normal">اختر الفرع لتفعيل الإنشاء.</span>
+            )}
           </label>
           <label className="space-y-1 text-xs font-semibold text-muted-foreground">
             عدد الطاولات
@@ -214,14 +250,14 @@ function TablesTab({ branches }: { branches: Branch[] }) {
           </label>
           <label className="space-y-1 text-xs font-semibold text-muted-foreground">
             اسم الطاولة
-            <Input value={batch.namePrefix}
+            <Input value={batch.namePrefix} maxLength={40}
               onChange={e => { setBatch({ ...batch, namePrefix: e.target.value }); setBatchMessage(""); }}
               aria-label="بادئة اسم الطاولة" data-testid="input-batch-name-prefix"
               className="h-10 bg-background" />
           </label>
           <label className="space-y-1 text-xs font-semibold text-muted-foreground">
             المنطقة / الصالة
-            <Input value={batch.area}
+            <Input value={batch.area} maxLength={80}
               onChange={e => { setBatch({ ...batch, area: e.target.value }); setBatchMessage(""); }}
               aria-label="المنطقة أو الصالة" data-testid="input-batch-area"
               className="h-10 bg-background" />
@@ -235,7 +271,7 @@ function TablesTab({ branches }: { branches: Branch[] }) {
           </label>
           <div className="flex items-end">
             <Button data-testid="button-create-table-batch" className="h-10 w-full font-black"
-              disabled={!batchValid || createBatch.isPending || branches.length === 0}
+              disabled={!batchValid || createBatch.isPending || branchesLoading || branchesError || branches.length === 0}
               onClick={() => { setBatchMessage(""); createBatch.mutate(); }}>
               {createBatch.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Plus className="ml-2 h-4 w-4" />}
               إنشاء الطاولات
@@ -279,9 +315,10 @@ function TablesTab({ branches }: { branches: Branch[] }) {
           </div>
           <Button data-testid="button-create-table" className="mt-3 font-bold"
             disabled={!draft.branchId || !draft.code || !draft.nameAr || create.isPending}
-            onClick={() => create.mutate()}>
+            onClick={() => { setManualError(""); create.mutate(); }}>
             {create.isPending ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <Plus className="ml-1 h-4 w-4" />}إضافة طاولة
           </Button>
+          {manualError && <p role="alert" className="mt-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">{manualError}</p>}
         </div>
       </details>
 

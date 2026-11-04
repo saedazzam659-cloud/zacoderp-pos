@@ -133,7 +133,7 @@ export default function WaiterApp() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <Button variant="ghost" size="icon" onClick={() => setLocation("/restaurant-settings?tab=tables")} aria-label="إعدادات الطاولات" data-testid="button-waiter-settings">
+          <Button variant="ghost" size="icon" onClick={() => setLocation("/restaurant-settings?tab=tables&returnTo=waiter")} aria-label="إعدادات الطاولات" data-testid="button-waiter-settings">
             <Settings className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="icon" onClick={() => qc.invalidateQueries({ queryKey: ["r-tables"] })} aria-label="تحديث الطاولات" data-testid="button-refresh-tables">
@@ -175,7 +175,7 @@ export default function WaiterApp() {
               <h2 className="text-lg font-black">لا توجد طاولات معرّفة بعد</h2>
               <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">أضف الطاولات من إعدادات المطعم لتبدأ استقبال الطلبات في الصالة.</p>
               <div className="mt-5 flex flex-wrap justify-center gap-2">
-                <Button onClick={() => setLocation("/restaurant-settings?tab=tables")} data-testid="btn-add-tables-cta"><Plus className="ml-2 h-4 w-4" /> إضافة طاولات</Button>
+                <Button onClick={() => setLocation("/restaurant-settings?tab=tables&returnTo=waiter")} data-testid="btn-add-tables-cta"><Plus className="ml-2 h-4 w-4" /> إضافة طاولات</Button>
                 <Button variant="outline" onClick={() => qc.invalidateQueries({ queryKey: ["r-tables"] })} data-testid="btn-refresh-tables"><RefreshCw className="ml-2 h-4 w-4" /> تحديث</Button>
               </div>
             </section>
