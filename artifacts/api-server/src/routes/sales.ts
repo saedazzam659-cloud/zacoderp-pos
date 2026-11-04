@@ -28,6 +28,7 @@ import {
   receiptVouchersTable, paymentVouchersTable,
   salesRepsTable, offersTable,
   goodsDeliveriesTable, goodsDeliveryLinesTable,
+  purchaseInvoicesTable,
   subscriptionsTable,
   negativeStockCostSettlementsTable,
   itemsTable,
@@ -41,7 +42,7 @@ import {
   schoolFeesTable,
 } from "@workspace/db";
 import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
-import { eq, and, asc, desc, sql, inArray, isNull, count, gte, lte, ilike, or, ne } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray, isNull, count, gte, gt, lte, ilike, or, ne } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter, multiBranchScopeSpread, intersectBranchRequest } from "../middleware/auth.js";
 import { isMobileChannel, mobilePermAllowed } from "../lib/mobilePerms.js";
 import { requireMobilePerm } from "../lib/mobileGuard.js";
@@ -72,6 +73,7 @@ import { logger } from "../lib/logger.js";
 import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
 import { getAgentDbPoolStats } from "../lib/agentDb.js";
 import { ensureCustomerLedger } from "../lib/entityAccounts.js";
+import { resolveNegativeStockUnitCost } from "../lib/negativeStockCost.js";
 import { assertZatcaSubmissionAllowed, resolveZatcaChain, withZatcaChainLock } from "../lib/zatcaRegistrationTransfer.js";
 import {
   admitInvoiceAcceleration,
@@ -3962,7 +3964,14 @@ async function postSalesInvoiceHandler(
       checkItemsUsable(cid, "sales_invoices", lineItemIds, req.authUser, "post"),
       lineItemIds.length
         ? db
-            .select({ id: itemsTable.id, mode: itemsTable.batchTrackingMode, type: itemsTable.itemType, revAcc: itemsTable.revenueAccountId })
+            .select({
+              id: itemsTable.id,
+              mode: itemsTable.batchTrackingMode,
+              type: itemsTable.itemType,
+              revAcc: itemsTable.revenueAccountId,
+              costMethod: itemsTable.costMethod,
+              itemCardCost: itemsTable.costPrice,
+            })
             .from(itemsTable)
             .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, lineItemIds)))
         : Promise.resolve([]),
@@ -3975,11 +3984,15 @@ async function postSalesInvoiceHandler(
     const modeById = new Map<number, "none" | "fifo" | "fefo">();
     const typeById = new Map<number, string>();
     const revAccById = new Map<number, number | null>();
+    const costMethodById = new Map<number, string>();
+    const itemCardCostById = new Map<number, number>();
     for (const r of itemMetaRows) {
       const m = (r.mode ?? "none") as string;
       modeById.set(r.id, m === "fifo" || m === "fefo" ? (m as "fifo" | "fefo") : "none");
       typeById.set(r.id, (r.type ?? "stock") as string);
       revAccById.set(r.id, r.revAcc ?? null);
+      costMethodById.set(r.id, r.costMethod ?? "weighted_avg");
+      itemCardCostById.set(r.id, Number(r.itemCardCost) || 0);
     }
     const isServiceLine = (l: any) => { if (!l.itemId) return false; const t = typeById.get(l.itemId); return t === "service" || t === "prepaid_expense"; };
 
@@ -4194,6 +4207,52 @@ async function postSalesInvoiceHandler(
         )
       : new Map();
     timing?.mark("batch-plans");
+    const stockItemIds = lineItemIds.filter((itemId) => !isServiceLine({ itemId }));
+    const stockWarehouseIds = Array.from(new Set(stockPairs.map((pair) => pair.warehouseId)));
+    const latestPurchaseRows = !gdnSourced && stockItemIds.length && stockWarehouseIds.length
+      ? await tx.selectDistinctOn([stockLedgerTable.itemId, stockLedgerTable.warehouseId], {
+          itemId: stockLedgerTable.itemId,
+          warehouseId: stockLedgerTable.warehouseId,
+          costPrice: stockLedgerTable.costPrice,
+        })
+        .from(stockLedgerTable)
+        .innerJoin(purchaseInvoicesTable, and(
+          eq(purchaseInvoicesTable.id, stockLedgerTable.refId),
+          eq(purchaseInvoicesTable.companyId, stockLedgerTable.companyId),
+        ))
+        .where(and(
+          eq(stockLedgerTable.companyId, cid),
+          inArray(stockLedgerTable.itemId, stockItemIds),
+          inArray(stockLedgerTable.warehouseId, stockWarehouseIds),
+          eq(stockLedgerTable.txType, "purchase"),
+          eq(stockLedgerTable.refType, "purchase_invoice"),
+          gt(stockLedgerTable.qty, "0"),
+          gt(stockLedgerTable.costPrice, "0"),
+          lte(stockLedgerTable.txDate, inv.invoiceDate),
+          eq(purchaseInvoicesTable.status, "posted"),
+        ))
+        .orderBy(
+          stockLedgerTable.itemId,
+          stockLedgerTable.warehouseId,
+          desc(stockLedgerTable.txDate),
+          desc(stockLedgerTable.id),
+        )
+      : [];
+    const lastPurchaseCostById = new Map(
+      latestPurchaseRows.map((row) => [`${row.itemId}:${row.warehouseId}`, Number(row.costPrice) || 0]),
+    );
+    const resolveShortageCost = (
+      itemId: number,
+      warehouseId: number,
+      warehouseAverageCost: number,
+      batchTracked: boolean,
+    ) => resolveNegativeStockUnitCost({
+      costMethod: costMethodById.get(itemId) ?? "weighted_avg",
+      averageCost: warehouseAverageCost,
+      lastPurchaseCost: lastPurchaseCostById.get(`${itemId}:${warehouseId}`) ?? 0,
+      itemCardCost: itemCardCostById.get(itemId) ?? 0,
+      batchTracked,
+    });
     if (!gdnSourced) {
       for (const line of lines) {
         if (!line.itemId || !line.warehouseId) continue;
@@ -4226,7 +4285,7 @@ async function postSalesInvoiceHandler(
         let shortageQty = 0;
         let shortageUnitCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
         if (mode === "none") {
-          avgCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
+          const warehouseAverageCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
           const pairKey = `${line.itemId}:${line.warehouseId}`;
           const available = availableByPair.has(pairKey)
             ? availableByPair.get(pairKey)!
@@ -4234,7 +4293,12 @@ async function postSalesInvoiceHandler(
           const issuedFromStock = Math.min(qty, available);
           shortageQty = qty - issuedFromStock;
           availableByPair.set(pairKey, Math.max(0, available - issuedFromStock));
-          shortageUnitCost = avgCost;
+          shortageUnitCost = shortageQty > 0
+            ? resolveShortageCost(line.itemId, line.warehouseId, warehouseAverageCost, false).unitCost
+            : warehouseAverageCost;
+          avgCost = qty > 0
+            ? (issuedFromStock * warehouseAverageCost + shortageQty * shortageUnitCost) / qty
+            : 0;
           picks = null;
         } else {
           // Consume the preloaded plan in line order. The allocator mutates the
@@ -4257,7 +4321,10 @@ async function postSalesInvoiceHandler(
             return;
           }
           const lineCost = picks.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
-          shortageUnitCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
+          const warehouseAverageCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
+          shortageUnitCost = shortageQty > 0
+            ? resolveShortageCost(line.itemId, line.warehouseId, warehouseAverageCost, true).unitCost
+            : warehouseAverageCost;
           avgCost = qty > 0
             ? (lineCost + shortageQty * shortageUnitCost) / qty
             : 0;
@@ -4279,6 +4346,14 @@ async function postSalesInvoiceHandler(
       }
     }
     timing?.mark("costing");
+    const uncostedShortage = stockOps.find((op) => op.shortageQty > 0.0001 && op.shortageUnitCost <= 0);
+    if (uncostedShortage) {
+      const itemName = lines.find((line) => line.id === uncostedShortage.sourceLineId)?.itemName ?? `#${uncostedShortage.itemId}`;
+      res.status(400).json({
+        error: `لا يمكن ترحيل البيع السالب للصنف "${itemName}": لا توجد تكلفة مخزنية أو فاتورة شراء سابقة أو تكلفة مسجلة في بطاقة الصنف.`,
+      });
+      return;
+    }
 
     // ── Build journal entry ──
     // Dr Customer/Cash (= total = subtotal − discount + vat)

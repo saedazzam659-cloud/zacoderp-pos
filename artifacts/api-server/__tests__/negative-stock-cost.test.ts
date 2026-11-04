@@ -5,6 +5,7 @@ import { nextStockAverageCost } from "../src/lib/stockHelpers.js";
 import {
   negativeStockCostAdjustment,
   planNegativeStockCoverage,
+  resolveNegativeStockUnitCost,
   returnCostAdjustmentPerUnit,
   untrackedNegativeStockEstimate,
 } from "../src/lib/negativeStockCost.js";
@@ -41,6 +42,57 @@ test("cost settlement and returns preserve the signed per-unit adjustment", () =
   assert.equal(returnCostAdjustmentPerUnit(totalAdjustment, 10), 1.5);
   assert.equal(negativeStockCostAdjustment(7, 4, 5), -15);
   assert.equal(returnCostAdjustmentPerUnit(15, 0), 0);
+});
+
+test("negative-stock fallback preserves the valuation method and uses posted cost sources in order", () => {
+  assert.deepEqual(resolveNegativeStockUnitCost({
+    costMethod: "weighted_avg",
+    averageCost: 4.25,
+    lastPurchaseCost: 5.5,
+    itemCardCost: 6,
+    batchTracked: false,
+  }), { unitCost: 4.25, source: "stock_average" });
+
+  assert.deepEqual(resolveNegativeStockUnitCost({
+    costMethod: "last_cost",
+    averageCost: 4.25,
+    lastPurchaseCost: 5.5,
+    itemCardCost: 6,
+    batchTracked: false,
+  }), { unitCost: 5.5, source: "last_purchase" });
+
+  assert.deepEqual(resolveNegativeStockUnitCost({
+    costMethod: "weighted_avg",
+    averageCost: 0,
+    lastPurchaseCost: 0,
+    itemCardCost: 6,
+    batchTracked: false,
+  }), { unitCost: 6, source: "item_card" });
+
+  assert.deepEqual(resolveNegativeStockUnitCost({
+    costMethod: "weighted_avg",
+    averageCost: 4.25,
+    lastPurchaseCost: 5.5,
+    itemCardCost: 6,
+    batchTracked: true,
+  }), { unitCost: 5.5, source: "last_purchase" });
+
+  assert.deepEqual(resolveNegativeStockUnitCost({
+    costMethod: "weighted_avg",
+    averageCost: 0,
+    lastPurchaseCost: 0,
+    itemCardCost: 0,
+    batchTracked: false,
+  }), { unitCost: 0, source: "missing" });
+});
+
+test("negative-stock purchase fallback is company-scoped and cannot use future or unposted purchases", async () => {
+  const source = await readFile(new URL("../src/routes/sales.ts", import.meta.url), "utf8");
+  assert.match(source, /eq\(stockLedgerTable\.companyId,\s*cid\)/);
+  assert.match(source, /eq\(purchaseInvoicesTable\.status,\s*"posted"\)/);
+  assert.match(source, /lte\(stockLedgerTable\.txDate,\s*inv\.invoiceDate\)/);
+  assert.match(source, /gt\(stockLedgerTable\.costPrice,\s*"0"\)/);
+  assert.match(source, /inArray\(stockLedgerTable\.warehouseId,\s*stockWarehouseIds\)/);
 });
 
 test("legacy preview separates tracked layers and never estimates negative value", () => {
