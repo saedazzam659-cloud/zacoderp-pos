@@ -3364,6 +3364,61 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
     }
 
     const updated = await db.transaction(async (tx) => {
+      const activeCostSettlements = await tx.select().from(negativeStockCostSettlementsTable)
+        .where(and(
+          eq(negativeStockCostSettlementsTable.companyId, cid),
+          eq(negativeStockCostSettlementsTable.purchaseInvoiceId, id),
+          eq(negativeStockCostSettlementsTable.status, "active"),
+        ))
+        .for("update");
+      const adjustmentJournalIds = [...new Set(
+        activeCostSettlements
+          .map((row) => row.journalEntryId)
+          .filter((entryId): entryId is number => entryId != null),
+      )];
+      if (adjustmentJournalIds.length) {
+        // Retain the independent adjustment JE as a draft so repost can reuse
+        // its number and cannot duplicate a previously posted cost correction.
+        await tx.update(journalEntriesTable)
+          .set({ status: "draft", updatedAt: new Date() })
+          .where(and(
+            eq(journalEntriesTable.companyId, cid),
+            inArray(journalEntriesTable.id, adjustmentJournalIds),
+          ));
+      }
+      for (const allocation of activeCostSettlements) {
+        const [layer] = await tx.select().from(negativeStockCostSettlementsTable)
+          .where(and(
+            eq(negativeStockCostSettlementsTable.companyId, cid),
+            eq(negativeStockCostSettlementsTable.salesLineId, allocation.salesLineId),
+            or(
+              eq(negativeStockCostSettlementsTable.status, "pending"),
+              eq(negativeStockCostSettlementsTable.status, "closed"),
+            ),
+          ))
+          .orderBy(desc(negativeStockCostSettlementsTable.id))
+          .limit(1)
+          .for("update");
+        if (!layer) {
+          throw Object.assign(new Error("تعذر إعادة فتح طبقة تكلفة البيع عند فك ترحيل فاتورة الشراء."), { status: 409 });
+        }
+        const restoredQty = Number(layer.quantity) + Number(allocation.quantity);
+        await tx.update(negativeStockCostSettlementsTable).set({
+          quantity: String(restoredQty),
+          status: "pending",
+        }).where(eq(negativeStockCostSettlementsTable.id, layer.id));
+      }
+      if (activeCostSettlements.length) {
+        await tx.update(negativeStockCostSettlementsTable).set({
+          status: "reversed",
+          reversedAt: new Date(),
+        }).where(and(
+          eq(negativeStockCostSettlementsTable.companyId, cid),
+          eq(negativeStockCostSettlementsTable.purchaseInvoiceId, id),
+          eq(negativeStockCostSettlementsTable.status, "active"),
+        ));
+      }
+
       let retainLinkedJournalEntry = false;
       if (inv.journalEntryId) {
         const [linkedEntry] = await tx.select({
