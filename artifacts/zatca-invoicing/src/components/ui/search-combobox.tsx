@@ -60,6 +60,8 @@ interface SearchComboboxProps {
   endAdornment?: React.ReactNode;
   /** Turn the result rows into checkboxes and add all checked values together. */
   onAddSelected?: (values: string[], items: ComboboxItem[]) => void | Promise<void>;
+  /** Immediately add one result on double-click while leaving other checked rows selected. */
+  onItemDoubleClick?: (item: ComboboxItem) => void | Promise<void>;
 }
 
 export function SearchCombobox({
@@ -85,6 +87,7 @@ export function SearchCombobox({
   loading = false,
   endAdornment,
   onAddSelected,
+  onItemDoubleClick,
 }: SearchComboboxProps) {
   const { i18n } = useTranslation();
   const isEnglish = i18n.language?.toLowerCase().startsWith("en") ?? false;
@@ -200,6 +203,27 @@ export function SearchCombobox({
     }
   };
 
+  const addQuickly = (item: ComboboxItem) => {
+    if (item.disabled || !onAddSelected || !onItemDoubleClick) return;
+    setMultiSelectedValues(current => current.filter(value => value !== item.value));
+    setMultiSelectedItems(current => {
+      const next = { ...current };
+      delete next[item.value];
+      return next;
+    });
+    void Promise.resolve(onItemDoubleClick(item)).catch(error => {
+      console.error("[SearchCombobox] could not add item quickly", error);
+    });
+  };
+
+  const commitHighlightedItem = (item: ComboboxItem, advance = false) => {
+    if (onAddSelected && onItemDoubleClick) {
+      addQuickly(item);
+      return;
+    }
+    handleSelect(item.value, advance);
+  };
+
   const renderOption = (item: ComboboxItem, idx: number) => {
     const isHi = idx === highlight;
     const dis = !!item.disabled;
@@ -219,6 +243,12 @@ export function SearchCombobox({
           if (onAddSelected && (e.target as HTMLElement).closest('input[type="checkbox"]')) return;
           e.preventDefault();
           handleSelect(item.value);
+        }}
+        onDoubleClick={e => {
+          if (dis || !onAddSelected || !onItemDoubleClick) return;
+          if ((e.target as HTMLElement).closest('input[type="checkbox"]')) return;
+          e.preventDefault();
+          addQuickly(item);
         }}
         onMouseEnter={() => { if (!dis) setHighlight(idx); }}
         aria-disabled={dis}
@@ -276,11 +306,11 @@ export function SearchCombobox({
         void Promise.resolve(onSearchEnter(currentSearch))
           .then(handled => {
             if (!handled && flatList[highlight]) {
-              handleSelect(flatList[highlight].value, advanceOnEnter);
+              commitHighlightedItem(flatList[highlight], advanceOnEnter);
             }
           })
           .catch(() => {
-            if (flatList[highlight]) handleSelect(flatList[highlight].value, advanceOnEnter);
+            if (flatList[highlight]) commitHighlightedItem(flatList[highlight], advanceOnEnter);
           });
         return;
       }
@@ -292,7 +322,7 @@ export function SearchCombobox({
       if (open && flatList[highlight]) {
         e.preventDefault();
         e.stopPropagation();
-        handleSelect(flatList[highlight].value, advanceOnEnter);
+        commitHighlightedItem(flatList[highlight], advanceOnEnter);
       } else if (open) {
         // Open with no items — just close and let the global handler run.
         setOpen(false);
@@ -435,11 +465,18 @@ export function SearchCombobox({
         </div>
         {onAddSelected && (
           <div className="flex items-center justify-between gap-2 border-t p-2">
-            <span className="text-xs text-muted-foreground" aria-live="polite">
-              {isEnglish
-                ? `${multiSelectedValues.length} selected`
-                : `${multiSelectedValues.length} صنف محدد`}
-            </span>
+            <div className="min-w-0">
+              <span className="text-xs text-muted-foreground" aria-live="polite">
+                {isEnglish
+                  ? `${multiSelectedValues.length} selected`
+                  : `${multiSelectedValues.length} صنف محدد`}
+              </span>
+              {onItemDoubleClick && (
+                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                  {isEnglish ? "Double-click an item to add it now" : "دبل كليك على الصنف لإضافته مباشرة"}
+                </p>
+              )}
+            </div>
             <Button
               type="button"
               size="sm"

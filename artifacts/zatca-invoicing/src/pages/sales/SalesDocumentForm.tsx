@@ -168,7 +168,7 @@ type SalesItemPickerWithStockProps = ComponentProps<typeof SearchCombobox> & {
   stockEnabled: boolean;
 };
 
-function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockEnabled, warehouseId, value, items, onAddSelected, ...pickerProps }: SalesItemPickerWithStockProps) {
+function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockEnabled, warehouseId, value, items, onAddSelected, onItemDoubleClick, ...pickerProps }: SalesItemPickerWithStockProps) {
   const { i18n } = useTranslation();
   const isEnglish = i18n.language?.startsWith("en");
   // Put the controlled selection first so it is never clipped by the bounded
@@ -198,6 +198,7 @@ function SalesItemPickerWithStock({ companyId, userId, branchId, headers, stockE
       items={optionsWithStock}
       value={value}
       onAddSelected={onAddSelected}
+      onItemDoubleClick={onItemDoubleClick}
       endAdornment={stockEnabled ? (
         <div className="flex items-center gap-1">
           {value && <SalesBranchStock itemId={value} companyId={companyId} userId={userId} branchId={branchId} warehouseId={warehouseId} headers={headers} enabled />}
@@ -3498,7 +3499,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />}
                       {user ? (
                         <div className="min-w-0">
-                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
+                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} onItemDoubleClick={isInvoice ? item => handleMultiItemAdd([item.value], l._id, [item]) : undefined} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
                           {renderSalesOptionPicker(l)}
                         </div>
                       ) : (
