@@ -4896,6 +4896,31 @@ router.patch("/sales-invoices/:id/unpost", requireUnpostRight("sales"), document
           { status: 409 },
         );
       }
+      const activeCostSettlements = await tx.select({ id: negativeStockCostSettlementsTable.id })
+        .from(negativeStockCostSettlementsTable)
+        .where(and(
+          eq(negativeStockCostSettlementsTable.companyId, cid),
+          eq(negativeStockCostSettlementsTable.salesInvoiceId, id),
+          eq(negativeStockCostSettlementsTable.status, "active"),
+        ))
+        .limit(1);
+      if (activeCostSettlements.length) {
+        throw Object.assign(
+          new Error("يجب فك ترحيل فاتورة الشراء التي سوّت تكلفة هذه الفاتورة أولاً."),
+          { status: 409 },
+        );
+      }
+      await tx.update(negativeStockCostSettlementsTable).set({
+        status: "reversed",
+        reversedAt: new Date(),
+      }).where(and(
+        eq(negativeStockCostSettlementsTable.companyId, cid),
+        eq(negativeStockCostSettlementsTable.salesInvoiceId, id),
+        or(
+          eq(negativeStockCostSettlementsTable.status, "pending"),
+          eq(negativeStockCostSettlementsTable.status, "closed"),
+        ),
+      ));
 
       await reverseSalesInvoiceStockForUnpost({
         executor: tx,
