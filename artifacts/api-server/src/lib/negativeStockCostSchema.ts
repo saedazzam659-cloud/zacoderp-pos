@@ -17,6 +17,7 @@ export async function ensureNegativeStockCostSchema(): Promise<void> {
       purchase_line_id INTEGER,
       item_id INTEGER NOT NULL,
       warehouse_id INTEGER NOT NULL,
+      original_quantity NUMERIC(18,4) NOT NULL,
       quantity NUMERIC(18,4) NOT NULL,
       provisional_unit_cost NUMERIC(14,4) NOT NULL,
       actual_unit_cost NUMERIC(14,4) NOT NULL,

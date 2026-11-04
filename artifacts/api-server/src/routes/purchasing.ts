@@ -18,6 +18,7 @@ import {
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
   purchaseOrdersTable, purchaseOrderLinesTable,
   purchaseReturnsTable, purchaseReturnLinesTable,
+  salesReturnsTable,
   supplierSettlementsTable, suppliersTable,
   productionCommercialAccrualsTable,
   cashBoxesTable, bankAccountsTable, journalEntriesTable, journalEntryLinesTable,
@@ -3320,6 +3321,31 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
     // — the loop below is a safe no-op in that case but we short-circuit
     // to make the intent obvious.
     const grnSourced = !!(inv as any).sourceGrnId;
+
+    const activeNegativeCostRows = await db.select({
+      salesInvoiceId: negativeStockCostSettlementsTable.salesInvoiceId,
+    }).from(negativeStockCostSettlementsTable).where(and(
+      eq(negativeStockCostSettlementsTable.companyId, cid),
+      eq(negativeStockCostSettlementsTable.purchaseInvoiceId, id),
+      eq(negativeStockCostSettlementsTable.status, "active"),
+    ));
+    const dependentSaleInvoiceIds = [...new Set(activeNegativeCostRows.map((row) => row.salesInvoiceId))];
+    if (dependentSaleInvoiceIds.length) {
+      const [postedDependentReturn] = await db.select({ id: salesReturnsTable.id })
+        .from(salesReturnsTable)
+        .where(and(
+          eq(salesReturnsTable.companyId, cid),
+          inArray(salesReturnsTable.invoiceId, dependentSaleInvoiceIds),
+          eq(salesReturnsTable.status, "posted"),
+        ))
+        .limit(1);
+      if (postedDependentReturn) {
+        throw Object.assign(
+          new Error("يجب فك ترحيل مرتجعات البيع المرتبطة قبل فك ترحيل شراء سوّى تكلفتها."),
+          { status: 409 },
+        );
+      }
+    }
 
     // ── Reverse stock movements (delete ledger rows + decrement balances) ──
     const ledger = grnSourced ? [] : await db.select().from(stockLedgerTable)

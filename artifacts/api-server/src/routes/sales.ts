@@ -4728,6 +4728,7 @@ async function postSalesInvoiceHandler(
           salesLineId: op.sourceLineId,
           itemId: op.itemId,
           warehouseId: op.warehouseId,
+          originalQuantity: String(op.shortageQty),
           quantity: String(op.shortageQty),
           provisionalUnitCost: String(op.shortageUnitCost.toFixed(4)),
           actualUnitCost: String(op.shortageUnitCost.toFixed(4)),

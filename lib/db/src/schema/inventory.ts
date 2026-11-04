@@ -512,6 +512,7 @@ export const negativeStockCostSettlementsTable = pgTable("negative_stock_cost_se
   purchaseLineId:        integer("purchase_line_id"),
   itemId:                integer("item_id").notNull(),
   warehouseId:           integer("warehouse_id").notNull(),
+  originalQuantity:      numeric("original_quantity", { precision: 18, scale: 4 }).notNull(),
   quantity:              numeric("quantity", { precision: 18, scale: 4 }).notNull(),
   provisionalUnitCost:   numeric("provisional_unit_cost", { precision: 14, scale: 4 }).notNull(),
   actualUnitCost:        numeric("actual_unit_cost", { precision: 14, scale: 4 }).notNull(),
