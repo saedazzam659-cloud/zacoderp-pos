@@ -1706,7 +1706,7 @@ router.get("/items/search", async (req, res) => {
       : matchingNature);
   }
   if (itemTypes.length) clauses.push(inArray(itemsTable.itemType, itemTypes));
-  if (activeOnly) clauses.push(eq(itemsTable.isActive, true));
+  if (activeOnly) clauses.push(eq(itemsTable.status, "active"));
   if (query) {
     const pattern = `%${query}%`;
     clauses.push(or(

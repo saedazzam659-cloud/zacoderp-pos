@@ -110,12 +110,12 @@ async function validateRestaurantErpItemLink(companyId: number, value: unknown):
   const [item] = await db.select({
     id: itemsTable.id,
     itemType: itemsTable.itemType,
-    isActive: itemsTable.isActive,
+    status: itemsTable.status,
   }).from(itemsTable).where(and(
     eq(itemsTable.id, id),
     eq(itemsTable.companyId, companyId),
   ));
-  if (!item || !item.isActive || !["stock", "service"].includes(item.itemType)) {
+  if (!item || item.status !== "active" || !["stock", "service"].includes(item.itemType)) {
     throw Object.assign(new Error("الصنف المرتبط غير موجود أو غير نشط أو ليس صنف مخزون/خدمة"), { statusCode: 400 });
   }
   return item.id;
