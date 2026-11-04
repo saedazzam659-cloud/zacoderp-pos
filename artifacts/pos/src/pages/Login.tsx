@@ -97,11 +97,11 @@ export default function LoginPage() {
   }, []);
 
   // Keep authenticated users out of login history. Station-bound cashiers go
-  // through /entry so their assigned terminal determines the branch/screen.
+  // through /entry; other authenticated users are sent to their configured POS
+  // landing screen instead of being offered the cashier-only login form.
   useEffect(() => {
     if (!getToken()) return;
-    const stored = getStoredUser();
-    navigate(stored?.role === "cashier" ? "/entry" : "/pos", { replace: true });
+    navigate("/entry", { replace: true });
   }, [navigate]);
 
   async function loadBranchesFor(companyId: number) {
@@ -388,7 +388,7 @@ export default function LoginPage() {
               <div className="relative">
                 <div className="flex items-center justify-between mb-1">
                   <h2 className="text-2xl font-extrabold tracking-tight">
-                    أهلاً بك
+                    دخول الكاشير
                   </h2>
                   <div className="flex items-center gap-1 p-1 rounded-full bg-muted text-xs font-bold">
                     <button
@@ -416,7 +416,7 @@ export default function LoginPage() {
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground mb-6">
-                  سجّل دخولك لبدء وردية البيع
+                  سجّل دخولك لفتح محطة البيع المرتبطة بحسابك
                 </p>
 
                 <form onSubmit={handleLogin} className="space-y-4">

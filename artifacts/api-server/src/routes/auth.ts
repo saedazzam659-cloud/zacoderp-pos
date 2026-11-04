@@ -460,6 +460,24 @@ router.post("/login", async (req, res) => {
     return;
   }
 
+  // The dedicated POS login screen is for cashier accounts only. Company
+  // managers must authenticate through the ERP/company login, then enter the
+  // POS settings through their normal company permissions.
+  const loginSurface = String(req.body?.surface ?? "").toLowerCase();
+  if (loginSurface === "pos" && user.role !== "cashier") {
+    await writeAudit({
+      userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+      module: "auth", action: "denied",
+      method: "POST", path: "/api/auth/login", statusCode: 403,
+      ip, userAgent: ua, metadata: { reason: "pos_cashier_login_only", surface: loginSurface },
+    });
+    res.status(403).json({
+      error: "شاشة نقاط البيع مخصصة للكاشير. سجّل الدخول من النظام الرئيسي لإدارة المطعم.",
+      code: "POS_CASHIER_LOGIN_ONLY",
+    });
+    return;
+  }
+
   // ── Cashier station-bound login ────────────────────────────────────────
   // The company login is also the entry point for a station-bound cashier:
   // after authentication the ERP client immediately sends them to POS.
@@ -467,7 +485,7 @@ router.post("/login", async (req, res) => {
   // link to an active terminal; the POS bootstrap still enforces screen,
   // branch, session, and terminal permissions before opening the register.
   if (user.role === "cashier") {
-    const surface = String(req.body?.surface ?? "").toLowerCase();
+    const surface = loginSurface;
     const allowedSurface = surface === "" || surface === "erp" || surface === "pos";
     const [link] = allowedSurface ? await db.select({ userId: posTerminalUsersTable.userId })
       .from(posTerminalUsersTable)
