@@ -3,6 +3,7 @@ export * from "./companies";
 export * from "./documentArchives";
 export * from "./deliveryReceiptDocuments";
 export * from "./customers";
+export * from "./partyIdentities";
 export * from "./invoices";
 export * from "./users";
 export * from "./approvalLog";
