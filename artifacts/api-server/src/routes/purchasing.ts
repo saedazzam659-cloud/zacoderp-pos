@@ -647,6 +647,7 @@ async function getSupplierAccountId(cid: number, supplierId: number | null | und
   return s?.accountId ?? null;
 }
 
+
 /** Map a list of warehouse IDs to their {accountId, allowNegative, name}. */
 async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<number, { accountId: number | null; allowNegative: boolean; nameAr: string | null }>> {
   const out: Record<number, any> = {};

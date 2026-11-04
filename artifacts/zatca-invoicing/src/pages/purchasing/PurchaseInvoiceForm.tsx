@@ -512,7 +512,7 @@ function PurchaseInvoiceFormContent() {
   const { data: supplierBalances = [] } = useQuery<any[]>({
     queryKey: ["supplier-balances", cid],
     queryFn: () => fetchJsonArray(`${API}/api/suppliers/balances?companyId=${cid}`, authH),
-    enabled: !!user && !!cid && paymentType === "credit",
+    enabled: !!user && !!cid,
   });
 
   const { data: costCentersList = [] } = useQuery<any[]>({
@@ -1723,6 +1723,17 @@ function PurchaseInvoiceFormContent() {
                     setSupplierId(v);
                     if (v) setManualPrintPartyName("");
                   }} placeholder={tr("fields.supplierPh")} />
+                  {supplierId && (() => {
+                    const row = supplierBalances.find((balance: any) => balance.supplierId === Number(supplierId));
+                    const balance = Number(row?.balance ?? 0);
+                    const direction = balance > 0 ? "مستحق للمورد" : balance < 0 ? "المورد مدين لنا" : "الرصيد متزن";
+                    return (
+                      <div data-testid="supplier-balance-card" className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                        <span className="text-muted-foreground">الرصيد الحالي: </span>
+                        <strong>{direction} {fmt(Math.abs(balance))} {defaultCurrency?.code ?? "SAR"}</strong>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <SupplierVatControl suppliers={suppliers} supplierId={supplierId} onSupplierChange={v => {
                   setSupplierId(v);

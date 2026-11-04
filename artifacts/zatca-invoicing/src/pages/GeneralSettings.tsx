@@ -2191,6 +2191,31 @@ export default function GeneralSettings() {
             </span>
           </label>
         )}
+        {user?.role === "admin" && (
+          <label
+            data-testid="customer-supplier-offset-setting"
+            className={cn(
+              "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+              user?.company?.customerSupplierOffsetEnabled
+                ? "border-primary bg-primary/5 shadow-sm"
+                : "border-border hover:border-primary/40 hover:bg-muted/30"
+            )}
+          >
+            <input
+              type="checkbox"
+              className="mt-0.5 h-5 w-5 cursor-pointer"
+              checked={user?.company?.customerSupplierOffsetEnabled === true}
+              disabled={postingSaving}
+              onChange={event => togglePostingMode({ customerSupplierOffsetEnabled: event.target.checked })}
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-semibold">السماح بمقاصة رصيد العميل مع فاتورة المورد</span>
+              <span className="block text-xs text-muted-foreground leading-relaxed">
+                مغلق افتراضيًا. عند تفعيله، لا تُتاح المقاصة إلا بين سجلّي عميل ومورد مرتبطين بهوية مشتركة، وتبقى أرصدتهما منفصلة.
+              </span>
+            </span>
+          </label>
+        )}
         <label
           data-testid="hide-quick-add-toggle"
           className={cn(

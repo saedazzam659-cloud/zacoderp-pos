@@ -84,6 +84,7 @@
 - [Browser readiness](browser-readiness.md) — authenticated realtime connections require control-based waits, not network idleness.
 - [New company defaults](new-company-defaults-boundary.md) — creation-only settings; never reset existing tenants or split shared document-number namespaces.
 - [Party classification](party-classification-boundaries.md) — unset means ordinary customer/supplier; filter new choices only and preserve historical links.
+- [Customer–supplier offsets](customer-supplier-offset-boundary.md) — offset only explicitly linked identities, behind a company setting that defaults off; keep both ledgers distinct.
 - [Mobile server sessions](mobile-server-session-boundary.md) — changing domains requires fresh authentication; preserve queued operations and central-only legacy sessions.
 - [Mobile error recovery](mobile-error-recovery-boundary.md) — retry the current route instead of restarting to the authenticated invoice landing route.
 - [Mobile live-location tracking](mobile-live-tracking-boundary.md) — separate employee GPS opt-in and manager mobile access; work-session-only tracking and WhatsApp range reports.

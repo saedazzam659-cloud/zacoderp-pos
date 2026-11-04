@@ -3215,6 +3215,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS show_customer_debit_notes BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "companies add show_supplier_credit_notes",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS show_supplier_credit_notes BOOLEAN NOT NULL DEFAULT FALSE` },
+    { label: "companies add customer_supplier_offset_enabled",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS customer_supplier_offset_enabled BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "companies add show_free_quantity",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS show_free_quantity BOOLEAN NOT NULL DEFAULT TRUE` },
     { label: "companies add show_sales_branch_stock",

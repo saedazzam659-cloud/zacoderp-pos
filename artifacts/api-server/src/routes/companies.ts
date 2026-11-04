@@ -453,6 +453,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     brandLogo, brandLogoBase64, brandLogoMime,
     decimalPlaces, showZeros, hideQuickAddBar, inputHintColorsEnabled, inputHintColor, showFreeQuantity, showSalesBranchStock, allowNegativeSales, negativeStockCostEnforced, deferNegativeStockCostToPurchases, enforceSalesPriceFloor, purchaseBatchExpiryEnabled, autoPostingEnabled,
     salesBarcodeEntryEnabled, allowDuplicateInvoiceItems, purchaseDirectExpensesCustodyEnabled, purchaseVatInInventoryCost,
+    customerSupplierOffsetEnabled,
     documentFieldControlsEnabled,
     allowHistoricalUnitChanges,
     showCustomerDebitNotes, showSupplierCreditNotes,
@@ -517,6 +518,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
     decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; inputHintColorsEnabled?: boolean; inputHintColor?: string; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; negativeStockCostEnforced?: boolean; deferNegativeStockCostToPurchases?: boolean; enforceSalesPriceFloor?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
     salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean; purchaseDirectExpensesCustodyEnabled?: boolean; purchaseVatInInventoryCost?: boolean;
+    customerSupplierOffsetEnabled?: boolean;
     documentFieldControlsEnabled?: boolean;
     allowHistoricalUnitChanges?: boolean;
     showCustomerDebitNotes?: boolean; showSupplierCreditNotes?: boolean;
@@ -669,6 +671,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     ["allowDuplicateInvoiceItems", allowDuplicateInvoiceItems],
     ["purchaseDirectExpensesCustodyEnabled", purchaseDirectExpensesCustodyEnabled],
     ["purchaseVatInInventoryCost", purchaseVatInInventoryCost],
+    ["customerSupplierOffsetEnabled", customerSupplierOffsetEnabled],
   ] as const) {
     if (value === undefined) continue;
     if (typeof value !== "boolean") {

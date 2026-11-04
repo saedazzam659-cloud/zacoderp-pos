@@ -103,6 +103,8 @@ export const companiesTable = pgTable("companies", {
   // may change this flag; false keeps the manager-facing controls unavailable.
   documentFieldControlsEnabled: boolean("document_field_controls_enabled").notNull().default(false),
   sharedPartyIdentityEnabled: boolean("shared_party_identity_enabled").notNull().default(false),
+  // Cross-ledger customer receivable / supplier payable offsets are opt-in.
+  customerSupplierOffsetEnabled: boolean("customer_supplier_offset_enabled").notNull().default(false),
   // Explicit SuperAdmin opt-in to bypass historical-unit-label conflicts
   // when assigning/changing an item's base unit. Structural graph checks remain.
   allowHistoricalUnitChanges: boolean("allow_historical_unit_changes").notNull().default(false),

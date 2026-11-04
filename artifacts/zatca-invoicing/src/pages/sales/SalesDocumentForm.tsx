@@ -793,6 +793,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     queryFn: () => fetchJsonArray(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, authH),
     enabled: !!user,
   });
+  const { data: customerBalances = [] } = useQuery<any[]>({
+    queryKey: ["customer-balances", cid],
+    queryFn: () => fetchJsonArray(`${API}/api/customers/balances?companyId=${cid}`, authH),
+    enabled: !!user && !!cid && isInvoice,
+  });
 
   useEffect(() => {
     const draft = zidImportDraftRef.current;
@@ -4821,6 +4826,21 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       if (v) setManualPrintPartyName("");
                     }} placeholder={t("salesDocForm.customerPlaceholder")} />
                   </div>
+                  {isInvoice && customerId && (() => {
+                    const row = customerBalances.find((balance: any) => balance.customerId === Number(customerId));
+                    const balance = Number(row?.balance ?? 0);
+                    const direction = balance > 0
+                      ? (isRtl ? "العميل مدين لنا" : "Customer owes us")
+                      : balance < 0
+                        ? (isRtl ? "علينا للعميل" : "We owe customer")
+                        : (isRtl ? "الرصيد متزن" : "Settled");
+                    return (
+                      <div data-testid="customer-balance-card" className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                        <span className="text-muted-foreground">{isRtl ? "الرصيد الحالي" : "Current balance"}: </span>
+                        <strong>{direction} {fmt(Math.abs(balance))} {defaultCurrency?.code ?? "SAR"}</strong>
+                      </div>
+                    );
+                  })()}
                 </div>
                 )}
                 <CustomerVatControl
