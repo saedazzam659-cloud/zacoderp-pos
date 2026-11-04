@@ -683,6 +683,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     const l = newLine();
     return [l];
   });
+  const [missingNegativeStockCosts, setMissingNegativeStockCosts] = useState<Record<string, {
+    itemId: number;
+    warehouseId: number;
+    itemName: string;
+    shortageQty: number;
+  }>>({});
+  const [negativeStockCostInputs, setNegativeStockCostInputs] = useState<Record<string, string>>({});
+  const [retryingNegativeStockPost, setRetryingNegativeStockPost] = useState(false);
   useEffect(() => {
     const url = new URL(window.location.href);
     if (!isInvoice || !isNew || url.searchParams.get("fromZid") !== "1") return;
@@ -2209,8 +2217,41 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const salesTemplate: "a4" | "thermal" =
     ((user as any)?.company?.printTemplateSales === "thermal") ? "thermal" : "a4";
 
+  const negativeStockCostKey = (itemId: number | string, warehouseId: number | string) =>
+    `${Number(itemId)}:${Number(warehouseId)}`;
+  const getNegativeStockCostOverrides = () => Object.fromEntries(
+    Object.entries(negativeStockCostInputs).filter(([key, value]) =>
+      Object.prototype.hasOwnProperty.call(missingNegativeStockCosts, key)
+      && Number.isFinite(Number(value))
+      && Number(value) > 0
+      && Number(value) <= 9_999_999_999.9999,
+    ),
+  );
+  const captureMissingNegativeStockCosts = (error: any): boolean => {
+    if (error?.code !== "NEGATIVE_STOCK_COST_REQUIRED" || !Array.isArray(error?.missingCosts)) return false;
+    const next = Object.fromEntries(error.missingCosts.map((missing: any) => [
+      negativeStockCostKey(missing.itemId, missing.warehouseId),
+      {
+        itemId: Number(missing.itemId),
+        warehouseId: Number(missing.warehouseId),
+        itemName: String(missing.itemName ?? missing.itemId),
+        shortageQty: Number(missing.shortageQty) || 0,
+      },
+    ]));
+    setMissingNegativeStockCosts(next);
+    setActiveTab("items");
+    toast({
+      title: isRtl ? "يلزم إدخال تكلفة تقديرية" : "A provisional cost is required",
+      description: isRtl
+        ? "أدخل تكلفة الوحدة الأساسية في السطر المطلوب ثم أعد الترحيل."
+        : "Enter the base-unit cost in the marked line, then retry posting.",
+      variant: "destructive",
+    });
+    return true;
+  };
+
   const saveMut = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async ({ data, forcePost = false }: { data: any; forcePost?: boolean }) => {
       // `isNew` remains true until navigation completes. Prefer the id captured
       // from a prior successful POST so retries after a failed post/navigation
       // update that same invoice rather than creating another draft.
@@ -2239,15 +2280,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
       // Auto-post immediately after save for invoices only (not quotations) — only when enabled system-wide
       if (data.saveAsDraft === true) return { ...j, __savedAsDraft: true };
-      if (autoPostingEnabled && isInvoice && !deferDraftNoWarehouse && j?.id && (j.status ?? "draft") === "draft") {
+      if ((autoPostingEnabled || forcePost) && isInvoice && !deferDraftNoWarehouse && j?.id && (j.status ?? "draft") === "draft") {
         const postRes = await fetch(`${API}/api/sales/${apiPath}/${j.id}/post`, {
-          method: "PATCH", headers,
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ negativeStockUnitCostOverrides: getNegativeStockCostOverrides() }),
         });
         const postJson = await postRes.json().catch(() => ({}));
         if (!postRes.ok) {
-          throw new Error(postJson.error || postRes.statusText);
+          const error: any = new Error(postJson.error || postRes.statusText);
+          error.code = postJson.code;
+          error.missingCosts = postJson.missingCosts;
+          throw error;
         }
-        return { ...postJson, __deferredDraft: false };
+        return { ...postJson, __deferredDraft: false, __forcedPost: forcePost };
       }
       return { ...j, __deferredDraft: deferDraftNoWarehouse };
     },
@@ -2292,7 +2338,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         if (saved?.id && matchNew) navigate(`${basePath}/${saved.id}`);
         return;
       }
-      const didPost   = isInvoice && autoPostingEnabled;
+      const didPost   = isInvoice && (autoPostingEnabled || saved?.__forcedPost === true);
       const didPrint  = autoPrintSalesInvoice && !!saved?.id;
       toast({ title: getSaveToastTitle(t, { posted: didPost, printed: didPrint }) });
       // If auto-print is on for sales invoices, hand the just-saved id
@@ -2330,11 +2376,61 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       }
       navigate(basePath);
     },
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      if (!captureMissingNegativeStockCosts(e)) {
+        toast({ title: e.message, variant: "destructive" });
+      }
+    },
     onSettled: () => {
       saveInFlightRef.current = false;
     },
   });
+
+  async function retryNegativeStockCostPost() {
+    const invoiceId = persistedInvoiceIdRef.current ?? editId;
+    if (!invoiceId) {
+      toast({ title: isRtl ? "احفظ الفاتورة أولاً" : "Save the invoice first", variant: "destructive" });
+      return;
+    }
+    const overrides = getNegativeStockCostOverrides();
+    if (Object.keys(overrides).length < Object.keys(missingNegativeStockCosts).length) {
+      toast({
+        title: isRtl ? "أدخل تكلفة موجبة لكل سطر محدد" : "Enter a positive cost for every marked line",
+        variant: "destructive",
+      });
+      return;
+    }
+    setRetryingNegativeStockPost(true);
+    try {
+      const response = await fetch(`${API}/api/sales/${apiPath}/${invoiceId}/post`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ negativeStockUnitCostOverrides: overrides }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error: any = new Error(payload.error || response.statusText);
+        error.code = payload.code;
+        error.missingCosts = payload.missingCosts;
+        if (!captureMissingNegativeStockCosts(error)) {
+          toast({ title: error.message, variant: "destructive" });
+        }
+        return;
+      }
+      setMissingNegativeStockCosts({});
+      setNegativeStockCostInputs({});
+      qc.invalidateQueries({ queryKey: ["sales-invoices"] });
+      toast({ title: isRtl ? "تم ترحيل الفاتورة" : "Invoice posted" });
+      if (matchNew) navigate(`${basePath}/${invoiceId}?savedTab=items`);
+    } catch (error: any) {
+      toast({
+        title: error?.message || (isRtl ? "تعذر ترحيل الفاتورة" : "Could not post invoice"),
+        variant: "destructive",
+      });
+    } finally {
+      setRetryingNegativeStockPost(false);
+    }
+  }
 
   // ── ZATCA validators (B2B / فاتورة ضريبية) ────────────────────────────
   // الرقم الضريبي السعودي: 15 رقم، يبدأ وينتهي بـ "3"، الرقمان قبل الأخير
@@ -2408,7 +2504,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     });
   }
 
-  function handleSave(saveAsDraft = false, customerOverride?: any) {
+  function handleSave(saveAsDraft = false, customerOverride?: any, forcePost = false) {
     if (isInvoice && draftOnly && !saveAsDraft) return;
     // React Query's pending state updates on a render; this ref closes the
     // same-tick double-click/Enter window before a second mutation can POST.
@@ -2594,7 +2690,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       base.clientRequestId = clientRequestIdRef.current;
     }
     saveInFlightRef.current = true;
-    saveMut.mutate(base);
+    saveMut.mutate({ data: base, forcePost });
   }
 
   useEffect(() => {
@@ -3449,6 +3545,51 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
+                    {isInvoice && l.itemId && l.warehouseId && (() => {
+                      const costKey = negativeStockCostKey(l.itemId, l.warehouseId);
+                      const missing = missingNegativeStockCosts[costKey];
+                      const firstMatchingLine = lines.find((candidate) =>
+                        candidate.itemId === l.itemId && candidate.warehouseId === l.warehouseId,
+                      );
+                      if (!missing || firstMatchingLine?._id !== l._id) return null;
+                      return (
+                        <div
+                          role="alert"
+                          data-testid={`panel-negative-stock-cost-${l._id}`}
+                          className="mt-2 flex flex-wrap items-end gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-950"
+                        >
+                          <div className="min-w-[220px] flex-1">
+                            <p className="text-xs font-semibold">
+                              {isRtl
+                                ? `لا توجد تكلفة للصنف ${missing.itemName}، والكمية التي ستصبح سالبة ${missing.shortageQty} من الوحدة الأساسية.`
+                                : `No cost is available for ${missing.itemName}; ${missing.shortageQty} base units will become negative.`}
+                            </p>
+                            <p className="mt-1 text-[11px] text-amber-900/80">
+                              {isRtl
+                                ? "أدخل تكلفة الوحدة الأساسية. ستُستخدم لهذه الفاتورة فقط ولن تغيّر بطاقة الصنف."
+                                : "Enter the base-unit cost. It applies to this invoice only and will not change the item card."}
+                            </p>
+                          </div>
+                          <label className="w-40 text-xs font-medium">
+                            {isRtl ? "تكلفة الوحدة الأساسية" : "Base-unit cost"}
+                            <Input
+                              data-testid={`input-negative-stock-cost-${l._id}`}
+                              type="number"
+                              inputMode="decimal"
+                              min="0.0001"
+                              step="0.0001"
+                              dir="ltr"
+                              className="mt-1 h-9 bg-white text-sm"
+                              value={negativeStockCostInputs[costKey] ?? ""}
+                              onChange={(event) => setNegativeStockCostInputs((current) => ({
+                                ...current,
+                                [costKey]: event.target.value,
+                              }))}
+                            />
+                          </label>
+                        </div>
+                      );
+                    })()}
                     {l.appliedOfferId && l.appliedOfferName && (
                       <div className="mt-1 ms-1 flex items-center gap-1.5 text-[10px] text-emerald-700" data-testid={`applied-offer-${l._id}`}>
                         <Tag className="h-3 w-3" />
@@ -3488,6 +3629,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               </div>
                 );
               })()}
+
+              {isInvoice && Object.keys(missingNegativeStockCosts).length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                  <p className="text-sm text-amber-950">
+                    {isRtl
+                      ? "أدخل تكلفة موجبة لكل سطر مطلوب، ثم أعد ترحيل الفاتورة."
+                      : "Enter a positive cost for each marked line, then retry posting."}
+                  </p>
+                  <Button
+                    type="button"
+                    data-testid="button-retry-negative-stock-post"
+                    disabled={retryingNegativeStockPost || saveMut.isPending}
+                    onClick={() => void retryNegativeStockCostPost()}
+                  >
+                    {retryingNegativeStockPost
+                      ? (isRtl ? "جارٍ الترحيل..." : "Posting...")
+                      : (isRtl ? "إعادة محاولة الترحيل" : "Retry posting")}
+                  </Button>
+                </div>
+              )}
 
               {(isInvoice || isQuotation || isOrder) && canCreateCatalogItems && (
                 <Button
@@ -4132,6 +4293,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             <Save className="h-4 w-4" />
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
+          {isInvoice && !autoPostingEnabled && !draftOnly && (
+            <Button
+              size="sm"
+              variant="default"
+              onClick={() => handleSave(false, undefined, true)}
+              disabled={saveMut.isPending}
+              data-testid="button-save-and-post-top"
+            >
+              {isRtl ? "حفظ وترحيل" : "Save and post"}
+            </Button>
+          )}
           </>
         )}
       </div>
@@ -5101,6 +5273,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <Button data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={() => handleSave(false)} disabled={saveMut.isPending || (isInvoice && draftOnly)}>
             {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
+          {isInvoice && !autoPostingEnabled && !draftOnly && (
+            <Button
+              variant="default"
+              onClick={() => handleSave(false, undefined, true)}
+              disabled={saveMut.isPending}
+              data-testid="button-save-and-post"
+            >
+              {isRtl ? "حفظ وترحيل" : "Save and post"}
+            </Button>
+          )}
           </>
         )}
       </div>

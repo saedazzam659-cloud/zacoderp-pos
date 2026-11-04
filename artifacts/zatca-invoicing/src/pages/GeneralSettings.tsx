@@ -2027,6 +2027,29 @@ export default function GeneralSettings() {
             </span>
           </span>
         </label>
+        <label
+          data-testid="negative-stock-cost-enforcement-toggle"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.negativeStockCostEnforced
+              ? "border-amber-500 bg-amber-50/70 shadow-sm"
+              : "border-border hover:border-amber-500/40 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 accent-amber-600 cursor-pointer"
+            checked={user?.company?.negativeStockCostEnforced === true}
+            disabled={postingSaving}
+            onChange={e => togglePostingMode({ negativeStockCostEnforced: e.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">طلب تكلفة عند البيع بالسالب</span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              عند التفعيل، إذا لم توجد تكلفة مخزون أو شراء أو تكلفة بطاقة، سيُطلب من المستخدم إدخال تكلفة تقديرية في سطر فاتورة البيع قبل الترحيل. تعمل التكلفة لهذه الفاتورة فقط ولا تغيّر بطاقة الصنف.
+            </span>
+          </span>
+        </label>
         {isArchiveAdmin && (
           <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-3" data-testid="overdraft-user-access">
             <div>

@@ -3910,6 +3910,11 @@ async function postSalesInvoiceHandler(
     const cid = guard(req, res); if (!cid) return;
     if (!(await requireMobilePerm(req, res, cid, "invoice_post", "ليست لديك صلاحية ترحيل فواتير المبيعات من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
+    const rawNegativeStockUnitCostOverrides = req.body?.negativeStockUnitCostOverrides;
+    const negativeStockUnitCostOverrides =
+      rawNegativeStockUnitCostOverrides && typeof rawNegativeStockUnitCostOverrides === "object" && !Array.isArray(rawNegativeStockUnitCostOverrides)
+        ? rawNegativeStockUnitCostOverrides
+        : {};
 
     // Branch-scope guard: a restricted user must not be able to post
     // another branch's invoice by guessing the id. Shared (branch_id NULL)
@@ -4249,13 +4254,20 @@ async function postSalesInvoiceHandler(
       warehouseId: number,
       warehouseAverageCost: number,
       batchTracked: boolean,
-    ) => resolveNegativeStockUnitCost({
-      costMethod: costMethodById.get(itemId) ?? "weighted_avg",
-      averageCost: warehouseAverageCost,
-      lastPurchaseCost: lastPurchaseCostById.get(`${itemId}:${warehouseId}`) ?? 0,
-      itemCardCost: itemCardCostById.get(itemId) ?? 0,
-      batchTracked,
-    });
+    ) => {
+      const resolved = resolveNegativeStockUnitCost({
+        costMethod: costMethodById.get(itemId) ?? "weighted_avg",
+        averageCost: warehouseAverageCost,
+        lastPurchaseCost: lastPurchaseCostById.get(`${itemId}:${warehouseId}`) ?? 0,
+        itemCardCost: itemCardCostById.get(itemId) ?? 0,
+        batchTracked,
+      });
+      if (resolved.source !== "missing") return resolved.unitCost;
+      const requested = Number(negativeStockUnitCostOverrides[`${itemId}:${warehouseId}`]);
+      return Number.isFinite(requested) && requested > 0 && requested <= 9_999_999_999.9999
+        ? Number(requested.toFixed(4))
+        : 0;
+    };
     if (!gdnSourced) {
       for (const line of lines) {
         if (!line.itemId || !line.warehouseId) continue;
@@ -4297,7 +4309,7 @@ async function postSalesInvoiceHandler(
           shortageQty = qty - issuedFromStock;
           availableByPair.set(pairKey, Math.max(0, available - issuedFromStock));
           shortageUnitCost = shortageQty > 0
-            ? resolveShortageCost(line.itemId, line.warehouseId, warehouseAverageCost, false).unitCost
+            ? resolveShortageCost(line.itemId, line.warehouseId, warehouseAverageCost, false)
             : warehouseAverageCost;
           avgCost = qty > 0
             ? (issuedFromStock * warehouseAverageCost + shortageQty * shortageUnitCost) / qty
@@ -4326,7 +4338,7 @@ async function postSalesInvoiceHandler(
           const lineCost = picks.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
           const warehouseAverageCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
           shortageUnitCost = shortageQty > 0
-            ? resolveShortageCost(line.itemId, line.warehouseId, warehouseAverageCost, true).unitCost
+            ? resolveShortageCost(line.itemId, line.warehouseId, warehouseAverageCost, true)
             : warehouseAverageCost;
           avgCost = qty > 0
             ? (lineCost + shortageQty * shortageUnitCost) / qty
@@ -4349,28 +4361,53 @@ async function postSalesInvoiceHandler(
       }
     }
     timing?.mark("costing");
-    const uncostedShortage = stockOps.find((op) => op.shortageQty > 0.0001 && op.shortageUnitCost <= 0);
-    const [negativeStockCostPolicy] = uncostedShortage
+    const uncostedShortages = stockOps.filter((op) => op.shortageQty > 0.0001 && op.shortageUnitCost <= 0);
+    const [negativeStockCostPolicy] = uncostedShortages.length
       ? await tx.select({ enforced: companiesTable.negativeStockCostEnforced })
         .from(companiesTable)
         .where(eq(companiesTable.id, cid))
         .limit(1)
       : [];
-    if (uncostedShortage && shouldRejectUncostedNegativeStock(
+    if (uncostedShortages.length && shouldRejectUncostedNegativeStock(
       negativeStockCostPolicy?.enforced ?? false,
       true,
     )) {
-      const itemName = lines.find((line) => line.id === uncostedShortage.sourceLineId)?.itemName ?? `#${uncostedShortage.itemId}`;
+      const missingCostsByPair = new Map<string, {
+        lineId: number;
+        itemId: number;
+        warehouseId: number;
+        itemName: string;
+        shortageQty: number;
+      }>();
+      for (const op of uncostedShortages) {
+        const key = `${op.itemId}:${op.warehouseId}`;
+        const current = missingCostsByPair.get(key);
+        if (current) current.shortageQty += op.shortageQty;
+        else {
+          missingCostsByPair.set(key, {
+            lineId: op.sourceLineId,
+            itemId: op.itemId,
+            warehouseId: op.warehouseId,
+            itemName: lines.find((line) => line.id === op.sourceLineId)?.itemName ?? `#${op.itemId}`,
+            shortageQty: op.shortageQty,
+          });
+        }
+      }
       res.status(400).json({
-        error: `لا يمكن ترحيل البيع السالب للصنف "${itemName}": لا توجد تكلفة مخزنية أو فاتورة شراء سابقة أو تكلفة مسجلة في بطاقة الصنف.`,
+        code: "NEGATIVE_STOCK_COST_REQUIRED",
+        error: "أدخل تكلفة الوحدة الأساسية للأصناف المطلوبة في سطور الفاتورة ثم أعد الترحيل.",
+        missingCosts: Array.from(missingCostsByPair.values()),
       });
       return;
     }
-    if (uncostedShortage) {
+    if (uncostedShortages.length) {
       logger.warn({
         companyId: cid,
-        itemId: uncostedShortage.itemId,
-        warehouseId: uncostedShortage.warehouseId,
+        shortages: uncostedShortages.map((op) => ({
+          itemId: op.itemId,
+          warehouseId: op.warehouseId,
+          quantity: op.shortageQty,
+        })),
       }, "Legacy company posted negative stock without a positive cost source");
     }
 
