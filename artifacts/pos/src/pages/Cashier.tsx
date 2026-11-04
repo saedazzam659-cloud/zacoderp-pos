@@ -60,11 +60,15 @@ import {
   type SalesInvoice,
   type CreateInvoiceLine,
   type PosSession,
+  getItemSalePrice,
+  getSalePriceOptions,
+  getSalePriceOptionName,
 } from "@/lib/api";
 
 type CartLine = {
   item: Item;
   qty: number;
+  selectedSaleOptionId?: string;
 };
 
 type ParkedCart = {
@@ -113,12 +117,12 @@ function isParkedCart(value: unknown): value is ParkedCart {
 function parkedCartTotal(cart: ParkedCart) {
   const discountPct = Math.max(0, Math.min(100, Number(cart.discountPct) || 0));
   const subtotal = cart.cart.reduce(
-    (sum, line) => sum + Number(line.item.salePrice) * line.qty,
+    (sum, line) => sum + getItemSalePrice(line.item, line.selectedSaleOptionId) * line.qty,
     0,
   );
   const discount = subtotal * discountPct / 100;
   const vat = cart.cart.reduce((sum, line) => {
-    const gross = Number(line.item.salePrice) * line.qty;
+    const gross = getItemSalePrice(line.item, line.selectedSaleOptionId) * line.qty;
     const net = gross - gross * discountPct / 100;
     return sum + net * (Number(line.item.vatRate) || VAT_RATE) / 100;
   }, 0);
@@ -451,6 +455,14 @@ export default function CashierPage() {
     });
   };
 
+  const selectSalePriceOption = (itemId: number, optionId: string) => {
+    setCart((c) => c.map((line) =>
+      line.item.id === itemId
+        ? { ...line, selectedSaleOptionId: optionId || undefined }
+        : line,
+    ));
+  };
+
   const updateQty = (id: number, delta: number) => {
     setCart((c) =>
       c
@@ -542,13 +554,13 @@ export default function CashierPage() {
   };
 
   const subtotal = cart.reduce(
-    (s, l) => s + Number(l.item.salePrice) * l.qty,
+    (s, l) => s + getItemSalePrice(l.item, l.selectedSaleOptionId) * l.qty,
     0,
   );
   const discountAmount = (subtotal * discountPct) / 100;
   const afterDiscount = subtotal - discountAmount;
   const vatAmount = cart.reduce((s, l) => {
-    const lineGross = Number(l.item.salePrice) * l.qty;
+    const lineGross = getItemSalePrice(l.item, l.selectedSaleOptionId) * l.qty;
     const lineDisc = (lineGross * discountPct) / 100;
     const rate = Number(l.item.vatRate) || VAT_RATE;
     return s + ((lineGross - lineDisc) * rate) / 100;
@@ -591,12 +603,14 @@ export default function CashierPage() {
 
       const today = new Date().toISOString().slice(0, 10);
       const lines: CreateInvoiceLine[] = cart.map((l) => {
-        const unitPrice = Number(l.item.salePrice);
+        const unitPrice = getItemSalePrice(l.item, l.selectedSaleOptionId);
         const lineGross = unitPrice * l.qty;
         const lineDisc = (lineGross * discountPct) / 100;
+        const option = getSalePriceOptions(l.item).find((candidate) => candidate.id === l.selectedSaleOptionId);
+        const optionName = getSalePriceOptionName(option);
         return {
           itemId: l.item.id,
-          itemName: l.item.nameAr,
+          itemName: optionName ? `${l.item.nameAr} — ${optionName}` : l.item.nameAr,
           itemCode: l.item.code,
           unit: l.item.unit?.nameAr || null,
           unitId: l.item.unitId ?? null,
@@ -1200,6 +1214,7 @@ export default function CashierPage() {
             cart={cart}
             updateQty={updateQty}
             removeLine={removeLine}
+            selectSalePriceOption={selectSalePriceOption}
             canCreatePosReturn={canCreatePosReturn}
             openReturns={() => setReturnsOpen(true)}
             subtotal={subtotal}
@@ -1253,6 +1268,7 @@ export default function CashierPage() {
                 cart={cart}
                 updateQty={updateQty}
                 removeLine={removeLine}
+                selectSalePriceOption={selectSalePriceOption}
                 canCreatePosReturn={canCreatePosReturn}
                 openReturns={() => setReturnsOpen(true)}
                 subtotal={subtotal}
@@ -1534,6 +1550,7 @@ function CartPanel(props: {
   cart: CartLine[];
   updateQty: (id: number, delta: number) => void;
   removeLine: (id: number) => void;
+  selectSalePriceOption: (itemId: number, optionId: string) => void;
   canCreatePosReturn: boolean;
   openReturns: () => void;
   subtotal: number;
@@ -1554,6 +1571,7 @@ function CartPanel(props: {
     cart,
     updateQty,
     removeLine,
+    selectSalePriceOption,
     canCreatePosReturn,
     openReturns,
     subtotal,
@@ -1636,9 +1654,25 @@ function CartPanel(props: {
                       {l.item.nameAr}
                     </p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      {formatSAR(Number(l.item.salePrice))} ر.س /{" "}
+                      {formatSAR(getItemSalePrice(l.item, l.selectedSaleOptionId))} ر.س /{" "}
                       {l.item.unit?.nameAr || "وحدة"}
                     </p>
+                    {getSalePriceOptions(l.item).length > 0 && (
+                      <select
+                        value={l.selectedSaleOptionId ?? ""}
+                        onChange={(event) => selectSalePriceOption(l.item.id, event.target.value)}
+                        aria-label={`اختيار سعر ${l.item.nameAr}`}
+                        data-testid={`select-price-option-${l.item.id}`}
+                        className="mt-1 h-8 w-full rounded-md border border-primary/20 bg-background px-2 text-xs"
+                      >
+                        <option value="">السعر الأساسي · {formatSAR(Number(l.item.salePrice))} ر.س</option>
+                        {getSalePriceOptions(l.item).map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {getSalePriceOptionName(option)} · {formatSAR(Number(option.salePrice))} ر.س
+                          </option>
+                        ))}
+                      </select>
+                    )}
                     <div className="mt-2 flex items-center justify-between">
                       <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
                         <button
@@ -1664,7 +1698,7 @@ function CartPanel(props: {
                         </button>
                       </div>
                       <p className="text-sm font-black text-primary">
-                        {formatSAR(Number(l.item.salePrice) * l.qty)}
+                        {formatSAR(getItemSalePrice(l.item, l.selectedSaleOptionId) * l.qty)}
                         <span className="text-[10px] text-muted-foreground font-bold mr-0.5">
                           ر.س
                         </span>

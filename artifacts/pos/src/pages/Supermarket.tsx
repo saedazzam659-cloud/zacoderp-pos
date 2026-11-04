@@ -10,12 +10,13 @@ import { Button } from "@/components/ui/button";
 import {
   api, getStoredUser, getToken, clearAuth, getPosSessionId, setPosSessionId,
   type Item, type Branch, type Warehouse, type AuthUser, type SalesInvoice,
-  type CreateInvoiceLine,
+  type CreateInvoiceLine, getItemSalePrice, getSalePriceOptions, getSalePriceOptionName,
 } from "@/lib/api";
 
 type CartLine = {
   item: Item;
   qty: number;
+  selectedSaleOptionId?: string;
   // When present (return mode loaded from a source invoice), these override
   // the current catalog pricing so we preserve the original invoice-line values.
   overrideUnitPrice?: number;
@@ -177,6 +178,12 @@ export default function SupermarketPage() {
     setSearch("");
     searchRef.current?.focus();
   };
+  const selectSalePriceOption = (itemId: number, optionId: string) =>
+    setCart((c) => c.map((line) =>
+      line.item.id === itemId
+        ? { ...line, selectedSaleOptionId: optionId || undefined }
+        : line,
+    ));
   const setQty = (id: number, qty: number) =>
     setCart((c) => c.map((l) => l.item.id === id ? { ...l, qty: Math.max(0, qty) } : l).filter((l) => l.qty > 0));
   const removeLine = (id: number) => setCart((c) => c.filter((l) => l.item.id !== id));
@@ -240,10 +247,10 @@ export default function SupermarketPage() {
     if (list.length > 0) addItem(list[0], qtyMultiplier);
   };
 
-  const subtotal       = cart.reduce((s, l) => s + Number(l.item.salePrice) * l.qty, 0);
+  const subtotal       = cart.reduce((s, l) => s + getItemSalePrice(l.item, l.selectedSaleOptionId) * l.qty, 0);
   const vatAmount      = cart.reduce((s, l) => {
     const rate = Number(l.item.vatRate) || VAT_RATE;
-    return s + (Number(l.item.salePrice) * l.qty * rate) / 100;
+    return s + (getItemSalePrice(l.item, l.selectedSaleOptionId) * l.qty * rate) / 100;
   }, 0);
   const grandTotal     = subtotal + vatAmount;
   const itemCount      = cart.reduce((n, l) => n + l.qty, 0);
@@ -329,10 +336,12 @@ export default function SupermarketPage() {
           } catch {}
         }
         const lines: CreateInvoiceLine[] = cart.map((l) => {
-          const unitPrice = Number(l.item.salePrice);
+          const unitPrice = getItemSalePrice(l.item, l.selectedSaleOptionId);
           const lineGross = unitPrice * l.qty;
+          const option = getSalePriceOptions(l.item).find((candidate) => candidate.id === l.selectedSaleOptionId);
+          const optionName = getSalePriceOptionName(option, lang);
           return {
-            itemId: l.item.id, itemName: l.item.nameAr, itemCode: l.item.code,
+            itemId: l.item.id, itemName: optionName ? `${l.item.nameAr} — ${optionName}` : l.item.nameAr, itemCode: l.item.code,
             unit: l.item.unit?.nameAr || null, unitId: l.item.unitId ?? null,
             warehouseId: l.item.itemType === "stock" ? defaultWarehouseId : null,
             qty: l.qty, unitPrice, discount: 0,
@@ -522,14 +531,33 @@ export default function SupermarketPage() {
                 <p>{tr("ابدأ بإضافة الأصناف من شريط البحث", "Start by adding items from the search bar")}</p>
               </div>
             ) : cart.map((l) => {
-              const unitPrice = Number(l.item.salePrice);
+              const unitPrice = l.overrideUnitPrice ?? getItemSalePrice(l.item, l.selectedSaleOptionId);
               const lineTotal = unitPrice * l.qty;
-              const name = lang === "ar" ? l.item.nameAr : (l.item.nameEn || l.item.nameAr);
+              const option = getSalePriceOptions(l.item).find((candidate) => candidate.id === l.selectedSaleOptionId);
+              const optionName = getSalePriceOptionName(option, lang);
+              const baseName = lang === "ar" ? l.item.nameAr : (l.item.nameEn || l.item.nameAr);
+              const name = optionName ? `${baseName} — ${optionName}` : baseName;
               return (
                 <div key={l.item.id} className="bg-white border border-slate-200 rounded-lg px-3 py-2.5 flex items-center gap-3 hover:border-emerald-300 hover:shadow-sm">
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold truncate">{name}</div>
                     <div className="text-[11px] text-slate-500 font-mono">{l.item.code} · {fmt(unitPrice, lang)} {tr("ر.س", "SAR")}</div>
+                    {mode === "sale" && getSalePriceOptions(l.item).length > 0 && (
+                      <select
+                        value={l.selectedSaleOptionId ?? ""}
+                        onChange={(event) => selectSalePriceOption(l.item.id, event.target.value)}
+                        aria-label={tr(`اختيار سعر ${baseName}`, `Choose price for ${baseName}`)}
+                        data-testid={`supermarket-price-option-${l.item.id}`}
+                        className="mt-1 h-8 w-full max-w-xs rounded-md border border-emerald-200 bg-white px-2 text-xs"
+                      >
+                        <option value="">{tr("السعر الأساسي", "Base price")} · {fmt(Number(l.item.salePrice), lang)}</option>
+                        {getSalePriceOptions(l.item).map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {getSalePriceOptionName(option, lang)} · {fmt(Number(option.salePrice), lang)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     <Button type="button" size="icon" variant="outline" className="h-8 w-8" onClick={() => setQty(l.item.id, l.qty - 1)}><Minus className="h-3 w-3" /></Button>

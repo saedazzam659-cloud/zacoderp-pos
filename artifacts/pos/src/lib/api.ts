@@ -168,12 +168,50 @@ export type Item = {
   unitId?: number | null;
   itemType: "stock" | "service" | "fixed_asset";
   salePrice: string;
+  variantAttributes?: Record<string, unknown> | null;
   costPrice: string;
   vatRate: string;
   imageUrl?: string | null;
   unit?: { id: number; nameAr: string } | null;
   group?: { id: number; nameAr: string } | null;
 };
+
+export type SalePriceOption = {
+  id: string;
+  nameAr: string;
+  nameEn?: string;
+  salePrice: string | number;
+};
+
+export function getSalePriceOptions(item: Item): SalePriceOption[] {
+  const raw = item.variantAttributes?._salesOptions;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((value: unknown) => {
+    if (!value || typeof value !== "object") return [];
+    const option = value as Record<string, unknown>;
+    const id = String(option.id ?? "").trim();
+    const nameAr = String(option.nameAr ?? "").trim();
+    const nameEn = String(option.nameEn ?? "").trim();
+    const salePrice = Number(option.salePrice);
+    if (!id || (!nameAr && !nameEn) || !Number.isFinite(salePrice) || salePrice < 0) return [];
+    return [{ id, nameAr, nameEn: nameEn || undefined, salePrice: option.salePrice as string | number }];
+  });
+}
+
+export function getItemSalePrice(item: Item, optionId?: string | null): number {
+  const selected = optionId
+    ? getSalePriceOptions(item).find((option) => option.id === optionId)
+    : undefined;
+  return selected ? Number(selected.salePrice) : Number(item.salePrice);
+}
+
+export function getSalePriceOptionName(
+  option: SalePriceOption | undefined,
+  language: "ar" | "en" = "ar",
+): string | undefined {
+  if (!option) return undefined;
+  return language === "en" ? option.nameEn || option.nameAr : option.nameAr || option.nameEn;
+}
 
 export type Customer = {
   id: number;
