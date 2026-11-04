@@ -13,8 +13,11 @@ import {
   bankAccountsTable,
   journalEntriesTable,
   journalEntryLinesTable,
+  paymentVouchersTable,
+  receiptVouchersTable,
+  cashTransfersTable,
 } from "@workspace/db";
-import { eq, and, sql, desc, isNull, gte, lte, inArray } from "drizzle-orm";
+import { eq, and, sql, desc, isNull, gte, lte, inArray, or } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 
@@ -348,6 +351,91 @@ router.get("/:id", async (req, res) => {
     invoices,
     invoiceCount: invoices.filter(i => i.status === "posted").length,
     totalSales,
+  });
+});
+
+// Cash movements attributed to the session's till and exact shift interval.
+router.get("/:id/cash-movements", async (req, res) => {
+  const user = req.authUser;
+  const id = Number(req.params.id);
+  if (!user?.companyId || !Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "معرّف الوردية غير صالح" }); return;
+  }
+  const [session] = await db.select().from(posSessionsTable)
+    .where(and(eq(posSessionsTable.id, id), eq(posSessionsTable.companyId, user.companyId))).limit(1);
+  if (!session || (session.userId !== user.id && !["admin", "superadmin"].includes(user.role))) {
+    res.status(404).json({ error: "الوردية غير موجودة" }); return;
+  }
+  if (!session.cashBoxId) { res.json([]); return; }
+  const from = session.openedAt;
+  const to = session.closedAt ?? new Date();
+  const [payments, receipts, transfers] = await Promise.all([
+    db.select({
+      id: paymentVouchersTable.id, code: paymentVouchersTable.code,
+      date: paymentVouchersTable.date, description: paymentVouchersTable.description,
+      amount: paymentVouchersTable.amount, createdAt: paymentVouchersTable.createdAt,
+      createdBy: paymentVouchersTable.createdById, sourceType: paymentVouchersTable.sourceType,
+    }).from(paymentVouchersTable).where(and(
+      eq(paymentVouchersTable.companyId, user.companyId),
+      eq(paymentVouchersTable.cashBoxId, session.cashBoxId),
+      eq(paymentVouchersTable.status, "posted"),
+      or(eq(paymentVouchersTable.createdById, session.userId), eq(paymentVouchersTable.cashExpenseCreatedByUserId, session.userId)),
+      gte(paymentVouchersTable.createdAt, from), lte(paymentVouchersTable.createdAt, to),
+    )),
+    db.select({
+      id: receiptVouchersTable.id, code: receiptVouchersTable.code,
+      date: receiptVouchersTable.date, description: receiptVouchersTable.description,
+      amount: receiptVouchersTable.amount, createdAt: receiptVouchersTable.createdAt,
+      createdBy: receiptVouchersTable.createdById,
+    }).from(receiptVouchersTable).where(and(
+      eq(receiptVouchersTable.companyId, user.companyId),
+      eq(receiptVouchersTable.cashBoxId, session.cashBoxId),
+      eq(receiptVouchersTable.status, "posted"),
+      eq(receiptVouchersTable.createdById, session.userId),
+      gte(receiptVouchersTable.createdAt, from), lte(receiptVouchersTable.createdAt, to),
+    )),
+    db.select().from(cashTransfersTable).where(and(
+      eq(cashTransfersTable.companyId, user.companyId),
+      eq(cashTransfersTable.status, "posted"),
+      eq(cashTransfersTable.createdByUserId, session.userId),
+      gte(cashTransfersTable.createdAt, from), lte(cashTransfersTable.createdAt, to),
+      sql`(${cashTransfersTable.fromCashBoxId} = ${session.cashBoxId} OR ${cashTransfersTable.toCashBoxId} = ${session.cashBoxId})`,
+    )),
+  ]);
+  const movements = [
+    ...payments.map((row) => ({
+      id: `payment-${row.id}`, code: row.code, date: row.date, description: row.description,
+      amount: -Math.abs(Number(row.amount || 0)), kind: row.sourceType === "cash_expense" ? "expense" : "withdrawal",
+      createdAt: row.createdAt, createdBy: row.createdBy,
+    })),
+    ...receipts.map((row) => ({
+      id: `receipt-${row.id}`, code: row.code, date: row.date, description: row.description,
+      amount: Math.abs(Number(row.amount || 0)), kind: "deposit", createdAt: row.createdAt, createdBy: row.createdBy,
+    })),
+    ...transfers.map((row) => ({
+      id: `transfer-${row.id}`, code: row.code, date: row.date, description: row.description,
+      amount: row.toCashBoxId === session.cashBoxId ? Math.abs(Number(row.amount || 0)) : -Math.abs(Number(row.amount || 0)),
+      kind: "transfer", createdAt: row.createdAt, createdBy: row.createdByUserId,
+    })),
+  ].sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime());
+  const [{ totalCashSales } = { totalCashSales: "0" }] = await db.select({
+    totalCashSales: sql<string>`COALESCE(SUM(CASE
+      WHEN ${salesInvoicesTable.paymentType} = 'cash' THEN ${salesInvoicesTable.totalAmount}
+      WHEN ${salesInvoicesTable.paymentType} = 'mixed' THEN ${salesInvoicesTable.cashAmount}
+      ELSE 0 END), 0)`,
+  }).from(salesInvoicesTable).where(and(
+    eq(salesInvoicesTable.posSessionId, id),
+    eq(salesInvoicesTable.companyId, session.companyId),
+    eq(salesInvoicesTable.status, "posted"),
+  ));
+  const movementNet = movements.reduce((sum, movement) => sum + movement.amount, 0);
+  const opening = Number(session.openingCash || 0);
+  res.json({
+    movements,
+    openingCash: opening,
+    cashSales: Number(totalCashSales || 0),
+    movementNet,
+    expectedCash: opening + Number(totalCashSales || 0) + movementNet,
   });
 });
 

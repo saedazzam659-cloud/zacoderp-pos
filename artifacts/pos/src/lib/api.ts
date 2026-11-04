@@ -135,6 +135,7 @@ export type CashBox = {
   nameEn?: string | null;
   branchId?: number | null;
   accountId?: number | null;
+  currencyId?: number | null;
 };
 
 export type PosItemGroup = {
@@ -331,6 +332,9 @@ export type CreateReturnBody = {
 // ─── Endpoints ────────────────────────────────────────────────────────────
 
 export const api = {
+  request: <T>(method: string, path: string, body?: unknown) =>
+    req<T>(method, path, body),
+
   // Auth
   // `surface: "pos"` identifies the POS login page. Cashier-role users may
   // also authenticate through the company login, but only while linked to an

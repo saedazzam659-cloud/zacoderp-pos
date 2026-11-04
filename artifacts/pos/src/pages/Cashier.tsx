@@ -35,6 +35,8 @@ import {
   Clock3,
 } from "lucide-react";
 import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
+import CashMovementDialog from "@/components/CashMovementDialog";
+import EmployeeMealsDialog from "@/components/EmployeeMealsDialog";
 import PosAiPanel from "@/components/PosAiPanel";
 import ReturnsPage from "@/pages/Returns";
 import { enqueueInvoice, syncNow, countQueued } from "@/lib/offlineQueue";
@@ -182,6 +184,8 @@ export default function CashierPage() {
   const [heldCarts, setHeldCarts] = useState<ParkedCart[]>([]);
   const [heldCartsOpen, setHeldCartsOpen] = useState(false);
   const [returnsOpen, setReturnsOpen] = useState(false);
+  const [cashMovementOpen, setCashMovementOpen] = useState(false);
+  const [employeeMealsOpen, setEmployeeMealsOpen] = useState(false);
   // The terminal setting can further hide services, but it never replaces the
   // company-module and signed-in-user permission checks.
   const [enabledServices, setEnabledServices] = useState<string[] | null>(null);
@@ -838,6 +842,30 @@ export default function CashierPage() {
             <Clock3 className="size-4" />
             <span className="hidden sm:inline">{posSession ? "إغلاق الوردية" : "فتح وردية"}</span>
           </button>
+          {hasPosFeatureAccess(user, "pos_cashier", "edit") && (
+            <button
+              type="button"
+              onClick={() => setCashMovementOpen(true)}
+              aria-label="فتح الحركة النقدية"
+              data-testid="button-pos-cash-movements"
+              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-card px-2.5 text-xs font-bold text-foreground transition-colors hover-elevate"
+            >
+              <Banknote className="size-4" />
+              <span className="hidden sm:inline">الحركة النقدية</span>
+            </button>
+          )}
+          {hasPosFeatureAccess(user, "pos_cashier", "view") && (
+            <button
+              type="button"
+              onClick={() => setEmployeeMealsOpen(true)}
+              aria-label="فتح وجبات الموظفين"
+              data-testid="button-pos-employee-meals"
+              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-card px-2.5 text-xs font-bold text-foreground transition-colors hover-elevate"
+            >
+              <ChefHat className="size-4" />
+              <span className="hidden sm:inline">وجبات الموظفين</span>
+            </button>
+          )}
           <div className="hidden lg:flex items-center gap-2 text-xs font-semibold text-muted-foreground font-mono px-2.5 py-1.5 rounded-full bg-muted">
             {timeStr}
           </div>
@@ -1390,6 +1418,21 @@ export default function CashierPage() {
           defaultWarehouseId={defaultWarehouseId ?? null}
         />
       )}
+
+      <CashMovementDialog
+        open={cashMovementOpen}
+        onClose={() => setCashMovementOpen(false)}
+        companyId={Number(user?.companyId ?? 0)}
+        session={posSession}
+        cashBoxes={cashBoxes}
+        branchId={branchId}
+      />
+      <EmployeeMealsDialog
+        open={employeeMealsOpen}
+        onClose={() => setEmployeeMealsOpen(false)}
+        companyId={Number(user?.companyId ?? 0)}
+        user={user}
+      />
 
       {canShowService("analytics") && (
         <PosAiPanel

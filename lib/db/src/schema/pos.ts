@@ -1,7 +1,10 @@
-import { pgTable, serial, integer, text, numeric, timestamp, boolean, pgEnum, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, numeric, timestamp, boolean, pgEnum, uniqueIndex, date } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { usersTable } from "./users";
 import { branchesTable } from "./branches";
+import { employeesTable } from "./hr";
+import { accountsTable } from "./accounts";
+import { journalEntriesTable } from "./journalEntries";
 
 // ─── POS terminals (طرق البيع) ──────────────────────────────────────────────
 // A "POS terminal" = a configured selling station. Each terminal lives in one
@@ -87,3 +90,34 @@ export const posSessionsTable = pgTable("pos_sessions", {
   // for N minutes, "admin_force_close" when an admin closed it manually.
   closeReason:  text("close_reason"),
 });
+
+export const posEmployeeMealSettingsTable = pgTable("pos_employee_meal_settings", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  dailyLimit: integer("daily_limit").notNull().default(1),
+  unitCost: numeric("unit_cost", { precision: 18, scale: 2 }).notNull().default("0"),
+  expenseAccountId: integer("expense_account_id").notNull().references(() => accountsTable.id),
+  clearingAccountId: integer("clearing_account_id").notNull().references(() => accountsTable.id),
+  updatedByUserId: integer("updated_by_user_id").references(() => usersTable.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  companyUnique: uniqueIndex("pos_employee_meal_settings_company_uniq").on(t.companyId),
+}));
+
+export const posEmployeeMealsTable = pgTable("pos_employee_meals", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  employeeId: integer("employee_id").notNull().references(() => employeesTable.id, { onDelete: "restrict" }),
+  mealDate: date("meal_date", { mode: "string" }).notNull(),
+  mealType: text("meal_type").notNull(),
+  count: integer("count").notNull(),
+  unitCost: numeric("unit_cost", { precision: 18, scale: 2 }).notNull(),
+  totalCost: numeric("total_cost", { precision: 18, scale: 2 }).notNull(),
+  expenseAccountId: integer("expense_account_id").notNull().references(() => accountsTable.id),
+  clearingAccountId: integer("clearing_account_id").notNull().references(() => accountsTable.id),
+  journalEntryId: integer("journal_entry_id").references(() => journalEntriesTable.id),
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniqueEmployeeMealDay: uniqueIndex("pos_employee_meals_employee_day_type_uniq").on(t.companyId, t.employeeId, t.mealDate, t.mealType),
+}));
