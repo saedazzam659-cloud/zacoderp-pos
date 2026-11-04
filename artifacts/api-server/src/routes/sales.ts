@@ -9,6 +9,7 @@ import { canPostDoc, requirePostRight, requireUnpostRight } from "../lib/posting
 import { randomUUID } from "node:crypto";
 import { db, getActiveExternalDb } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
+import { normalizeInvoiceLineVatRate } from "../lib/invoice-vat-rate.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { ownDocumentFilter } from "../lib/documentVisibility.js";
@@ -2165,9 +2166,6 @@ router.get("/sales-invoices/:id/returned-by-item", requirePermission("sales_invo
 });
 
 function mapInvoiceLine(l: any, invoiceId: number, cid: number, fallbackRate = "15") {
-  const lineVatRate = l?.vatRate == null || String(l.vatRate).trim() === ""
-    ? fallbackRate
-    : String(l.vatRate);
   return {
     invoiceId, companyId: cid,
     itemId:      l.itemId      ? Number(l.itemId)      : null,
@@ -2184,7 +2182,7 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number, fallbackRate = "
     unitPrice:   String(l.unitPrice || "0"),
     discount:    String(l.discount  || "0"),
     discountAmount: String(Math.max(0, Number(l.discountAmount) || 0)),
-    vatRate:     lineVatRate,
+    vatRate:     normalizeInvoiceLineVatRate(l?.vatRate, fallbackRate),
     lineTotal:   String(l.lineTotal || "0"),
     // OPTIONAL per-line cost-center CODE — JE/reporting only, NEVER in ZATCA XML.
     costCenter:  l.costCenter ? String(l.costCenter).trim() || null : null,

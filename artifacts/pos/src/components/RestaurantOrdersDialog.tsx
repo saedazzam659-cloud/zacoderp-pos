@@ -6,8 +6,9 @@ import {
   api,
   getPosSessionId,
   type ROrder, type ROrderItem,
-  type CreateInvoiceLine, type CreateInvoiceBody,
+  type CreateInvoiceBody,
 } from "@/lib/api";
+import { buildRestaurantInvoicePricing } from "@/lib/restaurant-pricing";
 
 type Props = {
   open: boolean;
@@ -55,6 +56,7 @@ export default function RestaurantOrdersDialog({
     setSubmitting(true); setError(null);
     try {
       const activeItems = selected.items.filter(li => li.status !== "cancelled");
+      if (activeItems.length === 0) throw new Error("لا توجد أصناف قابلة للفوترة في هذا الطلب");
       if (activeItems.some(li => !li.erpItemId || !["stock", "service"].includes(li.erpItemType ?? ""))) {
         throw new Error("اربط كل صنف مطعم بصنف مخزون أو خدمة من إعدادات المطعم قبل الفوترة");
       }
@@ -62,51 +64,8 @@ export default function RestaurantOrdersDialog({
         throw new Error("حدد مخزناً افتراضياً قبل فوترة أصناف مرتبطة بالمخزون");
       }
 
-      // Repeated lines for the same ERP item at the same price become one
-      // invoice line, avoiding duplicate-item rejection and stock movements.
-      const grouped = new Map<string, {
-        itemId: number; itemType: "stock" | "service"; itemName: string; qty: number;
-        grossUnitPrice: number; vatRate: number;
-      }>();
-      for (const li of activeItems) {
-        const qty = Number(li.qty);
-        const price = Number(li.price);
-        const itemId = li.erpItemId!;
-        const itemType = li.erpItemType as "stock" | "service";
-        const configuredRate = li.erpVatRate == null ? Number.NaN : Number(li.erpVatRate);
-        const vatRate = Number.isFinite(configuredRate) && configuredRate >= 0 ? configuredRate : 15;
-        // Normalize every restaurant price to a VAT-inclusive invoice basis.
-        // This supports menus with a mix of inclusive and exclusive prices
-        // while sales invoices retain one header-level priceIncludesVat flag.
-        const grossUnitPrice = Number((li.vatIncluded === false
-          ? price * (1 + vatRate / 100)
-          : price).toFixed(4));
-        const key = `erp:${itemId}:${vatRate}:${grossUnitPrice.toFixed(4)}`;
-        const current = grouped.get(key);
-        if (current) current.qty += qty;
-        else grouped.set(key, { itemId, itemType, itemName: li.nameSnapshot, qty, grossUnitPrice, vatRate });
-      }
-      let rawSubtotal = 0;
-      let rawVat = 0;
-      const lines: CreateInvoiceLine[] = [...grouped.values()].map(line => {
-          const lineGross = Number((line.qty * line.grossUnitPrice).toFixed(2));
-          const lineNet = Number((lineGross / (1 + line.vatRate / 100)).toFixed(2));
-          rawSubtotal += lineNet;
-          rawVat += lineGross - lineNet;
-          return {
-            itemId: line.itemId,
-            itemName: line.itemName,
-            qty: line.qty,
-            unitPrice: line.grossUnitPrice,
-            discount: 0,
-            vatRate: line.vatRate,
-            lineTotal: lineGross,
-            warehouseId: line.itemType === "stock" ? defaultWarehouseId! : undefined,
-          };
-        });
-      const subtotal = Number(rawSubtotal.toFixed(2));
-      const vatAmount = Number(rawVat.toFixed(2));
-      const totalAmount = Number((subtotal + vatAmount).toFixed(2));
+      const { lines, subtotal, vatAmount, totalAmount } =
+        buildRestaurantInvoicePricing(activeItems, defaultWarehouseId);
 
       const body: CreateInvoiceBody = {
         clientRequestId: `restaurant-order-${selected.id}`,

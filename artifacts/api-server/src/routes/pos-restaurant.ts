@@ -17,6 +17,7 @@ import { and, eq, sql, desc, asc, isNull, gte, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { generateRestaurantTables } from "../lib/posRestaurantTableBatch.js";
+import { calculateRestaurantOrderTotals } from "../lib/restaurant-order-pricing.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -75,47 +76,6 @@ async function nextOrderNumber(cid: number): Promise<string> {
   return `ORD-${ym}-${String((c ?? 0) + 1).padStart(5, "0")}`;
 }
 
-function recalcTotals(lines: Array<{
-  menuItemId?: number;
-  erpItemId?: number | null;
-  qty: string | number;
-  price: string | number;
-  vatIncluded?: boolean | null;
-  vatRate?: string | number | null;
-}>) {
-  const groups = new Map<string, { qty: number; grossUnitPrice: number; rate: number }>();
-  for (const line of lines) {
-    const rawRate = line.vatRate == null || String(line.vatRate).trim() === ""
-      ? Number.NaN
-      : Number(line.vatRate);
-    const rate = Number.isFinite(rawRate) && rawRate >= 0 ? rawRate : 15;
-    const price = Number(line.price);
-    const grossUnitPrice = Number((line.vatIncluded === false
-      ? price * (1 + rate / 100)
-      : price).toFixed(4));
-    const itemKey = line.erpItemId != null ? `erp:${line.erpItemId}` : `menu:${line.menuItemId ?? "unknown"}`;
-    const key = `${itemKey}:${rate}:${grossUnitPrice.toFixed(4)}`;
-    const current = groups.get(key);
-    if (current) current.qty += Number(line.qty);
-    else groups.set(key, { qty: Number(line.qty), grossUnitPrice, rate });
-  }
-  let subtotal = 0;
-  let vat = 0;
-  let total = 0;
-  for (const line of groups.values()) {
-    const lineGross = Number((line.qty * line.grossUnitPrice).toFixed(2));
-    const lineNet = Number((lineGross / (1 + line.rate / 100)).toFixed(2));
-    subtotal += lineNet;
-    vat += lineGross - lineNet;
-    total += lineGross;
-  }
-  return {
-    subtotal: subtotal.toFixed(2),
-    vatAmount: vat.toFixed(2),
-    total: total.toFixed(2),
-  };
-}
-
 async function recalculateOrderTotals(companyId: number, orderId: number) {
   const lines = await db.select({
     menuItemId: posOrderItemsTable.menuItemId,
@@ -135,7 +95,7 @@ async function recalculateOrderTotals(companyId: number, orderId: number) {
       eq(itemsTable.companyId, companyId),
     ))
     .where(eq(posOrderItemsTable.orderId, orderId));
-  const totals = recalcTotals(lines.filter(line => line.status !== "cancelled"));
+  const totals = calculateRestaurantOrderTotals(lines.filter(line => line.status !== "cancelled"));
   await db.update(posOrdersTable).set({ ...totals, updatedAt: new Date() })
     .where(and(eq(posOrdersTable.id, orderId), eq(posOrdersTable.companyId, companyId)));
   return totals;
@@ -454,7 +414,7 @@ router.get("/orders/:id", async (req, res) => {
     ))
     .where(eq(posOrderItemsTable.orderId, id))
     .orderBy(asc(posOrderItemsTable.id));
-  const totals = recalcTotals(items
+  const totals = calculateRestaurantOrderTotals(items
     .filter(line => line.status !== "cancelled")
     .map(line => ({ ...line, vatRate: line.erpVatRate })));
   res.json({ ...order, ...totals, items });
