@@ -5679,64 +5679,72 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
 }));
 
 // ─── UNPOST purchase return (فك الترحيل) ────────────────────────────────────
-router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), async (req, res) => {
+router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), documentMutationLock("purchase_return", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
 
-    // Branch-scope guard (mirrors /post above).
-    const [ret] = await db.select().from(purchaseReturnsTable)
-      .where(and(
-        eq(purchaseReturnsTable.id, id),
-        eq(purchaseReturnsTable.companyId, cid),
-        ...branchScopeSpread(req, purchaseReturnsTable.branchId, undefined),
-      ));
-    if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
-    if (ret.status !== "posted") { res.status(400).json({ error: "المرتجع ليس مُرحَّلاً" }); return; }
-    if (ret.isSequenceProtected && !ret.journalEntryId) {
-      throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بمرتجع المشتريات المحمي غير موجود."), { status: 409 });
-    }
-    const industrialLines = await db.select().from(purchaseReturnLinesTable)
-      .where(eq(purchaseReturnLinesTable.returnId, id));
-    await assertIndustrialCostPeriodsWritable(cid, industrialLines);
-
-    // Reverse stock movements (returns reduce stock; unposting adds it back)
-    const restoreLandedValue = ret.invoiceId
-      ? (await readExpenseRows(db, cid, "purchase_invoice", ret.invoiceId)).rows.some(r => r.treatment === "capitalized")
-      : false;
-    const ledger = await db.select().from(stockLedgerTable)
-      .where(and(
-        eq(stockLedgerTable.companyId, cid),
-        eq(stockLedgerTable.refType, "purchase_return"),
-        eq(stockLedgerTable.refId, id),
-      ));
-    if (restoreLandedValue) await lockStockBalances(ledger.map(row => ({ companyId: cid, itemId: row.itemId, warehouseId: row.warehouseId })), db);
-    for (const row of ledger) {
-      const qty = Number(row.qty);
-      const [bal] = await db.select().from(stockBalanceTable)
-        .where(and(
-          eq(stockBalanceTable.companyId, cid),
-          eq(stockBalanceTable.itemId, row.itemId),
-          eq(stockBalanceTable.warehouseId, row.warehouseId),
-        ));
-      if (restoreLandedValue && !bal) throw new Error("رصيد المخزون المرتبط بالتكلفة المحملة غير موجود");
-      if (bal) {
-        const newQty = Number(bal.qty) - qty;
-        const newValue = Number(bal.qty) * Number(bal.avgCost) - Number(row.totalCost);
-        await db.update(stockBalanceTable)
-          .set({ qty: String(newQty), ...(restoreLandedValue ? { avgCost: newQty > 0 ? String(newValue / newQty) : "0" } : {}), updatedAt: new Date() })
-          .where(eq(stockBalanceTable.id, bal.id));
-        if (restoreLandedValue) await refreshItemCost(cid, row.itemId);
-      }
-    }
-    await db.delete(stockLedgerTable)
-      .where(and(
-        eq(stockLedgerTable.companyId, cid),
-        eq(stockLedgerTable.refType, "purchase_return"),
-        eq(stockLedgerTable.refId, id),
-      ));
-
     const updated = await db.transaction(async (tx) => {
+      // Lock the document before checking state so concurrent post/unpost
+      // requests cannot both apply or remove the stock effect.
+      const [ret] = await tx.select().from(purchaseReturnsTable)
+        .where(and(
+          eq(purchaseReturnsTable.id, id),
+          eq(purchaseReturnsTable.companyId, cid),
+          ...branchScopeSpread(req, purchaseReturnsTable.branchId, undefined),
+        ))
+        .for("update");
+      if (!ret) throw Object.assign(new Error("المرتجع غير موجود"), { status: 404 });
+      if (ret.status !== "posted") throw Object.assign(new Error("المرتجع ليس مُرحَّلاً"), { status: 400 });
+      if (ret.isSequenceProtected && !ret.journalEntryId) {
+        throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بمرتجع المشتريات المحمي غير موجود."), { status: 409 });
+      }
+      const industrialLines = await tx.select().from(purchaseReturnLinesTable)
+        .where(eq(purchaseReturnLinesTable.returnId, id));
+      await assertIndustrialCostPeriodsWritable(cid, industrialLines);
+
+      // Keep stock, cost, ledger, accounting, custody, and document state in
+      // one transaction so any failure rolls the entire unpost back.
+      const restoreLandedValue = ret.invoiceId
+        ? (await readExpenseRows(tx, cid, "purchase_invoice", ret.invoiceId)).rows.some(r => r.treatment === "capitalized")
+        : false;
+      const ledger = await tx.select().from(stockLedgerTable)
+        .where(and(
+          eq(stockLedgerTable.companyId, cid),
+          eq(stockLedgerTable.refType, "purchase_return"),
+          eq(stockLedgerTable.refId, id),
+        ))
+        .orderBy(asc(stockLedgerTable.id));
+      await lockStockBalances(
+        ledger.map(row => ({ companyId: cid, itemId: row.itemId, warehouseId: row.warehouseId })),
+        tx,
+      );
+      for (const row of ledger) {
+        const qty = Number(row.qty);
+        const [bal] = await tx.select().from(stockBalanceTable)
+          .where(and(
+            eq(stockBalanceTable.companyId, cid),
+            eq(stockBalanceTable.itemId, row.itemId),
+            eq(stockBalanceTable.warehouseId, row.warehouseId),
+          ))
+          .for("update");
+        if (restoreLandedValue && !bal) throw new Error("رصيد المخزون المرتبط بالتكلفة المحملة غير موجود");
+        if (bal) {
+          const newQty = Number(bal.qty) - qty;
+          const newValue = Number(bal.qty) * Number(bal.avgCost) - Number(row.totalCost);
+          await tx.update(stockBalanceTable)
+            .set({ qty: String(newQty), ...(restoreLandedValue ? { avgCost: newQty > 0 ? String(newValue / newQty) : "0" } : {}), updatedAt: new Date() })
+            .where(eq(stockBalanceTable.id, bal.id));
+          if (restoreLandedValue) await refreshItemCost(cid, row.itemId, tx);
+        }
+      }
+      await tx.delete(stockLedgerTable)
+        .where(and(
+          eq(stockLedgerTable.companyId, cid),
+          eq(stockLedgerTable.refType, "purchase_return"),
+          eq(stockLedgerTable.refId, id),
+        ));
+
       let retainLinkedJournalEntry = false;
       if (ret.journalEntryId) {
         const [linkedEntry] = await tx.select({
@@ -5816,7 +5824,7 @@ router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), asy
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
-});
+}));
 
 router.delete("/purchase-returns/:id", async (req, res) => {
   try {
