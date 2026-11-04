@@ -28,6 +28,7 @@
 - [Web POS parked carts](web-pos-parked-carts.md) — held drafts stay device-local and scoped by company, cashier, branch, and terminal; checkout alone creates a cloud invoice.
 - [POS display-group boundary](pos-display-group-boundary.md) — cashier tabs use a dedicated display group; preserve the existing accounting item category unchanged.
 - [Cashier company-login boundary](cashier-main-login-boundary.md) — allow station-linked cashiers through company login only to enter POS; use the station branch without duplicate user-branch links.
+- [Restaurant table manager access](restaurant-table-manager-access.md) — managers can manage restaurant tables; preserve company module and per-user edit gates, and keep cashier login station-bound.
 - [Accounting and ZATCA index](accounting-zatca-index.md) — accounting, numbering, settlement, reports, documents, imports, and ZATCA implementation notes.
 - [Cash expense boundary](cash-expense-boundary.md) — explicit mobile grants, per-cashbox assignment, private receipts, and currency-safe reporting.
 - [Cash-transfer posting boundary](cash-transfer-posting-boundary.md) — deposits reuse the existing transfer lifecycle; preserve balance checks and exactly-once journal posting.

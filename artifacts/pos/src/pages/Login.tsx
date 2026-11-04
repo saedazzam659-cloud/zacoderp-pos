@@ -96,9 +96,12 @@ export default function LoginPage() {
     };
   }, []);
 
-  // If already logged in, jump straight to cashier.
+  // Keep authenticated users out of login history. Station-bound cashiers go
+  // through /entry so their assigned terminal determines the branch/screen.
   useEffect(() => {
-    if (getToken()) navigate("/pos");
+    if (!getToken()) return;
+    const stored = getStoredUser();
+    navigate(stored?.role === "cashier" ? "/entry" : "/pos", { replace: true });
   }, [navigate]);
 
   async function loadBranchesFor(companyId: number) {
@@ -152,7 +155,7 @@ export default function LoginPage() {
       localStorage.setItem("pos_branch_id", String(branchId));
       if (terminalId) localStorage.setItem("pos_terminal_id", String(terminalId));
       else localStorage.removeItem("pos_terminal_id");
-      navigate("/pos");
+      navigate("/pos", { replace: true });
     } catch (err: any) {
       setError(err?.message || "تعذّر فتح الجلسة");
     } finally {
@@ -186,6 +189,10 @@ export default function LoginPage() {
       const res = await api.login(username.trim(), password, code || undefined);
       setToken(res.token);
       setStoredUser(res.user);
+      if (res.user.role === "cashier") {
+        navigate("/entry", { replace: true });
+        return;
+      }
       if (res.user.companyId) {
         localStorage.setItem("pos_company_id", String(res.user.companyId));
         await loadBranchesFor(res.user.companyId);
@@ -196,7 +203,7 @@ export default function LoginPage() {
         const existing = await api.getCurrentPosSession();
         if (existing) {
           setPosSessionId(existing.id);
-          navigate("/pos");
+          navigate("/pos", { replace: true });
           return;
         }
       } catch {/* ignore */}

@@ -19,9 +19,12 @@ type Tab = typeof TABS[number]["id"];
 
 export default function RestaurantSettings() {
   const [, setLocation] = useLocation();
-  const returnTo = new URLSearchParams(window.location.search).get("returnTo") === "waiter"
+  const returnTarget = new URLSearchParams(window.location.search).get("returnTo");
+  const returnTo = returnTarget === "waiter"
     ? "/waiter"
-    : "/restaurant";
+    : returnTarget === "cashier"
+      ? "/pos"
+      : "/restaurant";
   const [tab, setTab] = useState<Tab>(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
     return TABS.some(item => item.id === requested) ? requested as Tab : "tables";
@@ -42,7 +45,7 @@ export default function RestaurantSettings() {
     <div dir="rtl" className="min-h-[100dvh] bg-background text-foreground">
       <header className="sticky top-0 z-20 flex min-h-16 items-center gap-3 border-b border-border/80 bg-card px-3 py-2 shadow-sm sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setLocation(returnTo)} aria-label="العودة إلى المطعم" data-testid="button-settings-back">
+          <Button variant="ghost" size="sm" onClick={() => setLocation(returnTo, { replace: true })} aria-label="العودة إلى الشاشة السابقة" data-testid="button-settings-back">
             <ChevronRight className="h-4 w-4 ml-1" /> رجوع
           </Button>
           <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm"><Settings className="h-5 w-5" /></div>
@@ -121,13 +124,14 @@ function TablesTab({
   const [editBuf, setEditBuf] = useState<Partial<RTable>>({});
 
   useEffect(() => {
-    if (batch.branchId || !branches.length) return;
+    if (!branches.length) return;
     const preferredId = Number(localStorage.getItem("pos_branch_id") || 0);
-    const preferred = branches.find(branch => branch.id === preferredId);
-    if (preferred || branches.length === 1) {
-      setBatch(current => ({ ...current, branchId: String((preferred ?? branches[0]).id) }));
-    }
-  }, [branches, batch.branchId]);
+    const branch = branches.find(item => item.id === preferredId)
+      ?? branches.find(item => (item as Branch & { isMain?: boolean }).isMain === true)
+      ?? branches[0];
+    if (!batch.branchId) setBatch(current => ({ ...current, branchId: String(branch.id) }));
+    if (!draft.branchId) setDraft(current => ({ ...current, branchId: String(branch.id) }));
+  }, [branches, batch.branchId, draft.branchId]);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["r-tables-all"] });

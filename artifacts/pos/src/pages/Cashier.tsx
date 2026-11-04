@@ -933,7 +933,7 @@ export default function CashierPage() {
           )}
           {canShowService("settings") && (
             <button
-              onClick={() => navigate("/restaurant-settings")}
+              onClick={() => navigate("/restaurant-settings?returnTo=cashier")}
               title="إعدادات المطعم"
               className="w-10 h-10 rounded-xl border border-border bg-card grid place-items-center hover-elevate active-elevate-2 hidden xl:flex"
               data-testid="svc-settings"

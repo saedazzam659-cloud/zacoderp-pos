@@ -40,7 +40,7 @@ export default function PosEntry() {
       setError(null);
       try {
         if (!getToken()) {
-          navigate("/login");
+          navigate("/login", { replace: true });
           return;
         }
 
@@ -84,7 +84,7 @@ export default function PosEntry() {
             setPosSessionId(current.id);
             localStorage.setItem("pos_branch_id", String(linkedTerminal.branchId));
             localStorage.setItem("pos_terminal_id", String(linkedTerminal.id));
-            navigate("/pos");
+            navigate("/pos", { replace: true });
             return;
           }
 
@@ -98,7 +98,7 @@ export default function PosEntry() {
 
           localStorage.setItem("pos_branch_id", String(terminal.branchId));
           localStorage.setItem("pos_terminal_id", String(terminal.id));
-          navigate("/pos");
+          navigate("/pos", { replace: true });
           return;
         }
 
@@ -128,7 +128,7 @@ export default function PosEntry() {
           } else {
             localStorage.removeItem("pos_terminal_id");
           }
-          navigate(screen.path);
+          navigate(screen.path, { replace: true });
           return;
         }
 
@@ -155,11 +155,11 @@ export default function PosEntry() {
         } else {
           localStorage.removeItem("pos_terminal_id");
         }
-        navigate(screen.path);
+        navigate(screen.path, { replace: true });
       } catch (cause) {
         if (!active) return;
         if (!getToken()) {
-          navigate("/login");
+          navigate("/login", { replace: true });
           return;
         }
         setError(cause instanceof Error ? cause.message : "تعذّر فتح شاشة نقاط البيع.");
