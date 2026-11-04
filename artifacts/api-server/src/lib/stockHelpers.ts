@@ -349,6 +349,23 @@ export async function lockStockBalances(
   }
 }
 
+export function nextStockAverageCost(
+  oldQty: number,
+  oldCost: number,
+  deltaQty: number,
+  incomingCost: number,
+): number {
+  if (deltaQty <= 0) return oldCost;
+  const newQty = oldQty + deltaQty;
+  if (oldQty < 0) {
+    // Receipts cover negative layers before becoming on-hand inventory.
+    return newQty > 0 ? incomingCost : oldCost;
+  }
+  return newQty === 0
+    ? incomingCost
+    : (oldQty * oldCost + deltaQty * incomingCost) / newQty;
+}
+
 export async function upsertBalance(
   companyId: number,
   itemId: number,
@@ -385,23 +402,9 @@ export async function upsertBalance(
   } else {
     const oldQty  = Number(existing.qty);
     const oldCost = Number(existing.avgCost);
-    let newQty: number, newAvg: number;
-    if (deltaQty > 0) {
-      newQty = oldQty + deltaQty;
-      if (oldQty < 0) {
-        // Receipts first cover the negative layer. Do not average its
-        // provisional cost into the received stock: that invents value (for
-        // example, -4 @ 0 plus 10 @ 5 must leave 6 @ 5, not 6 @ 8.33).
-        // The sale-side COGS difference is reconciled separately from this
-        // balance summary.
-        newAvg = newQty > 0 ? costPrice : oldCost;
-      } else {
-        newAvg = newQty === 0 ? costPrice : (oldQty * oldCost + deltaQty * costPrice) / newQty;
-      }
-    } else {
-      newQty = oldQty + deltaQty;
-      newAvg = oldCost;
-    }
+    const newQty = oldQty + deltaQty;
+    // The sale-side COGS difference is reconciled separately from this balance.
+    const newAvg = nextStockAverageCost(oldQty, oldCost, deltaQty, costPrice);
     await executor.update(stockBalanceTable)
       .set({ qty: String(newQty), avgCost: String(newAvg), updatedAt: new Date() })
       .where(eq(stockBalanceTable.id, existing.id));
