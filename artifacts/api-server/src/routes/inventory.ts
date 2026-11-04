@@ -1696,6 +1696,8 @@ router.get("/items/search", async (req, res) => {
 
   const includeHidden = String(req.query.includeHidden ?? "") === "1"
     || String(req.query.includeHidden ?? "").toLowerCase() === "true";
+  const activeOnly = String(req.query.activeOnly ?? "") === "1"
+    || String(req.query.activeOnly ?? "").toLowerCase() === "true";
   const clauses: any[] = cid ? [eq(itemsTable.companyId, cid)] : [];
   if (itemNatures.length) {
     const matchingNature = inArray(itemsTable.itemNature, itemNatures);
@@ -1704,6 +1706,7 @@ router.get("/items/search", async (req, res) => {
       : matchingNature);
   }
   if (itemTypes.length) clauses.push(inArray(itemsTable.itemType, itemTypes));
+  if (activeOnly) clauses.push(eq(itemsTable.isActive, true));
   if (query) {
     const pattern = `%${query}%`;
     clauses.push(or(

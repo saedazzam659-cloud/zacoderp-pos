@@ -344,7 +344,7 @@ export const api = {
   getItems: (companyId: number) =>
     req<Item[]>("GET", `/api/inventory/items?companyId=${companyId}`),
   searchItems: (companyId: number, query: string) =>
-    req<Item[]>("GET", `/api/inventory/items/search?companyId=${companyId}&includeHidden=1&itemTypes=stock,service&limit=20&q=${encodeURIComponent(query)}`),
+    req<Item[]>("GET", `/api/inventory/items/search?companyId=${companyId}&includeHidden=1&activeOnly=1&itemTypes=stock,service&limit=20&q=${encodeURIComponent(query)}`),
   lookupItems: (companyId: number, ids: number[]) =>
     req<Item[]>("GET", `/api/inventory/items/lookup?companyId=${companyId}&ids=${ids.join(",")}`),
   getItemGroups: (companyId: number) =>

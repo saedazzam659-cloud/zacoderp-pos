@@ -62,9 +62,8 @@ export default function RestaurantOrdersDialog({
         throw new Error("حدد مخزناً افتراضياً قبل فوترة أصناف مرتبطة بالمخزون");
       }
 
-      // Repeated order lines for the same stocked item at the same price become
-      // one invoice line, avoiding duplicate-item rejection and duplicate stock
-      // movements while preserving the order total.
+      // Repeated lines for the same ERP item at the same price become one
+      // invoice line, avoiding duplicate-item rejection and stock movements.
       const grouped = new Map<string, {
         itemId: number; itemType: "stock" | "service"; itemName: string; qty: number; price: number;
       }>();

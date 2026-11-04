@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   api, getToken, getStoredUser,
-  type Branch, type RTable, type RMenuCategory, type RMenuItem,
+  type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem,
 } from "@/lib/api";
 
 const TABS = [
@@ -74,7 +74,7 @@ export default function RestaurantSettings() {
         {branchesQ.isError && tab === "tables" && <p role="alert" className="mb-4 flex items-center gap-2 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"><AlertCircle className="h-4 w-4" />تعذّر تحميل الفروع. أعد المحاولة من تحديث الصفحة.</p>}
         {tab === "tables" && <TablesTab branches={branchesQ.data ?? []} />}
         {tab === "cats"   && <CategoriesTab />}
-        {tab === "items"  && <ItemsTab />}
+        {tab === "items"  && <ItemsTab companyId={cid} />}
       </main>
     </div>
   );
@@ -492,13 +492,14 @@ function CategoriesTab() {
 }
 
 // ─── Items ───────────────────────────────────────────────────────────────
-function ItemsTab() {
+function ItemsTab({ companyId }: { companyId: number | null }) {
   const qc = useQueryClient();
   const catsQ = useQuery({ queryKey: ["r-cats-all"], queryFn: () => api.rCategories() });
   const itemsQ = useQuery({ queryKey: ["r-items-all"], queryFn: () => api.rMenuItems() });
   const [draft, setDraft] = useState({
     categoryId: "" as string | number, code: "", nameAr: "", price: 0,
     prepTimeMinutes: 0, kitchenStation: "kitchen" as RMenuItem["kitchenStation"],
+    itemId: null as number | null,
   });
   const [editId, setEditId] = useState<number | null>(null);
   const [editBuf, setEditBuf] = useState<Partial<RMenuItem>>({});
@@ -512,10 +513,10 @@ function ItemsTab() {
     mutationFn: () => api.rCreateMenuItem({
       categoryId: Number(draft.categoryId), code: draft.code, nameAr: draft.nameAr,
       price: String(draft.price), prepTimeMinutes: draft.prepTimeMinutes,
-      kitchenStation: draft.kitchenStation,
-    } as any),
+      kitchenStation: draft.kitchenStation, itemId: draft.itemId,
+    }),
     onSuccess: () => {
-      setDraft({ ...draft, code: "", nameAr: "", price: 0, prepTimeMinutes: 0 });
+      setDraft({ ...draft, code: "", nameAr: "", price: 0, prepTimeMinutes: 0, itemId: null });
       invalidate();
     },
     onError: (e: any) => alert(e?.message ?? "فشل الإنشاء"),
@@ -532,7 +533,7 @@ function ItemsTab() {
 
   const startEdit = (it: RMenuItem) => {
     setEditId(it.id);
-    setEditBuf({ categoryId: it.categoryId, code: it.code, nameAr: it.nameAr, price: it.price, prepTimeMinutes: it.prepTimeMinutes, kitchenStation: it.kitchenStation });
+    setEditBuf({ categoryId: it.categoryId, code: it.code, nameAr: it.nameAr, price: it.price, prepTimeMinutes: it.prepTimeMinutes, kitchenStation: it.kitchenStation, itemId: it.itemId ?? null });
   };
 
   const catName = (id: number) => catsQ.data?.find(c => c.id === id)?.nameAr ?? "—";
@@ -570,6 +571,13 @@ function ItemsTab() {
             <option value="dessert">الحلويات</option>
           </select>
         </div>
+        <div className="mt-3">
+          <ErpItemPicker
+            companyId={companyId}
+            value={draft.itemId}
+            onChange={itemId => setDraft({ ...draft, itemId })}
+          />
+        </div>
         <Button data-testid="button-create-menu-item" className="mt-3 font-bold"
           disabled={!draft.categoryId || !draft.code || !draft.nameAr || create.isPending}
           onClick={() => create.mutate()}>
@@ -600,7 +608,14 @@ function ItemsTab() {
                 {itemsQ.data!.map(it => editId === it.id ? (
                   <tr key={it.id} className="border-t border-primary/30 bg-primary/[0.04]">
                     <td className="p-1"><Input aria-label="رمز الصنف" value={editBuf.code ?? ""} onChange={e => setEditBuf({ ...editBuf, code: e.target.value })} className="h-8 bg-background" /></td>
-                    <td className="p-1"><Input aria-label="اسم الصنف" value={editBuf.nameAr ?? ""} onChange={e => setEditBuf({ ...editBuf, nameAr: e.target.value })} className="h-8 bg-background" /></td>
+                    <td className="p-1">
+                      <Input aria-label="اسم الصنف" value={editBuf.nameAr ?? ""} onChange={e => setEditBuf({ ...editBuf, nameAr: e.target.value })} className="h-8 bg-background" />
+                      <ErpItemPicker
+                        companyId={companyId}
+                        value={editBuf.itemId ?? null}
+                        onChange={itemId => setEditBuf({ ...editBuf, itemId })}
+                      />
+                    </td>
                     <td className="p-1">
                       <select value={editBuf.categoryId ?? ""}
                         onChange={e => setEditBuf({ ...editBuf, categoryId: Number(e.target.value) })}
@@ -633,7 +648,12 @@ function ItemsTab() {
                 ) : (
                   <tr key={it.id} className="border-t border-border/70 hover:bg-muted/40">
                     <td className="p-2">{it.code}</td>
-                    <td className="p-2 font-semibold">{it.nameAr}</td>
+                    <td className="p-2 font-semibold">
+                      <div>{it.nameAr}</div>
+                      <div className={`mt-1 text-[11px] ${it.itemId ? "text-emerald-700" : "text-amber-700"}`}>
+                        {it.itemId ? `مرتبط بصنف ERP #${it.itemId}` : "غير مربوط بصنف ERP — لن يقبل الفوترة"}
+                      </div>
+                    </td>
                     <td className="p-2 text-muted-foreground">{catName(it.categoryId)}</td>
                     <td className="p-2 text-xs">{stationLabel(it.kitchenStation)}</td>
                     <td className="p-2">{it.prepTimeMinutes} د</td>
@@ -661,4 +681,88 @@ function kindLabel(k: string) {
 }
 function stationLabel(s: string) {
   return s === "kitchen" ? "المطبخ" : s === "grill" ? "الشواية" : s === "bar" ? "البار" : s === "cold" ? "البارد" : "الحلويات";
+}
+
+function ErpItemPicker({
+  companyId,
+  value,
+  onChange,
+}: {
+  companyId: number | null;
+  value: number | null;
+  onChange: (itemId: number | null) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [changing, setChanging] = useState(false);
+  const search = useQuery({
+    queryKey: ["restaurant-erp-item-search", companyId, query],
+    queryFn: () => api.searchItems(companyId!, query.trim()),
+    enabled: companyId != null && query.trim().length >= 2,
+    staleTime: 30_000,
+  });
+  const selected = useQuery({
+    queryKey: ["restaurant-erp-item-selected", companyId, value],
+    queryFn: () => api.lookupItems(companyId!, [value!]),
+    enabled: companyId != null && value != null && value > 0,
+    staleTime: 60_000,
+  });
+  const showInput = value == null || changing;
+
+  return (
+    <div className="mt-2 min-w-48">
+      <div className="mb-1 text-[11px] font-semibold text-muted-foreground">
+        ربط بصنف ERP موجود (مطلوب لإصدار الفاتورة)
+      </div>
+      {value != null && !changing && (
+        <div className="mb-1 flex items-center gap-2 text-xs">
+          <span className="truncate font-semibold">
+            {selected.data?.[0]
+              ? `${selected.data[0].nameAr} · ${selected.data[0].code} · ${selected.data[0].itemType === "stock" ? "مخزني" : "خدمة"}`
+              : selected.isLoading ? "جارٍ تحميل الصنف المرتبط..." : `صنف ERP #${value}`}
+          </span>
+          <button type="button" className="shrink-0 text-primary underline" onClick={() => setChanging(true)}>تغيير</button>
+          <button type="button" className="shrink-0 text-destructive underline" onClick={() => onChange(null)}>إزالة</button>
+        </div>
+      )}
+      {showInput && (
+        <>
+          <Input
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder="ابحث بالاسم أو الرمز (حرفان فأكثر)"
+            aria-label="البحث عن صنف مخزون أو خدمة"
+            data-testid="input-restaurant-erp-item-search"
+            disabled={companyId == null}
+            className="h-9 bg-background text-xs"
+          />
+          {query.trim().length >= 2 && (
+            <div role="listbox" aria-label="نتائج أصناف ERP" className="mt-1 max-h-48 overflow-y-auto rounded-lg border border-border bg-card shadow-md">
+              {search.isFetching ? (
+                <div className="p-2 text-xs text-muted-foreground">جارٍ البحث...</div>
+              ) : (search.data ?? []).length === 0 ? (
+                <div className="p-2 text-xs text-muted-foreground">لا توجد أصناف مخزون أو خدمات مطابقة</div>
+              ) : (search.data ?? []).map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="option"
+                  aria-selected={value === item.id}
+                  className="block w-full border-b border-border/60 p-2 text-right text-xs hover:bg-muted"
+                  onClick={() => {
+                    onChange(item.id);
+                    setQuery("");
+                    setChanging(false);
+                  }}
+                >
+                  <span className="font-bold">{item.nameAr}</span>
+                  <span className="mr-2 text-muted-foreground">{item.code} · {item.itemType === "stock" ? "مخزني" : "خدمة"}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {changing && <button type="button" className="mt-1 text-xs text-muted-foreground underline" onClick={() => { setChanging(false); setQuery(""); }}>إلغاء التغيير</button>}
+        </>
+      )}
+    </div>
+  );
 }
