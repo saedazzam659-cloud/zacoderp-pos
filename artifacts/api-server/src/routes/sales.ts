@@ -29,6 +29,7 @@ import {
   salesRepsTable, offersTable,
   goodsDeliveriesTable, goodsDeliveryLinesTable,
   subscriptionsTable,
+  negativeStockCostSettlementsTable,
   itemsTable,
   itemUnitPricesTable,
   posSessionsTable,
@@ -4071,10 +4072,13 @@ async function postSalesInvoiceHandler(
       warehouseId: number;
       qty: number;
       avgCost: number;
+      shortageQty: number;
+      shortageUnitCost: number;
       notes: string | null;
       picks: BatchPick[] | null; // null = legacy single-row, [] = nothing to pick
     };
     const stockOps: StockOp[] = [];
+    const availableByPair = new Map<string, number>();
     const batchPlans = !gdnSourced
       ? await readBatchRemainingBulk(
           cid,
@@ -4119,28 +4123,59 @@ async function postSalesInvoiceHandler(
         }
         let avgCost: number;
         let picks: BatchPick[] | null;
+        let shortageQty = 0;
+        let shortageUnitCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
         if (mode === "none") {
           avgCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
+          const pairKey = `${line.itemId}:${line.warehouseId}`;
+          const available = availableByPair.has(pairKey)
+            ? availableByPair.get(pairKey)!
+            : Math.max(0, stockSnapshots.get(pairKey)?.qty ?? 0);
+          const issuedFromStock = Math.min(qty, available);
+          shortageQty = qty - issuedFromStock;
+          availableByPair.set(pairKey, Math.max(0, available - issuedFromStock));
+          shortageUnitCost = avgCost;
           picks = null;
         } else {
           // Consume the preloaded plan in line order. The allocator mutates the
           // pair plan so repeated lines never re-use the same lot.
           try {
             const batchPlan = batchPlans.get(`${line.itemId}:${line.warehouseId}`) ?? [];
-            picks = hasManualBatchAllocation
-              ? allocateSelectedBatchPicks(batchPlan, line.batchAllocations, qty)
-              : allocateBatchPicks(batchPlan, qty);
+            if (hasManualBatchAllocation) {
+              // A manually specified lot allocation remains exact; the
+              // provisional negative layer is only used for automatic FIFO/
+              // FEFO allocation when available lots run out.
+              picks = allocateSelectedBatchPicks(batchPlan, line.batchAllocations, qty);
+            } else {
+              const available = batchPlan.reduce((sum, batch) => sum + Math.max(0, batch.remaining), 0);
+              const pickedQty = Math.min(qty, available);
+              picks = allocateBatchPicks(batchPlan, pickedQty);
+              shortageQty = qty - pickedQty;
+            }
           } catch (e: any) {
             res.status(400).json({ error: `${line.itemName ?? "صنف"}: ${e?.message ?? "كمية غير متاحة"}` });
             return;
           }
           const lineCost = picks.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
-          avgCost = qty > 0 ? lineCost / qty : 0;
+          shortageUnitCost = stockSnapshots.get(`${line.itemId}:${line.warehouseId}`)?.avgCost ?? 0;
+          avgCost = qty > 0
+            ? (lineCost + shortageQty * shortageUnitCost) / qty
+            : 0;
         }
         const lineCogs = Number(multiplyQuantity(String(qty), String(avgCost)));
         totalCogs += lineCogs;
         cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineCogs;
-        stockOps.push({ sourceLineId: line.id, itemId: line.itemId, warehouseId: line.warehouseId, qty, avgCost, notes: line.notes ?? null, picks });
+        stockOps.push({
+          sourceLineId: line.id,
+          itemId: line.itemId,
+          warehouseId: line.warehouseId,
+          qty,
+          avgCost,
+          shortageQty,
+          shortageUnitCost,
+          notes: line.notes ?? null,
+          picks,
+        });
       }
     }
     timing?.mark("costing");
@@ -4249,6 +4284,15 @@ async function postSalesInvoiceHandler(
         res.status(400).json({ error: `لم يتم ربط حساب محاسبي للمخزن/المخازن التالية: ${missingWh.join("، ")}. اضبط حساب المخزون من شاشة المخازن.` });
         return;
       }
+    }
+    if (
+      historicalImportMode !== "inventory_only" &&
+      historicalImportMode !== "financial_only" &&
+      stockOps.some((op) => op.shortageQty > 0.0001) &&
+      !cogsAccId
+    ) {
+      res.status(400).json({ error: "يلزم تحديد حساب تكلفة البضاعة المباعة لتسجيل تكلفة العجز المؤقت." });
+      return;
     }
     // Resolve Delivery Clearing for GDN-sourced invoices (auto-provisioning).
     let deliveryClearingAccId: number | null = null;
@@ -4651,10 +4695,55 @@ async function postSalesInvoiceHandler(
             notes:       `${op.notes ?? ""}${pick.batchNumber ? ` — تشغيلة ${pick.batchNumber}` : ""}`.trim() || undefined,
           });
         }
+        if (op.shortageQty > 0.0001) {
+          cursor -= op.shortageQty;
+          ledgerEntries.push({
+            companyId: cid,
+            itemId: op.itemId,
+            warehouseId: op.warehouseId,
+            txDate: inv.invoiceDate,
+            txType: "sale",
+            qty: String(-op.shortageQty),
+            costPrice: String(op.shortageUnitCost.toFixed(4)),
+            totalCost: String((-op.shortageQty * op.shortageUnitCost).toFixed(2)),
+            balanceQty: String(cursor.toFixed(4)),
+            refId: id,
+            refType: "sales_invoice",
+            sourceLineId: op.sourceLineId,
+            notes: `${op.notes ?? ""} — طبقة سالبة مؤقتة`.trim(),
+          });
+        }
       }
     }
     if (ledgerEntries.length) {
       await tx.insert(stockLedgerTable).values(ledgerEntries);
+    }
+    if (cogsAccId && historicalImportMode !== "inventory_only" && historicalImportMode !== "financial_only") {
+      const pendingLayers = stockOps
+        .filter((op) => op.shortageQty > 0.0001)
+        .map((op) => ({
+          companyId: cid,
+          salesInvoiceId: id,
+          salesLineId: op.sourceLineId,
+          itemId: op.itemId,
+          warehouseId: op.warehouseId,
+          quantity: String(op.shortageQty),
+          provisionalUnitCost: String(op.shortageUnitCost.toFixed(4)),
+          actualUnitCost: String(op.shortageUnitCost.toFixed(4)),
+          adjustmentAmount: "0",
+          cogsAccountId: cogsAccId,
+          inventoryAccountId: whInfo[op.warehouseId]?.accountId ?? null,
+          costCenter: (lines.find((line) => line.id === op.sourceLineId) as any)?.costCenter
+            ?? (inv as any).costCenter
+            ?? null,
+          status: "pending" as const,
+        }));
+      if (pendingLayers.some((layer) => layer.inventoryAccountId == null)) {
+        throw Object.assign(new Error("يلزم ربط حساب مخزون للمخزن قبل ترحيل عجز الصنف."), { status: 400 });
+      }
+      if (pendingLayers.length) {
+        await tx.insert(negativeStockCostSettlementsTable).values(pendingLayers);
+      }
     }
     await writeSalesLineProductionAttributions(
       tx,
