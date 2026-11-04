@@ -1702,6 +1702,43 @@ async function ensurePayrollAllocationSchema(options: { strict?: boolean } = {})
   return applied;
 }
 
+async function ensurePosEmployeeMealsSchema(): Promise<void> {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS pos_employee_meal_settings (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      daily_limit INTEGER NOT NULL DEFAULT 1,
+      unit_cost NUMERIC(18,2) NOT NULL DEFAULT 0,
+      expense_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      clearing_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      updated_by_user_id INTEGER REFERENCES users(id),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_employee_meal_settings_company_uniq
+      ON pos_employee_meal_settings(company_id)`,
+    `CREATE TABLE IF NOT EXISTS pos_employee_meals (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+      meal_date DATE NOT NULL,
+      meal_type TEXT NOT NULL,
+      count INTEGER NOT NULL,
+      unit_cost NUMERIC(18,2) NOT NULL,
+      total_cost NUMERIC(18,2) NOT NULL,
+      expense_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      clearing_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER REFERENCES journal_entries(id),
+      created_by_user_id INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_employee_meals_employee_day_type_uniq
+      ON pos_employee_meals(company_id, employee_id, meal_date, meal_type)`,
+  ];
+  for (const statement of statements) {
+    await db.execute(sql.raw(statement));
+  }
+}
+
 async function ensureTenantIdentityIndexes(): Promise<string[]> {
   const applied: string[] = [];
   const stmts: { label: string; sql: string }[] = [
@@ -4918,6 +4955,9 @@ async function runHeal(options: {
     await ensureAgentSchoolSchema();
     await ensureContractingBoqTables();
     await ensureAgentPosItemSubgroupsSchema();
+    // New POS meal tables must be materialized on existing external agent
+    // databases before strict generic schema validation checks declared tables.
+    await ensurePosEmployeeMealsSchema();
   }
   // Owner-bill tax mappings are required application data. Agent databases
   // need their complete DDL before strict table validation; central schema

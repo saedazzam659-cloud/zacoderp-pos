@@ -7,7 +7,12 @@ import { SharedPartyIdentityTab } from "./SharedPartyIdentityTab";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsTrigger as PrimitiveTabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger as PrimitiveTabsTrigger,
+  TabsContent as PrimitiveTabsContent,
+} from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Settings2, Upload, Trash2, CheckCircle2, Image as ImageIcon,
@@ -80,6 +85,18 @@ function TabsTrigger(props: ComponentProps<typeof PrimitiveTabsTrigger>) {
         {label}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+function TabsContent(props: ComponentProps<typeof PrimitiveTabsContent>) {
+  return (
+    <PrimitiveTabsContent
+      {...props}
+      className={cn(
+        "min-w-0 lg:col-start-2 lg:row-start-1 lg:mt-0",
+        props.className,
+      )}
+    />
   );
 }
 
@@ -1709,21 +1726,19 @@ export default function GeneralSettings() {
       )}
 
       {/* ─── Tabs Header — modern wrap-pill layout (RTL-aware, no text overlap) ─ */}
-      <Tabs defaultValue="general" dir="rtl" className="w-full">
+      <Tabs
+        defaultValue="general"
+        dir="rtl"
+        orientation="vertical"
+        className="w-full lg:grid lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)] lg:items-start lg:gap-5"
+      >
         <TabsList className={cn(
-          "grid grid-cols-2 gap-2 h-auto w-full bg-muted/40 border border-border/50 p-2 rounded-xl shadow-sm",
-          "[&>button]:!min-w-0 [&>button]:!h-auto [&>button]:!min-h-12 [&>button]:!w-full [&>button]:!flex-none [&>button]:!justify-start [&>button]:!whitespace-normal [&>button]:!px-3 [&>button]:!py-2 [&>button]:!text-start",
-          "[&>button>span]:!min-w-0 [&>button>span]:!flex-1 [&>button>span]:!whitespace-normal [&>button>span]:!overflow-visible [&>button>span]:!text-clip [&>button>span]:break-words [&>button>span]:leading-snug",
-          agentShortcutIcons && [
-            "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-3 bg-transparent border-0 p-0 shadow-none",
-            "[&>button]:min-w-0 [&>button]:h-auto [&>button]:min-h-[84px] [&>button]:w-full [&>button]:flex-none",
-            "[&>button]:flex-col [&>button]:justify-center [&>button]:gap-2 [&>button]:whitespace-normal [&>button]:px-2 [&>button]:py-3",
-            "[&>button]:rounded-xl [&>button]:border [&>button]:border-border/60 [&>button]:bg-card [&>button]:text-center [&>button]:text-xs [&>button]:shadow-sm",
-            "[&>button]:transition-all [&>button]:hover:-translate-y-0.5 [&>button]:hover:shadow-md",
-            "[&>button[data-state=active]]:border-primary [&>button[data-state=active]]:bg-primary/5 [&>button[data-state=active]]:text-primary [&>button[data-state=active]]:shadow-md",
-            "[&>button>svg]:h-7 [&>button>svg]:w-7 [&>button>svg]:shrink-0 [&>button>svg]:rounded-xl [&>button>svg]:bg-primary/10 [&>button>svg]:p-1.5 [&>button>svg]:text-primary",
-            "[&>button>span]:w-full [&>button>span]:whitespace-normal [&>button>span]:overflow-visible [&>button>span]:text-center [&>button>span]:leading-tight",
-          ]
+          "flex h-auto max-h-[42vh] w-full flex-col items-stretch gap-1.5 overflow-y-auto rounded-xl border border-border/60 bg-card p-2 shadow-sm",
+          "lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)]",
+          "[&>button]:!flex [&>button]:!h-auto [&>button]:!min-h-11 [&>button]:!w-full [&>button]:!min-w-0 [&>button]:!flex-none [&>button]:!justify-start [&>button]:!gap-3 [&>button]:!rounded-lg [&>button]:!px-3 [&>button]:!py-2 [&>button]:!text-start [&>button]:!text-sm [&>button]:!font-medium [&>button]:!whitespace-normal",
+          "[&>button>svg]:!h-4 [&>button>svg]:!w-4 [&>button>svg]:!shrink-0",
+          "[&>button>span]:!min-w-0 [&>button>span]:!flex-1 [&>button>span]:!whitespace-normal [&>button>span]:!overflow-visible [&>button>span]:!text-clip [&>button>span]:break-words [&>button>span]:!leading-snug",
+          "[&>button[data-state=active]]:!bg-primary [&>button[data-state=active]]:!text-primary-foreground [&>button[data-state=active]]:!shadow-sm",
         )}>
           <TabsTrigger
             value="general"

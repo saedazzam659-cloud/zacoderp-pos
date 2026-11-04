@@ -222,6 +222,26 @@ test("agent strict heal creates payroll allocation tables before missing-table v
     "required payroll tables must be created before strict missing-table validation");
 });
 
+test("external-agent heal creates POS employee-meal tables before strict validation", () => {
+  const helperStart = ensureSchemaSrc.indexOf("async function ensurePosEmployeeMealsSchema(");
+  const helperEnd = ensureSchemaSrc.indexOf("async function ensureTenantIdentityIndexes(", helperStart);
+  const helperBody = ensureSchemaSrc.slice(helperStart, helperEnd);
+  assert.ok(helperStart !== -1, "the additive employee-meal schema helper must exist");
+  assert.match(helperBody, /CREATE TABLE IF NOT EXISTS pos_employee_meal_settings/);
+  assert.match(helperBody, /CREATE TABLE IF NOT EXISTS pos_employee_meals/);
+  assert.match(helperBody, /pos_employee_meal_settings_company_uniq/);
+  assert.match(helperBody, /pos_employee_meals_employee_day_type_uniq/);
+
+  const runHealStart = ensureSchemaSrc.lastIndexOf("async function runHeal(");
+  const runHealEnd = ensureSchemaSrc.indexOf("export function ensureSchemaUpToDate", runHealStart);
+  const runHealBody = ensureSchemaSrc.slice(runHealStart, runHealEnd);
+  const externalHeal = runHealBody.indexOf("if (getActiveExternalDb()) {");
+  const mealsHeal = runHealBody.indexOf("await ensurePosEmployeeMealsSchema()", externalHeal);
+  const genericValidation = runHealBody.indexOf("const r = await ensureColumns(");
+  assert.ok(externalHeal !== -1 && mealsHeal > externalHeal && mealsHeal < genericValidation,
+    "agent meal tables must exist before strict missing-table validation");
+});
+
 test("external-agent heal creates CAPTCHA challenge storage before strict validation", () => {
   const helperStart = ensureSchemaSrc.indexOf("async function ensureAgentLoginCaptchaSchema(");
   const helperEnd = ensureSchemaSrc.indexOf("async function ensureAgentPosItemSubgroupsSchema(", helperStart);
