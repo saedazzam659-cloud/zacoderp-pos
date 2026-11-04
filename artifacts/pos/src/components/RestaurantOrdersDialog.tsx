@@ -54,25 +54,44 @@ export default function RestaurantOrdersDialog({
     if (!selected) return;
     setSubmitting(true); setError(null);
     try {
-      const lines: CreateInvoiceLine[] = selected.items
-        .filter(li => li.status !== "cancelled")
-        .map(li => {
-          const qty = Number(li.qty);
-          const price = Number(li.price);
+      const activeItems = selected.items.filter(li => li.status !== "cancelled");
+      if (activeItems.some(li => !li.erpItemId || !["stock", "service"].includes(li.erpItemType ?? ""))) {
+        throw new Error("اربط كل صنف مطعم بصنف مخزون أو خدمة من إعدادات المطعم قبل الفوترة");
+      }
+      if (activeItems.some(li => li.erpItemType === "stock") && !defaultWarehouseId) {
+        throw new Error("حدد مخزناً افتراضياً قبل فوترة أصناف مرتبطة بالمخزون");
+      }
+
+      // Repeated order lines for the same stocked item at the same price become
+      // one invoice line, avoiding duplicate-item rejection and duplicate stock
+      // movements while preserving the order total.
+      const grouped = new Map<string, {
+        itemId: number; itemType: "stock" | "service"; itemName: string; qty: number; price: number;
+      }>();
+      for (const li of activeItems) {
+        const qty = Number(li.qty);
+        const price = Number(li.price);
+        const itemId = li.erpItemId!;
+        const itemType = li.erpItemType as "stock" | "service";
+        const key = `erp:${itemId}:${price.toFixed(2)}`;
+        const current = grouped.get(key);
+        if (current) current.qty += qty;
+        else grouped.set(key, { itemId, itemType, itemName: li.nameSnapshot, qty, price });
+      }
+      const lines: CreateInvoiceLine[] = [...grouped.values()].map(line => {
+          const qty = line.qty;
+          const price = line.price;
           const lineSub = qty * price;
           const lineVat = lineSub * 0.15;
           return {
-            // Use 0 as itemId — server may accept null but type needs number;
-            // server will store name only. If your sales schema requires
-            // an itemId, link menuItem to an inventory item via posMenuItem.itemId.
-            itemId: 0,
-            itemName: li.nameSnapshot,
+            itemId: line.itemId,
+            itemName: line.itemName,
             qty,
             unitPrice: price,
             discount: 0,
             vatRate: 15,
             lineTotal: lineSub + lineVat,
-            warehouseId: defaultWarehouseId ?? undefined,
+            warehouseId: line.itemType === "stock" ? defaultWarehouseId! : undefined,
           };
         });
       const subtotal = Number(selected.subtotal);
@@ -80,6 +99,7 @@ export default function RestaurantOrdersDialog({
       const totalAmount = Number(selected.total);
 
       const body: CreateInvoiceBody = {
+        clientRequestId: `restaurant-order-${selected.id}`,
         invoiceDate: new Date().toISOString().slice(0, 10),
         branchId: branchId ?? null,
         paymentType: method === "cash" ? "cash" : "bank",
@@ -95,8 +115,14 @@ export default function RestaurantOrdersDialog({
         lines,
         posSessionId: getPosSessionId(),
       };
-      const inv = await api.createSalesInvoice(body);
-      try { await api.postSalesInvoice(inv.id); } catch {}
+      let inv = await api.createSalesInvoice(body);
+      if (inv.status !== "posted" && inv.paymentType && inv.paymentType !== body.paymentType) {
+        throw new Error("توجد مسودة فاتورة لهذا الطلب بطريقة دفع مختلفة؛ استخدم الطريقة نفسها أو راجع المسودة قبل المتابعة");
+      }
+      if (inv.status !== "posted") inv = await api.postSalesInvoice(inv.id);
+      if (inv.status !== "posted") {
+        throw new Error("لم يتم ترحيل الفاتورة؛ ظل الطلب مفتوحاً ويمكن إعادة المحاولة");
+      }
       await api.rBillOrder(selected.id, { salesInvoiceId: inv.id });
       setDone({ id: inv.id, method: methodLabel(method) });
       onBilled?.(inv.id);

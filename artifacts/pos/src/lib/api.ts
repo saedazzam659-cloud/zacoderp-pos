@@ -182,7 +182,7 @@ export type Customer = {
 };
 
 export type CreateInvoiceLine = {
-  itemId: number;
+  itemId: number | null;
   itemName: string;
   itemCode?: string | null;
   unit?: string | null;
@@ -196,6 +196,7 @@ export type CreateInvoiceLine = {
 };
 
 export type CreateInvoiceBody = {
+  clientRequestId?: string;
   invoiceDate: string;
   customerId?: number | null;
   branchId?: number | null;
@@ -342,6 +343,10 @@ export const api = {
   // Inventory
   getItems: (companyId: number) =>
     req<Item[]>("GET", `/api/inventory/items?companyId=${companyId}`),
+  searchItems: (companyId: number, query: string) =>
+    req<Item[]>("GET", `/api/inventory/items/search?companyId=${companyId}&includeHidden=1&itemTypes=stock,service&limit=20&q=${encodeURIComponent(query)}`),
+  lookupItems: (companyId: number, ids: number[]) =>
+    req<Item[]>("GET", `/api/inventory/items/lookup?companyId=${companyId}&ids=${ids.join(",")}`),
   getItemGroups: (companyId: number) =>
     req<PosItemGroup[]>("GET", `/api/inventory/item-groups?companyId=${companyId}`),
   getPosItemGroups: (companyId: number) =>
@@ -624,6 +629,8 @@ export type ROrderItem = {
   id: number;
   orderId: number;
   menuItemId: number;
+  erpItemId?: number | null;
+  erpItemType?: "stock" | "service" | "fixed_asset" | null;
   nameSnapshot: string;
   qty: string;
   price: string;

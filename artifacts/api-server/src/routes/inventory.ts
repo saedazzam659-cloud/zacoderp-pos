@@ -1685,6 +1685,13 @@ router.get("/items/search", async (req, res) => {
     .filter((value): value is typeof allowedItemNatures[number] =>
       allowedItemNatures.includes(value as typeof allowedItemNatures[number]),
     );
+  const allowedItemTypes = ["stock", "service", "fixed_asset"] as const;
+  const itemTypes = String(req.query.itemTypes ?? "")
+    .split(",")
+    .map(value => value.trim())
+    .filter((value): value is typeof allowedItemTypes[number] =>
+      allowedItemTypes.includes(value as typeof allowedItemTypes[number]),
+    );
   const includeUnclassified = String(req.query.includeUnclassified ?? "") === "1";
 
   const includeHidden = String(req.query.includeHidden ?? "") === "1"
@@ -1696,6 +1703,7 @@ router.get("/items/search", async (req, res) => {
       ? or(matchingNature, isNull(itemsTable.itemNature))!
       : matchingNature);
   }
+  if (itemTypes.length) clauses.push(inArray(itemsTable.itemType, itemTypes));
   if (query) {
     const pattern = `%${query}%`;
     clauses.push(or(

@@ -8,6 +8,7 @@ import {
   posOrderItemsTable,
   posSuspiciousOpsTable,
   salesInvoicesTable,
+  itemsTable,
   usersTable,
   stockBalanceTable,
   branchesTable,
@@ -82,6 +83,25 @@ function recalcTotals(lines: Array<{ qty: string | number; price: string | numbe
     vatAmount: vat.toFixed(2),
     total: (subtotal + vat).toFixed(2),
   };
+}
+
+async function validateRestaurantErpItemLink(companyId: number, value: unknown): Promise<number | null> {
+  if (value == null || String(value).trim() === "") return null;
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw Object.assign(new Error("اختر صنف مخزون أو خدمة صحيحاً"), { statusCode: 400 });
+  }
+  const [item] = await db.select({
+    id: itemsTable.id,
+    itemType: itemsTable.itemType,
+  }).from(itemsTable).where(and(
+    eq(itemsTable.id, id),
+    eq(itemsTable.companyId, companyId),
+  ));
+  if (!item || !["stock", "service"].includes(item.itemType)) {
+    throw Object.assign(new Error("الصنف المرتبط غير موجود في الشركة أو ليس صنف مخزون/خدمة"), { statusCode: 400 });
+  }
+  return item.id;
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -269,6 +289,7 @@ router.post("/menu/items", async (req, res) => {
   const { categoryId, code, nameAr, nameEn, description, price, prepTimeMinutes, kitchenStation, imageUrl, itemId, vatIncluded, modifiers } = req.body ?? {};
   if (!categoryId || !code || !nameAr) { res.status(400).json({ error: "categoryId/code/nameAr مطلوبة" }); return; }
   try {
+    const linkedItemId = await validateRestaurantErpItemLink(cid, itemId);
     const [row] = await db.insert(posMenuItemsTable).values({
       companyId: cid, categoryId: Number(categoryId), code, nameAr,
       nameEn: nameEn ?? null, description: description ?? null,
@@ -276,7 +297,7 @@ router.post("/menu/items", async (req, res) => {
       prepTimeMinutes: Number(prepTimeMinutes ?? 0),
       kitchenStation: kitchenStation ?? "kitchen",
       imageUrl: imageUrl ?? null,
-      itemId: itemId ? Number(itemId) : null,
+      itemId: linkedItemId,
       vatIncluded: vatIncluded !== false,
       modifiers: modifiers ?? [],
     }).returning();
@@ -290,6 +311,15 @@ router.put("/menu/items/:id", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const patch: any = { updatedAt: new Date() };
+  if (req.body?.itemId !== undefined) {
+    try {
+      patch.itemId = await validateRestaurantErpItemLink(cid, req.body.itemId);
+    } catch (error) {
+      res.status(Number((error as { statusCode?: number })?.statusCode) || 400)
+        .json({ error: error instanceof Error ? error.message : "الصنف المرتبط غير صالح" });
+      return;
+    }
+  }
   for (const k of ["nameAr","nameEn","description","kitchenStation","imageUrl","modifiers"]) {
     if (req.body?.[k] !== undefined) patch[k] = req.body[k];
   }
@@ -336,7 +366,33 @@ router.get("/orders/:id", async (req, res) => {
   const [order] = await db.select().from(posOrdersTable)
     .where(and(eq(posOrdersTable.id, id), eq(posOrdersTable.companyId, cid)));
   if (!order) { res.status(404).json({ error: "not found" }); return; }
-  const items = await db.select().from(posOrderItemsTable)
+  const items = await db.select({
+    id: posOrderItemsTable.id,
+    orderId: posOrderItemsTable.orderId,
+    menuItemId: posOrderItemsTable.menuItemId,
+    erpItemId: posMenuItemsTable.itemId,
+    erpItemType: itemsTable.itemType,
+    nameSnapshot: posOrderItemsTable.nameSnapshot,
+    qty: posOrderItemsTable.qty,
+    price: posOrderItemsTable.price,
+    total: posOrderItemsTable.total,
+    modifiers: posOrderItemsTable.modifiers,
+    kitchenStation: posOrderItemsTable.kitchenStation,
+    status: posOrderItemsTable.status,
+    notes: posOrderItemsTable.notes,
+    sentAt: posOrderItemsTable.sentAt,
+    readyAt: posOrderItemsTable.readyAt,
+    createdAt: posOrderItemsTable.createdAt,
+    updatedAt: posOrderItemsTable.updatedAt,
+  }).from(posOrderItemsTable)
+    .leftJoin(posMenuItemsTable, and(
+      eq(posMenuItemsTable.id, posOrderItemsTable.menuItemId),
+      eq(posMenuItemsTable.companyId, cid),
+    ))
+    .leftJoin(itemsTable, and(
+      eq(itemsTable.id, posMenuItemsTable.itemId),
+      eq(itemsTable.companyId, cid),
+    ))
     .where(eq(posOrderItemsTable.orderId, id))
     .orderBy(asc(posOrderItemsTable.id));
   res.json({ ...order, items });
@@ -432,23 +488,64 @@ router.post("/orders/:id/send", async (req, res) => {
 router.post("/orders/:id/bill", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { salesInvoiceId } = req.body ?? {};
-  const [order] = await db.select().from(posOrdersTable)
-    .where(and(eq(posOrdersTable.id, id), eq(posOrdersTable.companyId, cid)));
-  if (!order) { res.status(404).json({ error: "not found" }); return; }
-  await db.update(posOrdersTable)
-    .set({
-      status: "billed", billedAt: new Date(),
-      billedInvoiceId: salesInvoiceId ? Number(salesInvoiceId) : null,
-      updatedAt: new Date(),
-    })
-    .where(eq(posOrdersTable.id, id));
-  if (order.tableId) {
-    await db.update(posTablesTable)
-      .set({ status: "free", currentOrderId: null, updatedAt: new Date() })
-      .where(eq(posTablesTable.id, order.tableId));
+  const salesInvoiceId = Number(req.body?.salesInvoiceId);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(salesInvoiceId) || salesInvoiceId <= 0) {
+    res.status(400).json({ error: "معرّف الطلب والفاتورة مطلوبان" }); return;
   }
-  res.json({ ok: true });
+  try {
+    await db.transaction(async (tx) => {
+      const [order] = await tx.select().from(posOrdersTable)
+        .where(and(eq(posOrdersTable.id, id), eq(posOrdersTable.companyId, cid)))
+        .for("update");
+      if (!order) throw Object.assign(new Error("الطلب غير موجود"), { statusCode: 404 });
+
+      const [invoice] = await tx.select({
+        id: salesInvoicesTable.id,
+        status: salesInvoicesTable.status,
+      }).from(salesInvoicesTable)
+        .where(and(
+          eq(salesInvoicesTable.id, salesInvoiceId),
+          eq(salesInvoicesTable.companyId, cid),
+        ))
+        .for("update");
+      if (!invoice) throw Object.assign(new Error("الفاتورة غير موجودة"), { statusCode: 404 });
+      if (invoice.status !== "posted") {
+        throw Object.assign(new Error("لا يمكن إغلاق الطلب قبل ترحيل الفاتورة بنجاح"), { statusCode: 409 });
+      }
+
+      if (order.status === "billed") {
+        if (order.billedInvoiceId === salesInvoiceId) return;
+        throw Object.assign(new Error("الطلب مرتبط بفاتورة أخرى بالفعل"), { statusCode: 409 });
+      }
+      if (order.status === "cancelled") {
+        throw Object.assign(new Error("لا يمكن فوترة طلب ملغى"), { statusCode: 409 });
+      }
+
+      await tx.update(posOrdersTable)
+        .set({
+          status: "billed", billedAt: new Date(),
+          billedInvoiceId: salesInvoiceId,
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(posOrdersTable.id, id),
+          eq(posOrdersTable.companyId, cid),
+        ));
+      if (order.tableId) {
+        await tx.update(posTablesTable)
+          .set({ status: "free", currentOrderId: null, updatedAt: new Date() })
+          .where(and(
+            eq(posTablesTable.id, order.tableId),
+            eq(posTablesTable.companyId, cid),
+          ));
+      }
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    const statusCode = Number((error as { statusCode?: number })?.statusCode) || 500;
+    if (statusCode >= 500) req.log.error({ err: error, orderId: id, salesInvoiceId }, "restaurant order billing link failed");
+    res.status(statusCode).json({ error: error instanceof Error ? error.message : "تعذر إغلاق الطلب" });
+  }
 });
 
 router.post("/orders/:id/cancel", async (req, res) => {
