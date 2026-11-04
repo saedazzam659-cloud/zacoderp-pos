@@ -2890,6 +2890,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
         const { line, qty, costUnit, landedCost } = receipt;
         const oldBalance = await getBalance(cid, line.itemId!, line.warehouseId!, tx);
         let uncoveredQty = Math.min(qty, Math.max(0, -oldBalance));
+        let coveredForBatch = 0;
         if (uncoveredQty > 0.0001) {
           const pendingLayers = await tx.select().from(negativeStockCostSettlementsTable)
             .where(and(
@@ -2905,6 +2906,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
             const layerQty = Math.max(0, Number(layer.quantity));
             const coveredQty = Math.min(layerQty, uncoveredQty);
             if (coveredQty <= 0.0001) continue;
+            coveredForBatch += coveredQty;
             if (!layer.cogsAccountId || !layer.inventoryAccountId) {
               throw Object.assign(new Error("تعذر تسوية تكلفة البيع السالب لعدم اكتمال حسابات التكلفة أو المخزون."), { status: 409 });
             }
@@ -2918,6 +2920,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
               purchaseLineId: line.id,
               itemId: layer.itemId,
               warehouseId: layer.warehouseId,
+              originalQuantity: String(coveredQty),
               quantity: String(coveredQty),
               provisionalUnitCost: String(provisionalUnitCost.toFixed(4)),
               actualUnitCost: String(costUnit.toFixed(4)),
@@ -2999,6 +3002,51 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
           expiryDate: line.expiryDate ? String(line.expiryDate) : null,
           notes: line.notes ?? undefined,
         }, tx);
+        if (coveredForBatch > 0.0001 && line.batchNumber) {
+          const [itemInfo] = await tx.select({ mode: itemsTable.batchTrackingMode })
+            .from(itemsTable)
+            .where(and(eq(itemsTable.id, line.itemId!), eq(itemsTable.companyId, cid)))
+            .limit(1);
+          if (itemInfo?.mode === "fifo" || itemInfo?.mode === "fefo") {
+            const batchNumber = String(line.batchNumber).trim();
+            const coveredCost = coveredForBatch * costUnit;
+            const transferNotes = "تسوية نسبة التشغيلة التي غطت طبقة مخزون سالبة";
+            // Re-attribute the covered quantity from the unbatched negative
+            // layer into the received lot without changing total stock or value.
+            await addStockLedgerEntry({
+              companyId: cid,
+              itemId: line.itemId!,
+              warehouseId: line.warehouseId!,
+              txDate: inv.invoiceDate,
+              txType: "adjustment",
+              qty: String(coveredForBatch),
+              costPrice: String(costUnit.toFixed(4)),
+              totalCost: String(coveredCost.toFixed(4)),
+              balanceQty: String((newBal + coveredForBatch).toFixed(4)),
+              refId: id,
+              refType: "purchase_invoice",
+              sourceLineId: line.id,
+              notes: transferNotes,
+            }, tx);
+            await addStockLedgerEntry({
+              companyId: cid,
+              itemId: line.itemId!,
+              warehouseId: line.warehouseId!,
+              txDate: inv.invoiceDate,
+              txType: "adjustment",
+              qty: String(-coveredForBatch),
+              costPrice: String(costUnit.toFixed(4)),
+              totalCost: String((-coveredCost).toFixed(4)),
+              balanceQty: String(newBal.toFixed(4)),
+              refId: id,
+              refType: "purchase_invoice",
+              sourceLineId: line.id,
+              batchNumber,
+              expiryDate: line.expiryDate ? String(line.expiryDate) : null,
+              notes: transferNotes,
+            }, tx);
+          }
+        }
       }
       for (const itemId of costRefreshItemIds) {
         await refreshItemCost(cid, itemId, tx);
