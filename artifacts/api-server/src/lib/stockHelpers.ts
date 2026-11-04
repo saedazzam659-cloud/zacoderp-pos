@@ -388,7 +388,16 @@ export async function upsertBalance(
     let newQty: number, newAvg: number;
     if (deltaQty > 0) {
       newQty = oldQty + deltaQty;
-      newAvg = newQty === 0 ? costPrice : (oldQty * oldCost + deltaQty * costPrice) / newQty;
+      if (oldQty < 0) {
+        // Receipts first cover the negative layer. Do not average its
+        // provisional cost into the received stock: that invents value (for
+        // example, -4 @ 0 plus 10 @ 5 must leave 6 @ 5, not 6 @ 8.33).
+        // The sale-side COGS difference is reconciled separately from this
+        // balance summary.
+        newAvg = newQty > 0 ? costPrice : oldCost;
+      } else {
+        newAvg = newQty === 0 ? costPrice : (oldQty * oldCost + deltaQty * costPrice) / newQty;
+      }
     } else {
       newQty = oldQty + deltaQty;
       newAvg = oldCost;

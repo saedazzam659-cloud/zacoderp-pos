@@ -2432,6 +2432,12 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
     const groupInvItemNamesByAccount: Record<string, string[]> = {};
     let groupInvTotal = 0;
     const costRefreshItemIds = new Set<number>();
+    const stockReceiptPlan: Array<{
+      line: (typeof lines)[number];
+      qty: number;
+      costUnit: number;
+      landedCost: number;
+    }> = [];
     const directExpenseShares = await capitalizedExpenseShares(db, cid, inv);
     for (const line of lines) {
       if ((line as any).lineType === "direct_expense") {
@@ -2513,32 +2519,9 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
       if (grnSourced) continue;
 
       if (historicalImportMode !== "financial_only") {
-      await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
+      stockReceiptPlan.push({ line, qty, costUnit, landedCost });
       costRefreshItemIds.add(line.itemId);
-      const newBal = await getBalance(cid, line.itemId, line.warehouseId);
-      await addStockLedgerEntry({
-        companyId:   cid,
-        itemId:      line.itemId,
-        warehouseId: line.warehouseId,
-        txDate:      inv.invoiceDate,
-        txType:      "purchase",
-        qty:         String(qty),
-        costPrice:   String(costUnit.toFixed(4)),
-        totalCost:   String(landedCost.toFixed(2)),
-        balanceQty:  String(newBal),
-        refId:       id,
-        refType:     "purchase_invoice",
-        batchNumber: line.batchNumber ? String(line.batchNumber).trim() || null : null,
-        expiryDate:  line.expiryDate  ? String(line.expiryDate)  : null,
-        notes:       line.notes ?? undefined,
-      });
       }
-    }
-
-    // Write the new company-wide weighted-average cost back to the item master
-    // so the الأصناف (items) grid shows the latest landed cost after posting.
-    for (const itemId of costRefreshItemIds) {
-      await refreshItemCost(cid, itemId);
     }
 
     // ── Create journal entry (قيد محاسبي) ──────────────────────────
@@ -2884,6 +2867,41 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
     }
 
     const updated = await db.transaction(async (tx) => {
+      // Keep stock, its immutable ledger, the accounting entry, and invoice
+      // status in one transaction. In particular, a closed-period rejection
+      // from createJournalEntry must not leave a committed stock receipt.
+      for (const receipt of stockReceiptPlan) {
+        const { line, qty, costUnit, landedCost } = receipt;
+        const newBal = await upsertBalance(
+          cid,
+          line.itemId!,
+          line.warehouseId!,
+          qty,
+          costUnit,
+          tx,
+        );
+        await addStockLedgerEntry({
+          companyId: cid,
+          itemId: line.itemId!,
+          warehouseId: line.warehouseId!,
+          txDate: inv.invoiceDate,
+          txType: "purchase",
+          qty: String(qty),
+          costPrice: String(costUnit.toFixed(4)),
+          totalCost: String(landedCost.toFixed(2)),
+          balanceQty: String(newBal),
+          refId: id,
+          refType: "purchase_invoice",
+          sourceLineId: line.id,
+          batchNumber: line.batchNumber ? String(line.batchNumber).trim() || null : null,
+          expiryDate: line.expiryDate ? String(line.expiryDate) : null,
+          notes: line.notes ?? undefined,
+        }, tx);
+      }
+      for (const itemId of costRefreshItemIds) {
+        await refreshItemCost(cid, itemId, tx);
+      }
+
       const journalId = historicalImportMode === "inventory_only" ? null : await createJournalEntry({
         companyId:    cid,
         audit:        { req },

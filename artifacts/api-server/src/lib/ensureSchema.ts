@@ -28,6 +28,7 @@ import { ensureCompanyPurgeSchema } from "./companyPurgeSchema.js";
 import { ensureAgentSchoolSchema } from "./agentSchoolSchema.js";
 import { ensureCrmWhatsAppSchema } from "./crmWhatsAppSchema.js";
 import { ensurePartyIdentitySchema } from "./partyIdentitySchema.js";
+import { ensureNegativeStockCostSchema } from "./negativeStockCostSchema.js";
 
 async function ensureTaxIntegrationSchema(): Promise<void> {
   await db.execute(sql.raw(`
@@ -4886,6 +4887,7 @@ async function runHeal(options: {
   await ensureInternalControlSchema();
   await ensureDocumentExpenseSchema();
   await ensurePartyIdentitySchema();
+  await ensureNegativeStockCostSchema();
   await ensureTaxIntegrationSchema();
   await ensureCrmWhatsAppSchema();
   await ensurePurchaseBatchExpirySettingMigration();

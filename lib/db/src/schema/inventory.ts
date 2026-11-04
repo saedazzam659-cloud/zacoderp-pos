@@ -500,6 +500,42 @@ export const stockLedgerTable = pgTable("stock_ledger", {
   createdAt:   timestamp("created_at").defaultNow().notNull(),
 });
 
+// Traceable cost coverage for sales that temporarily drove a stock pair below
+// zero. Rows are allocations, not replacements for the immutable sale/purchase
+// stock-ledger movements; reversing a purchase marks its allocations reversed.
+export const negativeStockCostSettlementsTable = pgTable("negative_stock_cost_settlements", {
+  id:                    serial("id").primaryKey(),
+  companyId:             integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  salesInvoiceId:        integer("sales_invoice_id").notNull(),
+  salesLineId:           integer("sales_line_id").notNull(),
+  purchaseInvoiceId:     integer("purchase_invoice_id"),
+  purchaseLineId:        integer("purchase_line_id"),
+  itemId:                integer("item_id").notNull(),
+  warehouseId:           integer("warehouse_id").notNull(),
+  quantity:              numeric("quantity", { precision: 18, scale: 4 }).notNull(),
+  provisionalUnitCost:   numeric("provisional_unit_cost", { precision: 14, scale: 4 }).notNull(),
+  actualUnitCost:        numeric("actual_unit_cost", { precision: 14, scale: 4 }).notNull(),
+  adjustmentAmount:      numeric("adjustment_amount", { precision: 18, scale: 2 }).notNull(),
+  cogsAccountId:         integer("cogs_account_id"),
+  inventoryAccountId:    integer("inventory_account_id"),
+  costCenter:            text("cost_center"),
+  journalEntryId:        integer("journal_entry_id"),
+  status:                text("status").notNull().default("active"),
+  createdAt:             timestamp("created_at").defaultNow().notNull(),
+  reversedAt:            timestamp("reversed_at"),
+}, (table) => ({
+  activePurchaseAllocation: uniqueIndex("negative_stock_cost_active_purchase_sale_uq")
+    .on(table.companyId, table.purchaseLineId, table.salesLineId)
+    .where(sql`${table.status} = 'active'`),
+  salesLineLookup: index("negative_stock_cost_sales_line_idx")
+    .on(table.companyId, table.salesLineId, table.status),
+  purchaseLookup: index("negative_stock_cost_purchase_idx")
+    .on(table.companyId, table.purchaseInvoiceId, table.status),
+  pendingLayerLookup: index("negative_stock_cost_pending_idx")
+    .on(table.companyId, table.itemId, table.warehouseId, table.id)
+    .where(sql`${table.status} = 'pending'`),
+}));
+
 // ─── Stock Transfers ──────────────────────────────────────────────────────────
 export const stockTransfersTable = pgTable("stock_transfers", {
   id:              serial("id").primaryKey(),
