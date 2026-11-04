@@ -269,6 +269,9 @@ interface DocLine {
   // the already-reduced price → cross-cycle double-discount.
   // Updated only when the user manually edits unitPrice or selects an item.
   baseUnitPrice: string;
+  // Lowest allowed manual unit price for this line's currently selected
+  // catalog price or explicitly selected configured price option.
+  minimumAllowedUnitPrice?: string;
   // ─── Brand (العلامة التجارية) — OPTIONAL, invoice-mode only, PRINT-ONLY ─────
   // brandId links to the chosen brand so we can reload its per-brand price on
   // edit; brandName is the display snapshot printed on the invoice. NEITHER
@@ -292,7 +295,7 @@ function newLine(): DocLine {
     lineTotal: "0", notes: "",
     appliedOfferId: null, appliedOfferName: null,
     engineUnitPrice: null, engineDiscount: null,
-    baseUnitPrice: "0",
+    baseUnitPrice: "0", minimumAllowedUnitPrice: "0",
     brandId: null, brandName: "",
     costCenter: "",
     batchAllocations: null,
@@ -675,6 +678,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         line.itemCode = String(item?.sku ?? item?.barcode ?? product?.sku ?? "").slice(0, 120);
         line.qty = Number.isFinite(qty) && qty > 0 ? String(qty) : "1";
         line.unitPrice = Number.isFinite(price) && price >= 0 ? String(price) : "0";
+        line.minimumAllowedUnitPrice = line.unitPrice;
         line.vatRate = Number.isFinite(vat) && vat >= 0 ? String(vat) : "15";
         line.lineTotal = String((Number(line.qty) * Number(line.unitPrice)).toFixed(2));
         return line;
@@ -934,6 +938,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         engineUnitPrice:  null,
         engineDiscount:   null,
         baseUnitPrice:    String(l.unitPrice ?? "0"),
+        minimumAllowedUnitPrice: String(l.unitPrice ?? "0"),
       })) : [newLine()]);
       setSourceQuotationId(qid);
       toast({ title: t("salesDocForm.basedOnQuotationLoaded", { num: src.docNumber ?? `SQ-${qid}` }) });
@@ -1270,6 +1275,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       if (np == null) return l;
       const updated: DocLine = {
         ...l, unitPrice: np, baseUnitPrice: np,
+        minimumAllowedUnitPrice: np,
         engineUnitPrice: null, engineDiscount: null,
         appliedOfferId: null, appliedOfferName: null,
       };
@@ -1388,7 +1394,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // didn't save the original). Acceptable trade-off — on no-match the
       // line drops out cleanly; on still-qualify the engine writes the same
       // value and idempotency holds.
-      baseUnitPrice:    String(l.unitPrice ?? "0"),
+       baseUnitPrice:    String(l.unitPrice ?? "0"),
+       minimumAllowedUnitPrice: String(l.unitPrice ?? "0"),
       // Brand snapshot (invoice-mode only; null on quotations/orders).
       brandId:          l.brandId != null ? Number(l.brandId) : null,
       brandName:        l.brandName ?? "",
@@ -1468,6 +1475,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           engineUnitPrice:  null,
           engineDiscount:   null,
           baseUnitPrice:    String(l.unitPrice ?? "0"),
+          minimumAllowedUnitPrice: String(l.unitPrice ?? "0"),
         })) : [newLine()]);
         // Same logic for the document offer — duplicate gets a fresh match.
         setDocumentOfferId(null);
@@ -1536,6 +1544,23 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
     }));
+  }
+
+  function enforceLinePriceFloor(lineId: string) {
+    const line = lines.find(candidate => candidate._id === lineId);
+    if (!line || (line.engineUnitPrice !== null && line.engineUnitPrice === line.unitPrice)) return;
+    const minimum = Number(line.minimumAllowedUnitPrice ?? line.unitPrice);
+    const entered = Number(line.unitPrice);
+    if (!Number.isFinite(minimum) || minimum <= 0 || !Number.isFinite(entered) || entered >= minimum) return;
+    const corrected = trimTrailingZeros(String(minimum));
+    updateLine(lineId, "unitPrice", corrected);
+    toast({
+      title: isRtl ? "السعر أقل من المسموح" : "Price is below the allowed minimum",
+      description: isRtl
+        ? `أدنى سعر لهذا الاختيار هو ${fmt(minimum)}. اختر سعرًا بديلًا مسجلًا إذا أردت سعرًا أقل.`
+        : `The minimum for this selection is ${fmt(minimum)}. Choose a configured alternative to use a lower price.`,
+      variant: "destructive",
+    });
   }
 
   function updateBatchAllocations(lineId: string, allocations: SalesBatchAllocation[] | null) {
@@ -1645,6 +1670,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         unit:      chosenUnitName,
         conversionFactor: String(chosenFactor),
         unitPrice: newPrice,
+        minimumAllowedUnitPrice: newPrice,
         // Picking a new item resets the engine ownership and the matching
         // base — the catalog price IS the new base.
         baseUnitPrice: newPrice,
@@ -1905,6 +1931,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         unit: localizedName(row?.unit?.nameAr ?? globalUnit?.nameAr, row?.unit?.nameEn ?? globalUnit?.nameEn, isRtl ? "ar" : "en"),
         conversionFactor: String(row?.conversionFactor ?? "1"),
         unitPrice: newPrice,
+        minimumAllowedUnitPrice: newPrice,
         baseUnitPrice: newPrice,
         engineUnitPrice: null,
         engineDiscount:  null,
@@ -1938,6 +1965,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           updated = {
             ...updated,
             unitPrice: np, baseUnitPrice: np,
+            minimumAllowedUnitPrice: np,
             engineUnitPrice: null, engineDiscount: null,
             appliedOfferId: null, appliedOfferName: null,
             discount: "0",
@@ -1996,6 +2024,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         ...current,
         itemName: name,
         unitPrice: trimTrailingZeros(String(optionPrice)),
+        minimumAllowedUnitPrice: trimTrailingZeros(String(optionPrice)),
         baseUnitPrice: trimTrailingZeros(String(optionPrice)),
         engineUnitPrice: null,
         engineDiscount: null,
@@ -2509,6 +2538,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     // React Query's pending state updates on a render; this ref closes the
     // same-tick double-click/Enter window before a second mutation can POST.
     if (saveInFlightRef.current || saveMut.isPending) return;
+    if (isInvoice) {
+      const underpricedLine = lines.find(line => {
+        if (!line.itemId || (line.engineUnitPrice !== null && line.engineUnitPrice === line.unitPrice)) return false;
+        const minimum = Number(line.minimumAllowedUnitPrice ?? 0);
+        const price = Number(line.unitPrice || 0);
+        return minimum > 0 && (!Number.isFinite(price) || price + 0.0000001 < minimum);
+      });
+      if (underpricedLine) {
+        setActiveTab("items");
+        setFocusLineId(underpricedLine._id);
+        toast({
+          title: isRtl ? "لا يمكن حفظ سعر أقل من الحد المسموح" : "Price is below the allowed minimum",
+          description: isRtl
+            ? "أعد السعر إلى الحد المسموح أو اختر السعر البديل المسجل للصنف."
+            : "Restore the allowed minimum or select a configured alternative price for this item.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     // Required-fields gate (mirrors the server's 400 in /sales-invoices):
     // every sales invoice must carry an explicit customer + branch. We
     // surface this as an attractive destructive toast BEFORE the network
@@ -3252,11 +3301,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       title={fp.isReadOnly("freeQty") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : (t("salesDocForm.colFreeQtyHint") as string)}
                       onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />}
                     <Input
+                      data-testid={`input-sales-unit-price-${l._id}`}
                       className={cn("h-8 text-xs font-mono", l.appliedOfferId && l.appliedOfferName && "bg-emerald-50 border-emerald-300 text-emerald-800", fp.isReadOnly("unitPrice") && "bg-muted/40 cursor-not-allowed")}
                       type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
                       readOnly={fp.isReadOnly("unitPrice")}
                       title={fp.isReadOnly("unitPrice") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : undefined}
-                      onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))}
+                      onBlur={() => enforceLinePriceFloor(l._id)} />
                     <div className="flex items-center gap-0.5">
                       <Input className="h-8 text-xs font-mono flex-1 min-w-0" type="text" inputMode="decimal" dir="ltr"
                         value={dMode === "amt" ? (l.discountAmount || "0") : (l.discount || "0")}
@@ -3497,6 +3548,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         title={fp.isReadOnly("freeQty") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : (t("salesDocForm.colFreeQtyHint") as string)}
                         onChange={e => updateLine(l._id, "freeQty", e.target.value.replace(/[^0-9]/g, ""))} />}
                       <Input
+                        data-testid={`input-sales-unit-price-${l._id}`}
                         className={cn(
                           "h-8 text-xs",
                           l.appliedOfferId && l.appliedOfferName && "bg-emerald-50 border-emerald-300 text-emerald-800",
@@ -3505,7 +3557,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
                         readOnly={fp.isReadOnly("unitPrice")}
                       title={fp.isReadOnly("unitPrice") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : undefined}
-                        onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                        onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))}
+                        onBlur={() => enforceLinePriceFloor(l._id)} />
                       {/* خصم% — نسبة مئوية تُطبَّق على (الكمية × سعر البيع). */}
                       <Input
                         className={cn(
