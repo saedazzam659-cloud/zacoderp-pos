@@ -30,6 +30,13 @@ export function negativeStockCostAdjustment(
 
 export type NegativeStockCostSource = "stock_average" | "last_purchase" | "item_card" | "missing";
 
+export function shouldRejectUncostedNegativeStock(
+  enforcementEnabled: boolean,
+  hasUncostedShortage: boolean,
+): boolean {
+  return enforcementEnabled && hasUncostedShortage;
+}
+
 export function resolveNegativeStockUnitCost(input: {
   costMethod: string;
   averageCost: number;

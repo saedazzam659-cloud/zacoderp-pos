@@ -166,6 +166,9 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       windowsModulePermissions:  source.windowsModulePermissions,
       autoPostingEnabled:        source.autoPostingEnabled,
       sequenceProtectionEnabled: source.sequenceProtectionEnabled ?? false,
+      // A clone is not a new customer registration; do not switch on the
+      // strict negative-stock posting policy just because the clone is new.
+      negativeStockCostEnforced: false,
       allowUnbalancedOpeningBalances: source.allowUnbalancedOpeningBalances,
       openingBalanceReminderMessage: source.openingBalanceReminderMessage,
       openingBalanceReminderStartTime: source.openingBalanceReminderStartTime,

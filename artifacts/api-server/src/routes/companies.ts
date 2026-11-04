@@ -140,6 +140,7 @@ router.post("/", async (req, res) => {
     invoiceType: data.invoiceType ?? "both",
     isSandbox: data.isSandbox ?? false,
     sequenceProtectionEnabled: true,
+    negativeStockCostEnforced: true,
     serialNumber: data.serialNumber,
     deviceSerial1: data.deviceSerial1,
     deviceSerial2: data.deviceSerial2,

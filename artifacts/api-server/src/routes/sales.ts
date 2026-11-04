@@ -73,7 +73,10 @@ import { logger } from "../lib/logger.js";
 import { ensureProjectFinancialLinks, resolveProjectLink } from "../lib/project-financial-link.js";
 import { getAgentDbPoolStats } from "../lib/agentDb.js";
 import { ensureCustomerLedger } from "../lib/entityAccounts.js";
-import { resolveNegativeStockUnitCost } from "../lib/negativeStockCost.js";
+import {
+  resolveNegativeStockUnitCost,
+  shouldRejectUncostedNegativeStock,
+} from "../lib/negativeStockCost.js";
 import { assertZatcaSubmissionAllowed, resolveZatcaChain, withZatcaChainLock } from "../lib/zatcaRegistrationTransfer.js";
 import {
   admitInvoiceAcceleration,
@@ -4347,12 +4350,28 @@ async function postSalesInvoiceHandler(
     }
     timing?.mark("costing");
     const uncostedShortage = stockOps.find((op) => op.shortageQty > 0.0001 && op.shortageUnitCost <= 0);
-    if (uncostedShortage) {
+    const [negativeStockCostPolicy] = uncostedShortage
+      ? await tx.select({ enforced: companiesTable.negativeStockCostEnforced })
+        .from(companiesTable)
+        .where(eq(companiesTable.id, cid))
+        .limit(1)
+      : [];
+    if (uncostedShortage && shouldRejectUncostedNegativeStock(
+      negativeStockCostPolicy?.enforced ?? false,
+      true,
+    )) {
       const itemName = lines.find((line) => line.id === uncostedShortage.sourceLineId)?.itemName ?? `#${uncostedShortage.itemId}`;
       res.status(400).json({
         error: `لا يمكن ترحيل البيع السالب للصنف "${itemName}": لا توجد تكلفة مخزنية أو فاتورة شراء سابقة أو تكلفة مسجلة في بطاقة الصنف.`,
       });
       return;
+    }
+    if (uncostedShortage) {
+      logger.warn({
+        companyId: cid,
+        itemId: uncostedShortage.itemId,
+        warehouseId: uncostedShortage.warehouseId,
+      }, "Legacy company posted negative stock without a positive cost source");
     }
 
     // ── Build journal entry ──

@@ -3190,6 +3190,8 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS input_hint_color TEXT NOT NULL DEFAULT '#64748b'` },
     { label: "companies add allow_negative_sales",
       sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS allow_negative_sales BOOLEAN NOT NULL DEFAULT FALSE` },
+    { label: "companies add negative_stock_cost_enforced",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS negative_stock_cost_enforced BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "warehouses add block_negative_sales",
       sql:   `ALTER TABLE warehouses ADD COLUMN IF NOT EXISTS block_negative_sales BOOLEAN NOT NULL DEFAULT FALSE` },
     { label: "companies add topbar_quick_actions",

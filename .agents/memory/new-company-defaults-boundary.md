@@ -5,6 +5,12 @@ description: Scope approved for initial company settings and numbering without c
 
 Apply the requested settings only when creating a genuinely new company: horizontal navigation, hidden quick item entry strip, five-digit numbering starting at 1, and initial accounting mappings.
 
+Negative-stock cost enforcement is also a creation-time setting: enable it for real customer-registration flows, but leave existing companies, copied companies, transferred companies, and training sandboxes unchanged unless explicitly approved.
+
+**Why:** Existing businesses may lack purchase history or item-card costs; enforcing complete costing on them would block sales. New companies can start with the stricter policy without backfilling or disrupting active tenants.
+
+**How to apply:** Use a company-level flag with a false database default, set it only in genuine customer-company creation paths, explicitly keep it off for clones and training sandboxes, and preserve it when transferring the same company between environments. Do not turn it on during schema healing or general company updates.
+
 **Why:** The user explicitly approved creation-time initialization but emphasized that existing companies must not change. This approval does not cover changing accounting calculations, posting rules, resetting existing counters, or copying defaults onto restored/imported companies.
 
 **How to apply:** Keep this policy out of startup migrations, company updates, clone/restore/import paths, and approval of already-created pending companies. Deployed independent agents need an application update before their own future creations can use new defaults.

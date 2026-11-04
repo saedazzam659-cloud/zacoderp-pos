@@ -1848,6 +1848,7 @@ router.post("/register", async (req, res) => {
     status: companyStatus,
     registrationIp,
     sequenceProtectionEnabled: true,
+    negativeStockCostEnforced: true,
     // New tenants default to the legacy "manual" journal-entry form mode
     // (close screen + return to list after each save). They can switch to
     // the faster "auto" continuous-entry mode from الإعدادات العامة.

@@ -211,6 +211,7 @@ router.post("/clients", requireResellerPermission("add_companies"), async (req, 
     isSandbox: false,
     status: "active",
     sequenceProtectionEnabled: true,
+    negativeStockCostEnforced: true,
     journalEntryFormMode: "manual",
   }).returning();
 

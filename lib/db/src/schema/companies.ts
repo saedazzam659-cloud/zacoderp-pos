@@ -89,6 +89,7 @@ export const companiesTable = pgTable("companies", {
   // Master safety switch for negative-stock sales. When off, neither a
   // warehouse policy nor an invoice-level override may post stock below zero.
   allowNegativeSales: boolean("allow_negative_sales").notNull().default(false),
+  negativeStockCostEnforced: boolean("negative_stock_cost_enforced").notNull().default(false),
   // New companies opt out of batch/expiry capture until enabled in settings.
   // Existing companies are backfilled to true to preserve their current forms.
   purchaseBatchExpiryEnabled: boolean("purchase_batch_expiry_enabled").notNull().default(false),

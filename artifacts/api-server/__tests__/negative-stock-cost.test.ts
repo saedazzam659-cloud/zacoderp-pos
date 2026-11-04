@@ -7,6 +7,7 @@ import {
   planNegativeStockCoverage,
   resolveNegativeStockUnitCost,
   returnCostAdjustmentPerUnit,
+  shouldRejectUncostedNegativeStock,
   untrackedNegativeStockEstimate,
 } from "../src/lib/negativeStockCost.js";
 
@@ -84,6 +85,12 @@ test("negative-stock fallback preserves the valuation method and uses posted cos
     itemCardCost: 0,
     batchTracked: false,
   }), { unitCost: 0, source: "missing" });
+});
+
+test("missing-cost enforcement blocks new-company policy but preserves existing-company posting", () => {
+  assert.equal(shouldRejectUncostedNegativeStock(true, true), true);
+  assert.equal(shouldRejectUncostedNegativeStock(false, true), false);
+  assert.equal(shouldRejectUncostedNegativeStock(true, false), false);
 });
 
 test("negative-stock purchase fallback is company-scoped and cannot use future or unposted purchases", async () => {

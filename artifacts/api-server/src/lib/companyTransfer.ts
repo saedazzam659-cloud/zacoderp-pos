@@ -180,6 +180,7 @@ async function createTargetShell(
       country: String(rowValue(settings, "country") ?? "SA"),
       industryName: rowValue(settings, "industry_name") ? String(rowValue(settings, "industry_name")) : null,
       purchaseVatInInventoryCost: rowValue(settings, "purchase_vat_in_inventory_cost") !== false,
+      negativeStockCostEnforced: rowValue(settings, "negative_stock_cost_enforced") === true,
       invoiceType: String(rowValue(settings, "invoice_type") ?? "both"),
       // A transfer target must never become login-capable until the complete
       // restore and ownership audit have committed successfully.
