@@ -34,6 +34,7 @@ import {
   unitsTable,
   taxesTable,
   goodsReceiptsTable, goodsReceiptLinesTable,
+  negativeStockCostSettlementsTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql, inArray, notInArray, isNull, or, ilike, ne } from "drizzle-orm";
 import {
@@ -2870,8 +2871,75 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
       // Keep stock, its immutable ledger, the accounting entry, and invoice
       // status in one transaction. In particular, a closed-period rejection
       // from createJournalEntry must not leave a committed stock receipt.
+      await lockStockBalances(
+        stockReceiptPlan.map(({ line }) => ({
+          companyId: cid,
+          itemId: line.itemId!,
+          warehouseId: line.warehouseId!,
+        })),
+        tx,
+      );
+      const adjustmentByAccount = new Map<string, {
+        cogsAccountId: number;
+        inventoryAccountId: number;
+        costCenter: string | null;
+        debitCogs: number;
+      }>();
       for (const receipt of stockReceiptPlan) {
         const { line, qty, costUnit, landedCost } = receipt;
+        const oldBalance = await getBalance(cid, line.itemId!, line.warehouseId!, tx);
+        let uncoveredQty = Math.min(qty, Math.max(0, -oldBalance));
+        if (uncoveredQty > 0.0001) {
+          const pendingLayers = await tx.select().from(negativeStockCostSettlementsTable)
+            .where(and(
+              eq(negativeStockCostSettlementsTable.companyId, cid),
+              eq(negativeStockCostSettlementsTable.itemId, line.itemId!),
+              eq(negativeStockCostSettlementsTable.warehouseId, line.warehouseId!),
+              eq(negativeStockCostSettlementsTable.status, "pending"),
+            ))
+            .orderBy(asc(negativeStockCostSettlementsTable.id))
+            .for("update");
+          for (const layer of pendingLayers) {
+            if (uncoveredQty <= 0.0001) break;
+            const layerQty = Math.max(0, Number(layer.quantity));
+            const coveredQty = Math.min(layerQty, uncoveredQty);
+            if (coveredQty <= 0.0001) continue;
+            const provisionalUnitCost = Number(layer.provisionalUnitCost);
+            const adjustmentAmount = Number(((costUnit - provisionalUnitCost) * coveredQty).toFixed(2));
+            await tx.insert(negativeStockCostSettlementsTable).values({
+              companyId: cid,
+              salesInvoiceId: layer.salesInvoiceId,
+              salesLineId: layer.salesLineId,
+              purchaseInvoiceId: id,
+              purchaseLineId: line.id,
+              itemId: layer.itemId,
+              warehouseId: layer.warehouseId,
+              quantity: String(coveredQty),
+              provisionalUnitCost: String(provisionalUnitCost.toFixed(4)),
+              actualUnitCost: String(costUnit.toFixed(4)),
+              adjustmentAmount: String(adjustmentAmount.toFixed(2)),
+              cogsAccountId: layer.cogsAccountId,
+              inventoryAccountId: layer.inventoryAccountId,
+              costCenter: layer.costCenter,
+              status: "active",
+            }).returning({ id: negativeStockCostSettlementsTable.id });
+            const accountKey = `${layer.cogsAccountId}:${layer.inventoryAccountId}:${layer.costCenter ?? ""}`;
+            const accountBucket = adjustmentByAccount.get(accountKey) ?? {
+              cogsAccountId: layer.cogsAccountId!,
+              inventoryAccountId: layer.inventoryAccountId!,
+              costCenter: layer.costCenter,
+              debitCogs: 0,
+            };
+            accountBucket.debitCogs += adjustmentAmount;
+            adjustmentByAccount.set(accountKey, accountBucket);
+            const remainingLayerQty = Math.max(0, layerQty - coveredQty);
+            await tx.update(negativeStockCostSettlementsTable).set({
+              quantity: String(remainingLayerQty),
+              status: remainingLayerQty <= 0.0001 ? "closed" : "pending",
+            }).where(eq(negativeStockCostSettlementsTable.id, layer.id));
+            uncoveredQty -= coveredQty;
+          }
+        }
         const newBal = await upsertBalance(
           cid,
           line.itemId!,
@@ -2924,6 +2992,62 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
           ...creditLines,
         ],
       });
+
+      const costAdjustmentLines = [...adjustmentByAccount.values()]
+        .flatMap((bucket) => {
+          const amount = Number(bucket.debitCogs.toFixed(2));
+          if (Math.abs(amount) < 0.01) return [];
+          const shared = {
+            description: `تسوية تكلفة بيع سابق — فاتورة شراء ${inv.docNumber || id}`,
+            ...(bucket.costCenter ? { costCenter: bucket.costCenter } : {}),
+          };
+          return amount > 0
+            ? [
+                { accountId: bucket.cogsAccountId, debit: amount, ...shared },
+                { accountId: bucket.inventoryAccountId, credit: amount, ...shared },
+              ]
+            : [
+                { accountId: bucket.inventoryAccountId, debit: Math.abs(amount), ...shared },
+                { accountId: bucket.cogsAccountId, credit: Math.abs(amount), ...shared },
+              ];
+        });
+      let costAdjustmentJournalId: number | null = null;
+      if (costAdjustmentLines.length) {
+        const priorAdjustment = await tx.select({ journalEntryId: negativeStockCostSettlementsTable.journalEntryId })
+          .from(negativeStockCostSettlementsTable)
+          .where(and(
+            eq(negativeStockCostSettlementsTable.companyId, cid),
+            eq(negativeStockCostSettlementsTable.purchaseInvoiceId, id),
+            eq(negativeStockCostSettlementsTable.status, "reversed"),
+          ))
+          .orderBy(desc(negativeStockCostSettlementsTable.id))
+          .limit(1);
+        costAdjustmentJournalId = await createJournalEntry({
+          companyId: cid,
+          audit: { req },
+          branchId: inv.branchId,
+          date: inv.invoiceDate,
+          docNumber: inv.docNumber,
+          description: `تسوية تكلفة المخزون السالب — فاتورة ${inv.docNumber || id}`,
+          entryType: "inventory_cost_adjustment",
+          sourceType: "negative_stock_cost_adjustment",
+          sourceId: id,
+          reuseEntryId: priorAdjustment[0]?.journalEntryId ?? undefined,
+          sequenceProtected: inv.isSequenceProtected,
+          exchangeRate: inv.exchangeRate,
+          dx: tx,
+          lines: costAdjustmentLines,
+        });
+      }
+      if (costAdjustmentJournalId != null) {
+        await tx.update(negativeStockCostSettlementsTable)
+          .set({ journalEntryId: costAdjustmentJournalId })
+          .where(and(
+            eq(negativeStockCostSettlementsTable.companyId, cid),
+            eq(negativeStockCostSettlementsTable.purchaseInvoiceId, id),
+            eq(negativeStockCostSettlementsTable.status, "active"),
+          ));
+      }
 
       const [updated] = await tx.update(purchaseInvoicesTable)
         .set({
