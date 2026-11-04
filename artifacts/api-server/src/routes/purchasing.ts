@@ -2952,6 +2952,36 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
           costUnit,
           tx,
         );
+        if (newBal < -0.0001) {
+          let qtyToCost = Math.abs(newBal);
+          let costValue = 0;
+          let costedQty = 0;
+          const unresolvedLayers = await tx.select().from(negativeStockCostSettlementsTable)
+            .where(and(
+              eq(negativeStockCostSettlementsTable.companyId, cid),
+              eq(negativeStockCostSettlementsTable.itemId, line.itemId!),
+              eq(negativeStockCostSettlementsTable.warehouseId, line.warehouseId!),
+              eq(negativeStockCostSettlementsTable.status, "pending"),
+            ))
+            .orderBy(asc(negativeStockCostSettlementsTable.id));
+          for (const layer of unresolvedLayers) {
+            if (qtyToCost <= 0.0001) break;
+            const take = Math.min(qtyToCost, Math.max(0, Number(layer.quantity)));
+            costValue += take * Number(layer.provisionalUnitCost);
+            costedQty += take;
+            qtyToCost -= take;
+          }
+          if (costedQty > 0.0001) {
+            await tx.update(stockBalanceTable).set({
+              avgCost: String((costValue / costedQty).toFixed(4)),
+              updatedAt: new Date(),
+            }).where(and(
+              eq(stockBalanceTable.companyId, cid),
+              eq(stockBalanceTable.itemId, line.itemId!),
+              eq(stockBalanceTable.warehouseId, line.warehouseId!),
+            ));
+          }
+        }
         await addStockLedgerEntry({
           companyId: cid,
           itemId: line.itemId!,
@@ -3449,6 +3479,46 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
           eq(negativeStockCostSettlementsTable.purchaseInvoiceId, id),
           eq(negativeStockCostSettlementsTable.status, "active"),
         ));
+        const affectedPairs = new Map<string, { itemId: number; warehouseId: number }>();
+        for (const allocation of activeCostSettlements) {
+          affectedPairs.set(`${allocation.itemId}:${allocation.warehouseId}`, {
+            itemId: allocation.itemId,
+            warehouseId: allocation.warehouseId,
+          });
+        }
+        for (const pair of affectedPairs.values()) {
+          const currentQty = await getBalance(cid, pair.itemId, pair.warehouseId, tx);
+          if (currentQty >= -0.0001) continue;
+          let qtyToCost = Math.abs(currentQty);
+          let costValue = 0;
+          let costedQty = 0;
+          const pendingLayers = await tx.select().from(negativeStockCostSettlementsTable)
+            .where(and(
+              eq(negativeStockCostSettlementsTable.companyId, cid),
+              eq(negativeStockCostSettlementsTable.itemId, pair.itemId),
+              eq(negativeStockCostSettlementsTable.warehouseId, pair.warehouseId),
+              eq(negativeStockCostSettlementsTable.status, "pending"),
+            ))
+            .orderBy(asc(negativeStockCostSettlementsTable.id));
+          for (const layer of pendingLayers) {
+            if (qtyToCost <= 0.0001) break;
+            const take = Math.min(qtyToCost, Math.max(0, Number(layer.quantity)));
+            costValue += take * Number(layer.provisionalUnitCost);
+            costedQty += take;
+            qtyToCost -= take;
+          }
+          if (costedQty > 0.0001) {
+            await tx.update(stockBalanceTable).set({
+              avgCost: String((costValue / costedQty).toFixed(4)),
+              updatedAt: new Date(),
+            }).where(and(
+              eq(stockBalanceTable.companyId, cid),
+              eq(stockBalanceTable.itemId, pair.itemId),
+              eq(stockBalanceTable.warehouseId, pair.warehouseId),
+            ));
+            await refreshItemCost(cid, pair.itemId, tx);
+          }
+        }
       }
 
       let retainLinkedJournalEntry = false;
