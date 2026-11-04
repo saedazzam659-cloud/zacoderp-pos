@@ -95,6 +95,7 @@ import {
 } from "../lib/invoiceCreateIdempotency.js";
 import { documentMutationLock, withDocumentMutationLock } from "../lib/document-mutation-lock.js";
 import { normalizeManualPrintPartyName } from "../lib/manualPrintPartyName.js";
+import { returnCostAdjustmentPerUnit } from "../lib/negativeStockCost.js";
 
 function hasSalesZatcaArtifacts(invoice: any): boolean {
   const zatcaStatus = String(invoice?.zatcaStatus ?? "").trim().toLowerCase();
@@ -6215,7 +6216,10 @@ router.patch(
         }
         for (const [key, amount] of adjustmentByPair) {
           const soldQty = soldQtyByPair.get(key) ?? 0;
-          if (soldQty > 0) returnCostAdjustmentPerPair.set(key, amount / soldQty);
+          if (soldQty > 0) returnCostAdjustmentPerPair.set(
+            key,
+            returnCostAdjustmentPerUnit(amount, soldQty),
+          );
         }
       }
       const consumedThisDoc = new Map<string, number>();

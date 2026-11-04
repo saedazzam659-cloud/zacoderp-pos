@@ -2,6 +2,7 @@ import { Router } from "express";
 import { GetPurchaseItemPartyHistoryQueryParams, GetPurchaseItemPartyHistoryResponse } from "@workspace/api-zod";
 import { approvalGate, enforceDraftSaveMode, nextDraftDocumentNumber } from "./documentApprovals.js";
 import { normalizeManualPrintPartyName } from "../lib/manualPrintPartyName.js";
+import { negativeStockCostAdjustment, planNegativeStockCoverage } from "../lib/negativeStockCost.js";
 import { capitalizedExpenseShares, expenseJournalLines, installExpenseDocumentTransactions, readExpenseRows, withDocumentExpenseSavepoint } from "../lib/documentExpenses.js";
 import { returnedCostShare } from "../lib/documentExpenseAllocation.js";
 import { nextEntityCode } from "../lib/nextEntityCode.js";
@@ -2901,17 +2902,23 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
             ))
             .orderBy(asc(negativeStockCostSettlementsTable.id))
             .for("update");
-          for (const layer of pendingLayers) {
-            if (uncoveredQty <= 0.0001) break;
+          const coveragePlan = planNegativeStockCoverage(pendingLayers, uncoveredQty);
+          const layerById = new Map(pendingLayers.map((layer) => [layer.id, layer]));
+          for (const coverage of coveragePlan) {
+            const layer = layerById.get(coverage.layerId);
+            if (!layer) continue;
+            const coveredQty = coverage.quantity;
             const layerQty = Math.max(0, Number(layer.quantity));
-            const coveredQty = Math.min(layerQty, uncoveredQty);
-            if (coveredQty <= 0.0001) continue;
             coveredForBatch += coveredQty;
             if (!layer.cogsAccountId || !layer.inventoryAccountId) {
               throw Object.assign(new Error("تعذر تسوية تكلفة البيع السالب لعدم اكتمال حسابات التكلفة أو المخزون."), { status: 409 });
             }
             const provisionalUnitCost = Number(layer.provisionalUnitCost);
-            const adjustmentAmount = Number(((costUnit - provisionalUnitCost) * coveredQty).toFixed(2));
+            const adjustmentAmount = negativeStockCostAdjustment(
+              provisionalUnitCost,
+              costUnit,
+              coveredQty,
+            );
             await tx.insert(negativeStockCostSettlementsTable).values({
               companyId: cid,
               salesInvoiceId: layer.salesInvoiceId,
