@@ -39,6 +39,11 @@ export default function ItemCard() {
   const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
 
   const txLabel = (tx: string) => t(`inventoryReports.itemCard.txType.${tx}`, { defaultValue: tx });
+  const movementLabel = (row: any) => {
+    if (row.refType === "sales_invoice_unposted") return txLabel("sales_invoice_unposted");
+    if (row.refType === "sales_invoice_unpost") return txLabel("sales_invoice_unpost");
+    return txLabel(row.txType);
+  };
 
   const EXPORT_COLS = [
     { key: "txDate",       header: t("inventoryReports.itemCard.cols.date"),             width: 14 },
@@ -188,7 +193,7 @@ export default function ItemCard() {
 
   const toExportRow = (r: any) => ({
     txDate:        r.txDate,
-    txType:        txLabel(r.txType),
+    txType:        movementLabel(r),
     documentNumber: r.documentNumber ?? "",
     warehouseName: pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—",
     sourceWarehouse: pickName(r.sourceWarehouse?.nameAr, r.sourceWarehouse?.nameEn) || "",
@@ -236,7 +241,7 @@ export default function ItemCard() {
 
   const gridColumns = useMemo<GridColumn<any>[]>(() => [
     { key: "txDate", label: t("inventoryReports.itemCard.cols.date"), type: "text", width: 96, value: r => r.txDate },
-    { key: "txType", label: t("inventoryReports.itemCard.cols.txType"), type: "text", width: 118, value: r => txLabel(r.txType) },
+    { key: "txType", label: t("inventoryReports.itemCard.cols.txType"), type: "text", width: 190, value: movementLabel },
     {
       key: "documentNumber", label: t("inventoryReports.itemCard.cols.documentNumber"), type: "text", width: 130,
       value: r => r.documentNumber ?? "",

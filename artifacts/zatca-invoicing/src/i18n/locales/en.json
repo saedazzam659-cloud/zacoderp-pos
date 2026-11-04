@@ -7000,7 +7000,7 @@
     },
     "itemCard": {
       "title": "Item Card",
-      "subtitle": "Record of a single item's movement with the running balance after each operation",
+      "subtitle": "Item history shows unpost and repost movements separately under the source invoice; the final balance reflects their net effect",
       "exportFilenamePrefix": "item-card",
       "selectItemPrompt": "Select an item",
       "customer": "Customer",
@@ -7046,6 +7046,8 @@
         "adjustment": "Adjustment",
         "count_adj": "Count Adjustment",
         "sale": "Sale",
+        "sales_invoice_unposted": "Original sale — unposted",
+        "sales_invoice_unpost": "Invoice unpost reversal",
         "purchase": "Purchase",
         "opening": "Opening Balance",
         "sales_return": "Sales Return",

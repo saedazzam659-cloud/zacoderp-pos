@@ -4290,7 +4290,7 @@ router.get("/stock-ledger", async (req, res) => {
     const pattern = `%${costCenter.trim()}%`;
     conditions.push(sql`(
       (
-        ${stockLedgerTable.refType} = 'sales_invoice'
+        ${stockLedgerTable.refType} IN ('sales_invoice', 'sales_invoice_unposted', 'sales_invoice_unpost')
         AND EXISTS (
           SELECT 1 FROM ${salesInvoicesTable}
           WHERE ${salesInvoicesTable.id} = ${stockLedgerTable.refId}
@@ -4326,7 +4326,10 @@ router.get("/stock-ledger", async (req, res) => {
     const invIdList = invIds.map(r => r.id);
     const retIdList = retIds.map(r => r.id);
     const parts: any[] = [];
-    if (invIdList.length) parts.push(and(eq(stockLedgerTable.refType, "sales_invoice"), inArray(stockLedgerTable.refId, invIdList)));
+    if (invIdList.length) parts.push(and(
+      inArray(stockLedgerTable.refType, ["sales_invoice", "sales_invoice_unposted", "sales_invoice_unpost"]),
+      inArray(stockLedgerTable.refId, invIdList),
+    ));
     if (retIdList.length) parts.push(and(eq(stockLedgerTable.refType, "sales_return"),  inArray(stockLedgerTable.refId, retIdList)));
     if (parts.length === 0) { res.json(wantsPaged ? emptyPage : []); return; }
     conditions.push(parts.length === 1 ? parts[0] : or(...parts)!);
@@ -4388,7 +4391,11 @@ router.get("/stock-ledger", async (req, res) => {
       .filter(r => r.led.refType === refType && r.led.refId != null)
       .map(r => Number(r.led.refId)),
   )];
-  const salesInvoiceIds = idsFor("sales_invoice");
+  const salesInvoiceIds = [...new Set([
+    ...idsFor("sales_invoice"),
+    ...idsFor("sales_invoice_unposted"),
+    ...idsFor("sales_invoice_unpost"),
+  ])];
   const purchaseInvoiceIds = idsFor("purchase_invoice");
   const salesReturnIds = idsFor("sales_return");
   const purchaseReturnIds = idsFor("purchase_return");
@@ -4531,12 +4538,15 @@ router.get("/stock-ledger", async (req, res) => {
   };
   const sourceRefs = new Map<string, SourceMeta>();
   for (const doc of salesDocs) {
-    sourceRefs.set(`sales_invoice:${doc.id}`, {
+    const source = {
       documentNumber: doc.docNumber,
       documentPath: `/sales/invoices/${doc.id}`,
       costCenter: doc.costCenter,
       notes: doc.notes,
-    });
+    };
+    for (const refType of ["sales_invoice", "sales_invoice_unposted", "sales_invoice_unpost"]) {
+      sourceRefs.set(`${refType}:${doc.id}`, source);
+    }
   }
   for (const doc of purchaseDocs) {
     sourceRefs.set(`purchase_invoice:${doc.id}`, {
