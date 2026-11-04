@@ -4,7 +4,7 @@ import {
   fiscalYearsTable, fiscalPeriodsTable,
   journalEntriesTable, journalEntryLinesTable, accountsTable,
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
-  auditLogTable, systemSettingsTable,
+  auditLogTable, systemSettingsTable, stockLedgerTable, itemsTable, warehousesTable,
 } from "@workspace/db";
 import { eq, and, asc, ne, gte, lte, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -102,6 +102,47 @@ function buildMonthlyPeriods(startDate: string, endDate: string) {
 const rangesOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) =>
   aStart <= bEnd && aEnd >= bStart;
 
+async function listNegativeStockAtYearEnd(companyId: number, endDate: string) {
+  const rows = await db.select({
+    itemId: stockLedgerTable.itemId,
+    itemCode: itemsTable.code,
+    itemNameAr: itemsTable.nameAr,
+    itemNameEn: itemsTable.nameEn,
+    warehouseId: stockLedgerTable.warehouseId,
+    warehouseNameAr: warehousesTable.nameAr,
+    warehouseNameEn: warehousesTable.nameEn,
+    quantity: sql<string>`COALESCE(SUM(${stockLedgerTable.qty}), 0)::text`,
+  }).from(stockLedgerTable)
+    .innerJoin(itemsTable, and(
+      eq(itemsTable.id, stockLedgerTable.itemId),
+      eq(itemsTable.companyId, companyId),
+    ))
+    .innerJoin(warehousesTable, and(
+      eq(warehousesTable.id, stockLedgerTable.warehouseId),
+      eq(warehousesTable.companyId, companyId),
+    ))
+    .where(and(
+      eq(stockLedgerTable.companyId, companyId),
+      lte(stockLedgerTable.txDate, endDate),
+    ))
+    .groupBy(
+      stockLedgerTable.itemId,
+      itemsTable.code,
+      itemsTable.nameAr,
+      itemsTable.nameEn,
+      stockLedgerTable.warehouseId,
+      warehousesTable.nameAr,
+      warehousesTable.nameEn,
+    )
+    .having(sql`COALESCE(SUM(${stockLedgerTable.qty}), 0) < -0.0001`)
+    .orderBy(asc(itemsTable.code), asc(warehousesTable.nameAr));
+
+  return rows.map((row) => ({
+    ...row,
+    negativeQuantity: Math.abs(Number(row.quantity) || 0),
+  }));
+}
+
 // ─── GET /api/fiscal-years — list all fiscal years for the company ──────
 router.get("/years", async (req, res) => {
   try {
@@ -161,6 +202,32 @@ router.get("/years/:id", async (req, res) => {
     res.json({ year, periods });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "خطأ" });
+  }
+});
+
+router.get("/years/:id/negative-stock", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    const [year] = await db.select({
+      id: fiscalYearsTable.id,
+      endDate: fiscalYearsTable.endDate,
+    }).from(fiscalYearsTable).where(and(
+      eq(fiscalYearsTable.id, id),
+      eq(fiscalYearsTable.companyId, cid),
+    ));
+    if (!year) { res.status(404).json({ error: "السنة المالية غير موجودة" }); return; }
+
+    const items = await listNegativeStockAtYearEnd(cid, year.endDate);
+    res.json({
+      asOf: year.endDate,
+      count: items.length,
+      totalNegativeQuantity: items.reduce((sum, row) => sum + row.negativeQuantity, 0),
+      items,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message ?? "تعذر فحص أرصدة المخزون" });
   }
 });
 
@@ -332,6 +399,18 @@ router.patch("/years/:id/status", async (req, res) => {
       return;
     }
     if (current.status === status) { res.json({ ok: true, year: current, noop: true }); return; }
+
+    if (status === "closed" || status === "permanently_closed") {
+      const negativeStockItems = await listNegativeStockAtYearEnd(cid, current.endDate);
+      if (negativeStockItems.length) {
+        res.status(409).json({
+          error: `لا يمكن إقفال السنة المالية حتى تسوية ${negativeStockItems.length} صنفاً/مخزناً بالسالب حتى ${current.endDate}.`,
+          asOf: current.endDate,
+          negativeStockItems,
+        });
+        return;
+      }
+    }
 
     // Re-open (→ open) is always allowed — cascades to soft-closed periods
     // (but never reopens an already permanently_closed period).

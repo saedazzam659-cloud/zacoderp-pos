@@ -1,9 +1,11 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { usePermission } from "@/hooks/usePermission";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,6 +43,17 @@ type OpeningBalanceDifference = {
   difference: number;
 };
 
+type NegativeStockYearEndRow = {
+  itemId: number;
+  itemCode: string | null;
+  itemNameAr: string | null;
+  itemNameEn: string | null;
+  warehouseId: number;
+  warehouseNameAr: string | null;
+  warehouseNameEn: string | null;
+  negativeQuantity: number;
+};
+
 const EMPTY_YEAR = {
   name: "",
   startDate: `${new Date().getUTCFullYear()}-01-01`,
@@ -65,6 +78,8 @@ export default function FiscalPeriods() {
   const { isRtl } = useFormatters();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
+  const canCreatePurchaseInvoice = usePermission("purchase_invoices", "create");
   const todayIso = new Date().toISOString().slice(0, 10);
   // For a SuperAdmin we have no own company. Use the impersonated tenant's
   // id (set via the "دخول إلى الشركة" flow) so this page operates on the
@@ -138,6 +153,22 @@ export default function FiscalPeriods() {
       if (!r.ok) return [];
       const d = await r.json();
       return d?.periods ?? [];
+    },
+  });
+
+  const negativeStockQ = useQuery<{
+    asOf: string;
+    count: number;
+    totalNegativeQuantity: number;
+    items: NegativeStockYearEndRow[];
+  }>({
+    queryKey: ["fiscal-year-negative-stock", selectedYearId],
+    enabled: !!selectedYearId && !!token,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/fiscal/years/${selectedYearId}/negative-stock?companyId=${cid}`, { headers });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || "تعذر فحص أرصدة المخزون");
+      return data;
     },
   });
 
@@ -236,8 +267,12 @@ export default function FiscalPeriods() {
       if (!r.ok) {
         const error = new Error(data?.error || t("fiscalPeriods.updateFailed")) as Error & {
           openingBalanceDifferences?: OpeningBalanceDifference[];
+          negativeStockItems?: NegativeStockYearEndRow[];
+          asOf?: string;
         };
         error.openingBalanceDifferences = data?.openingBalanceDifferences;
+        error.negativeStockItems = data?.negativeStockItems;
+        error.asOf = data?.asOf;
         throw error;
       }
       return data;
@@ -271,6 +306,20 @@ export default function FiscalPeriods() {
     onError: (e: any) => {
       if (Array.isArray(e?.openingBalanceDifferences)) {
         setOpeningBalanceDifferences(e.openingBalanceDifferences);
+      }
+      if (Array.isArray(e?.negativeStockItems)) {
+        qc.setQueryData(
+          ["fiscal-year-negative-stock", selectedYearId],
+          {
+            asOf: e.asOf ?? selectedYear?.endDate ?? "",
+            count: e.negativeStockItems.length,
+            totalNegativeQuantity: e.negativeStockItems.reduce(
+              (sum: number, row: NegativeStockYearEndRow) => sum + row.negativeQuantity,
+              0,
+            ),
+            items: e.negativeStockItems,
+          },
+        );
       }
       toast({ title: t("fiscalPeriods.error"), description: e.message, variant: "destructive" });
     },
@@ -587,6 +636,123 @@ export default function FiscalPeriods() {
                   </div>
                 </CardContent>
               </Card>
+
+              {selectedYear && (
+                <Card className={cn(
+                  "border",
+                  negativeStockQ.data?.items.length
+                    ? "border-amber-300 bg-amber-50/70"
+                    : "border-slate-200",
+                )}>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-semibold">
+                          {isRtl ? "فحص المخزون حتى نهاية السنة" : "Stock check through fiscal year-end"}
+                        </h3>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {negativeStockQ.data
+                            ? (isRtl
+                              ? `تاريخ الفحص: ${negativeStockQ.data.asOf}`
+                              : `Checked through ${negativeStockQ.data.asOf}`)
+                            : (isRtl ? "جارٍ فحص حركات الأصناف والمخازن..." : "Checking item and warehouse movements...")}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={negativeStockQ.isFetching}
+                        onClick={() => void negativeStockQ.refetch()}
+                      >
+                        {negativeStockQ.isFetching
+                          ? (isRtl ? "جارٍ الفحص..." : "Checking...")
+                          : (isRtl ? "إعادة الفحص" : "Run check again")}
+                      </Button>
+                    </div>
+
+                    {negativeStockQ.isError && (
+                      <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                        {negativeStockQ.error instanceof Error
+                          ? negativeStockQ.error.message
+                          : (isRtl ? "تعذر فحص المخزون؛ لن يُسمح بالإقفال دون نجاح الفحص." : "Stock check failed; closing remains blocked until it succeeds.")}
+                      </p>
+                    )}
+
+                    {negativeStockQ.data?.items.length === 0 && (
+                      <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                        {isRtl
+                          ? "لا توجد أرصدة سالبة حتى نهاية هذه السنة. سيعيد الخادم الفحص عند تنفيذ الإقفال."
+                          : "No negative stock through year-end. The server checks again when closing."}
+                      </p>
+                    )}
+
+                    {!!negativeStockQ.data?.items.length && (
+                      <>
+                        <p className="text-sm text-amber-900">
+                          {isRtl
+                            ? `يوجد ${negativeStockQ.data.count} صنف/مخزن يحتاج إلى تسوية. لن يتم الإقفال قبل تصحيح الأرصدة.`
+                            : `${negativeStockQ.data.count} item/warehouse balance${negativeStockQ.data.count === 1 ? "" : "s"} need resolution. The year cannot close until corrected.`}
+                        </p>
+                        <div className="max-h-80 overflow-auto rounded-md border bg-white">
+                          <table className="w-full text-xs text-start">
+                            <thead className="sticky top-0 bg-amber-50 text-amber-950">
+                              <tr>
+                                <th className="px-2 py-2">{isRtl ? "الصنف" : "Item"}</th>
+                                <th className="px-2 py-2">{isRtl ? "المخزن" : "Warehouse"}</th>
+                                <th className="px-2 py-2">{isRtl ? "الكمية السالبة" : "Negative quantity"}</th>
+                                <th className="px-2 py-2">{isRtl ? "الإجراء" : "Action"}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {negativeStockQ.data.items.map((row) => (
+                                <tr key={`${row.itemId}:${row.warehouseId}`} className="border-t">
+                                  <td className="px-2 py-2">
+                                    <span className="font-mono">{row.itemCode || `#${row.itemId}`}</span>
+                                    <span className="ms-2">{isRtl ? row.itemNameAr : (row.itemNameEn || row.itemNameAr)}</span>
+                                  </td>
+                                  <td className="px-2 py-2">{isRtl ? row.warehouseNameAr : (row.warehouseNameEn || row.warehouseNameAr)}</td>
+                                  <td className="px-2 py-2 font-semibold tabular-nums" dir="ltr">
+                                    -{row.negativeQuantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    {canCreatePurchaseInvoice ? (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 whitespace-nowrap"
+                                        onClick={() => {
+                                          const params = new URLSearchParams({
+                                            negativeStockItemId: String(row.itemId),
+                                            negativeStockWarehouseId: String(row.warehouseId),
+                                            negativeStockQty: String(row.negativeQuantity),
+                                            negativeStockYearEnd: negativeStockQ.data?.asOf ?? selectedYear.endDate,
+                                          });
+                                          navigate(`/purchasing/invoices/new?${params.toString()}`);
+                                        }}
+                                      >
+                                        {isRtl ? "إنشاء فاتورة شراء" : "New purchase invoice"}
+                                      </Button>
+                                    ) : (
+                                      <span className="text-muted-foreground">
+                                        {isRtl ? "لا توجد صلاحية إنشاء" : "Create permission required"}
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="text-xs text-amber-900">
+                          {isRtl
+                            ? "تاريخ الفاتورة يجب أن يطابق تاريخ الشراء الحقيقي. الشراء بعد نهاية السنة لا يغيّر رصيد المخزون بتاريخ الإقفال. إذا كانت الفترة مغلقة، افتحها لإدخال فاتورة مستحقة ثم أعد الإقفال."
+                            : "Use the actual purchase date. A later purchase does not change year-end stock. If its period is closed, reopen it to enter the due invoice, then close again."}
+                        </p>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {openingBalanceDifferences.length > 0 && (
                 <Card className="border-red-300 bg-red-50/70">

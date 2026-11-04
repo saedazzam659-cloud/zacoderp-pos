@@ -870,6 +870,51 @@ function PurchaseInvoiceFormContent() {
     }));
   }
 
+  const negativeStockPrefillRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isNew || !user) return;
+    const params = new URLSearchParams(search);
+    const itemId = params.get("negativeStockItemId");
+    const warehouseId = params.get("negativeStockWarehouseId");
+    const suggestedQty = Number(params.get("negativeStockQty"));
+    const yearEnd = params.get("negativeStockYearEnd");
+    if (!itemId || !warehouseId || !Number.isFinite(suggestedQty) || suggestedQty <= 0) return;
+    const key = `${itemId}:${warehouseId}:${suggestedQty}:${yearEnd ?? ""}`;
+    if (negativeStockPrefillRef.current === key) return;
+    negativeStockPrefillRef.current = key;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetch(`${API}/api/inventory/items/${itemId}?companyId=${cid}`, { headers: authH });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || "تعذر تحميل الصنف");
+        if (cancelled) return;
+
+        const line = newLine();
+        line.warehouseId = warehouseId;
+        setLines([line]);
+        await selectItem(line._id, itemId, data?.item ?? data);
+        if (cancelled) return;
+        setLines((previous) => previous.map((current) => current._id === line._id
+          ? { ...current, qty: String(suggestedQty) }
+          : current));
+        toast({
+          title: isRtl ? "تم تجهيز الصنف في فاتورة الشراء" : "Item added to purchase invoice",
+          description: isRtl
+            ? `الكمية المقترحة تغطي السالب حتى ${yearEnd || "نهاية السنة"}. أدخل تاريخ الشراء الحقيقي؛ الشراء بعد نهاية السنة لا يغيّر رصيد يوم الإقفال.`
+            : `Suggested quantity covers the negative balance through ${yearEnd || "year-end"}. Use the actual purchase date; a later purchase will not change the year-end balance.`,
+        });
+      } catch (error: any) {
+        if (!cancelled) {
+          toast({ title: error?.message || "تعذر تجهيز فاتورة الشراء", variant: "destructive" });
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isNew, search, user?.id, cid]);
+
   // Commit the "إضافة صنف" bar into a new grid line. Appends an empty line,
   // runs the SAME selectItem auto-fill (catalog/currency cost, base unit,
   // VAT), then applies the bar's overrides through updateLine (which
@@ -1032,9 +1077,12 @@ function PurchaseInvoiceFormContent() {
   // Per-doc-type auto-posting flag with global fallback. See
   // SalesDocumentForm for the full rationale on the legacy fallback.
   const _gl = _co?.autoPostingEnabled !== false;
-  const autoPostingEnabled = _co?.autoPostPurchase === undefined || _co?.autoPostPurchase === null
-    ? _gl
-    : _co.autoPostPurchase !== false;
+  const fromNegativeStockYearClose = new URLSearchParams(search).has("negativeStockItemId");
+  const autoPostingEnabled = !fromNegativeStockYearClose && (
+    _co?.autoPostPurchase === undefined || _co?.autoPostPurchase === null
+      ? _gl
+      : _co.autoPostPurchase !== false
+  );
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
       const persistedId = persistedInvoiceIdRef.current ?? editId;
