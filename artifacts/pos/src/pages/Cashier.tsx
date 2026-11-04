@@ -32,6 +32,7 @@ import {
   RotateCcw,
   Package2,
   AlertCircle,
+  Clock3,
 } from "lucide-react";
 import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
 import PosAiPanel from "@/components/PosAiPanel";
@@ -43,6 +44,7 @@ import {
   api,
   getStoredUser,
   getToken,
+  getPosDeviceId,
   clearAuth,
   getPosSessionId,
   setPosSessionId,
@@ -55,6 +57,7 @@ import {
   type AuthUser,
   type SalesInvoice,
   type CreateInvoiceLine,
+  type PosSession,
 } from "@/lib/api";
 
 type CartLine = {
@@ -173,6 +176,7 @@ export default function CashierPage() {
   );
   const [queuedInvoices, setQueuedInvoices] = useState(0);
   const [time, setTime] = useState(new Date());
+  const [posSession, setPosSession] = useState<PosSession | null>(null);
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [restaurantOpen, setRestaurantOpen] = useState(false);
   const [heldCarts, setHeldCarts] = useState<ParkedCart[]>([]);
@@ -200,6 +204,12 @@ export default function CashierPage() {
 
   // Online + clock
   useEffect(() => {
+    if (getToken()) {
+      void api.getCurrentPosSession().then((session) => {
+        setPosSession(session);
+        setPosSessionId(session?.id ?? null);
+      }).catch(() => {});
+    }
     const onO = () => {
       setOnline(true);
       // Auto-sync any queued offline invoices.
@@ -324,6 +334,8 @@ export default function CashierPage() {
       card:   posSettings?.posCardBankAccountId != null,
       apple:  posSettings?.posAppleBankAccountId != null,
       wallet: posSettings?.posWalletBankAccountId != null,
+      mixed:  (posSettings?.posCashCashBoxId ?? defaultCashBoxId) != null &&
+        !!(posSettings?.posCardBankAccountId || posSettings?.posAppleBankAccountId || posSettings?.posWalletBankAccountId),
     }),
     [posSettings, defaultCashBoxId],
   );
@@ -331,6 +343,62 @@ export default function CashierPage() {
   const branchName = useMemo(() => {
     return branches.find((b) => b.id === branchId)?.nameAr || "—";
   }, [branches, branchId]);
+
+  const openShift = async (openingCash: number) => {
+    const terminalId = Number(localStorage.getItem("pos_terminal_id") || 0) || null;
+    const session = await api.openPosSession({
+      branchId,
+      cashBoxId: defaultCashBoxId,
+      openingCash,
+      device: navigator.userAgent.slice(0, 120),
+      posTerminalId: terminalId,
+      machineCode: terminalId ? getPosDeviceId() : null,
+    });
+    setPosSession(session);
+    setPosSessionId(session.id);
+  };
+
+  const handleShiftAction = async () => {
+    try {
+      if (!posSession) {
+        const rawOpening = window.prompt("أدخل مبلغ النقد الافتتاحي في الدرج", "0");
+        if (rawOpening === null) return;
+        const opening = Number(rawOpening);
+        if (!Number.isFinite(opening) || opening < 0) {
+          window.alert("أدخل مبلغاً صحيحاً لا يقل عن صفر.");
+          return;
+        }
+        await openShift(opening);
+        return;
+      }
+
+      const rawClosing = window.prompt(
+        "أدخل النقد المعدود لإغلاق الوردية. اتركه فارغاً لاستخدام النقد المتوقع.",
+        "",
+      );
+      if (rawClosing === null) return;
+      const closingCash = rawClosing.trim() === "" ? undefined : Number(rawClosing);
+      if (closingCash !== undefined && (!Number.isFinite(closingCash) || closingCash < 0)) {
+        window.alert("أدخل مبلغاً صحيحاً لا يقل عن صفر.");
+        return;
+      }
+      await api.closePosSession(posSession.id, { closingCash });
+      setPosSession(null);
+      setPosSessionId(null);
+      if (window.confirm("تم إغلاق الوردية. هل تريد فتح وردية جديدة الآن؟")) {
+        const rawOpening = window.prompt("أدخل مبلغ النقد الافتتاحي للوردية الجديدة", "0");
+        if (rawOpening === null) return;
+        const opening = Number(rawOpening);
+        if (!Number.isFinite(opening) || opening < 0) {
+          window.alert("أدخل مبلغاً صحيحاً لا يقل عن صفر.");
+          return;
+        }
+        await openShift(opening);
+      }
+    } catch (error: any) {
+      window.alert(error?.message || "تعذّر تنفيذ إجراء الوردية.");
+    }
+  };
 
   // Display tabs are driven by the separate POS group assignment, not the
   // accounting item category (groupId).
@@ -487,7 +555,23 @@ export default function CashierPage() {
   const handleLogout = async () => {
     const sessionId = getPosSessionId();
     if (sessionId) {
-      try { await api.closePosSession(sessionId, {}); } catch {}
+      const rawClosing = window.prompt(
+        "أدخل النقد المعدود لإغلاق الوردية. اتركه فارغاً لاستخدام النقد المتوقع.",
+        "",
+      );
+      if (rawClosing === null) return;
+      const closingCash = rawClosing.trim() === "" ? undefined : Number(rawClosing);
+      if (closingCash !== undefined && (!Number.isFinite(closingCash) || closingCash < 0)) {
+        window.alert("أدخل مبلغاً صحيحاً لا يقل عن صفر.");
+        return;
+      }
+      try {
+        await api.closePosSession(sessionId, { closingCash });
+      } catch (error: any) {
+        window.alert(error?.message || "تعذّر إغلاق الوردية؛ لم يتم تسجيل الخروج.");
+        return;
+      }
+      setPosSession(null);
       setPosSessionId(null);
     }
     api.logout().catch(() => {});
@@ -496,7 +580,7 @@ export default function CashierPage() {
   };
 
   const pay = useCallback(
-    async (method: "cash" | "card" | "apple" | "wallet") => {
+    async (method: "cash" | "card" | "apple" | "wallet" | "mixed") => {
       if (cart.length === 0 || submitting) return;
       setSubmitError(null);
       setSubmitting(true);
@@ -524,10 +608,38 @@ export default function CashierPage() {
 
       // Route the payment based on company POS settings (admin maps each
       // method to a cashbox or bank account in /pos-settings on the ERP).
-      let paymentType: "cash" | "bank" = "cash";
+      let paymentType: "cash" | "bank" | "mixed" = "cash";
       let cashBoxIdForPayment: number | null = null;
       let bankAccountIdForPayment: number | null = null;
-      if (method === "cash") {
+      let cashAmountForPayment: number | null = null;
+      let bankAmountForPayment: number | null = null;
+      if (method === "mixed") {
+        cashBoxIdForPayment = posSettings?.posCashCashBoxId ?? defaultCashBoxId;
+        const bankMethod = posSettings?.posCardBankAccountId ? "card"
+          : posSettings?.posAppleBankAccountId ? "apple"
+          : posSettings?.posWalletBankAccountId ? "wallet" : null;
+        bankAccountIdForPayment = bankMethod === "card" ? posSettings?.posCardBankAccountId ?? null
+          : bankMethod === "apple" ? posSettings?.posAppleBankAccountId ?? null
+          : bankMethod === "wallet" ? posSettings?.posWalletBankAccountId ?? null : null;
+        if (!cashBoxIdForPayment || !bankAccountIdForPayment) {
+          setSubmitError("اربط صندوق النقد وحساباً بنكياً واحداً على الأقل من إعدادات نقاط البيع.");
+          setSubmitting(false);
+          return;
+        }
+        const rawCashAmount = window.prompt(`أدخل المبلغ النقدي من إجمالي ${formatSAR(grandTotal)} ر.س. سيُحصّل الباقي عبر ${methodArabic(bankMethod || "card")}.`, (grandTotal / 2).toFixed(2));
+        if (rawCashAmount === null) {
+          setSubmitting(false);
+          return;
+        }
+        cashAmountForPayment = Math.round(Number(rawCashAmount) * 100) / 100;
+        bankAmountForPayment = Math.round((grandTotal - cashAmountForPayment) * 100) / 100;
+        if (!Number.isFinite(cashAmountForPayment) || cashAmountForPayment <= 0 || bankAmountForPayment <= 0) {
+          setSubmitError("يجب أن يكون مبلغ النقد ومبلغ البنك أكبر من صفر.");
+          setSubmitting(false);
+          return;
+        }
+        paymentType = "mixed";
+      } else if (method === "cash") {
         paymentType = "cash";
         cashBoxIdForPayment = posSettings?.posCashCashBoxId ?? defaultCashBoxId;
       } else {
@@ -554,26 +666,18 @@ export default function CashierPage() {
       }
 
       try {
-        // Ensure we have an open POS session; reopen if missing.
+        // Sales require an explicitly opened shift so the cashier's opening
+        // cash is captured before the first transaction.
         let posSessionId = getPosSessionId();
         if (!posSessionId) {
-          try {
-            const existing = await api.getCurrentPosSession();
-            if (existing) {
-              posSessionId = existing.id;
-            } else {
-              const opened = await api.openPosSession({
-                branchId,
-                cashBoxId: defaultCashBoxId,
-                openingCash: 0,
-                device: navigator.userAgent.slice(0, 120),
-              });
-              posSessionId = opened.id;
-            }
-            setPosSessionId(posSessionId);
-          } catch {
-            // ignore — invoice will be created without session linkage.
+          const existing = await api.getCurrentPosSession().catch(() => null);
+          if (!existing) {
+            setSubmitError("افتح وردية البيع أولاً قبل إتمام الفاتورة.");
+            return;
           }
+          posSessionId = existing.id;
+          setPosSession(existing);
+          setPosSessionId(posSessionId);
         }
         const invoiceBody = {
           invoiceDate: today,
@@ -581,6 +685,8 @@ export default function CashierPage() {
           paymentType,
           cashBoxId: cashBoxIdForPayment,
           bankAccountId: bankAccountIdForPayment,
+          cashAmount: cashAmountForPayment,
+          bankAmount: bankAmountForPayment,
           subtotal,
           vatAmount,
           discountAmount,
@@ -635,6 +741,7 @@ export default function CashierPage() {
       vatAmount,
       discountAmount,
       grandTotal,
+      posSettings,
     ],
   );
 
@@ -717,6 +824,20 @@ export default function CashierPage() {
               </span>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => void handleShiftAction()}
+            aria-label={posSession ? "إغلاق الوردية الحالية" : "فتح وردية جديدة"}
+            data-testid="button-pos-shift"
+            className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-bold transition-colors hover-elevate ${
+              posSession
+                ? "border-primary/20 bg-primary/5 text-primary"
+                : "border-amber-300 bg-amber-50 text-amber-800"
+            }`}
+          >
+            <Clock3 className="size-4" />
+            <span className="hidden sm:inline">{posSession ? "إغلاق الوردية" : "فتح وردية"}</span>
+          </button>
           <div className="hidden lg:flex items-center gap-2 text-xs font-semibold text-muted-foreground font-mono px-2.5 py-1.5 rounded-full bg-muted">
             {timeStr}
           </div>
@@ -1359,6 +1480,7 @@ function methodArabic(method: string) {
       card: "شبكة",
       apple: "Apple Pay",
       wallet: "محفظة",
+      mixed: "نقد + بنك",
     } as Record<string, string>
   )[method] || method;
 }
@@ -1380,8 +1502,8 @@ function CartPanel(props: {
   itemCount: number;
   parkCurrentCart: () => void;
   paid: boolean;
-  pay: (method: "cash" | "card" | "apple" | "wallet") => void | Promise<void>;
-  methods: { cash: boolean; card: boolean; apple: boolean; wallet: boolean };
+  pay: (method: "cash" | "card" | "apple" | "wallet" | "mixed") => void | Promise<void>;
+  methods: { cash: boolean; card: boolean; apple: boolean; wallet: boolean; mixed: boolean };
   submitting: boolean;
   submitError: string | null;
 }) {
@@ -1589,7 +1711,7 @@ function CartPanel(props: {
         </div>
 
         {/* All payment methods stay visible; only configured methods are actionable. */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-0.5">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 pt-0.5">
           <PayButton
             testId="button-pay-cash"
             disabled={cart.length === 0 || submitting || !methods.cash}
@@ -1621,6 +1743,14 @@ function CartPanel(props: {
             onClick={() => pay("wallet")}
             icon={<Wallet className="w-4 h-4" />}
             label="محفظة"
+          />
+          <PayButton
+            testId="button-pay-mixed"
+            disabled={cart.length === 0 || submitting || !methods.mixed}
+            disabledReason={!methods.mixed ? "اربط صندوقاً نقدياً وحساباً بنكياً من إعدادات نقاط البيع." : undefined}
+            onClick={() => pay("mixed")}
+            icon={<Banknote className="w-4 h-4" />}
+            label="نقد + بنك"
           />
         </div>
         {Object.values(methods).some((configured) => !configured) && (

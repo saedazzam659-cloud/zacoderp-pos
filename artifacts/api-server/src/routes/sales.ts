@@ -2858,7 +2858,7 @@ router.post("/sales-invoices", async (req, res) => {
     // immediately even if the app UI is stale. NULL map = all allowed.
     if (!(await enforceMobileSalesRights(req, res, cid, req.body?.lines, "create"))) return;
     timing?.mark("mobile-rights");
-    const { docNumber, legacyDocNumber, invoiceDate, customerId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    const { docNumber, legacyDocNumber, invoiceDate, customerId, manualPrintPartyName, branchId, paymentType, cashBoxId, bankAccountId, cashAmount, bankAmount, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
@@ -3049,6 +3049,28 @@ router.post("/sales-invoices", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "cash" && !(await userCanUseCashBox(req.authUser, cid, Number(cashBoxId)))) { res.status(403).json({ error: "ليس لديك صلاحية استخدام هذه الخزنة" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
+    const mixedCashAmount = Number(cashAmount);
+    const mixedBankAmount = Number(bankAmount);
+    if (pType === "mixed") {
+      if (!cashBoxId || !bankAccountId) {
+        res.status(400).json({ error: "اختر صندوق النقد والحساب البنكي للدفع المختلط" }); return;
+      }
+      if (!Number.isFinite(mixedCashAmount) || mixedCashAmount <= 0 ||
+          !Number.isFinite(mixedBankAmount) || mixedBankAmount <= 0 ||
+          Math.abs(mixedCashAmount + mixedBankAmount - Number(totals.totalAmount)) > 0.01) {
+        res.status(400).json({ error: "يجب أن يكون مبلغ النقد والبنك أكبر من صفر ومجموعهما مساوياً لإجمالي الفاتورة" }); return;
+      }
+      if (!(await userCanUseCashBox(req.authUser, cid, Number(cashBoxId)))) {
+        res.status(403).json({ error: "ليس لديك صلاحية استخدام هذه الخزنة" }); return;
+      }
+      const [cashAccountId, bankLedgerAccountId] = await Promise.all([
+        getCashBoxAccountId(cid, Number(cashBoxId)),
+        getBankAccountAccountId(cid, Number(bankAccountId)),
+      ]);
+      if (!cashAccountId || !bankLedgerAccountId) {
+        res.status(400).json({ error: "اربط صندوق النقد والحساب البنكي بحسابات محاسبية قبل الدفع المختلط" }); return;
+      }
+    }
     // ── Overdue-payment guard ──
     // When the customer has `paymentTermsDays > 0`, refuse a new CREDIT invoice
     // if any prior posted credit invoice of theirs still has an outstanding
@@ -3202,8 +3224,10 @@ router.post("/sales-invoices", async (req, res) => {
       customerId: customerId ? Number(customerId) : null,
       manualPrintPartyName: normalizeManualPrintPartyName(manualPrintPartyName, pType, !!customerId),
       paymentType: pType,
-      cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
-      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
+      cashBoxId: (pType === "cash" || pType === "mixed") && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId: (pType === "bank" || pType === "mixed") && bankAccountId ? Number(bankAccountId) : null,
+      cashAmount: pType === "mixed" ? String(mixedCashAmount.toFixed(2)) : null,
+      bankAmount: pType === "mixed" ? String(mixedBankAmount.toFixed(2)) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       subtotal: totals.subtotal, vatAmount: totals.vatAmount,
@@ -4330,9 +4354,20 @@ async function postSalesInvoiceHandler(
       }
     }
 
-    const partyAccountPromise =
-      inv.paymentType === "cash" ? getCashBoxAccountId(cid, inv.cashBoxId)
-      : inv.paymentType === "bank" ? getBankAccountAccountId(cid, (inv as any).bankAccountId)
+    const isMixedPayment = inv.paymentType === "mixed";
+    const isImmediatePayment = inv.paymentType === "cash" || inv.paymentType === "bank" || isMixedPayment;
+    const cashSettlementPromise =
+      inv.paymentType === "cash" || isMixedPayment
+        ? getCashBoxAccountId(cid, inv.cashBoxId, tx)
+        : Promise.resolve(null);
+    const bankSettlementPromise =
+      inv.paymentType === "bank" || isMixedPayment
+        ? getBankAccountAccountId(cid, (inv as any).bankAccountId, tx)
+        : Promise.resolve(null);
+    const partyAccountPromise = isMixedPayment
+      ? Promise.resolve(null)
+      : inv.paymentType === "cash" ? cashSettlementPromise
+      : inv.paymentType === "bank" ? bankSettlementPromise
       : getCustomerAccountId(cid, inv.customerId, tx);
     // AR pass-through (mirrors the supplier AP pass-through on purchases):
     // cash/bank invoices route the sale THROUGH the customer's receivable
@@ -4340,18 +4375,24 @@ async function postSalesInvoiceHandler(
     // and the immediate collection both show on the customer's ledger.
     // Falls back to the old direct debit when the customer has no GL account.
     const customerArPromise =
-      (inv.paymentType === "cash" || inv.paymentType === "bank")
+      isImmediatePayment
         ? getCustomerAccountId(cid, inv.customerId, tx)
         : Promise.resolve(null);
-    const [partyAccountId, invCustomerArAccId] = await Promise.all([
+    const [partyAccountId, invCustomerArAccId, cashSettlementAccountId, bankSettlementAccountId] = await Promise.all([
       partyAccountPromise,
       customerArPromise,
+      cashSettlementPromise,
+      bankSettlementPromise,
     ]);
     timing?.mark("party-accounts");
-    if (historicalImportMode !== "inventory_only" && !partyAccountId) {
+    if (historicalImportMode !== "inventory_only" &&
+        (isMixedPayment
+          ? !cashSettlementAccountId || !bankSettlementAccountId
+          : !partyAccountId)) {
       res.status(400).json({ error:
         inv.paymentType === "cash" ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
         : inv.paymentType === "bank" ? "الحساب البنكي لا يحتوي على حساب محاسبي مرتبط"
+        : isMixedPayment ? "صندوق النقد أو الحساب البنكي لا يحتوي على حساب محاسبي مرتبط"
         : "العميل لا يحتوي على حساب محاسبي مرتبط (حساب الذمم المدينة)" });
       return;
     }
@@ -4371,9 +4412,19 @@ async function postSalesInvoiceHandler(
     // account → AR pass-through trio; cash/bank WITHOUT one → legacy direct
     // DR cash/bank (statement pairing still shows; GL AR untouched).
     const journalDescription = `قيد فاتورة مبيعات رقم ${inv.docNumber || inv.id}`;
-    const collectionDesc = inv.paymentType === "cash" ? "تحصيل نقدي من العميل" : "تحصيل بنكي من العميل";
-    const partyDebitLines =
-      (inv.paymentType === "cash" || inv.paymentType === "bank") && invCustomerArAccId
+    const collectionDesc = isMixedPayment
+      ? "تحصيل نقدي وبنكي من العميل"
+      : inv.paymentType === "cash" ? "تحصيل نقدي من العميل" : "تحصيل بنكي من العميل";
+    const partyDebitLines = isMixedPayment
+      ? [
+          ...(invCustomerArAccId ? [
+            { accountId: invCustomerArAccId, debit: totalAmt, description: "ذمم العميل (فاتورة نقدية وبنكية)" },
+            { accountId: invCustomerArAccId, credit: totalAmt, description: collectionDesc },
+          ] : []),
+          { accountId: cashSettlementAccountId!, debit: Number((inv as any).cashAmount), description: "تحصيل نقدي" },
+          { accountId: bankSettlementAccountId!, debit: Number((inv as any).bankAmount), description: journalDescription },
+        ]
+      : (inv.paymentType === "cash" || inv.paymentType === "bank") && invCustomerArAccId
         ? [
             { accountId: invCustomerArAccId, debit: totalAmt,  description: "ذمم العميل (فاتورة نقدية/بنكية)" },
             { accountId: invCustomerArAccId, credit: totalAmt, description: collectionDesc },

@@ -27,6 +27,8 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   paymentType:    text("payment_type").notNull().default("credit"),
   cashBoxId:      integer("cash_box_id"),
   bankAccountId:  integer("bank_account_id"),
+  cashAmount:     numeric("cash_amount", { precision: 15, scale: 2 }),
+  bankAmount:     numeric("bank_amount", { precision: 15, scale: 2 }),
   currencyCode:   text("currency_code").notNull().default("SAR"),
   exchangeRate:   numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),
   subtotal:       numeric("subtotal",        { precision: 15, scale: 2 }).notNull().default("0"),

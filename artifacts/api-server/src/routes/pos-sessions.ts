@@ -212,7 +212,10 @@ router.post("/:id/close", async (req, res) => {
 
   // Compute expected cash = openingCash + sum(cash sales in this session, scoped to its company).
   const [{ totalCash } = { totalCash: "0" }] = await db.select({
-    totalCash: sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}), 0)`,
+    totalCash: sql<string>`COALESCE(SUM(CASE
+      WHEN ${salesInvoicesTable.paymentType} = 'cash' THEN ${salesInvoicesTable.totalAmount}
+      WHEN ${salesInvoicesTable.paymentType} = 'mixed' THEN ${salesInvoicesTable.cashAmount}
+      ELSE 0 END), 0)`,
   }).from(salesInvoicesTable).where(and(
     eq(salesInvoicesTable.posSessionId, id),
     eq(salesInvoicesTable.companyId, s.companyId),

@@ -149,27 +149,9 @@ export default function LoginPage() {
     if (terminals.length > 0 && !terminalId) { setError("اختر محطة بيع"); return; }
     setLoading(true); setError(null);
     try {
-      const existing = await api.getCurrentPosSession();
-      if (existing) {
-        setPosSessionId(existing.id);
-        navigate("/pos");
-        return;
-      }
-      const cashBoxId = (() => {
-        const v = localStorage.getItem("pos_cash_box_id");
-        return v ? Number(v) : null;
-      })();
-      const session = await api.openPosSession({
-        branchId,
-        cashBoxId,
-        openingCash: 0,
-        device: navigator.userAgent.slice(0, 120),
-        posTerminalId: terminalId ?? null,
-        machineCode: terminalId ? getPosDeviceId() : null,
-      });
-      setPosSessionId(session.id);
       localStorage.setItem("pos_branch_id", String(branchId));
       if (terminalId) localStorage.setItem("pos_terminal_id", String(terminalId));
+      else localStorage.removeItem("pos_terminal_id");
       navigate("/pos");
     } catch (err: any) {
       setError(err?.message || "تعذّر فتح الجلسة");

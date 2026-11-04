@@ -80,6 +80,8 @@ export interface InvoiceData {
   supplyDate?: string | null;
   currency: string;
   paymentMethod?: string | null;
+  /** Multiple payment means for split tender, e.g. cash plus bank transfer. */
+  paymentMethods?: string[] | null;
   subtotal: string;
   discountTotal: string;
   vatTotal: string;
@@ -278,7 +280,12 @@ export function generateZatcaXml(data: InvoiceData): string {
   if (prepaidCents > invoiceGrossCents) throw new Error("Prepayment amount exceeds invoice gross total");
   const { typeCode, subTypeCode } = getInvoiceTypeCode(data.invoiceType, documentType, data.prepaymentInvoice);
   const issueTime = data.issueTime ?? new Date().toISOString().split("T")[1]?.split(".")[0] ?? "00:00:00";
-  const paymentMeansCode = data.paymentMethod ?? "10";
+  const paymentMeansCodes = data.paymentMethods?.length
+    ? data.paymentMethods
+    : [data.paymentMethod ?? "10"];
+  if (paymentMeansCodes.some((code) => !/^\d{2}$/.test(code))) {
+    throw new Error("Invalid payment method code");
+  }
   const documentUuid = data.uuid ?? data.invoiceNumber;
 
   // Credit/debit notes must reference the corrected invoice (cac:BillingReference,
@@ -292,6 +299,10 @@ export function generateZatcaXml(data: InvoiceData): string {
   </cac:BillingReference>` : "";
   const instructionNoteXml = documentType !== "invoice" ? `
     <cbc:InstructionNote>${xmlEscape(data.instructionNote ?? "تصحيح فاتورة")}</cbc:InstructionNote>` : "";
+  const paymentMeansXml = paymentMeansCodes.map((code) => `
+  <cac:PaymentMeans>
+    <cbc:PaymentMeansCode>${code}</cbc:PaymentMeansCode>${instructionNoteXml}
+  </cac:PaymentMeans>`).join("");
 
   // Aggregate tax by category for TaxTotal/TaxSubtotal
   const taxByCategory = new Map<string, { taxable: number; tax: number; rate: number }>();
@@ -486,9 +497,7 @@ ${billingReferenceXml}
     <cbc:ActualDeliveryDate>${data.supplyDate ?? data.issueDate}</cbc:ActualDeliveryDate>
   </cac:Delivery>
 
-  <cac:PaymentMeans>
-    <cbc:PaymentMeansCode>${paymentMeansCode}</cbc:PaymentMeansCode>${instructionNoteXml}
-  </cac:PaymentMeans>
+${paymentMeansXml}
 
   <cac:TaxTotal>
     <cbc:TaxAmount currencyID="${data.currency}">${Number(data.vatTotal).toFixed(2)}</cbc:TaxAmount>

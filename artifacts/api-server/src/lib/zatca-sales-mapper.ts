@@ -174,6 +174,7 @@ export function salesInvoiceRowToZatcaData(
     supplyDate: invoice.invoiceDate,
     currency: "SAR",
     paymentMethod: invoice.paymentType === "cash" ? "10" : "30",
+    paymentMethods: invoice.paymentType === "mixed" ? ["10", "30"] : undefined,
     subtotal: computedSubtotalSar.toFixed(2),
     discountTotal: "0.00",
     vatTotal: computedVatTotalSar.toFixed(2),

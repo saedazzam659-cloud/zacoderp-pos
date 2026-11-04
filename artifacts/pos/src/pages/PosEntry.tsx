@@ -96,18 +96,8 @@ export default function PosEntry() {
             throw new Error("محطة البيع المرتبطة بحسابك مستخدمة حالياً. أعد المحاولة بعد إتاحتها.");
           }
 
-          const session = await api.openPosSession({
-            branchId: terminal.branchId,
-            cashBoxId: null,
-            openingCash: 0,
-            device: navigator.userAgent.slice(0, 120),
-            posTerminalId: terminal.id,
-            machineCode: deviceId,
-          });
-          if (!active) return;
-          setPosSessionId(session.id);
-          localStorage.setItem("pos_branch_id", String(session.branchId ?? terminal.branchId));
-          localStorage.setItem("pos_terminal_id", String(session.posTerminalId ?? terminal.id));
+          localStorage.setItem("pos_branch_id", String(terminal.branchId));
+          localStorage.setItem("pos_terminal_id", String(terminal.id));
           navigate("/pos");
           return;
         }
@@ -159,24 +149,9 @@ export default function PosEntry() {
           throw new Error("كل محطات البيع المسموح بها مشغولة حالياً. أعد المحاولة بعد إتاحة محطة.");
         }
 
-        const storedCashBox = Number(localStorage.getItem("pos_cash_box_id") || 0);
-        const session = await api.openPosSession({
-          branchId: branch.id,
-          cashBoxId: terminal
-            ? null
-            : Number.isFinite(storedCashBox) && storedCashBox > 0
-              ? storedCashBox
-              : null,
-          openingCash: 0,
-          device: navigator.userAgent.slice(0, 120),
-          posTerminalId: terminal?.id ?? null,
-          machineCode: terminal ? deviceId : null,
-        });
-        if (!active) return;
-        setPosSessionId(session.id);
-        localStorage.setItem("pos_branch_id", String(session.branchId ?? branch.id));
-        if (session.posTerminalId) {
-          localStorage.setItem("pos_terminal_id", String(session.posTerminalId));
+        localStorage.setItem("pos_branch_id", String(branch.id));
+        if (terminal) {
+          localStorage.setItem("pos_terminal_id", String(terminal.id));
         } else {
           localStorage.removeItem("pos_terminal_id");
         }
@@ -206,7 +181,7 @@ export default function PosEntry() {
             <LoaderCircle className="mx-auto h-9 w-9 animate-spin text-primary" aria-hidden />
             <h1 className="mt-4 text-xl font-black">جارٍ فتح شاشة نقاط البيع</h1>
             <p role="status" className="mt-2 text-sm leading-6 text-slate-600">
-              نتحقق من الصلاحيات والفروع والمحطة، ثم نفتح الجلسة المسموح بها.
+              نتحقق من الصلاحيات والفروع والمحطة، ثم نجهّز شاشة البيع لفتح الوردية.
             </p>
           </>
         ) : (

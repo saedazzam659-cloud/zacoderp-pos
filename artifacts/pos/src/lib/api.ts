@@ -199,9 +199,11 @@ export type CreateInvoiceBody = {
   invoiceDate: string;
   customerId?: number | null;
   branchId?: number | null;
-  paymentType: "cash" | "bank" | "credit";
+  paymentType: "cash" | "bank" | "credit" | "mixed";
   cashBoxId?: number | null;
   bankAccountId?: number | null;
+  cashAmount?: number | null;
+  bankAmount?: number | null;
   currencyCode?: string;
   subtotal: number;
   vatAmount: number;
@@ -259,6 +261,8 @@ export type SalesInvoice = {
   discountAmount?: string;
   priceIncludesVat?: boolean;
   paymentType?: string;
+  cashAmount?: string | null;
+  bankAmount?: string | null;
   currencyCode?: string;
   lines?: SalesInvoiceLine[];
 };

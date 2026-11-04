@@ -64,7 +64,10 @@ export async function runPosSessionAutoCloseOnce(): Promise<{
   for (const s of candidates) {
     try {
       const [{ totalCash } = { totalCash: "0" }] = await db.select({
-        totalCash: sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}), 0)`,
+        totalCash: sql<string>`COALESCE(SUM(CASE
+          WHEN ${salesInvoicesTable.paymentType} = 'cash' THEN ${salesInvoicesTable.totalAmount}
+          WHEN ${salesInvoicesTable.paymentType} = 'mixed' THEN ${salesInvoicesTable.cashAmount}
+          ELSE 0 END), 0)`,
       }).from(salesInvoicesTable).where(and(
         eq(salesInvoicesTable.posSessionId, s.id),
         eq(salesInvoicesTable.companyId, s.companyId),
