@@ -6098,6 +6098,7 @@ router.patch(
         .where(eq(salesReturnLinesTable.returnId, id));
       if (!lines.length)
         throw Object.assign(new Error("لا توجد أصناف في المرتجع"), { status: 400 });
+      const returnCostAdjustmentPerPair = new Map<string, number>();
       if (ret.invoiceId) {
         const [sourceInvoice] = await tx.select({
           id: salesInvoicesTable.id,
@@ -6117,6 +6118,7 @@ router.patch(
         // and therefore count toward both the sold and already-returned cap.
         const sourceLines = await tx.select({
           itemId: salesInvoiceLinesTable.itemId,
+          warehouseId: salesInvoiceLinesTable.warehouseId,
           qty: salesInvoiceLinesTable.qty,
           freeQty: salesInvoiceLinesTable.freeQty,
           conversionFactor: salesInvoiceLinesTable.conversionFactor,
@@ -6161,6 +6163,32 @@ router.patch(
             throw Object.assign(new Error(
               `الصنف #${itemId}: كمية المرتجع تتجاوز المتاح بعد احتساب المجاني — المباع ${soldQty}، المرتجع سابقاً ${returnedQty}، المتاح ${Math.max(0, remainingQty).toFixed(3)} (بالوحدة الأساس)`,
             ), { status: 400 });
+        }
+        const soldQtyByPair = new Map<string, number>();
+        for (const sourceLine of sourceLines) {
+          if (sourceLine.itemId == null || sourceLine.warehouseId == null) continue;
+          const key = `${sourceLine.itemId}:${sourceLine.warehouseId}`;
+          const baseQty = (Number(sourceLine.qty || 0) + Number(sourceLine.freeQty || 0))
+            * Number(sourceLine.conversionFactor || 1);
+          soldQtyByPair.set(key, (soldQtyByPair.get(key) ?? 0) + baseQty);
+        }
+        const linkedCostAdjustments = await tx.select({
+          itemId: negativeStockCostSettlementsTable.itemId,
+          warehouseId: negativeStockCostSettlementsTable.warehouseId,
+          adjustmentAmount: negativeStockCostSettlementsTable.adjustmentAmount,
+        }).from(negativeStockCostSettlementsTable).where(and(
+          eq(negativeStockCostSettlementsTable.companyId, cid),
+          eq(negativeStockCostSettlementsTable.salesInvoiceId, ret.invoiceId),
+          eq(negativeStockCostSettlementsTable.status, "active"),
+        ));
+        const adjustmentByPair = new Map<string, number>();
+        for (const adjustment of linkedCostAdjustments) {
+          const key = `${adjustment.itemId}:${adjustment.warehouseId}`;
+          adjustmentByPair.set(key, (adjustmentByPair.get(key) ?? 0) + Number(adjustment.adjustmentAmount));
+        }
+        for (const [key, amount] of adjustmentByPair) {
+          const soldQty = soldQtyByPair.get(key) ?? 0;
+          if (soldQty > 0) returnCostAdjustmentPerPair.set(key, amount / soldQty);
         }
       }
       const consumedThisDoc = new Map<string, number>();
@@ -6297,6 +6325,41 @@ router.patch(
       }
 
       // Aggregate cost across all parts (weighted-sum) for JE math.
+      const adjustmentPerUnit = ret.invoiceId
+        ? returnCostAdjustmentPerPair.get(`${line.itemId}:${line.warehouseId}`) ?? 0
+        : 0;
+      if (adjustmentPerUnit !== 0) {
+        for (const part of parts) {
+          part.costPrice = Math.max(0, part.costPrice + adjustmentPerUnit);
+        }
+      }
+      // A linked return before receipt reduces the still-uncovered negative
+      // layer. Unlinked returns are capped by the live negative balance when a
+      // later receipt allocates coverage.
+      if (ret.invoiceId) {
+        let returnedAgainstPending = qty;
+        const pendingLayers = await tx.select().from(negativeStockCostSettlementsTable)
+          .where(and(
+            eq(negativeStockCostSettlementsTable.companyId, cid),
+            eq(negativeStockCostSettlementsTable.salesInvoiceId, ret.invoiceId),
+            eq(negativeStockCostSettlementsTable.itemId, line.itemId),
+            eq(negativeStockCostSettlementsTable.warehouseId, line.warehouseId),
+            eq(negativeStockCostSettlementsTable.status, "pending"),
+          ))
+          .orderBy(asc(negativeStockCostSettlementsTable.id))
+          .for("update");
+        for (const layer of pendingLayers) {
+          if (returnedAgainstPending <= 0.0001) break;
+          const pendingQty = Math.max(0, Number(layer.quantity));
+          const returnedQty = Math.min(pendingQty, returnedAgainstPending);
+          const remainingQty = Math.max(0, pendingQty - returnedQty);
+          await tx.update(negativeStockCostSettlementsTable).set({
+            quantity: String(remainingQty),
+            status: remainingQty <= 0.0001 ? "closed" : "pending",
+          }).where(eq(negativeStockCostSettlementsTable.id, layer.id));
+          returnedAgainstPending -= returnedQty;
+        }
+      }
       const lineRestoredCost = parts.reduce((s, p) => s + p.takeQty * p.costPrice, 0);
       if (historicalImportMode === "financial_only" && lineRestoredCost <= 0) {
         throw Object.assign(new Error("تعذر تحديد تكلفة نظام موثوقة لأحد أصناف المرتجع؛ لم يتم ترحيل المستند."), { status: 400 });
