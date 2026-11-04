@@ -9,6 +9,70 @@ import * as zod from 'zod';
 
 
 /**
+ * @summary Read posted sales prices for one item and customer
+ */
+
+
+export const getSalesItemPartyHistoryQueryLimitDefault = 20;
+export const getSalesItemPartyHistoryQueryLimitMax = 30;
+
+
+
+export const GetSalesItemPartyHistoryQueryParams = zod.object({
+  "itemId": zod.coerce.number().min(1),
+  "partyId": zod.coerce.number().min(1),
+  "limit": zod.coerce.number().min(1).max(getSalesItemPartyHistoryQueryLimitMax).default(getSalesItemPartyHistoryQueryLimitDefault)
+})
+
+export const GetSalesItemPartyHistoryResponse = zod.object({
+  "entries": zod.array(zod.object({
+  "invoiceId": zod.number(),
+  "docNumber": zod.string().nullish(),
+  "invoiceDate": zod.string(),
+  "qty": zod.string(),
+  "unit": zod.string().nullish(),
+  "unitPrice": zod.string(),
+  "discount": zod.string(),
+  "discountAmount": zod.string(),
+  "lineTotal": zod.string(),
+  "currencyCode": zod.string()
+}))
+})
+
+
+/**
+ * @summary Read posted purchase prices for one item and supplier
+ */
+
+
+export const getPurchaseItemPartyHistoryQueryLimitDefault = 20;
+export const getPurchaseItemPartyHistoryQueryLimitMax = 30;
+
+
+
+export const GetPurchaseItemPartyHistoryQueryParams = zod.object({
+  "itemId": zod.coerce.number().min(1),
+  "partyId": zod.coerce.number().min(1),
+  "limit": zod.coerce.number().min(1).max(getPurchaseItemPartyHistoryQueryLimitMax).default(getPurchaseItemPartyHistoryQueryLimitDefault)
+})
+
+export const GetPurchaseItemPartyHistoryResponse = zod.object({
+  "entries": zod.array(zod.object({
+  "invoiceId": zod.number(),
+  "docNumber": zod.string().nullish(),
+  "invoiceDate": zod.string(),
+  "qty": zod.string(),
+  "unit": zod.string().nullish(),
+  "unitPrice": zod.string(),
+  "discount": zod.string(),
+  "discountAmount": zod.string(),
+  "lineTotal": zod.string(),
+  "currencyCode": zod.string()
+}))
+})
+
+
+/**
  * @summary List public module screenshots
  */
 export const getPublicModuleShowcaseResponseImagesItemSortOrderMin = 0;

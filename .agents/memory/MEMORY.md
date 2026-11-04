@@ -97,6 +97,7 @@
 - [Fiscal-year rollover balances](fiscal-year-rollover-balances.md) — new years inherit balances from posted ledger history; do not generate duplicate opening journals.
 - [Sales negative-stock precedence](sales-negative-stock-precedence.md) — company switch is the master; warehouse can block, invoice can override warehouse only.
 - [Item catalog performance](item-catalog-performance.md) — large catalogs need bounded tenant-scoped picker search; preserve full-list behavior for reports.
+- [Invoice item history party scope](invoice-item-history-party-scope.md) — sales history follows the selected customer and purchase history follows the selected supplier; never show unrelated parties.
 - [Purchase picker price priority](purchase-picker-weighted-average-cost.md) — default from latest posted purchase; keep current weighted-average inventory cost separate.
 - [Purchase direct-expense and custody boundary](purchase-direct-expense-custody.md) — default-off direct-expense lines use normal expense/tax posting; custody settlements and returns reuse the existing lifecycle.
 - [Company document field controls](company-document-field-controls.md) — keep company controls off by default, SuperAdmin-gated, and company-wide when enabled.

@@ -3437,6 +3437,57 @@ export interface PurchaseVatCostDefaultUpdateResponse {
   enabled: boolean;
 }
 
+export interface ItemPartyHistoryEntry {
+  invoiceId: number;
+  /** @nullable */
+  docNumber?: string | null;
+  invoiceDate: string;
+  qty: string;
+  /** @nullable */
+  unit?: string | null;
+  unitPrice: string;
+  discount: string;
+  discountAmount: string;
+  lineTotal: string;
+  currencyCode: string;
+}
+
+export interface ItemPartyHistoryResponse {
+  entries: ItemPartyHistoryEntry[];
+}
+
+export type GetSalesItemPartyHistoryParams = {
+/**
+ * @minimum 1
+ */
+itemId: number;
+/**
+ * @minimum 1
+ */
+partyId: number;
+/**
+ * @minimum 1
+ * @maximum 30
+ */
+limit?: number;
+};
+
+export type GetPurchaseItemPartyHistoryParams = {
+/**
+ * @minimum 1
+ */
+itemId: number;
+/**
+ * @minimum 1
+ */
+partyId: number;
+/**
+ * @minimum 1
+ * @maximum 30
+ */
+limit?: number;
+};
+
 export type GetAdminModuleShowcaseUploadUrlBodyContentType = typeof GetAdminModuleShowcaseUploadUrlBodyContentType[keyof typeof GetAdminModuleShowcaseUploadUrlBodyContentType];
 
 

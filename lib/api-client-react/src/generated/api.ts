@@ -71,6 +71,7 @@ import type {
   GetInventoryReportBrandOptionsParams,
   GetMobileTrackingManagerReportParams,
   GetMonthlyStatsParams,
+  GetPurchaseItemPartyHistoryParams,
   GetPurchaseOrderReceiptOptionsParams,
   GetPurchaseReceiptFollowUpParams,
   GetPurchaseReturnsByItemParams,
@@ -78,6 +79,7 @@ import type {
   GetPurchaseVariantNetBySupplierParams,
   GetRecentInvoicesParams,
   GetSafetyKpisParams,
+  GetSalesItemPartyHistoryParams,
   GetSchoolAcademicPeriodsParams,
   GetSchoolAcademicReportParams,
   GetSchoolDailyAssessmentsParams,
@@ -105,6 +107,7 @@ import type {
   InternalStockTransferInput,
   InventoryReportBrandOption,
   Invoice,
+  ItemPartyHistoryResponse,
   JournalEntryReversalInput,
   JournalEntryReversalResult,
   ListContractingTaxSubmissionsParams,
@@ -247,6 +250,174 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetSalesItemPartyHistoryUrl = (params: GetSalesItemPartyHistoryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/sales/sales-invoices/item-party-history?${stringifiedParams}` : `/api/sales/sales-invoices/item-party-history`
+}
+
+/**
+ * @summary Read posted sales prices for one item and customer
+ */
+export const getSalesItemPartyHistory = async (params: GetSalesItemPartyHistoryParams, options?: RequestInit): Promise<ItemPartyHistoryResponse> => {
+
+  return customFetch<ItemPartyHistoryResponse>(getGetSalesItemPartyHistoryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSalesItemPartyHistoryQueryKey = (params?: GetSalesItemPartyHistoryParams,) => {
+    return [
+    `/api/sales/sales-invoices/item-party-history`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetSalesItemPartyHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getSalesItemPartyHistory>>, TError = ErrorType<void>>(params: GetSalesItemPartyHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSalesItemPartyHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSalesItemPartyHistoryQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSalesItemPartyHistory>>> = ({ signal }) => getSalesItemPartyHistory(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSalesItemPartyHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSalesItemPartyHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getSalesItemPartyHistory>>>
+export type GetSalesItemPartyHistoryQueryError = ErrorType<void>
+
+
+/**
+ * @summary Read posted sales prices for one item and customer
+ */
+
+export function useGetSalesItemPartyHistory<TData = Awaited<ReturnType<typeof getSalesItemPartyHistory>>, TError = ErrorType<void>>(
+ params: GetSalesItemPartyHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSalesItemPartyHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSalesItemPartyHistoryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetPurchaseItemPartyHistoryUrl = (params: GetPurchaseItemPartyHistoryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/purchasing/purchase-invoices/item-party-history?${stringifiedParams}` : `/api/purchasing/purchase-invoices/item-party-history`
+}
+
+/**
+ * @summary Read posted purchase prices for one item and supplier
+ */
+export const getPurchaseItemPartyHistory = async (params: GetPurchaseItemPartyHistoryParams, options?: RequestInit): Promise<ItemPartyHistoryResponse> => {
+
+  return customFetch<ItemPartyHistoryResponse>(getGetPurchaseItemPartyHistoryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPurchaseItemPartyHistoryQueryKey = (params?: GetPurchaseItemPartyHistoryParams,) => {
+    return [
+    `/api/purchasing/purchase-invoices/item-party-history`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetPurchaseItemPartyHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getPurchaseItemPartyHistory>>, TError = ErrorType<void>>(params: GetPurchaseItemPartyHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPurchaseItemPartyHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPurchaseItemPartyHistoryQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPurchaseItemPartyHistory>>> = ({ signal }) => getPurchaseItemPartyHistory(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPurchaseItemPartyHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPurchaseItemPartyHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getPurchaseItemPartyHistory>>>
+export type GetPurchaseItemPartyHistoryQueryError = ErrorType<void>
+
+
+/**
+ * @summary Read posted purchase prices for one item and supplier
+ */
+
+export function useGetPurchaseItemPartyHistory<TData = Awaited<ReturnType<typeof getPurchaseItemPartyHistory>>, TError = ErrorType<void>>(
+ params: GetPurchaseItemPartyHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPurchaseItemPartyHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPurchaseItemPartyHistoryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetPublicModuleShowcaseUrl = () => {
 

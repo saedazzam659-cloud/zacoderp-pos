@@ -15,6 +15,7 @@ import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/con
 import { useContractingModule } from "@/hooks/useContractingModule";
 import { usePermission } from "@/hooks/usePermission";
 import { JournalScanArchive } from "@/components/JournalScanArchive";
+import ItemPartyHistoryDrawer from "@/components/ItemPartyHistoryDrawer";
 import { renameArchivedKey } from "@/lib/localArchive";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useFormatters, currencySymbol, fmt2 } from "@/lib/format";
@@ -588,6 +589,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [docDate,   setDocDate]         = useState(today());
   const [validUntil,setValidUntil]      = useState("");
   const [customerId,setCustomerId]      = useState("");
+  const [itemHistoryTarget, setItemHistoryTarget] = useState<{ itemId: string; code: string } | null>(null);
   const [manualPrintPartyName, setManualPrintPartyName] = useState("");
   const [quickCustomerDialogOpen, setQuickCustomerDialogOpen] = useState(false);
   const [customerDetailsDialogOpen, setCustomerDetailsDialogOpen] = useState(false);
@@ -3102,7 +3104,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 <div key={l._id} className="px-3 py-2 text-xs hover:bg-muted/30 transition-colors">
                   <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: gridCols }}>
                     <span className="text-muted-foreground tabular-nums">{idx + 1}</span>
-                    <span className="font-mono truncate" title={l.itemCode}>{l.itemCode || "—"}</span>
+                    {isInvoice && l.itemId ? (
+                      <button type="button" className="truncate text-start font-mono text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={isRtl ? "عرض حركة الصنف مع العميل" : "View item history with this customer"} onClick={() => setItemHistoryTarget({ itemId: String(l.itemId), code: l.itemCode })}>
+                        {l.itemCode || "—"}
+                      </button>
+                    ) : <span className="font-mono truncate" title={l.itemCode}>{l.itemCode || "—"}</span>}
                     <div className="space-y-0.5 min-w-0">
                       <SalesItemPickerWithStock
                         items={itemComboItems}
@@ -3338,8 +3344,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       className="grid gap-2 items-center"
                       style={{ gridTemplateColumns: gridCols }}
                     >
-                      <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
-                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
+                      {isInvoice && l.itemId ? (
+                        <button type="button" className="h-8 truncate rounded-md bg-muted/40 px-2 text-start text-xs font-mono text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={isRtl ? "عرض حركة الصنف مع العميل" : "View item history with this customer"} onClick={() => setItemHistoryTarget({ itemId: String(l.itemId), code: l.itemCode })}>{l.itemCode || "—"}</button>
+                      ) : <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
+                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />}
                       {user ? (
                         <div className="min-w-0">
                           <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
@@ -5178,6 +5186,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           }}
         />
       )}
+      <ItemPartyHistoryDrawer
+        open={!!itemHistoryTarget}
+        onClose={() => setItemHistoryTarget(null)}
+        kind="sale"
+        itemId={itemHistoryTarget?.itemId ?? ""}
+        itemCode={itemHistoryTarget?.code ?? ""}
+        partyId={customerId}
+        apiBase={API}
+        authorization={authH.Authorization}
+        isRtl={isRtl}
+      />
     </div>
   );
 }

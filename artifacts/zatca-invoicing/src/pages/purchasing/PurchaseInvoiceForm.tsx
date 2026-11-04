@@ -58,6 +58,7 @@ import {
   serializeDocumentLine,
 } from "@/lib/documentLineUnits";
 import { DocumentQuantityWarnings } from "@/components/DocumentQuantityWarnings";
+import ItemPartyHistoryDrawer from "@/components/ItemPartyHistoryDrawer";
 import {
   convertGoodsReceiptToInvoice,
   convertPurchaseOrderToInvoice,
@@ -244,6 +245,7 @@ function PurchaseInvoiceFormContent() {
   const [supplierInvoiceDate, setSupplierInvoiceDate] = useState("");
   const [invoiceDate,  setInvoiceDate]  = useState(today());
   const [supplierId,   setSupplierId]   = useState("");
+  const [itemHistoryTarget, setItemHistoryTarget] = useState<{ itemId: string; code: string } | null>(null);
   const [manualPrintPartyName, setManualPrintPartyName] = useState("");
   const [branchId,     setBranchId]     = useState("");
   const [sourceLookupKind, setSourceLookupKind] = useState<"purchase-order" | "goods-receipt">("purchase-order");
@@ -2215,8 +2217,10 @@ function PurchaseInvoiceFormContent() {
                       style={{ gridTemplateColumns: GRID_COLS }}
                     >
                       <span className="text-xs text-muted-foreground tabular-nums">{idx + 1}</span>
-                      <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={tr("auto")} value={l.itemCode}
-                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
+                      {l.itemId && l.lineType !== "direct_expense" ? (
+                        <button type="button" className="h-8 truncate rounded-md bg-muted/40 px-2 text-start text-xs font-mono text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={isRtl ? "عرض حركة الصنف مع المورد" : "View item history with this supplier"} onClick={() => setItemHistoryTarget({ itemId: String(l.itemId), code: l.itemCode })}>{l.itemCode || "—"}</button>
+                      ) : <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={tr("auto")} value={l.itemCode}
+                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />}
                       {l.lineType === "direct_expense" ? (
                         <Input className="h-8 text-xs" placeholder="بيان المصروف" value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
@@ -2783,6 +2787,17 @@ function PurchaseInvoiceFormContent() {
             if (!qaWarehouseId && defaultWarehouse?.id) setQaWarehouseId(String(defaultWarehouse.id));
           }
         }}
+      />
+      <ItemPartyHistoryDrawer
+        open={!!itemHistoryTarget}
+        onClose={() => setItemHistoryTarget(null)}
+        kind="purchase"
+        itemId={itemHistoryTarget?.itemId ?? ""}
+        itemCode={itemHistoryTarget?.code ?? ""}
+        partyId={supplierId}
+        apiBase={API}
+        authorization={authH.Authorization}
+        isRtl={isRtl}
       />
     </div>
   );

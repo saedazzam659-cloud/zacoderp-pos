@@ -3,6 +3,8 @@ import { approvalGate, enforceDraftSaveMode, nextDraftDocumentNumber } from "./d
 import {
   LookupSalesOrderSourceDocumentQueryParams,
   LookupSalesOrderSourceDocumentResponse,
+  GetSalesItemPartyHistoryQueryParams,
+  GetSalesItemPartyHistoryResponse,
 } from "@workspace/api-zod";
 import { expenseJournalLines, expenseWhere, installExpenseDocumentTransactions } from "../lib/documentExpenses.js";
 import { canPostDoc, requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
@@ -2004,6 +2006,48 @@ router.get("/sales-invoices/batch-options", async (req, res) => {
   } catch (e: any) {
     res.status(e?.status ?? 500).json({ error: e?.message ?? "تعذر تحميل التشغيلات" });
   }
+});
+
+router.get("/sales-invoices/item-party-history", requirePermission("sales_invoices", "view"), async (req, res): Promise<void> => {
+  const cid = getCid(req);
+  if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+  const parsed = GetSalesItemPartyHistoryQueryParams.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { itemId, partyId, limit } = parsed.data;
+  const rows = await db.select({
+    invoiceId: salesInvoicesTable.id,
+    docNumber: salesInvoicesTable.docNumber,
+    invoiceDate: salesInvoicesTable.invoiceDate,
+    qty: salesInvoiceLinesTable.qty,
+    unit: salesInvoiceLinesTable.unit,
+    unitPrice: salesInvoiceLinesTable.unitPrice,
+    discount: salesInvoiceLinesTable.discount,
+    discountAmount: salesInvoiceLinesTable.discountAmount,
+    lineTotal: salesInvoiceLinesTable.lineTotal,
+    currencyCode: salesInvoicesTable.currencyCode,
+  }).from(salesInvoiceLinesTable)
+    .innerJoin(salesInvoicesTable, eq(salesInvoicesTable.id, salesInvoiceLinesTable.invoiceId))
+    .where(and(
+      eq(salesInvoiceLinesTable.companyId, cid),
+      eq(salesInvoiceLinesTable.itemId, itemId),
+      eq(salesInvoicesTable.companyId, cid),
+      eq(salesInvoicesTable.customerId, partyId),
+      eq(salesInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "salesInvoicesOwn", salesInvoicesTable.createdById),
+      ...multiBranchScopeSpread(req, salesInvoicesTable.branchId, undefined),
+    ))
+    .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id), desc(salesInvoiceLinesTable.id))
+    .limit(limit);
+  res.json(GetSalesItemPartyHistoryResponse.parse({
+    entries: rows.map((row) => ({
+      ...row,
+      qty: String(row.qty ?? "0"),
+      unitPrice: String(row.unitPrice ?? "0"),
+      discount: String(row.discount ?? "0"),
+      discountAmount: String(row.discountAmount ?? "0"),
+      lineTotal: String(row.lineTotal ?? "0"),
+    })),
+  }));
 });
 
 router.get("/sales-invoices/:id", requirePermission("sales_invoices", "view"), async (req, res) => {

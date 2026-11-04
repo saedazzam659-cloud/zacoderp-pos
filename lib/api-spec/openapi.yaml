@@ -36,6 +36,60 @@ tags:
   - name: moduleShowcase
     description: Public ERP module screenshots managed by SuperAdmin
 paths:
+  /sales/sales-invoices/item-party-history:
+    get:
+      operationId: getSalesItemPartyHistory
+      tags: [invoices]
+      summary: Read posted sales prices for one item and customer
+      parameters:
+        - name: itemId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: partyId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 30, default: 20 }
+      responses:
+        "200":
+          description: Recent posted sales invoice lines for the customer and item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemPartyHistoryResponse" }
+        "400": { description: Invalid item or customer }
+        "401": { description: Unauthorized }
+        "403": { description: Sales invoice view permission is required }
+  /purchasing/purchase-invoices/item-party-history:
+    get:
+      operationId: getPurchaseItemPartyHistory
+      tags: [purchasing]
+      summary: Read posted purchase prices for one item and supplier
+      parameters:
+        - name: itemId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: partyId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 30, default: 20 }
+      responses:
+        "200":
+          description: Recent posted purchase invoice lines for the supplier and item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemPartyHistoryResponse" }
+        "400": { description: Invalid item or supplier }
+        "401": { description: Unauthorized }
+        "403": { description: Purchase invoice view permission is required }
   /module-showcase:
     get:
       operationId: getPublicModuleShowcase
@@ -6805,3 +6859,24 @@ components:
       properties:
         ok: { type: boolean }
         enabled: { type: boolean }
+    ItemPartyHistoryEntry:
+      type: object
+      required: [invoiceId, invoiceDate, qty, unitPrice, discount, discountAmount, lineTotal, currencyCode]
+      properties:
+        invoiceId: { type: integer }
+        docNumber: { type: ["string", "null"] }
+        invoiceDate: { type: string }
+        qty: { type: string }
+        unit: { type: ["string", "null"] }
+        unitPrice: { type: string }
+        discount: { type: string }
+        discountAmount: { type: string }
+        lineTotal: { type: string }
+        currencyCode: { type: string }
+    ItemPartyHistoryResponse:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/ItemPartyHistoryEntry" }

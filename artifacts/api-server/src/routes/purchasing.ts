@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { GetPurchaseItemPartyHistoryQueryParams, GetPurchaseItemPartyHistoryResponse } from "@workspace/api-zod";
 import { approvalGate, enforceDraftSaveMode, nextDraftDocumentNumber } from "./documentApprovals.js";
 import { normalizeManualPrintPartyName } from "../lib/manualPrintPartyName.js";
 import { capitalizedExpenseShares, expenseJournalLines, installExpenseDocumentTransactions, readExpenseRows, withDocumentExpenseSavepoint } from "../lib/documentExpenses.js";
@@ -1667,6 +1668,49 @@ router.get("/purchase-invoices", async (req, res) => {
     });
     res.json(enriched);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+});
+
+router.get("/purchase-invoices/item-party-history", requirePermission("purchase_invoices", "view"), async (req, res): Promise<void> => {
+  const cid = getCid(req);
+  if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+  const parsed = GetPurchaseItemPartyHistoryQueryParams.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { itemId, partyId, limit } = parsed.data;
+  const rows = await db.select({
+    invoiceId: purchaseInvoicesTable.id,
+    docNumber: purchaseInvoicesTable.docNumber,
+    invoiceDate: purchaseInvoicesTable.invoiceDate,
+    qty: purchaseInvoiceLinesTable.qty,
+    unit: purchaseInvoiceLinesTable.unit,
+    unitPrice: purchaseInvoiceLinesTable.unitPrice,
+    discount: purchaseInvoiceLinesTable.discount,
+    discountAmount: purchaseInvoiceLinesTable.discountAmount,
+    lineTotal: purchaseInvoiceLinesTable.lineTotal,
+    currencyCode: purchaseInvoicesTable.currencyCode,
+  }).from(purchaseInvoiceLinesTable)
+    .innerJoin(purchaseInvoicesTable, eq(purchaseInvoicesTable.id, purchaseInvoiceLinesTable.invoiceId))
+    .where(and(
+      eq(purchaseInvoiceLinesTable.companyId, cid),
+      eq(purchaseInvoiceLinesTable.itemId, itemId),
+      eq(purchaseInvoiceLinesTable.lineType, "item"),
+      eq(purchaseInvoicesTable.companyId, cid),
+      eq(purchaseInvoicesTable.supplierId, partyId),
+      eq(purchaseInvoicesTable.status, "posted"),
+      ...ownDocumentFilter(req, "purchaseInvoicesOwn", purchaseInvoicesTable.createdById),
+      ...multiBranchScopeSpread(req, purchaseInvoicesTable.branchId, undefined),
+    ))
+    .orderBy(desc(purchaseInvoicesTable.invoiceDate), desc(purchaseInvoicesTable.id), desc(purchaseInvoiceLinesTable.id))
+    .limit(limit);
+  res.json(GetPurchaseItemPartyHistoryResponse.parse({
+    entries: rows.map((row) => ({
+      ...row,
+      qty: String(row.qty ?? "0"),
+      unitPrice: String(row.unitPrice ?? "0"),
+      discount: String(row.discount ?? "0"),
+      discountAmount: String(row.discountAmount ?? "0"),
+      lineTotal: String(row.lineTotal ?? "0"),
+    })),
+  }));
 });
 
 router.get("/purchase-invoices/:id", async (req, res) => {
