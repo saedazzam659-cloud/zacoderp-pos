@@ -631,6 +631,8 @@ export type ROrderItem = {
   menuItemId: number;
   erpItemId?: number | null;
   erpItemType?: "stock" | "service" | "fixed_asset" | null;
+  erpVatRate?: string | null;
+  vatIncluded?: boolean;
   nameSnapshot: string;
   qty: string;
   price: string;

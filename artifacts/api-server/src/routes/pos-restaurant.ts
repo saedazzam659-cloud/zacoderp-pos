@@ -75,14 +75,70 @@ async function nextOrderNumber(cid: number): Promise<string> {
   return `ORD-${ym}-${String((c ?? 0) + 1).padStart(5, "0")}`;
 }
 
-function recalcTotals(lines: Array<{ qty: string | number; price: string | number }>) {
-  const subtotal = lines.reduce((s, l) => s + Number(l.qty) * Number(l.price), 0);
-  const vat = subtotal * 0.15;
+function recalcTotals(lines: Array<{
+  menuItemId?: number;
+  erpItemId?: number | null;
+  qty: string | number;
+  price: string | number;
+  vatIncluded?: boolean | null;
+  vatRate?: string | number | null;
+}>) {
+  const groups = new Map<string, { qty: number; grossUnitPrice: number; rate: number }>();
+  for (const line of lines) {
+    const rawRate = line.vatRate == null || String(line.vatRate).trim() === ""
+      ? Number.NaN
+      : Number(line.vatRate);
+    const rate = Number.isFinite(rawRate) && rawRate >= 0 ? rawRate : 15;
+    const price = Number(line.price);
+    const grossUnitPrice = Number((line.vatIncluded === false
+      ? price * (1 + rate / 100)
+      : price).toFixed(4));
+    const itemKey = line.erpItemId != null ? `erp:${line.erpItemId}` : `menu:${line.menuItemId ?? "unknown"}`;
+    const key = `${itemKey}:${rate}:${grossUnitPrice.toFixed(4)}`;
+    const current = groups.get(key);
+    if (current) current.qty += Number(line.qty);
+    else groups.set(key, { qty: Number(line.qty), grossUnitPrice, rate });
+  }
+  let subtotal = 0;
+  let vat = 0;
+  let total = 0;
+  for (const line of groups.values()) {
+    const lineGross = Number((line.qty * line.grossUnitPrice).toFixed(2));
+    const lineNet = Number((lineGross / (1 + line.rate / 100)).toFixed(2));
+    subtotal += lineNet;
+    vat += lineGross - lineNet;
+    total += lineGross;
+  }
   return {
     subtotal: subtotal.toFixed(2),
     vatAmount: vat.toFixed(2),
-    total: (subtotal + vat).toFixed(2),
+    total: total.toFixed(2),
   };
+}
+
+async function recalculateOrderTotals(companyId: number, orderId: number) {
+  const lines = await db.select({
+    menuItemId: posOrderItemsTable.menuItemId,
+    erpItemId: posMenuItemsTable.itemId,
+    qty: posOrderItemsTable.qty,
+    price: posOrderItemsTable.price,
+    status: posOrderItemsTable.status,
+    vatIncluded: posMenuItemsTable.vatIncluded,
+    vatRate: itemsTable.vatRate,
+  }).from(posOrderItemsTable)
+    .leftJoin(posMenuItemsTable, and(
+      eq(posMenuItemsTable.id, posOrderItemsTable.menuItemId),
+      eq(posMenuItemsTable.companyId, companyId),
+    ))
+    .leftJoin(itemsTable, and(
+      eq(itemsTable.id, posMenuItemsTable.itemId),
+      eq(itemsTable.companyId, companyId),
+    ))
+    .where(eq(posOrderItemsTable.orderId, orderId));
+  const totals = recalcTotals(lines.filter(line => line.status !== "cancelled"));
+  await db.update(posOrdersTable).set({ ...totals, updatedAt: new Date() })
+    .where(and(eq(posOrdersTable.id, orderId), eq(posOrdersTable.companyId, companyId)));
+  return totals;
 }
 
 async function validateRestaurantErpItemLink(companyId: number, value: unknown): Promise<number | null> {
@@ -373,6 +429,8 @@ router.get("/orders/:id", async (req, res) => {
     menuItemId: posOrderItemsTable.menuItemId,
     erpItemId: posMenuItemsTable.itemId,
     erpItemType: itemsTable.itemType,
+    erpVatRate: itemsTable.vatRate,
+    vatIncluded: posMenuItemsTable.vatIncluded,
     nameSnapshot: posOrderItemsTable.nameSnapshot,
     qty: posOrderItemsTable.qty,
     price: posOrderItemsTable.price,
@@ -396,7 +454,10 @@ router.get("/orders/:id", async (req, res) => {
     ))
     .where(eq(posOrderItemsTable.orderId, id))
     .orderBy(asc(posOrderItemsTable.id));
-  res.json({ ...order, items });
+  const totals = recalcTotals(items
+    .filter(line => line.status !== "cancelled")
+    .map(line => ({ ...line, vatRate: line.erpVatRate })));
+  res.json({ ...order, ...totals, items });
 });
 
 router.post("/orders", async (req, res) => {
@@ -446,10 +507,7 @@ router.post("/orders/:id/items", async (req, res) => {
     notes: notes ?? null,
   });
   // Recalc totals
-  const items = await db.select().from(posOrderItemsTable).where(eq(posOrderItemsTable.orderId, id));
-  const totals = recalcTotals(items.filter(i => i.status !== "cancelled"));
-  await db.update(posOrdersTable).set({ ...totals, updatedAt: new Date() })
-    .where(eq(posOrdersTable.id, id));
+  const totals = await recalculateOrderTotals(cid, id);
   res.status(201).json({ ok: true, ...totals });
 });
 
@@ -462,10 +520,7 @@ router.delete("/orders/:id/items/:itemId", async (req, res) => {
   if (!order) { res.status(404).json({ error: "not found" }); return; }
   await db.delete(posOrderItemsTable)
     .where(and(eq(posOrderItemsTable.id, itemId), eq(posOrderItemsTable.orderId, id)));
-  const items = await db.select().from(posOrderItemsTable).where(eq(posOrderItemsTable.orderId, id));
-  const totals = recalcTotals(items.filter(i => i.status !== "cancelled"));
-  await db.update(posOrdersTable).set({ ...totals, updatedAt: new Date() })
-    .where(eq(posOrdersTable.id, id));
+  const totals = await recalculateOrderTotals(cid, id);
   res.json({ ok: true, ...totals });
 });
 
@@ -503,6 +558,9 @@ router.post("/orders/:id/bill", async (req, res) => {
       const [invoice] = await tx.select({
         id: salesInvoicesTable.id,
         status: salesInvoicesTable.status,
+        subtotal: salesInvoicesTable.subtotal,
+        vatAmount: salesInvoicesTable.vatAmount,
+        totalAmount: salesInvoicesTable.totalAmount,
       }).from(salesInvoicesTable)
         .where(and(
           eq(salesInvoicesTable.id, salesInvoiceId),
@@ -526,6 +584,9 @@ router.post("/orders/:id/bill", async (req, res) => {
         .set({
           status: "billed", billedAt: new Date(),
           billedInvoiceId: salesInvoiceId,
+          subtotal: invoice.subtotal,
+          vatAmount: invoice.vatAmount,
+          total: invoice.totalAmount,
           updatedAt: new Date(),
         })
         .where(and(

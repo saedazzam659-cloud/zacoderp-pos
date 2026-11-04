@@ -500,6 +500,7 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
     categoryId: "" as string | number, code: "", nameAr: "", price: 0,
     prepTimeMinutes: 0, kitchenStation: "kitchen" as RMenuItem["kitchenStation"],
     itemId: null as number | null,
+    vatIncluded: true,
   });
   const [editId, setEditId] = useState<number | null>(null);
   const [editBuf, setEditBuf] = useState<Partial<RMenuItem>>({});
@@ -513,10 +514,10 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
     mutationFn: () => api.rCreateMenuItem({
       categoryId: Number(draft.categoryId), code: draft.code, nameAr: draft.nameAr,
       price: String(draft.price), prepTimeMinutes: draft.prepTimeMinutes,
-      kitchenStation: draft.kitchenStation, itemId: draft.itemId,
+      kitchenStation: draft.kitchenStation, itemId: draft.itemId, vatIncluded: draft.vatIncluded,
     }),
     onSuccess: () => {
-      setDraft({ ...draft, code: "", nameAr: "", price: 0, prepTimeMinutes: 0, itemId: null });
+      setDraft({ ...draft, code: "", nameAr: "", price: 0, prepTimeMinutes: 0, itemId: null, vatIncluded: true });
       invalidate();
     },
     onError: (e: any) => alert(e?.message ?? "فشل الإنشاء"),
@@ -533,7 +534,7 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
 
   const startEdit = (it: RMenuItem) => {
     setEditId(it.id);
-    setEditBuf({ categoryId: it.categoryId, code: it.code, nameAr: it.nameAr, price: it.price, prepTimeMinutes: it.prepTimeMinutes, kitchenStation: it.kitchenStation, itemId: it.itemId ?? null });
+    setEditBuf({ categoryId: it.categoryId, code: it.code, nameAr: it.nameAr, price: it.price, prepTimeMinutes: it.prepTimeMinutes, kitchenStation: it.kitchenStation, itemId: it.itemId ?? null, vatIncluded: it.vatIncluded });
   };
 
   const catName = (id: number) => catsQ.data?.find(c => c.id === id)?.nameAr ?? "—";
@@ -578,6 +579,15 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
             onChange={itemId => setDraft({ ...draft, itemId })}
           />
         </div>
+        <label className="mt-3 flex items-center gap-2 text-sm font-semibold">
+          <input
+            type="checkbox"
+            checked={draft.vatIncluded}
+            onChange={event => setDraft({ ...draft, vatIncluded: event.target.checked })}
+            data-testid="checkbox-menu-price-vat-included"
+          />
+          السعر شامل ضريبة القيمة المضافة
+        </label>
         <Button data-testid="button-create-menu-item" className="mt-3 font-bold"
           disabled={!draft.categoryId || !draft.code || !draft.nameAr || create.isPending}
           onClick={() => create.mutate()}>
@@ -615,6 +625,15 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
                         value={editBuf.itemId ?? null}
                         onChange={itemId => setEditBuf({ ...editBuf, itemId })}
                       />
+                      <label className="mt-2 flex items-center gap-2 text-[11px] font-medium">
+                        <input
+                          type="checkbox"
+                          checked={editBuf.vatIncluded ?? true}
+                          onChange={event => setEditBuf({ ...editBuf, vatIncluded: event.target.checked })}
+                          aria-label="السعر شامل ضريبة القيمة المضافة"
+                        />
+                        السعر شامل الضريبة
+                      </label>
                     </td>
                     <td className="p-1">
                       <select value={editBuf.categoryId ?? ""}

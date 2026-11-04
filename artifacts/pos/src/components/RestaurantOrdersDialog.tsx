@@ -65,37 +65,48 @@ export default function RestaurantOrdersDialog({
       // Repeated lines for the same ERP item at the same price become one
       // invoice line, avoiding duplicate-item rejection and stock movements.
       const grouped = new Map<string, {
-        itemId: number; itemType: "stock" | "service"; itemName: string; qty: number; price: number;
+        itemId: number; itemType: "stock" | "service"; itemName: string; qty: number;
+        grossUnitPrice: number; vatRate: number;
       }>();
       for (const li of activeItems) {
         const qty = Number(li.qty);
         const price = Number(li.price);
         const itemId = li.erpItemId!;
         const itemType = li.erpItemType as "stock" | "service";
-        const key = `erp:${itemId}:${price.toFixed(2)}`;
+        const configuredRate = li.erpVatRate == null ? Number.NaN : Number(li.erpVatRate);
+        const vatRate = Number.isFinite(configuredRate) && configuredRate >= 0 ? configuredRate : 15;
+        // Normalize every restaurant price to a VAT-inclusive invoice basis.
+        // This supports menus with a mix of inclusive and exclusive prices
+        // while sales invoices retain one header-level priceIncludesVat flag.
+        const grossUnitPrice = Number((li.vatIncluded === false
+          ? price * (1 + vatRate / 100)
+          : price).toFixed(4));
+        const key = `erp:${itemId}:${vatRate}:${grossUnitPrice.toFixed(4)}`;
         const current = grouped.get(key);
         if (current) current.qty += qty;
-        else grouped.set(key, { itemId, itemType, itemName: li.nameSnapshot, qty, price });
+        else grouped.set(key, { itemId, itemType, itemName: li.nameSnapshot, qty, grossUnitPrice, vatRate });
       }
+      let rawSubtotal = 0;
+      let rawVat = 0;
       const lines: CreateInvoiceLine[] = [...grouped.values()].map(line => {
-          const qty = line.qty;
-          const price = line.price;
-          const lineSub = qty * price;
-          const lineVat = lineSub * 0.15;
+          const lineGross = Number((line.qty * line.grossUnitPrice).toFixed(2));
+          const lineNet = Number((lineGross / (1 + line.vatRate / 100)).toFixed(2));
+          rawSubtotal += lineNet;
+          rawVat += lineGross - lineNet;
           return {
             itemId: line.itemId,
             itemName: line.itemName,
-            qty,
-            unitPrice: price,
+            qty: line.qty,
+            unitPrice: line.grossUnitPrice,
             discount: 0,
-            vatRate: 15,
-            lineTotal: lineSub + lineVat,
+            vatRate: line.vatRate,
+            lineTotal: lineGross,
             warehouseId: line.itemType === "stock" ? defaultWarehouseId! : undefined,
           };
         });
-      const subtotal = Number(selected.subtotal);
-      const vatAmount = Number(selected.vatAmount);
-      const totalAmount = Number(selected.total);
+      const subtotal = Number(rawSubtotal.toFixed(2));
+      const vatAmount = Number(rawVat.toFixed(2));
+      const totalAmount = Number((subtotal + vatAmount).toFixed(2));
 
       const body: CreateInvoiceBody = {
         clientRequestId: `restaurant-order-${selected.id}`,
@@ -109,12 +120,24 @@ export default function RestaurantOrdersDialog({
         vatAmount,
         discountAmount: 0,
         totalAmount,
-        priceIncludesVat: false,
+        priceIncludesVat: true,
         notes: `طلب مطعم ${selected.orderNumber} — ${methodLabel(method)}`,
         lines,
         posSessionId: getPosSessionId(),
       };
       let inv = await api.createSalesInvoice(body);
+      if (
+        inv.status !== "posted" &&
+        inv.subtotal != null &&
+        inv.vatAmount != null &&
+        (
+          Math.abs(Number(inv.subtotal) - subtotal) > 0.01 ||
+          Math.abs(Number(inv.vatAmount) - vatAmount) > 0.01 ||
+          Math.abs(Number(inv.totalAmount) - totalAmount) > 0.01
+        )
+      ) {
+        throw new Error("توجد مسودة قديمة للطلب بإجماليات ضريبية مختلفة. راجعها قبل المتابعة حتى لا تُرحّل مبالغ غير مطابقة.");
+      }
       if (inv.status !== "posted" && inv.paymentType && inv.paymentType !== body.paymentType) {
         throw new Error("توجد مسودة فاتورة لهذا الطلب بطريقة دفع مختلفة؛ استخدم الطريقة نفسها أو راجع المسودة قبل المتابعة");
       }
@@ -221,13 +244,13 @@ export default function RestaurantOrdersDialog({
                           {Number(li.qty).toFixed(0)} × {Number(li.price).toFixed(2)}
                         </div>
                       </div>
-                      <div className="font-bold text-amber-600">{Number(li.total).toFixed(2)}</div>
+                  <div className="font-bold text-amber-600">{lineGross(li).toFixed(2)}</div>
                     </div>
                   ))}
                 </div>
                 <div className="p-3 border-t border-border space-y-1 text-sm">
                   <Row label="المجموع الفرعي" v={selected.subtotal} />
-                  <Row label="ضريبة 15%" v={selected.vatAmount} />
+                  <Row label="ضريبة القيمة المضافة" v={selected.vatAmount} />
                   <Row label="الإجمالي" v={selected.total} bold />
                 </div>
                 {error && (
@@ -268,6 +291,13 @@ function Row({ label, v, bold }: { label: string; v: string; bold?: boolean }) {
       <span>{Number(v).toFixed(2)} ر.س</span>
     </div>
   );
+}
+
+function lineGross(line: ROrderItem): number {
+  const amount = Number(line.qty) * Number(line.price);
+  const configuredRate = line.erpVatRate == null ? Number.NaN : Number(line.erpVatRate);
+  const rate = Number.isFinite(configuredRate) && configuredRate >= 0 ? configuredRate : 15;
+  return line.vatIncluded === false ? amount * (1 + rate / 100) : amount;
 }
 
 function statusLabel(s: ROrder["status"]) {
