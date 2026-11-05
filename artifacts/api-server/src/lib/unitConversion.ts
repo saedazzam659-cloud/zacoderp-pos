@@ -576,6 +576,33 @@ export function resolveUnitGraph(input: {
 }
 
 /**
+ * Clear one stale legacy marker only after an explicit unit-row edit, and only
+ * when the saved base and complete active graph resolve without any historical
+ * usage that could depend on the old ambiguous conversion.
+ */
+export function canClearLegacyConversionConflictAfterExplicitEdit(input: {
+  baseUnitId: number | null;
+  editedRowId: number;
+  rows: UnitGraphRow[];
+  historicalUsage: boolean;
+}): boolean {
+  if (input.baseUnitId == null || input.historicalUsage) return false;
+  const edited = input.rows.find((row) => row.id === input.editedRowId);
+  if (!edited?.legacyConversionConflict || edited.isActive === false) return false;
+
+  const candidateRows = input.rows.map((row) =>
+    row.id === input.editedRowId ? { ...row, legacyConversionConflict: false } : row,
+  );
+  try {
+    resolveUnitGraph({ baseUnitId: input.baseUnitId, rows: candidateRows });
+    return true;
+  } catch (error) {
+    if (error instanceof UnitConversionError) return false;
+    throw error;
+  }
+}
+
+/**
  * Reroot a valid conversion tree without changing unit-to-unit ratios.
  * Reversed edges are stored at the schema's 18-decimal precision; all other
  * edges remain unchanged. The requested root must already belong to the graph.

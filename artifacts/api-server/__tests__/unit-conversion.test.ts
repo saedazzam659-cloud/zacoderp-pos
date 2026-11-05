@@ -5,6 +5,7 @@ import {
   multiplyQuantity,
   rebaseUnitGraph,
   resolveUnitGraph,
+  canClearLegacyConversionConflictAfterExplicitEdit,
   roundQuantity,
   toStorageDecimal,
   UnitConversionError,
@@ -60,6 +61,39 @@ test("only a sole unrooted item-unit mapping may repair a missing base", () => {
       (error: unknown) => error instanceof UnitConversionError && error.code === "AMBIGUOUS_BASE",
     );
   }
+});
+
+test("an explicit edit may clear a stale marker on a valid graph with no history", () => {
+  const rows = [
+    {
+      id: 77,
+      unitId: 47,
+      referenceUnitId: 46,
+      relationFactor: "12",
+      isBase: false,
+      isActive: true,
+      legacyConversionConflict: true,
+    },
+  ];
+  assert.equal(canClearLegacyConversionConflictAfterExplicitEdit({
+    baseUnitId: 46,
+    editedRowId: 77,
+    rows,
+    historicalUsage: false,
+  }), true);
+
+  assert.equal(canClearLegacyConversionConflictAfterExplicitEdit({
+    baseUnitId: 46,
+    editedRowId: 77,
+    rows,
+    historicalUsage: true,
+  }), false);
+  assert.equal(canClearLegacyConversionConflictAfterExplicitEdit({
+    baseUnitId: 46,
+    editedRowId: 77,
+    rows: [{ ...rows[0], referenceUnitId: 999 }],
+    historicalUsage: false,
+  }), false);
 });
 
 test("used legacy unitless quantities may receive their first base unit", () => {

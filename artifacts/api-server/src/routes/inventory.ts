@@ -87,6 +87,7 @@ import {
 import {
   UnitConversionError,
   resolveItemUnitConversion,
+  canClearLegacyConversionConflictAfterExplicitEdit,
   multiplyQuantity,
   divideQuantity,
   formatRational,
@@ -2653,15 +2654,39 @@ router.put("/items/:id/units/:upId", async (req, res) => {
         throw new UnitConversionError("BASE_REQUIRED", "Select another base unit before disabling this base link");
       }
       if (!values.isBase && values.referenceUnitId !== null) await assertCatalogUnit(tx, cid, values.referenceUnitId);
-      // A conflict marker is cleared only when this transaction has reduced
-      // the complete item-owned graph to the deterministic single base row.
-      // Preserve it on every other edit so ambiguous legacy data cannot be
-      // made to look repaired by changing an unrelated field.
-      const clearLegacyConflict = rows.length === 1
+      // Preserve the deterministic first-base repair for the old single-row
+      // shape. A marker on an established graph can also be cleared, but only
+      // after an explicit edit, a no-history check, tenant validation, and a
+      // successful resolution of the entire graph.
+      let clearLegacyConflict = rows.length === 1
         && item.unitId == null
         && values.isBase
         && values.isActive
         && values.referenceUnitId === null;
+      if (!clearLegacyConflict && current.legacyConversionConflict && item.unitId != null) {
+        const history = await inspectItemHistoricalUsage(tx, cid, itemId);
+        if (!history.hasUsage) {
+          const candidateRows = rows.map((row: any) => row.id === upId ? {
+            ...row,
+            unitId,
+            referenceUnitId: values.referenceUnitId,
+            relationFactor: values.relationFactor,
+            isBase: values.isBase,
+            isActive: values.isActive,
+          } : row);
+          try {
+            await assertItemUnitGraphTenant(tx, cid, itemId, candidateRows, item.unitId);
+            clearLegacyConflict = canClearLegacyConversionConflictAfterExplicitEdit({
+              baseUnitId: item.unitId,
+              editedRowId: upId,
+              rows: candidateRows,
+              historicalUsage: history.hasUsage,
+            });
+          } catch (error) {
+            if (!(error instanceof UnitConversionError)) throw error;
+          }
+        }
+      }
       const [row] = await tx.update(itemUnitPricesTable).set({
         unitId,
         relationFactor: values.relationFactor,
