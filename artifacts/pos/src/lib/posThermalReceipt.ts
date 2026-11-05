@@ -4,6 +4,7 @@ type ReceiptLine = {
   item: any;
   qty: number;
   selectedSaleOptionId?: string;
+  modifierSelection?: Array<{ groupId: string; optionIds: string[] }>;
 };
 
 type PrintReceiptOptions = {
@@ -54,7 +55,7 @@ function paymentLabel(method: string): string {
 function receiptHtml(options: PrintReceiptOptions): string {
   const width = options.widthMm ?? 80;
   const printableWidth = width === 80 ? 72 : 52;
-  const rows = options.cart.map(({ item, qty, selectedSaleOptionId }) => {
+  const rows = options.cart.map(({ item, qty, selectedSaleOptionId, modifierSelection }) => {
     const price = getItemSalePrice(item, selectedSaleOptionId);
     const rawRate = item?.vatRate == null ? 15 : Number(item.vatRate);
     const vatRate = Number.isFinite(rawRate) ? rawRate : 15;
@@ -72,12 +73,29 @@ function receiptHtml(options: PrintReceiptOptions): string {
     const itemName = optionName
       ? `${item?.nameAr ?? item?.nameEn ?? "—"} — ${optionName}`
       : item?.nameAr ?? item?.nameEn ?? item?.code ?? "—";
-    return `<tr><td colspan="2" class="item-name">${escapeHtml(itemName)}${item?.code ? `<small>${escapeHtml(item.code)}</small>` : ""}</td></tr>
+    const selected = new Map((modifierSelection ?? []).map(entry => [entry.groupId, new Set(entry.optionIds)]));
+    const selectedOptions = (item?.restaurantModifierGroups ?? []).flatMap((group: any) =>
+      (group.options ?? []).filter((addon: any) => selected.get(group.id)?.has(addon.id))
+        .map((addon: any) => ({ group, addon })),
+    );
+    const optionNames = selectedOptions.map(({ group, addon }: any) => `${group.nameAr}: ${addon.nameAr}`).join("، ");
+    const mainRow = `<tr><td colspan="2" class="item-name">${escapeHtml(itemName)}${item?.code ? `<small>${escapeHtml(item.code)}</small>` : ""}${optionNames ? `<small>${escapeHtml(optionNames)}</small>` : ""}</td></tr>
       <tr class="line-detail">
         <td><span class="mono">${money(qty)} × ${money(price)}</span></td>
         <td class="mono tax">${money(vatRate)}%</td>
         <td class="mono amount">${money(total)}</td>
       </tr>`;
+    const addonRows = selectedOptions.map(({ addon }: any) => {
+      const consumption = Number(addon.consumptionQtyPerSelection) || 1;
+      const addonGross = Number(addon.extraPrice) * qty;
+      const addonDiscount = options.subtotal > 0 ? options.discountAmount * addonGross / options.subtotal : 0;
+      const addonRate = Number.isFinite(Number(addon.vatRate)) ? Number(addon.vatRate) : vatRate;
+      const addonTotal = Math.max(0, addonGross - addonDiscount) * (1 + addonRate / 100);
+      const addonQty = qty * consumption;
+      return `<tr><td colspan="2" class="item-name">${escapeHtml(addon.nameAr)} — ${escapeHtml(itemName)}</td></tr>
+        <tr class="line-detail"><td><span class="mono">${money(addonQty)} × ${money(Number(addon.extraPrice) / consumption)}</span></td><td class="mono tax">${money(addonRate)}%</td><td class="mono amount">${money(addonTotal)}</td></tr>`;
+    }).join("");
+    return mainRow + addonRows;
   }).join("");
   const logo = options.companyLogo
     ? `<img class="logo" src="${escapeHtml(options.companyLogo)}" alt="">`

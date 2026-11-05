@@ -124,21 +124,30 @@ function isParkedCart(value: unknown): value is ParkedCart {
       !!line?.item &&
       Number.isInteger(Number(line.item.id)) &&
       Number.isFinite(Number(line.qty)) &&
-      Number(line.qty) > 0,
+      Number(line.qty) > 0 &&
+      (line.modifierSelection === undefined ||
+        (Array.isArray(line.modifierSelection) && line.modifierSelection.every((selection) =>
+          typeof selection?.groupId === "string" &&
+          Array.isArray(selection.optionIds) &&
+          selection.optionIds.every((optionId) => typeof optionId === "string"),
+        ))),
     );
 }
 
 function parkedCartTotal(cart: ParkedCart) {
   const discountPct = Math.max(0, Math.min(100, Number(cart.discountPct) || 0));
   const subtotal = cart.cart.reduce(
-    (sum, line) => sum + getItemSalePrice(line.item, line.selectedSaleOptionId) * line.qty,
+    (sum, line) => sum + (getItemSalePrice(line.item, line.selectedSaleOptionId) + restaurantModifierPrice(line)) * line.qty,
     0,
   );
   const discount = subtotal * discountPct / 100;
   const vat = cart.cart.reduce((sum, line) => {
-    const gross = getItemSalePrice(line.item, line.selectedSaleOptionId) * line.qty;
-    const net = gross - gross * discountPct / 100;
-    return sum + net * (Number(line.item.vatRate) || VAT_RATE) / 100;
+    const baseGross = getItemSalePrice(line.item, line.selectedSaleOptionId) * line.qty * (1 - discountPct / 100);
+    const baseRate = Number.isFinite(Number(line.item.vatRate)) ? Number(line.item.vatRate) : VAT_RATE;
+    const addonsVat = selectedRestaurantModifiers(line).reduce((value, { option }) =>
+      value + Number(option.extraPrice) * line.qty * (1 - discountPct / 100) *
+        (Number.isFinite(Number(option.vatRate)) ? Number(option.vatRate) : baseRate) / 100, 0);
+    return sum + baseGross * baseRate / 100 + addonsVat;
   }, 0);
   return subtotal - discount + vat;
 }
@@ -1455,6 +1464,11 @@ export default function CashierPage() {
                           </span>
                         </span>
                       </div>
+                      {p.restaurantModifierGroups?.length ? (
+                        <span className="mt-1 inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-bold text-primary">
+                          اختيارات وإضافات
+                        </span>
+                      ) : null}
                       <span className="mt-0.5 block truncate text-[9px] font-mono leading-none text-muted-foreground">
                         {p.code}
                       </span>
@@ -1668,6 +1682,26 @@ export default function CashierPage() {
         <ReturnsPage embedded onClose={() => setReturnsOpen(false)} />
       )}
 
+      {modifierTarget && (
+        <RestaurantModifierDialog
+          open={Boolean(modifierTarget)}
+          onOpenChange={open => { if (!open) setModifierTarget(null); }}
+          item={{
+            id: modifierTarget.id,
+            nameAr: modifierTarget.nameAr,
+            nameEn: modifierTarget.nameEn,
+            price: modifierTarget.salePrice,
+          }}
+          groups={modifierTarget.restaurantModifierGroups ?? []}
+          language={language}
+          confirmLabel={language === "ar" ? "إضافة إلى الطلب" : "Add to order"}
+          onConfirm={selection => {
+            addToCart(modifierTarget, selection);
+            setModifierTarget(null);
+          }}
+        />
+      )}
+
       {/* Receipt modal */}
       <AnimatePresence>
         {paid && (
@@ -1739,10 +1773,7 @@ export default function CashierPage() {
           discountPct={discountPct}
           paymentType="cash"
           allItems={items}
-          onAddItem={(it) => setCart((c) => {
-            const ex = c.find((l) => l.item.id === it.id);
-            return ex ? c.map((l) => l.item.id === it.id ? { ...l, qty: l.qty + 1 } : l) : [...c, { item: it, qty: 1 }];
-          })}
+          onAddItem={chooseItem}
           onApplyDiscount={(pct) => setDiscountPct(pct)}
         />
       )}
@@ -1766,9 +1797,9 @@ function methodArabic(method: string) {
 
 function CartPanel(props: {
   cart: CartLine[];
-  updateQty: (id: number, delta: number) => void;
-  removeLine: (id: number) => void;
-  selectSalePriceOption: (itemId: number, optionId: string) => void;
+  updateQty: (key: string, delta: number) => void;
+  removeLine: (key: string) => void;
+  selectSalePriceOption: (lineKey: string, optionId: string) => void;
   canCreatePosReturn: boolean;
   openReturns: () => void;
   subtotal: number;
