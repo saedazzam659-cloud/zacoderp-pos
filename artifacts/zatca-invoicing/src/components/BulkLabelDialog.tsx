@@ -34,11 +34,12 @@ interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   items: LabelItem[];                   // pre-filtered selection
+  maxCopies?: number;
 }
 
 type Mode = "qr" | "barcode";
 
-export default function BulkLabelDialog({ open, onOpenChange, items }: Props) {
+export default function BulkLabelDialog({ open, onOpenChange, items, maxCopies = 50 }: Props) {
   const { t, i18n } = useTranslation();
   const isEnglish = i18n.language?.toLowerCase().startsWith("en") ?? false;
   const { fmt } = useFmt();
@@ -51,7 +52,8 @@ export default function BulkLabelDialog({ open, onOpenChange, items }: Props) {
 
   // Expand each selected item to N copies. Bound to a sane upper limit so a
   // typo (e.g. 9999) doesn't try to render 100k SVGs and lock the browser.
-  const copyCount = Math.max(1, Math.min(50, Number(copies) || 1));
+  const copyLimit = Math.max(1, Math.min(500, Math.floor(maxCopies) || 50));
+  const copyCount = Math.max(1, Math.min(copyLimit, Number(copies) || 1));
   // Memoise the expanded sheet so the rendering effect has a stable dependency
   // (avoids a re-render→new-array→re-effect loop, and lets us list it as the
   // single dep instead of suppressing exhaustive-deps).
@@ -149,7 +151,7 @@ export default function BulkLabelDialog({ open, onOpenChange, items }: Props) {
           <div className="space-y-1">
             <Label className="text-xs">{t("pages.items.bulkLabels.copies")}</Label>
             <Input
-              type="number" min={1} max={50}
+              type="number" min={1} max={copyLimit}
               value={copies}
               onChange={(e) => setCopies(e.target.value)}
               className="h-9 text-center"

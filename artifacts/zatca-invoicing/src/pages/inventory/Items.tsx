@@ -725,7 +725,7 @@ function ItemImageUpload({ value, onChange }: { value: string; onChange: (v: str
     </div>
   );
 }
-const UNIT_EMPTY = { unitId: "", referenceUnitId: "", conversionFactor: "1", costPrice: "0", salePrice: "0", isBase: false, isActive: true, decimalPlaces: "2", roundingMode: "half_up" };
+const UNIT_EMPTY = { unitId: "", referenceUnitId: "", conversionFactor: "1", costPrice: "0", salePrice: "0", barcode: "", isBase: false, isActive: true, decimalPlaces: "2", roundingMode: "half_up" };
 const UNIT_ROUNDING_LABELS: Record<string, string> = {
   half_up: "roundHalfUp", half_even: "roundHalfEven", bankers: "roundHalfEven",
   half_down: "roundHalfDown", ceil: "roundUp", floor: "roundDown", truncate: "truncate",
@@ -796,7 +796,11 @@ function ItemAnalyticsPanel({ itemId, unitCode }: { itemId: number; unitCode: st
   );
 }
 
-function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitId?: number | null }) {
+function ItemUnitPricesPanel({ itemId, itemUnitId, itemDetails }: {
+  itemId: number;
+  itemUnitId?: number | null;
+  itemDetails: { code?: string; nameAr?: string; nameEn?: string | null; barcode?: string | null; salePrice?: string | number | null };
+}) {
   const canCreateUnit = usePermission("items", "create");
   const canEditUnit = usePermission("items", "edit");
   const canDeleteUnit = usePermission("items", "delete");
@@ -819,6 +823,7 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
   const [editUpId, setEditUpId] = useState<number | null>(null);
   const [showUnitForm, setShowUnitForm] = useState(false);
   const [previewQty, setPreviewQty] = useState<string>("1");
+  const [labelTarget, setLabelTarget] = useState<any | null>(null);
   const unitMutationError = (error: Error) => {
     let description = error.message;
     try {
@@ -872,6 +877,7 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
       conversionFactor: up.relationFactor ?? up.conversionFactor ?? "1",
       costPrice: up.costPrice ?? "0",
       salePrice: up.salePrice ?? "0",
+      barcode: up.barcode ?? "",
       isBase: up.isBase,
       isActive: up.isActive ?? true,
       decimalPlaces: String(up.decimalPlaces || 2),
@@ -906,8 +912,25 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
         <p className="text-xs text-muted-foreground">
           {t("pages.items.unitPricesDescription")}
         </p>
-        {!showUnitForm && (
-          <Button disabled={!canCreateUnit || isLoading} size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => {
+        <div className="flex items-center gap-2">
+          <Button
+            disabled={!itemDetails.barcode}
+            size="sm"
+            variant="outline"
+            className="gap-1.5 h-8 text-xs"
+            onClick={() => setLabelTarget({
+              id: itemId,
+              code: itemDetails.code ?? String(itemId),
+              nameAr: `${itemDetails.nameAr ?? ""} — ${isRtl ? "الوحدة الأساسية" : "Base unit"}`,
+              nameEn: `${itemDetails.nameEn || itemDetails.nameAr || ""} — Base unit`,
+              barcode: itemDetails.barcode,
+              salePrice: (unitPrices as any[]).find((u: any) => u.isBase)?.salePrice ?? itemDetails.salePrice,
+            })}
+          >
+            <Printer className="h-3.5 w-3.5" />{isRtl ? "طباعة باركود الأساسية" : "Print base-unit labels"}
+          </Button>
+          {!showUnitForm && (
+            <Button disabled={!canCreateUnit || isLoading} size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => {
             setForm({
               ...UNIT_EMPTY,
               isBase: itemUnitId == null && unitPrices.length === 0,
@@ -915,10 +938,11 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
             });
             setEditUpId(null);
             setShowUnitForm(true);
-          }}>
-            <Plus className="h-3.5 w-3.5" />{t("pages.items.addUnit")}
-          </Button>
-        )}
+            }}>
+              <Plus className="h-3.5 w-3.5" />{t("pages.items.addUnit")}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Unit form */}
@@ -1024,6 +1048,26 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
               </div>
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("pages.items.barcode", { defaultValue: "الباركود" })}</Label>
+                {form.isBase ? (
+                  <p className="text-[11px] text-muted-foreground border rounded-md px-3 py-2">
+                    {isRtl ? "باركود الوحدة الأساسية هو باركود الصنف، ويُعدّل من بيانات الصنف." : "The base unit uses the item's barcode, edited in item details."}
+                  </p>
+                ) : (
+                  <Input
+                    className="h-8 text-xs font-mono text-left"
+                    dir="ltr"
+                    maxLength={120}
+                    placeholder={isRtl ? "أدخل باركود هذه الوحدة" : "Enter this unit's barcode"}
+                    value={form.barcode ?? ""}
+                    onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))}
+                  />
+                )}
+              </div>
+            </div>
+
             {/* Preview Section */}
             {(form.unitId && form.referenceUnitId && form.conversionFactor) && (
               <div className="bg-muted/30 border rounded-lg p-3 space-y-2 mt-4">
@@ -1111,6 +1155,9 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
                 <span className="text-xs font-bold font-mono text-primary">{up.unit?.code ?? "—"}</span>
                 <span className="text-xs font-medium">{pickName(up.unit?.nameAr, up.unit?.nameEn) || "—"}</span>
               </div>
+              <div className="text-[10px] font-mono text-muted-foreground truncate" dir="ltr">
+                {up.isBase ? itemDetails.barcode || (isRtl ? "لا يوجد باركود للصنف" : "No item barcode") : up.barcode || (isRtl ? "لم يُحدد باركود" : "No barcode set")}
+              </div>
               
               {up.referenceUnitId && (
                 <div className="text-[10px] text-muted-foreground flex items-center gap-1 mb-1">
@@ -1143,6 +1190,22 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
               )}
 
               <div className="flex gap-1 justify-end mt-1">
+                <Button
+                  disabled={!(up.isBase ? itemDetails.barcode : up.barcode)}
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1 text-[10px]"
+                  onClick={() => setLabelTarget({
+                    id: up.id,
+                    code: `${itemDetails.code ?? itemId}-${up.unit?.code ?? up.unitId}`,
+                    nameAr: `${itemDetails.nameAr ?? ""} — ${pickName(up.unit?.nameAr, up.unit?.nameEn)}`,
+                    nameEn: `${itemDetails.nameEn || itemDetails.nameAr || ""} — ${up.unit?.nameEn || up.unit?.nameAr || up.unit?.code || ""}`,
+                    barcode: up.isBase ? itemDetails.barcode : up.barcode,
+                    salePrice: up.salePrice,
+                  })}
+                >
+                  <Printer className="h-3 w-3" />{isRtl ? "طباعة" : "Print"}
+                </Button>
                 <Button disabled={!canEditUnit} variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditUp(up)}><Pencil className="h-3 w-3" /></Button>
                 <Button disabled={!canDeleteUnit} variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => { if (canDeleteUnit && confirm(t("pages.items.deleteUnitPriceConfirm"))) delMut.mutate(up.id); }}><Trash2 className="h-3 w-3" /></Button>
               </div>
@@ -1150,6 +1213,12 @@ function ItemUnitPricesPanel({ itemId, itemUnitId }: { itemId: number; itemUnitI
           ))}
         </div>
       )}
+      <BulkLabelDialog
+        open={labelTarget !== null}
+        onOpenChange={(open) => { if (!open) setLabelTarget(null); }}
+        items={labelTarget ? [labelTarget] : []}
+        maxCopies={500}
+      />
     </div>
   );
 }
@@ -2140,7 +2209,11 @@ export default function Items() {
             </TabsContent>
             <TabsContent value="units" className="mt-0">
               {editId ? (
-                <ItemUnitPricesPanel itemId={editId} itemUnitId={form.unitId ? Number(form.unitId) : null} />
+                <ItemUnitPricesPanel
+                  itemId={editId}
+                  itemUnitId={form.unitId ? Number(form.unitId) : null}
+                  itemDetails={{ code: form.code, nameAr: form.nameAr, nameEn: form.nameEn, barcode: form.barcode, salePrice: form.salePrice }}
+                />
               ) : (
                 <div className="text-sm text-muted-foreground p-4 text-center border rounded-lg bg-muted/30">
                   {t("inventoryMaster.units.saveItemFirst", { defaultValue: "Please save the item first to manage units." })}
@@ -2526,7 +2599,11 @@ export default function Items() {
                           )}
 
                           {expandedTab === "units" && (
-                            <ItemUnitPricesPanel itemId={it.id} itemUnitId={it.unitId ?? null} />
+                            <ItemUnitPricesPanel
+                              itemId={it.id}
+                              itemUnitId={it.unitId ?? null}
+                              itemDetails={{ code: it.code, nameAr: it.nameAr, nameEn: it.nameEn, barcode: it.barcode, salePrice: it.salePrice }}
+                            />
                           )}
 
                           {expandedTab === "analytics" && (

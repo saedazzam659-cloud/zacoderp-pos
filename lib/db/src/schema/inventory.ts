@@ -373,6 +373,7 @@ export const itemUnitPricesTable = pgTable("item_unit_prices", {
   conversionFactor: numeric("conversion_factor", { precision: 30, scale: 18 }).notNull().default("1"),
   costPrice:        numeric("cost_price",  { precision: 14, scale: 4 }).notNull().default("0"),
   salePrice:        numeric("sale_price",  { precision: 14, scale: 4 }).notNull().default("0"),
+  barcode:          text("barcode"),
   isBase:           boolean("is_base").notNull().default(false),
   // One directed edge per source unit: 1 source = relationFactor reference.
   // A base row has no reference and relationFactor = 1.

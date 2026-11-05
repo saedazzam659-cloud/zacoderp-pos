@@ -1507,6 +1507,13 @@ async function unitRowValues(body: any, current: any | null, item: any, unitId: 
   }
   const decimalPlaces = decimalPlacesValue(body.decimalPlaces, current?.decimalPlaces ?? 2);
   const roundingMode = String(body.roundingMode ?? current?.roundingMode ?? "half_up");
+  const barcodeRaw = body.barcode === undefined ? current?.barcode : body.barcode;
+  const barcode = barcodeRaw == null || String(barcodeRaw).trim() === ""
+    ? null
+    : String(barcodeRaw).trim();
+  if (barcode && barcode.length > 120) {
+    throw new UnitConversionError("INVALID_BARCODE", "Barcode must be 120 characters or fewer");
+  }
   // Validate the mode through the exact display helper without involving
   // conversion arithmetic.
   roundQuantity("0", decimalPlaces, roundingMode);
@@ -1520,7 +1527,25 @@ async function unitRowValues(body: any, current: any | null, item: any, unitId: 
     isActive: body.isActive === undefined ? current?.isActive !== false : body.isActive !== false,
     decimalPlaces,
     roundingMode,
+    barcode: isBase ? null : barcode,
   };
+}
+
+async function assertUniqueItemUnitBarcode(executor: any, cid: number, barcode: string | null, excludeId?: number) {
+  if (!barcode) return;
+  const normalized = barcode.trim().toLowerCase();
+  const [itemMatch] = await executor.select({ id: itemsTable.id }).from(itemsTable).where(and(
+    eq(itemsTable.companyId, cid),
+    sql`lower(trim(coalesce(${itemsTable.barcode}, ''))) = ${normalized}`,
+  )).limit(1);
+  if (itemMatch) throw new UnitConversionError("DUPLICATE_BARCODE", "Barcode is already used by an item in this company");
+  const unitMatches = await executor.select({ id: itemUnitPricesTable.id }).from(itemUnitPricesTable).where(and(
+    eq(itemUnitPricesTable.companyId, cid),
+    sql`lower(trim(coalesce(${itemUnitPricesTable.barcode}, ''))) = ${normalized}`,
+  )).limit(2);
+  if (unitMatches.some((row: any) => row.id !== excludeId)) {
+    throw new UnitConversionError("DUPLICATE_BARCODE", "Barcode is already used by another unit in this company");
+  }
 }
 
 router.get("/units", async (req, res) => {
@@ -2547,6 +2572,7 @@ router.post("/items/:id/units", async (req, res) => {
         throw new UnitConversionError("DUPLICATE_UNIT", "This unit is already linked to the item");
       }
       const values = await unitRowValues(req.body, null, item, unitId);
+      await assertUniqueItemUnitBarcode(tx, cid, values.barcode);
       // Explicit opt-in only: never infer a stock base from the catalog factor.
       if (req.body.initializeReferenceAsBase === true && !values.isBase) {
         if (values.referenceUnitId == null) {
@@ -2600,6 +2626,7 @@ router.post("/items/:id/units", async (req, res) => {
         referenceUnitId: values.referenceUnitId,
         costPrice: String(req.body.costPrice ?? "0"),
         salePrice: String(req.body.salePrice ?? "0"),
+        barcode: values.barcode,
         isBase: values.isBase,
         isActive: values.isActive,
         decimalPlaces: values.decimalPlaces,
@@ -2641,6 +2668,7 @@ router.put("/items/:id/units/:upId", async (req, res) => {
         throw new UnitConversionError("DUPLICATE_UNIT", "This unit is already linked to the item");
       }
       const values = await unitRowValues(req.body, current, item, unitId);
+      await assertUniqueItemUnitBarcode(tx, cid, values.barcode, upId);
       if (!values.isActive && current.isBase) {
         throw new UnitConversionError("BASE_DISABLE_BLOCKED", "The base unit cannot be disabled");
       }
@@ -2694,6 +2722,7 @@ router.put("/items/:id/units/:upId", async (req, res) => {
         conversionFactor: "1",
         costPrice: req.body.costPrice === undefined ? current.costPrice : String(req.body.costPrice),
         salePrice: req.body.salePrice === undefined ? current.salePrice : String(req.body.salePrice),
+        barcode: values.barcode,
         isBase: values.isBase,
         isActive: values.isActive,
         decimalPlaces: values.decimalPlaces,
