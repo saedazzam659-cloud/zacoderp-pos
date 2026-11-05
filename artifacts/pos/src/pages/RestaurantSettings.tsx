@@ -11,8 +11,8 @@ import {
 
 const TABS = [
   { id: "tables",  label: "الطاولات",   icon: ListOrdered },
-  { id: "cats",    label: "الفئات",     icon: Tags },
-  { id: "items",   label: "الأصناف",   icon: Utensils },
+  { id: "cats",    label: "فئات القائمة",     icon: Tags },
+  { id: "items",   label: "أصناف القائمة",   icon: Utensils },
 ] as const;
 
 type Tab = typeof TABS[number]["id"];
@@ -51,7 +51,7 @@ export default function RestaurantSettings() {
           <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm"><Settings className="h-5 w-5" /></div>
           <div className="min-w-0">
             <div className="truncate text-base font-black">إعدادات المطعم</div>
-            <p className="text-xs text-muted-foreground">الطاولات والقائمة ومناطق الخدمة</p>
+            <p className="text-xs text-muted-foreground">الطاولات وقائمة النادل ومسار الطلب للمطبخ والكاشير</p>
           </div>
         </div>
       </header>
@@ -77,6 +77,21 @@ export default function RestaurantSettings() {
       </nav>
 
       <main className="mx-auto max-w-6xl p-4 sm:p-6">
+        <section aria-labelledby="restaurant-role-heading" className="mb-5 rounded-2xl border border-primary/20 bg-primary/[0.04] p-4 sm:p-5">
+          <h1 id="restaurant-role-heading" className="font-black">ما وظيفة نظام المطعم؟</h1>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            يدير قائمة النادل وطلبات الطاولات والتحضير والتحصيل. لا يستبدل أصناف المخزون أو حساباته.
+          </p>
+          <div className="mt-3 grid gap-2 text-xs font-semibold sm:grid-cols-4">
+            <div className="rounded-lg bg-background px-3 py-2">١. إعداد فئات وأصناف قائمة النادل</div>
+            <div className="rounded-lg bg-background px-3 py-2">٢. تسجيل الطلب على الطاولة</div>
+            <div className="rounded-lg bg-background px-3 py-2">٣. إرسال الأصناف لمحطات التحضير</div>
+            <div className="rounded-lg bg-background px-3 py-2">٤. إصدار فاتورة البيع من الكاشير</div>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-muted-foreground">
+            اربط كل صنف في القائمة بصنف مخزون أو خدمة من ERP حتى يظهر في الفاتورة وتُسجل الحركة على السجل الصحيح. الربط الحالي لصنف ERP واحد، وليس وصفة متعددة المكونات.
+          </p>
+        </section>
         {tab === "tables" && (
           <TablesTab
             branches={branchesQ.data ?? []}
@@ -432,8 +447,11 @@ function CategoriesTab() {
 
   return (
     <div className="space-y-4">
+      <p className="rounded-xl border border-border bg-muted/30 p-3 text-sm leading-6 text-muted-foreground">
+        فئات القائمة لتنظيم ما يراه النادل، مثل الوجبات والمشروبات والحلويات. لا تنشئ مجموعة أصناف أو تصنيفًا محاسبيًا في المخزون.
+      </p>
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
-        <div className="font-bold mb-3">إضافة فئة جديدة</div>
+        <div className="font-bold mb-3">إضافة فئة لقائمة المطعم</div>
         <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
           <Input placeholder="الرمز" value={draft.code}
             onChange={e => setDraft({ ...draft, code: e.target.value })}
@@ -464,11 +482,11 @@ function CategoriesTab() {
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-        <div className="border-b border-border p-4 font-black">الفئات <span className="text-sm font-semibold text-muted-foreground">({catsQ.data?.length ?? 0})</span></div>
+        <div className="border-b border-border p-4 font-black">فئات قائمة المطعم <span className="text-sm font-semibold text-muted-foreground">({catsQ.data?.length ?? 0})</span></div>
         {catsQ.isLoading ? <div role="status" className="p-8 text-center"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-primary" />جارٍ تحميل الفئات</div> :
           catsQ.isError ? <div className="p-8 text-center text-sm text-destructive" role="alert">تعذّر تحميل الفئات. <button className="font-bold underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => catsQ.refetch()}>إعادة المحاولة</button></div> :
           (catsQ.data ?? []).length === 0 ? (
-            <div className="p-10 text-center text-sm text-muted-foreground">لا توجد فئات بعد. أضف أول فئة للقائمة.</div>
+            <div className="p-10 text-center text-sm text-muted-foreground">لا توجد فئات لقائمة المطعم بعد. أضف فئة مثل الوجبات أو المشروبات.</div>
           ) : (
             <table className="w-full text-sm">
               <thead className="bg-muted text-muted-foreground">
@@ -635,9 +653,12 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
 
   return (
     <div className="space-y-4">
+      <p className="rounded-xl border border-border bg-muted/30 p-3 text-sm leading-6 text-muted-foreground">
+        صنف القائمة هو ما يظهر للنادل بسعر البيع ومحطة التحضير. لا ينشئ صنف مخزون جديدًا؛ استورد صنفًا موجودًا أو اربطه به حتى تُصدر الفاتورة على الصنف الصحيح.
+      </p>
       <details className="group rounded-2xl border border-border bg-card shadow-sm">
         <summary className="cursor-pointer list-none p-4 font-bold marker:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-          <span className="inline-flex items-center gap-2"><Plus className="h-4 w-4 text-primary" />استيراد أصناف من المخزون</span>
+          <span className="inline-flex items-center gap-2"><Plus className="h-4 w-4 text-primary" />إضافة أصناف مخزون إلى قائمة المطعم</span>
           <span className="float-left text-xs font-normal text-muted-foreground">اختر الأصناف والفئة قبل الإضافة</span>
         </summary>
         <div className="space-y-3 border-t border-border p-4">
@@ -745,7 +766,8 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
       </details>
 
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
-        <div className="font-bold mb-3">إضافة صنف جديد</div>
+        <div className="font-bold mb-1">إضافة صنف إلى قائمة المطعم</div>
+        <p className="mb-3 text-xs leading-5 text-muted-foreground">استخدم هذا النموذج لصنف قائمة جديد. إذا كان الصنف موجودًا في المخزون، اربطه به أو استخدم الاستيراد الجماعي أعلاه بدل إنشاء بطاقة مخزون ثانية.</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <select value={draft.categoryId}
             onChange={e => setDraft({ ...draft, categoryId: e.target.value })}
@@ -799,11 +821,11 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-        <div className="border-b border-border p-4 font-black">الأصناف <span className="text-sm font-semibold text-muted-foreground">({itemsQ.data?.length ?? 0})</span></div>
+        <div className="border-b border-border p-4 font-black">أصناف قائمة المطعم <span className="text-sm font-semibold text-muted-foreground">({itemsQ.data?.length ?? 0})</span></div>
         {itemsQ.isLoading ? <div role="status" className="p-8 text-center"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-primary" />جارٍ تحميل الأصناف</div> :
           itemsQ.isError ? <div className="p-8 text-center text-sm text-destructive" role="alert">تعذّر تحميل الأصناف. <button className="font-bold underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => itemsQ.refetch()}>إعادة المحاولة</button></div> :
           (itemsQ.data ?? []).length === 0 ? (
-            <div className="p-10 text-center text-sm text-muted-foreground">لا توجد أصناف بعد. أضف صنفاً جديداً إلى القائمة.</div>
+            <div className="p-10 text-center text-sm text-muted-foreground">لا توجد أصناف في قائمة المطعم بعد. أضف صنفًا أو استورده من المخزون واربطه بسجله الحالي.</div>
           ) : (
             <table className="w-full text-sm">
               <thead className="bg-muted text-muted-foreground">

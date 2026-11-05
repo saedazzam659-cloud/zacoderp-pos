@@ -18,7 +18,7 @@ export default function RestaurantHub() {
     { to: "/pos",     label: "الكاشير",       sub: "إصدار الفواتير والتحصيل",  icon: Receipt,       color: "from-emerald-500 to-teal-600" },
     { to: "/super",   label: "السوبرماركت",   sub: "البيع بالباركود والميزان", icon: Coffee,        color: "from-sky-500 to-blue-600" },
     { to: "/restaurant-ai", label: "التحليلات الذكية", sub: "ساعات الذروة والتوصيات والمراقبة", icon: Sparkles, color: "from-fuchsia-500 to-pink-600" },
-    { to: "/restaurant-settings", label: "الإعدادات", sub: "الطاولات والقائمة والفئات", icon: Settings, color: "from-violet-500 to-purple-600" },
+    { to: "/restaurant-settings", label: "الإعدادات", sub: "الطاولات وفئات وأصناف قائمة النادل", icon: Settings, color: "from-violet-500 to-purple-600" },
   ];
 
   return (
@@ -53,6 +53,13 @@ export default function RestaurantHub() {
               </button>
             );
           })}
+        </div>
+
+        <div className="mt-6 rounded-xl border border-white/10 bg-white/5 p-4">
+          <div className="font-bold">دور نظام المطعم</div>
+          <p className="mt-1 text-sm leading-6 text-white/75">
+            ينظم طلبات الطاولات ويرسلها إلى المطبخ، ثم يربط الكاشير الطلب بفاتورة البيع عند التحصيل. المخزون والمحاسبة يظلان في ERP؛ أصناف قائمة النادل تُربط بأصناف المخزون ولا تستبدلها.
+          </p>
         </div>
 
         <div className="mt-8 p-4 rounded-xl bg-white/5 border border-white/10 flex items-center gap-3">

@@ -245,7 +245,13 @@ export default function WaiterApp() {
             <div className="grid flex-1 auto-rows-max grid-cols-2 content-start gap-3 overflow-y-auto bg-background p-3 sm:grid-cols-3 lg:grid-cols-4">
               {itemsQ.isLoading ? Array.from({ length: 8 }, (_, i) => <div key={i} className="h-28 animate-pulse rounded-2xl bg-muted" />) :
                 itemsQ.isError ? <div className="col-span-full py-10 text-center text-sm text-destructive" role="alert">تعذّر تحميل الأصناف.</div> :
-                  filteredItems.length === 0 ? <div className="col-span-full py-12 text-center text-sm text-muted-foreground">لا توجد أصناف مطابقة</div> :
+                  filteredItems.length === 0 ? (
+                    <div className="col-span-full py-12 text-center text-sm leading-6 text-muted-foreground" data-testid="empty-restaurant-menu">
+                      {(itemsQ.data ?? []).length === 0
+                        ? "قائمة المطعم فارغة. أضف الأصناف من إعدادات المطعم، أو استورد أصناف المخزون واربطها بسجلاتها."
+                        : "لا توجد أصناف مطابقة. جرّب فئة أخرى أو امسح البحث."}
+                    </div>
+                  ) :
                     filteredItems.map(item => (
                       <button key={item.id} type="button" disabled={addItem.isPending}
                         onClick={() => addItem.mutate({ orderId: activeOrder.id, menuItemId: item.id })}
