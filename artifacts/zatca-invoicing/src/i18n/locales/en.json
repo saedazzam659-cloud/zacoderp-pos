@@ -441,6 +441,7 @@
     "tabArchive": "Archive",
     "addItemAction": "Add item",
     "newItemAction": "New item",
+    "createNewItem": "Create new item",
     "printAction": "Print",
     "saveDraftAction": "Save as draft",
     "searchItemPlaceholder": "Search by code or name...",

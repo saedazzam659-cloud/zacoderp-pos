@@ -3068,6 +3068,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             items={itemComboItems}
             value={qaItemId}
             onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, undefined, selectedOptions) : undefined}
+            onItemDoubleClick={isInvoice ? item => handleMultiItemAdd([item.value], undefined, [item]) : undefined}
             warehouseId={qaWarehouseId || headerWarehouseId}
             onValueChange={value => {
               const item = (inventoryItems as any[]).find(candidate => String(candidate.id) === value);
@@ -3266,6 +3267,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         items={itemComboItems}
                         value={l.itemId}
                         onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined}
+                        onItemDoubleClick={isInvoice ? item => handleMultiItemAdd([item.value], l._id, [item]) : undefined}
                         warehouseId={l.warehouseId || headerWarehouseId}
                         onValueChange={v => void selectItem(l._id, v)}
                         onSearchChange={setItemSearch}

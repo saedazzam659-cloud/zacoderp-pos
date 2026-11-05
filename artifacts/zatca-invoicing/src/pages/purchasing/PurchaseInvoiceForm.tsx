@@ -2459,7 +2459,7 @@ function PurchaseInvoiceFormContent() {
                         data-testid="button-open-create-purchase-invoice-item-from-grid"
                       >
                         <Plus className="h-4 w-4" />
-                        إنشاء صنف جديد
+                        {localizeUiText("إنشاء صنف جديد")}
                       </Button>
                     )}
                     <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addGridLine}>

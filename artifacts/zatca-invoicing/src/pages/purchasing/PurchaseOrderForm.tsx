@@ -1463,7 +1463,7 @@ export default function PurchaseOrderForm() {
                       onClick={() => setQuickItemDialogOpen(true)}
                     >
                       <Plus className="h-4 w-4" />
-                      إنشاء صنف جديد
+                      {localizeUiText("إنشاء صنف جديد")}
                     </Button>
                   )}
                 </div>
