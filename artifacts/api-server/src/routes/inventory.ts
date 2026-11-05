@@ -1986,6 +1986,61 @@ function validateVariantAttributes(input: unknown):
       out[k] = normalized;
       continue;
     }
+    if (k === "_restaurantModifierGroups") {
+      if (!Array.isArray(v) || v.length > 30) {
+        return { ok: false, error: "مجموعات إضافات المطعم يجب ألا تتجاوز 30 مجموعة" };
+      }
+      const groupIds = new Set<string>();
+      const normalizedGroups = [];
+      for (const rawGroup of v) {
+        if (!rawGroup || typeof rawGroup !== "object" || Array.isArray(rawGroup)) {
+          return { ok: false, error: "بيانات إحدى مجموعات إضافات المطعم غير صالحة" };
+        }
+        const group = rawGroup as Record<string, unknown>;
+        const id = String(group.id ?? "").trim();
+        const nameAr = String(group.nameAr ?? "").trim();
+        const nameEn = String(group.nameEn ?? "").trim();
+        const required = group.required === true;
+        const selectionMode = group.selectionMode === "multiple" ? "multiple" : group.selectionMode === "single" ? "single" : null;
+        const minSelect = Number(group.minSelect);
+        const maxSelect = Number(group.maxSelect);
+        if (!id || id.length > 80 || groupIds.has(id) || !nameAr || nameAr.length > 100
+          || nameEn.length > 100 || !selectionMode || !Array.isArray(group.options)
+          || group.options.length < 1 || group.options.length > 40
+          || !Number.isInteger(minSelect) || !Number.isInteger(maxSelect)
+          || minSelect < (required ? 1 : 0) || maxSelect < 1 || maxSelect > group.options.length
+          || (!required && minSelect !== 0) || minSelect > maxSelect
+          || (selectionMode === "single" && maxSelect !== 1)) {
+          return { ok: false, error: "تحقق من اسم المجموعة ونوع الاختيار والحدين الأدنى والأعلى" };
+        }
+        groupIds.add(id);
+        const optionIds = new Set<string>();
+        const linkedItemIds = new Set<number>();
+        const options = [];
+        for (const rawOption of group.options) {
+          if (!rawOption || typeof rawOption !== "object" || Array.isArray(rawOption)) {
+            return { ok: false, error: "بيانات أحد خيارات المطعم غير صالحة" };
+          }
+          const option = rawOption as Record<string, unknown>;
+          const optionId = String(option.id ?? "").trim();
+          const itemId = Number(option.itemId);
+          const price = Number(option.extraPrice);
+          if (!optionId || optionId.length > 80 || optionIds.has(optionId)
+            || !Number.isSafeInteger(itemId) || itemId <= 0 || linkedItemIds.has(itemId)
+            || String(option.extraPrice ?? "").trim() === "" || !Number.isFinite(price) || price < 0) {
+            return { ok: false, error: "اربط كل خيار بصنف مخزون أو خدمة وحدد سعراً إضافياً صحيحاً" };
+          }
+          optionIds.add(optionId);
+          linkedItemIds.add(itemId);
+          options.push({ id: optionId, itemId, extraPrice: String(price) });
+        }
+        normalizedGroups.push({
+          id, nameAr, nameEn: nameEn || null, required, selectionMode, minSelect, maxSelect, options,
+        });
+      }
+      out[k] = normalizedGroups;
+      continue;
+    }
     if (v === null) { out[k] = null; continue; }
     if (typeof v === "string") {
       if (v.length > 200) return { ok: false, error: `قيمة السمة "${k}" أطول من المسموح` };
@@ -2000,6 +2055,28 @@ function validateVariantAttributes(input: unknown):
     }
   }
   return { ok: true, value: out };
+}
+
+async function validateRestaurantModifierItemLinks(companyId: number, attributes: Record<string, unknown> | null, ownerItemId?: number) {
+  const groups = attributes?._restaurantModifierGroups;
+  if (!Array.isArray(groups)) return;
+  const ids = [...new Set(groups.flatMap((group: any) =>
+    Array.isArray(group?.options) ? group.options.map((option: any) => Number(option?.itemId)) : [],
+  ))];
+  if (ownerItemId && ids.includes(ownerItemId)) {
+    throw new Error("لا يمكن ربط الصنف بنفسه كإضافة");
+  }
+  if (!ids.length) return;
+  const linkedItems = await db.select({
+    id: itemsTable.id, itemType: itemsTable.itemType, status: itemsTable.status,
+  }).from(itemsTable).where(and(
+    eq(itemsTable.companyId, companyId),
+    inArray(itemsTable.id, ids),
+  ));
+  if (linkedItems.length !== ids.length
+    || linkedItems.some(item => item.status !== "active" || !["stock", "service"].includes(item.itemType))) {
+    throw new Error("كل إضافة يجب أن ترتبط بصنف مخزون أو خدمة نشطة من الشركة نفسها");
+  }
 }
 
 // Compact wrapper around `writeAudit` for sub-entity tables (item_documents,
@@ -2186,6 +2263,11 @@ router.post("/items", async (req, res) => {
   }
   const variantAttrsCheck = validateVariantAttributes(variantAttributes);
   if (!variantAttrsCheck.ok) { res.status(400).json({ error: variantAttrsCheck.error }); return; }
+  try {
+    await validateRestaurantModifierItemLinks(cid, variantAttrsCheck.value);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message }); return;
+  }
   const normalizedTags = normalizeTags(tags);
   const disc = normalizeDiscount(discountType, discountValue);
   let requiredUnitId: number;
@@ -2306,6 +2388,13 @@ router.put("/items/:id", async (req, res) => {
   // Snapshot the existing row BEFORE mutating so we can compute a precise diff.
   const existing = others.find(i => i.id === id) ?? null;
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (variantAttrsCheck.value !== undefined) {
+    try {
+      await validateRestaurantModifierItemLinks(cid, variantAttrsCheck.value, id);
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message }); return;
+    }
+  }
   let validatedPosGroupId: number | null | undefined;
   if (posGroupId !== undefined) {
     const assignedPosGroup = await parseAndValidatePosGroupId(cid, posGroupId);

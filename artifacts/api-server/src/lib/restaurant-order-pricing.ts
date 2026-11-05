@@ -5,11 +5,19 @@ export type RestaurantOrderPricingLine = {
   price: string | number;
   vatIncluded?: boolean | null;
   vatRate?: string | number | null;
+  modifiers?: Array<{
+    itemId?: number;
+    price?: string | number;
+    vatRate?: string | number | null;
+    vatIncluded?: boolean | null;
+  }> | null;
 };
 
 export function calculateRestaurantOrderTotals(lines: RestaurantOrderPricingLine[]) {
   const groups = new Map<string, { qty: number; grossUnitPrice: number; rate: number }>();
-  for (const line of lines) {
+  const addLine = (
+    line: Pick<RestaurantOrderPricingLine, "menuItemId" | "erpItemId" | "qty" | "price" | "vatIncluded" | "vatRate">,
+  ) => {
     const rawRate = line.vatRate == null || String(line.vatRate).trim() === ""
       ? Number.NaN
       : Number(line.vatRate);
@@ -23,6 +31,20 @@ export function calculateRestaurantOrderTotals(lines: RestaurantOrderPricingLine
     const current = groups.get(key);
     if (current) current.qty += Number(line.qty);
     else groups.set(key, { qty: Number(line.qty), grossUnitPrice, rate });
+  };
+  for (const line of lines) {
+    addLine(line);
+    for (const modifier of line.modifiers ?? []) {
+      if (!modifier.itemId || modifier.price == null) continue;
+      addLine({
+        menuItemId: line.menuItemId,
+        erpItemId: modifier.itemId,
+        qty: line.qty,
+        price: modifier.price,
+        vatIncluded: modifier.vatIncluded ?? line.vatIncluded,
+        vatRate: modifier.vatRate,
+      });
+    }
   }
 
   let subtotal = 0;

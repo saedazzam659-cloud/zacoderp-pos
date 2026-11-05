@@ -82,6 +82,7 @@ async function recalculateOrderTotals(companyId: number, orderId: number) {
     erpItemId: posMenuItemsTable.itemId,
     qty: posOrderItemsTable.qty,
     price: posOrderItemsTable.price,
+    modifiers: posOrderItemsTable.modifiers,
     status: posOrderItemsTable.status,
     vatIncluded: posMenuItemsTable.vatIncluded,
     vatRate: itemsTable.vatRate,
@@ -119,6 +120,76 @@ async function validateRestaurantErpItemLink(companyId: number, value: unknown):
     throw Object.assign(new Error("الصنف المرتبط غير موجود أو غير نشط أو ليس صنف مخزون/خدمة"), { statusCode: 400 });
   }
   return item.id;
+}
+
+function configuredRestaurantModifierGroups(attributes: unknown): any[] {
+  if (!attributes || typeof attributes !== "object" || Array.isArray(attributes)) return [];
+  const groups = (attributes as Record<string, unknown>)._restaurantModifierGroups;
+  return Array.isArray(groups) ? groups : [];
+}
+
+async function resolveRestaurantModifiers(
+  companyId: number,
+  baseItem: any,
+  rawSelections: unknown,
+  vatIncluded: boolean,
+) {
+  const groups = configuredRestaurantModifierGroups(baseItem?.variantAttributes);
+  const selections = Array.isArray(rawSelections) ? rawSelections : [];
+  if (selections.length > groups.length) throw new Error("توجد اختيارات غير معروفة");
+  const byGroup = new Map<string, Set<string>>();
+  for (const raw of selections) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("بيانات الاختيارات غير صالحة");
+    const groupId = String((raw as any).groupId ?? "");
+    const optionIds = (raw as any).optionIds;
+    if (!groupId || byGroup.has(groupId) || !Array.isArray(optionIds)) throw new Error("بيانات الاختيارات غير صالحة");
+    const ids = optionIds.map((id: unknown) => String(id));
+    if (ids.some((id: string) => !id) || new Set(ids).size !== ids.length) throw new Error("الخيار مكرر أو غير صالح");
+    byGroup.set(groupId, new Set(ids));
+  }
+  const chosen: Array<{ group: any; option: any }> = [];
+  for (const group of groups) {
+    const selectedIds = byGroup.get(String(group.id)) ?? new Set<string>();
+    if (selectedIds.size < Number(group.minSelect) || selectedIds.size > Number(group.maxSelect)) {
+      throw new Error(`تحقق من عدد الاختيارات في مجموعة "${group.nameAr}"`);
+    }
+    for (const optionId of selectedIds) {
+      const option = (group.options ?? []).find((entry: any) => String(entry.id) === optionId);
+      if (!option) throw new Error("يوجد خيار غير مرتبط بهذه المجموعة");
+      chosen.push({ group, option });
+    }
+  }
+  for (const groupId of byGroup.keys()) {
+    if (!groups.some(group => String(group.id) === groupId)) throw new Error("توجد مجموعة اختيارات غير معروفة");
+  }
+  const itemIds = [...new Set(chosen.map(entry => Number(entry.option.itemId)))];
+  if (!itemIds.length) return [];
+  const linkedItems = await db.select({
+    id: itemsTable.id, nameAr: itemsTable.nameAr, nameEn: itemsTable.nameEn,
+    code: itemsTable.code, itemType: itemsTable.itemType, status: itemsTable.status,
+    vatRate: itemsTable.vatRate,
+  }).from(itemsTable).where(and(
+    eq(itemsTable.companyId, companyId),
+    inArray(itemsTable.id, itemIds),
+  ));
+  const linkedById = new Map(linkedItems.map(item => [item.id, item]));
+  return chosen.map(({ group, option }) => {
+    const item = linkedById.get(Number(option.itemId));
+    if (!item || item.status !== "active" || !["stock", "service"].includes(item.itemType)) {
+      throw new Error("أحد أصناف الإضافة غير نشط أو لم يعد متاحاً");
+    }
+    return {
+      name: group.nameAr,
+      option: item.nameAr,
+      price: Number(option.extraPrice),
+      groupId: String(group.id),
+      optionId: String(option.id),
+      itemId: item.id,
+      itemType: item.itemType as "stock" | "service",
+      vatRate: item.vatRate,
+      vatIncluded,
+    };
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -297,8 +368,39 @@ router.get("/menu/items", async (req, res) => {
   const where = catId
     ? and(eq(posMenuItemsTable.companyId, cid), eq(posMenuItemsTable.isActive, true), eq(posMenuItemsTable.categoryId, catId))
     : and(eq(posMenuItemsTable.companyId, cid), eq(posMenuItemsTable.isActive, true));
-  const rows = await db.select().from(posMenuItemsTable).where(where).orderBy(asc(posMenuItemsTable.nameAr));
-  res.json(rows);
+  const rows = await db.select({
+    menuItem: posMenuItemsTable,
+    linkedItemId: itemsTable.id,
+    linkedAttributes: itemsTable.variantAttributes,
+    linkedShowInPos: itemsTable.showInPos,
+  }).from(posMenuItemsTable)
+    .leftJoin(itemsTable, and(
+      eq(itemsTable.id, posMenuItemsTable.itemId),
+      eq(itemsTable.companyId, cid),
+    ))
+    .where(where).orderBy(asc(posMenuItemsTable.nameAr));
+  const configuredGroups = rows.flatMap(row => row.linkedShowInPos === false
+    ? [] : configuredRestaurantModifierGroups(row.linkedAttributes));
+  const optionItemIds = [...new Set(configuredGroups.flatMap((group: any) =>
+    (group.options ?? []).map((option: any) => Number(option.itemId)).filter(Number.isSafeInteger),
+  ))];
+  const optionItems = optionItemIds.length ? await db.select({
+    id: itemsTable.id, nameAr: itemsTable.nameAr, nameEn: itemsTable.nameEn, code: itemsTable.code,
+  }).from(itemsTable).where(and(
+    eq(itemsTable.companyId, cid), eq(itemsTable.status, "active"), inArray(itemsTable.id, optionItemIds),
+  )) : [];
+  const optionById = new Map(optionItems.map(item => [item.id, item]));
+  res.json(rows.map(row => ({
+    ...row.menuItem,
+    showInPos: row.linkedShowInPos !== false,
+    modifierGroups: configuredRestaurantModifierGroups(row.linkedAttributes).map((group: any) => ({
+      ...group,
+      options: (group.options ?? []).flatMap((option: any) => {
+        const item = optionById.get(Number(option.itemId));
+        return item ? [{ ...option, nameAr: item.nameAr, nameEn: item.nameEn, code: item.code }] : [];
+      }),
+    })),
+  })));
 });
 
 router.post("/menu/items", async (req, res) => {
@@ -476,17 +578,68 @@ router.post("/orders/:id/items", async (req, res) => {
     .where(and(eq(posMenuItemsTable.id, Number(menuItemId)), eq(posMenuItemsTable.companyId, cid)));
   if (!mi) { res.status(404).json({ error: "صنف غير موجود" }); return; }
   const q = Number(qty ?? 1);
-  const total = (Number(mi.price) * q).toFixed(2);
+  if (!Number.isFinite(q) || q <= 0) { res.status(400).json({ error: "الكمية يجب أن تكون أكبر من صفر" }); return; }
+  const [baseItem] = mi.itemId ? await db.select().from(itemsTable).where(and(
+    eq(itemsTable.id, mi.itemId), eq(itemsTable.companyId, cid),
+  )) : [];
+  let resolvedModifiers: any[];
+  try {
+    resolvedModifiers = await resolveRestaurantModifiers(cid, baseItem, modifiers, mi.vatIncluded);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message }); return;
+  }
+  const total = calculateRestaurantOrderTotals([{
+    menuItemId: mi.id, erpItemId: mi.itemId, qty: q, price: mi.price,
+    vatIncluded: mi.vatIncluded, vatRate: baseItem?.vatRate, modifiers: resolvedModifiers,
+  }]).total;
   await db.insert(posOrderItemsTable).values({
     orderId: id, menuItemId: mi.id, nameSnapshot: mi.nameAr,
     qty: String(q), price: mi.price, total,
     kitchenStation: mi.kitchenStation,
-    modifiers: modifiers ?? [],
+    modifiers: resolvedModifiers,
     notes: notes ?? null,
   });
   // Recalc totals
   const totals = await recalculateOrderTotals(cid, id);
   res.status(201).json({ ok: true, ...totals });
+});
+
+router.put("/orders/:id/items/:itemId", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const orderId = Number(req.params.id);
+  const lineId = Number(req.params.itemId);
+  const [order] = await db.select().from(posOrdersTable).where(and(
+    eq(posOrdersTable.id, orderId), eq(posOrdersTable.companyId, cid),
+  ));
+  if (!order) { res.status(404).json({ error: "not found" }); return; }
+  if (["billed", "cancelled"].includes(order.status)) {
+    res.status(400).json({ error: "لا يمكن التعديل على طلب مغلق" }); return;
+  }
+  const [line] = await db.select().from(posOrderItemsTable).where(and(
+    eq(posOrderItemsTable.id, lineId), eq(posOrderItemsTable.orderId, orderId),
+  ));
+  if (!line) { res.status(404).json({ error: "الصنف غير موجود في الطلب" }); return; }
+  if (line.status === "cancelled") { res.status(400).json({ error: "لا يمكن تعديل صنف ملغى" }); return; }
+  const [menuItem] = await db.select().from(posMenuItemsTable).where(and(
+    eq(posMenuItemsTable.id, line.menuItemId), eq(posMenuItemsTable.companyId, cid),
+  ));
+  const [baseItem] = menuItem?.itemId ? await db.select().from(itemsTable).where(and(
+    eq(itemsTable.id, menuItem.itemId), eq(itemsTable.companyId, cid),
+  )) : [];
+  let resolvedModifiers: any[];
+  try {
+    resolvedModifiers = await resolveRestaurantModifiers(cid, baseItem, req.body?.modifiers, menuItem?.vatIncluded ?? true);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message }); return;
+  }
+  const total = calculateRestaurantOrderTotals([{
+    menuItemId: line.menuItemId, erpItemId: menuItem?.itemId, qty: line.qty, price: line.price,
+    vatIncluded: menuItem?.vatIncluded ?? true, vatRate: baseItem?.vatRate, modifiers: resolvedModifiers,
+  }]).total;
+  await db.update(posOrderItemsTable).set({ modifiers: resolvedModifiers, total, updatedAt: new Date() })
+    .where(eq(posOrderItemsTable.id, lineId));
+  const totals = await recalculateOrderTotals(cid, orderId);
+  res.json({ ok: true, ...totals });
 });
 
 router.delete("/orders/:id/items/:itemId", async (req, res) => {

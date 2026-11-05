@@ -98,6 +98,11 @@ function TicketCard({ ticket, setStatus }: { ticket: ROrder & { items: ROrderIte
             <div className="flex-1 min-w-0">
               <div className="text-sm font-semibold truncate">{it.nameSnapshot}</div>
               <div className="text-xs text-white/60">{Number(it.qty).toFixed(0)} ×</div>
+              {it.modifiers?.length ? (
+                <div className="mt-1 text-xs font-bold text-amber-200" data-testid={`text-kitchen-modifiers-${it.id}`}>
+                  {it.modifiers.map(modifier => modifier.option).join(" · ")}
+                </div>
+              ) : null}
               {it.notes && <div className="text-[11px] text-amber-300 truncate">📝 {it.notes}</div>}
             </div>
             {it.status === "pending" && (

@@ -135,7 +135,17 @@ export const posOrderItemsTable = pgTable("pos_order_items", {
   qty:            numeric("qty", { precision: 15, scale: 3 }).notNull().default("1"),
   price:          numeric("price", { precision: 15, scale: 2 }).notNull().default("0"),
   total:          numeric("total", { precision: 15, scale: 2 }).notNull().default("0"),
-  modifiers:      jsonb("modifiers").$type<Array<{ name: string; option: string; price: number }>>().notNull().default([]),
+  modifiers:      jsonb("modifiers").$type<Array<{
+    name: string;
+    option: string;
+    price: number;
+    groupId?: string;
+    optionId?: string;
+    itemId?: number;
+    itemType?: "stock" | "service";
+    vatRate?: string | number;
+    vatIncluded?: boolean;
+  }>>().notNull().default([]),
   kitchenStation: text("kitchen_station").notNull().default("kitchen"),
   status:         posLineStatusEnum("status").notNull().default("pending"),
   notes:          text("notes"),

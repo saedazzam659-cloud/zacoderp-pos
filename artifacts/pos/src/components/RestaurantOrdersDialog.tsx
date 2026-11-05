@@ -249,6 +249,13 @@ export default function RestaurantOrdersDialog({
                     }`}>
                       <div className="flex-1">
                         <div className="text-sm font-semibold">{li.nameSnapshot}</div>
+                        {li.modifiers?.length ? (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {li.modifiers.map(modifier =>
+                              `${modifier.option}${Number(modifier.price) > 0 ? ` (+${Number(modifier.price).toFixed(2)})` : ""}`,
+                            ).join("، ")}
+                          </div>
+                        ) : null}
                         <div className="text-xs text-muted-foreground">
                           {Number(li.qty).toFixed(0)} × {Number(li.price).toFixed(2)}
                         </div>

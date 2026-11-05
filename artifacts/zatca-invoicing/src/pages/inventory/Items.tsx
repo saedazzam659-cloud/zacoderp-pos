@@ -17,6 +17,7 @@ import { usePermission } from "@/hooks/usePermission";
 import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 import ExportButtons from "@/components/ExportButtons";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
+import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt, trimTrailingZeros } from "@/hooks/use-fmt";
 import {
@@ -86,6 +87,7 @@ const EMPTY = {
   groupId: "", subgroupId: "", posGroupId: "", posSubgroupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15", salePriceOptions: [],
   reorderLevel: "0", maxLevel: "", costMethod: "weighted_avg", description: "", status: "active",
   costAccountId: "", revenueAccountId: "", imageUrl: "",
+  restaurantModifierGroups: [] as RestaurantModifierGroupConfig[],
   // PRO Extension #3 — per-item default discount auto-applied on sales lines.
   discountType: "none" as "none" | "percent" | "amount", discountValue: "0",
   tags: "" as string, // comma-separated
@@ -1442,6 +1444,128 @@ function AIAssistDialog({
 
 // deleted new item units panel here
 
+type RestaurantModifierOptionConfig = { id: string; itemId: number | null; extraPrice: string };
+type RestaurantModifierGroupConfig = {
+  id: string; nameAr: string; nameEn: string; required: boolean;
+  selectionMode: "single" | "multiple"; minSelect: number; maxSelect: number;
+  options: RestaurantModifierOptionConfig[];
+};
+
+function RestaurantModifierGroupsEditor({
+  value, onChange, companyId, ownerItemId, isRtl,
+}: {
+  value: RestaurantModifierGroupConfig[];
+  onChange(value: RestaurantModifierGroupConfig[]): void;
+  companyId?: number;
+  ownerItemId?: number;
+  isRtl: boolean;
+}) {
+  const text = (ar: string, en: string) => isRtl ? ar : en;
+  const selectedIds = value.flatMap(group => group.options.map(option => option.itemId).filter(Boolean)) as number[];
+  const search = useInventoryItemSearch(
+    companyId,
+    { Authorization: `Bearer ${localStorage.getItem("zatca_token") ?? ""}` },
+    selectedIds,
+    true,
+  );
+  const inventoryItems = search.items.filter((item: any) =>
+    item.id !== ownerItemId && item.status === "active" && ["stock", "service"].includes(item.itemType));
+  const choices: ComboboxItem[] = inventoryItems.map((item: any) => ({
+    value: String(item.id), label: item.nameAr, labelEn: item.nameEn, code: item.code,
+  }));
+  const updateGroup = (index: number, patch: Partial<RestaurantModifierGroupConfig>) =>
+    onChange(value.map((group, i) => i === index ? { ...group, ...patch } : group));
+  const updateOption = (gi: number, oi: number, patch: Partial<RestaurantModifierOptionConfig>) =>
+    onChange(value.map((group, i) => i !== gi ? group : ({
+      ...group, options: group.options.map((option, j) => j === oi ? { ...option, ...patch } : option),
+    })));
+  const addGroup = () => onChange([...value, {
+    id: crypto.randomUUID(), nameAr: "", nameEn: "", required: false,
+    selectionMode: "single", minSelect: 0, maxSelect: 1,
+    options: [{ id: crypto.randomUUID(), itemId: null, extraPrice: "0" }],
+  }]);
+  const fieldClass = "h-9 w-full rounded-lg border border-input bg-background px-3 text-sm";
+  return (
+    <div className="space-y-4" dir={isRtl ? "rtl" : "ltr"}>
+      <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-3 text-sm leading-6 text-muted-foreground">
+        {text("اربط كل اختيار بصنف مخزون موجود؛ لا يتم إنشاء صنف جديد. سعر الإضافة سعر بيع إضافي، والتكلفة والمخزون والحسابات تأتي من الصنف المرتبط.",
+          "Link each option to an existing inventory item; no duplicate item is created. The add-on price is extra sales value, while cost, stock, and accounts come from the linked item.")}
+      </div>
+      {value.map((group, gi) => (
+        <section key={group.id} className="space-y-3 rounded-xl border border-border bg-card p-4">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Input value={group.nameAr} maxLength={100} placeholder="اسم المجموعة بالعربية"
+              aria-label={`اسم المجموعة ${gi + 1}`} data-testid={`input-modifier-group-ar-${gi}`}
+              onChange={e => updateGroup(gi, { nameAr: e.target.value })} />
+            <Input value={group.nameEn} maxLength={100} placeholder="Group name in English" dir="ltr"
+              aria-label={`Group ${gi + 1} English name`} data-testid={`input-modifier-group-en-${gi}`}
+              onChange={e => updateGroup(gi, { nameEn: e.target.value })} />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={group.required} data-testid={`checkbox-modifier-required-${gi}`}
+                onChange={e => updateGroup(gi, { required: e.target.checked, minSelect: e.target.checked ? Math.max(1, group.minSelect) : 0 })} />
+              اختيار إجباري
+            </label>
+            <select className={fieldClass} value={group.selectionMode} aria-label="نوع الاختيار"
+              data-testid={`select-modifier-mode-${gi}`}
+              onChange={e => updateGroup(gi, { selectionMode: e.target.value as "single" | "multiple", maxSelect: e.target.value === "single" ? 1 : Math.max(2, group.maxSelect) })}>
+              <option value="single">اختيار واحد</option><option value="multiple">اختيارات متعددة</option>
+            </select>
+            <label className="text-xs text-muted-foreground">الحد الأدنى
+              <Input type="number" min={group.required ? 1 : 0} max={group.maxSelect} value={group.minSelect}
+                disabled={!group.required} data-testid={`input-modifier-min-${gi}`}
+                onChange={e => updateGroup(gi, { minSelect: Number(e.target.value) })} />
+            </label>
+            <label className="text-xs text-muted-foreground">الحد الأعلى
+              <Input type="number" min={1} max={group.options.length} disabled={group.selectionMode === "single"}
+                value={group.selectionMode === "single" ? 1 : group.maxSelect}
+                data-testid={`input-modifier-max-${gi}`}
+                onChange={e => updateGroup(gi, { maxSelect: Number(e.target.value) })} />
+            </label>
+          </div>
+          {group.options.map((option, oi) => (
+            <div key={option.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_auto]">
+              <SearchCombobox
+                items={choices}
+                value={option.itemId == null ? "" : String(option.itemId)}
+                onValueChange={raw => updateOption(gi, oi, { itemId: raw ? Number(raw) : null })}
+                onSearchChange={search.setSearch}
+                loading={search.isSearching}
+                placeholder="ابحث عن صنف مخزون أو خدمة"
+                searchPlaceholder="الاسم أو الرمز"
+                emptyText="لا توجد أصناف مطابقة"
+                testId={`select-modifier-item-${gi}-${oi}`}
+              />
+              <Input type="number" min="0" step="0.01" value={option.extraPrice}
+                aria-label="السعر الإضافي" data-testid={`input-modifier-price-${gi}-${oi}`}
+                onChange={e => updateOption(gi, oi, { extraPrice: e.target.value })} />
+              <Button type="button" variant="outline" aria-label="حذف الخيار"
+                data-testid={`button-remove-modifier-option-${gi}-${oi}`}
+                onClick={() => updateGroup(gi, { options: group.options.filter((_, j) => j !== oi) })}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" data-testid={`button-add-modifier-option-${gi}`}
+              onClick={() => updateGroup(gi, { options: [...group.options, { id: crypto.randomUUID(), itemId: null, extraPrice: "0" }] })}>
+              <Plus className="h-4 w-4" /> إضافة اختيار
+            </Button>
+            <Button type="button" variant="ghost" size="sm" data-testid={`button-remove-modifier-group-${gi}`}
+              onClick={() => onChange(value.filter((_, i) => i !== gi))}>
+              <Trash2 className="h-4 w-4" /> حذف المجموعة
+            </Button>
+          </div>
+        </section>
+      ))}
+      <Button type="button" variant="outline" onClick={addGroup} data-testid="button-add-modifier-group">
+        <Plus className="h-4 w-4" /> إضافة مجموعة خيارات
+      </Button>
+    </div>
+  );
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 export default function Items() {
     const gate = useDemoActionGate();
@@ -1621,6 +1745,13 @@ export default function Items() {
       unitId:  item.unitId  != null ? String(item.unitId)  : "",
       costPrice: item.costPrice ?? "0", salePrice: item.salePrice ?? "0",
       salePriceOptions: Array.isArray(item.variantAttributes?._salesOptions) ? item.variantAttributes._salesOptions : [],
+      restaurantModifierGroups: Array.isArray(item.variantAttributes?._restaurantModifierGroups)
+        ? item.variantAttributes._restaurantModifierGroups.map((group: any) => ({
+            ...group, nameEn: group.nameEn ?? "", options: (group.options ?? []).map((option: any) => ({
+              ...option, extraPrice: String(option.extraPrice ?? "0"),
+            })),
+          }))
+        : [],
       vatRate: item.vatRate ?? "15", reorderLevel: item.reorderLevel ?? "0",
       maxLevel: item.maxLevel ?? "",
       costAccountId:    item.costAccountId    ? String(item.costAccountId)    : "",
@@ -1643,6 +1774,17 @@ export default function Items() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const options = Array.isArray(form.salePriceOptions) ? form.salePriceOptions : [];
+    const modifierGroups = Array.isArray(form.restaurantModifierGroups) ? form.restaurantModifierGroups : [];
+    if (modifierGroups.some((group: RestaurantModifierGroupConfig) =>
+      !group.nameAr.trim() || !group.options.length
+      || group.options.some(option => !option.itemId || !Number.isFinite(Number(option.extraPrice)) || Number(option.extraPrice) < 0)
+      || group.minSelect < (group.required ? 1 : 0) || group.maxSelect < 1
+      || group.minSelect > group.maxSelect || group.maxSelect > group.options.length
+      || (group.selectionMode === "single" && group.maxSelect !== 1))) {
+      setActiveItemTab("restaurant-modifiers");
+      toast({ title: "أكمل مجموعات الخيارات واربط كل خيار بصنف مخزون نشط", variant: "destructive" });
+      return;
+    }
     if (options.some((option: any) => !String(option.nameAr ?? "").trim()
       || String(option.salePrice ?? "").trim() === ""
       || !Number.isFinite(Number(option.salePrice))
@@ -1674,7 +1816,8 @@ export default function Items() {
         return;
       }
     }
-    const { retailEnabled, retailCategory, retailColor, retailSize, costAccountId, revenueAccountId, salePriceOptions, ...itemFields } = form;
+    const { retailEnabled, retailCategory, retailColor, retailSize, costAccountId, revenueAccountId, salePriceOptions, restaurantModifierGroups: _restaurantModifierGroups, ...itemFields } = form;
+    void _restaurantModifierGroups;
     const retailTags = tagsToArray(form.tags);
     const retailAttributes = { ...(form.variantAttributes && typeof form.variantAttributes === "object" ? form.variantAttributes : {}) };
     if (canRetailVariants) {
@@ -1701,6 +1844,16 @@ export default function Items() {
       .filter((option: any) => option.nameAr);
     if (normalizedSaleOptions.length) retailAttributes._salesOptions = normalizedSaleOptions;
     else delete retailAttributes._salesOptions;
+    const normalizedModifierGroups = modifierGroups.map((group: RestaurantModifierGroupConfig) => ({
+      id: group.id, nameAr: group.nameAr.trim(), nameEn: group.nameEn.trim() || null,
+      required: group.required, selectionMode: group.selectionMode,
+      minSelect: Number(group.minSelect), maxSelect: Number(group.maxSelect),
+      options: group.options.map(option => ({
+        id: option.id, itemId: Number(option.itemId), extraPrice: String(Number(option.extraPrice)),
+      })),
+    }));
+    if (normalizedModifierGroups.length) retailAttributes._restaurantModifierGroups = normalizedModifierGroups;
+    else delete retailAttributes._restaurantModifierGroups;
     const payload = {
       ...itemFields,
       groupId:          form.groupId          ? Number(form.groupId)          : null,
@@ -1935,6 +2088,7 @@ export default function Items() {
                 <TabsTrigger value="accounts" className="text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{t("pages.items.accountingLink")}</TabsTrigger>
               )}
               <TabsTrigger value="inventory"  className="text-xs gap-1.5"><Warehouse  className="h-3.5 w-3.5" />{t("pages.items.inventoryAndWarehouses")}</TabsTrigger>
+              {form.showInPos !== false && <TabsTrigger value="restaurant-modifiers" className="text-xs gap-1.5"><Store className="h-3.5 w-3.5" />إضافات وخيارات المطعم</TabsTrigger>}
               <TabsTrigger value="additional" className="text-xs gap-1.5"><Layers     className="h-3.5 w-3.5" />{t("pages.items.additionalData")}</TabsTrigger>
               <TabsTrigger value="usage"      className="text-xs gap-1.5"><Cog        className="h-3.5 w-3.5" />{t("pages.items.usageControlTab")}</TabsTrigger>
               <TabsTrigger value="notes"      className="text-xs gap-1.5"><FileText   className="h-3.5 w-3.5" />{t("pages.items.notesTab")}</TabsTrigger>
@@ -2207,6 +2361,23 @@ export default function Items() {
               </div>
               </>)}
             </TabsContent>
+            {form.showInPos !== false && (
+              <TabsContent value="restaurant-modifiers" className="mt-0 space-y-4">
+                <div>
+                  <h3 className="font-bold">مجموعات اختيار المطعم</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    تُعرض هذه الخيارات عند إضافة الصنف المرتبط إلى طلب المطعم. تُحتسب الإضافات على سعر البيع، ويُسحب مخزونها من الأصناف المرتبطة.
+                  </p>
+                </div>
+                <RestaurantModifierGroupsEditor
+                  value={form.restaurantModifierGroups ?? []}
+                  onChange={restaurantModifierGroups => setForm((p: any) => ({ ...p, restaurantModifierGroups }))}
+                  companyId={cid}
+                  ownerItemId={editId ?? undefined}
+                  isRtl={isRtl}
+                />
+              </TabsContent>
+            )}
             <TabsContent value="units" className="mt-0">
               {editId ? (
                 <ItemUnitPricesPanel

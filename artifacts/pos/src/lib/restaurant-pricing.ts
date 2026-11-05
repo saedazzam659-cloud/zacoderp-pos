@@ -3,7 +3,7 @@ import type { CreateInvoiceLine, ROrderItem } from "./api";
 type RestaurantPricingItem = Pick<
   ROrderItem,
   "erpItemId" | "erpItemType" | "erpVatRate" | "vatIncluded" | "nameSnapshot" | "qty" | "price"
->;
+> & Pick<ROrderItem, "modifiers">;
 
 export function buildRestaurantInvoicePricing(
   items: RestaurantPricingItem[],
@@ -23,7 +23,21 @@ export function buildRestaurantInvoicePricing(
     vatRate: number;
   }>();
 
-  for (const item of items) {
+  const billableLines = items.flatMap(item => [
+    item,
+    ...(item.modifiers ?? []).flatMap(modifier => modifier.itemId ? [{
+      erpItemId: modifier.itemId,
+      erpItemType: modifier.itemType,
+      erpVatRate: modifier.vatRate,
+      vatIncluded: modifier.vatIncluded ?? item.vatIncluded,
+      nameSnapshot: modifier.option,
+      qty: item.qty,
+      price: modifier.price,
+      modifiers: [],
+    }] : []),
+  ]);
+
+  for (const item of billableLines) {
     const itemId = Number(item.erpItemId);
     const itemType = item.erpItemType;
     if (!Number.isInteger(itemId) || itemId <= 0 || (itemType !== "stock" && itemType !== "service")) {

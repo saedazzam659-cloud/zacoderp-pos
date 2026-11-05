@@ -547,9 +547,12 @@ export const api = {
     customerName?: string; customerPhone?: string;
     guestCount?: number; notes?: string;
   }) => req<ROrder>("POST", "/api/pos-restaurant/orders", b),
-  rAddItem: (orderId: number, b: { menuItemId: number; qty?: number; notes?: string; modifiers?: any[] }) =>
+  rAddItem: (orderId: number, b: { menuItemId: number; qty?: number; notes?: string; modifiers?: Array<{ groupId: string; optionIds: string[] }> }) =>
     req<{ ok: true; subtotal: string; vatAmount: string; total: string }>(
       "POST", `/api/pos-restaurant/orders/${orderId}/items`, b),
+  rUpdateItemModifiers: (orderId: number, itemId: number, modifiers: Array<{ groupId: string; optionIds: string[] }>) =>
+    req<{ ok: true; subtotal: string; vatAmount: string; total: string }>(
+      "PUT", `/api/pos-restaurant/orders/${orderId}/items/${itemId}`, { modifiers }),
   rRemoveItem: (orderId: number, itemId: number) =>
     req<{ ok: true; subtotal: string; vatAmount: string; total: string }>(
       "DELETE", `/api/pos-restaurant/orders/${orderId}/items/${itemId}`),
@@ -650,9 +653,21 @@ export type RMenuItem = {
   kitchenStation: "kitchen" | "bar" | "grill" | "cold" | "dessert";
   imageUrl?: string | null;
   itemId?: number | null;
+  showInPos?: boolean;
   vatIncluded: boolean;
   modifiers?: any[];
+  modifierGroups?: RestaurantModifierGroup[];
   isActive: boolean;
+};
+
+export type RestaurantModifierGroup = {
+  id: string; nameAr: string; nameEn?: string | null; required: boolean;
+  selectionMode: "single" | "multiple"; minSelect: number; maxSelect: number;
+  options: Array<{ id: string; itemId: number; extraPrice: number; nameAr: string; nameEn?: string | null; code: string }>;
+};
+export type RestaurantModifierSnapshot = {
+  name: string; option: string; price: number; groupId?: string; optionId?: string;
+  itemId?: number; itemType?: "stock" | "service"; vatRate?: string | number; vatIncluded?: boolean;
 };
 
 export type ROrder = {
@@ -694,7 +709,7 @@ export type ROrderItem = {
   total: string;
   status: "pending" | "preparing" | "ready" | "served" | "cancelled";
   kitchenStation: string;
-  modifiers?: any[];
+  modifiers?: RestaurantModifierSnapshot[];
   notes?: string | null;
   sentAt?: string | null;
   readyAt?: string | null;

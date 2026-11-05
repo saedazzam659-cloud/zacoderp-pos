@@ -10,8 +10,9 @@ import { Input } from "@/components/ui/input";
 import VoiceSearchButton from "@/components/VoiceSearchButton";
 import {
   api, getToken, getStoredUser,
-  type RTable, type ROrder, type ROrderItem,
+  type RTable, type ROrder, type ROrderItem, type RMenuItem,
 } from "@/lib/api";
+import RestaurantModifierDialog, { type RestaurantModifierSelection } from "@/components/RestaurantModifierDialog";
 import { tr, usePosLanguage } from "@/lib/posLanguage";
 
 export default function WaiterApp() {
@@ -33,6 +34,7 @@ export default function WaiterApp() {
   const [deliveryNotes, setDeliveryNotes] = useState("");
   const [creatingDelivery, setCreatingDelivery] = useState(false);
   const [deliveryError, setDeliveryError] = useState("");
+  const [modifierTarget, setModifierTarget] = useState<{ item: RMenuItem; line?: ROrderItem } | null>(null);
 
   useEffect(() => { if (!getToken()) setLocation("/login"); }, [setLocation]);
 
@@ -82,11 +84,21 @@ export default function WaiterApp() {
   }, [openTableId, tablesQ.data, qc, view, language]);
 
   const addItem = useMutation({
-    mutationFn: ({ orderId, menuItemId }: { orderId: number; menuItemId: number }) =>
-      api.rAddItem(orderId, { menuItemId, qty: 1 }),
+    mutationFn: ({ orderId, menuItemId, modifiers }: { orderId: number; menuItemId: number; modifiers: RestaurantModifierSelection }) =>
+      api.rAddItem(orderId, { menuItemId, qty: 1, modifiers }),
     onSuccess: async () => {
       if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id));
       await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+      setModifierTarget(null);
+    },
+  });
+  const updateItemModifiers = useMutation({
+    mutationFn: ({ orderId, itemId, modifiers }: { orderId: number; itemId: number; modifiers: RestaurantModifierSelection }) =>
+      api.rUpdateItemModifiers(orderId, itemId, modifiers),
+    onSuccess: async () => {
+      if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id));
+      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+      setModifierTarget(null);
     },
   });
   const removeItem = useMutation({
@@ -115,6 +127,7 @@ export default function WaiterApp() {
 
   const filteredItems = useMemo(() => {
     let arr = itemsQ.data ?? [];
+    arr = arr.filter(item => item.showInPos !== false);
     if (activeCat) arr = arr.filter(i => i.categoryId === activeCat);
     if (search.trim()) {
       const term = search.trim().toLowerCase();
@@ -137,6 +150,28 @@ export default function WaiterApp() {
   }, [tablesQ.data, language]);
   const freeCount = (tablesQ.data ?? []).filter(table => table.status === "free").length;
   const selectedTable = tablesQ.data?.find(table => table.id === openTableId);
+  const chooseMenuItem = (item: RMenuItem) => {
+    if (item.modifierGroups?.length) setModifierTarget({ item });
+    else if (activeOrder) addItem.mutate({ orderId: activeOrder.id, menuItemId: item.id, modifiers: [] });
+  };
+  const confirmModifiers = (modifiers: RestaurantModifierSelection) => {
+    if (!activeOrder || !modifierTarget) return;
+    if (modifierTarget.line) {
+      updateItemModifiers.mutate({ orderId: activeOrder.id, itemId: modifierTarget.line.id, modifiers });
+    } else {
+      addItem.mutate({ orderId: activeOrder.id, menuItemId: modifierTarget.item.id, modifiers });
+    }
+  };
+  const modifierInitialSelection = useMemo(() => {
+    const selections: RestaurantModifierSelection = [];
+    for (const modifier of modifierTarget?.line?.modifiers ?? []) {
+      if (!modifier.groupId || !modifier.optionId) continue;
+      const group = selections.find(entry => entry.groupId === modifier.groupId);
+      if (group) group.optionIds.push(modifier.optionId);
+      else selections.push({ groupId: modifier.groupId, optionIds: [modifier.optionId] });
+    }
+    return selections;
+  }, [modifierTarget?.line?.modifiers]);
   const deliveryBranchId =
     Number(localStorage.getItem("pos_branch_id") || 0) ||
     tablesQ.data?.[0]?.branchId ||
@@ -359,7 +394,7 @@ export default function WaiterApp() {
                     i.nameAr.includes(text) || text.includes(i.nameAr) ||
                     Boolean(i.nameEn && (i.nameEn.includes(text) || text.includes(i.nameEn))));
                   if (matches.length === 1 && activeOrder) {
-                    addItem.mutate({ orderId: activeOrder.id, menuItemId: matches[0].id });
+                    chooseMenuItem(matches[0]);
                     setSearch("");
                   }
                 }} />
@@ -388,7 +423,7 @@ export default function WaiterApp() {
                   ) :
                     filteredItems.map(item => (
                       <button key={item.id} type="button" disabled={addItem.isPending}
-                        onClick={() => addItem.mutate({ orderId: activeOrder.id, menuItemId: item.id })}
+                        onClick={() => chooseMenuItem(item)}
                         data-testid={`button-add-menu-item-${item.id}`} aria-label={`${text("إضافة", "Add")} ${item.nameEn && language === "en" ? item.nameEn : item.nameAr}`}
                         className="group min-h-28 rounded-2xl border border-border bg-card p-3 text-start shadow-sm transition hover:border-primary/40 hover:shadow-md disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
                         <span className="flex items-start justify-between gap-2">
@@ -430,12 +465,27 @@ export default function WaiterApp() {
                 <div key={line.id} className="mb-2 flex items-center gap-2 rounded-xl border border-border/80 bg-background p-3" data-testid={`row-order-item-${line.id}`}>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-bold">{line.nameSnapshot}</div>
+                    {line.modifiers?.length ? (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {line.modifiers.map(modifier => modifier.option).join("، ")}
+                      </div>
+                    ) : null}
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span>{Number(line.qty).toFixed(0)} × {Number(line.price).toFixed(2)}</span>
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${line.status === "served" ? "bg-primary/10 text-primary" : line.status === "ready" ? "bg-amber-100 text-amber-800" : line.status === "preparing" ? "bg-sky-100 text-sky-800" : "bg-muted text-muted-foreground"}`}>{statusLabel(line.status, language)}</span>
                     </div>
                   </div>
                   <div className="shrink-0 text-sm font-black">{Number(line.total).toFixed(2)}</div>
+                  {!line.sentAt && itemsQ.data?.find(item => item.id === line.menuItemId)?.modifierGroups?.length ? (
+                    <Button variant="ghost" size="icon" aria-label={`${text("تعديل الإضافات", "Edit add-ons")} ${line.nameSnapshot}`}
+                      data-testid={`button-edit-order-item-modifiers-${line.id}`}
+                      onClick={() => {
+                        const item = itemsQ.data?.find(entry => entry.id === line.menuItemId);
+                        if (item) setModifierTarget({ item, line });
+                      }}>
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  ) : null}
                   {!line.sentAt && <Button variant="ghost" size="icon" aria-label={`${text("حذف", "Remove")} ${line.nameSnapshot}`} data-testid={`button-remove-order-item-${line.id}`}
                     disabled={removeItem.isPending} onClick={() => removeItem.mutate({ orderId: activeOrder.id, itemId: line.id })}>
                     <Trash2 className="h-4 w-4 text-destructive" />
@@ -458,11 +508,24 @@ export default function WaiterApp() {
                 {cancelOrder.isPending ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <X className="me-2 h-4 w-4" />} {text("إلغاء الطلب", "Cancel order")}
               </Button>
             </div>
-            {(sendOrder.isError || addItem.isError || removeItem.isError || cancelOrder.isError) && (
+            {(sendOrder.isError || addItem.isError || updateItemModifiers.isError || removeItem.isError || cancelOrder.isError) && (
               <p className="px-4 pb-3 text-xs text-destructive" role="alert">{text("تعذّر تنفيذ الإجراء. حاول مرة أخرى.", "Could not complete the action. Try again.")}</p>
             )}
           </aside>
         </main>
+      )}
+      {modifierTarget && activeOrder && (
+        <RestaurantModifierDialog
+          open={Boolean(modifierTarget)}
+          onOpenChange={open => { if (!open && !updateItemModifiers.isPending && !addItem.isPending) setModifierTarget(null); }}
+          item={modifierTarget.item}
+          groups={modifierTarget.item.modifierGroups ?? []}
+          language={language}
+          submitting={addItem.isPending || updateItemModifiers.isPending}
+          initialSelection={modifierInitialSelection}
+          confirmLabel={modifierTarget.line ? text("حفظ التعديلات", "Save changes") : undefined}
+          onConfirm={confirmModifiers}
+        />
       )}
     </div>
   );
