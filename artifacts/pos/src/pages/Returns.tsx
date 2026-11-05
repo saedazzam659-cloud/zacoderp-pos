@@ -452,6 +452,7 @@ export default function ReturnsPage({
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-extrabold" data-testid={`text-return-item-${line.id}`}>{line.itemName}</p>
                             <p className="mt-0.5 text-[11px] text-slate-500">{line.itemCode || "—"} <span className="mx-1">·</span> المتبقي {number(maxReturnQty(line))} من {number(line.qty)} {line.unit || ""}</p>
+                            <button type="button" onClick={() => setQty(line.id, maxReturnQty(line))} disabled={!returnedByItemQuery.isSuccess || maxReturnQty(line) <= 0} className="mt-1 text-[11px] font-extrabold text-[#087c68] underline underline-offset-2 disabled:text-slate-400 disabled:no-underline" data-testid={`button-return-remaining-${line.id}`}>إرجاع المتبقي: {number(maxReturnQty(line))}</button>
                           </div>
                           <div className="flex h-9 shrink-0 items-center overflow-hidden rounded-lg border border-slate-200 bg-[#fafcfb]">
                           <button type="button" onClick={() => setQty(line.id, (returnLines.find((l) => l.id === line.id)?.returnQty ?? 0) - 1)} disabled={!returnedByItemQuery.isSuccess || !(returnLines.find((l) => l.id === line.id)?.returnQty ?? 0)} className="grid size-8 place-items-center text-slate-500 hover:bg-slate-100 disabled:opacity-30" aria-label={`تقليل كمية ${line.itemName}`} data-testid={`button-decrease-return-${line.id}`}><X size={14} /></button>
@@ -477,6 +478,7 @@ export default function ReturnsPage({
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-extrabold" data-testid={`text-return-item-${line.id}`}>{line.itemName}</p>
                             <p className="mt-0.5 text-[11px] text-slate-500">{line.itemCode || "—"} <span className="mx-1">·</span> المتبقي {number(maxReturnQty(line))} من {number(line.qty)} {line.unit || ""}</p>
+                            <button type="button" onClick={() => setQty(line.id, maxReturnQty(line))} disabled={!returnedByItemQuery.isSuccess || maxReturnQty(line) <= 0} className="mt-1 text-[11px] font-extrabold text-[#087c68] underline underline-offset-2 disabled:text-slate-400 disabled:no-underline" data-testid={`button-return-remaining-${line.id}`}>إرجاع المتبقي: {number(maxReturnQty(line))}</button>
                           </div>
                           <div className="flex h-9 shrink-0 items-center overflow-hidden rounded-lg border border-slate-200 bg-[#fafcfb]">
                             <button type="button" onClick={() => setQty(line.id, line.returnQty - 1)} disabled={!returnedByItemQuery.isSuccess || line.returnQty <= 0} className="grid size-8 place-items-center text-slate-500 hover:bg-slate-100 disabled:opacity-30" aria-label={`تقليل كمية ${line.itemName}`} data-testid={`button-decrease-return-${line.id}`}><X size={14} /></button>
