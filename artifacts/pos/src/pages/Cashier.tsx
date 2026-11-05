@@ -190,14 +190,14 @@ export default function CashierPage() {
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [cashMovementOpen, setCashMovementOpen] = useState(false);
   const [employeeMealsOpen, setEmployeeMealsOpen] = useState(false);
-  // The terminal setting can further hide services, but it never replaces the
-  // company-module and signed-in-user permission checks.
-  const [enabledServices, setEnabledServices] = useState<string[] | null>(null);
+  // Hide services until the selected station's configuration has loaded.
+  // This never replaces company-module or signed-in-user permission checks.
+  const [enabledServices, setEnabledServices] = useState<string[]>([]);
   const canShowService = useCallback((key: string) => {
     const access = SERVICE_ACCESS[key];
     return !!access &&
       hasPosFeatureAccess(user, access.feature, access.action) &&
-      (enabledServices === null || enabledServices.includes(key));
+      enabledServices.includes(key);
   }, [enabledServices, user]);
   const canCreatePosReturn =
     hasPosFeatureAccess(user, "pos_returns", "view") &&
@@ -244,6 +244,23 @@ export default function CashierPage() {
   // Load reference + catalog data
   useEffect(() => {
     let alive = true;
+    const refreshServiceAvailability = () => {
+      const selectedTerminalId = Number(localStorage.getItem("pos_terminal_id") || 0) || null;
+      api.getEffectiveServices(selectedTerminalId)
+        .then((r) => {
+          if (alive) setEnabledServices(Array.isArray(r?.services) ? r.services : []);
+        })
+        .catch(() => {
+          if (alive) setEnabledServices([]);
+        });
+    };
+    refreshServiceAvailability();
+    const serviceRefreshTimer = window.setInterval(refreshServiceAvailability, 15_000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshServiceAvailability();
+    };
+    window.addEventListener("focus", refreshServiceAvailability);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     (async () => {
       try {
         if (!user) {
@@ -277,11 +294,6 @@ export default function CashierPage() {
         setBranches(brs);
         setCashBoxes(cbs);
         setPosSettings(settings);
-        // Resolve terminal-specific service availability. User grants and
-        // company module access are checked separately before showing controls.
-        api.getEffectiveServices()
-          .then((r) => { if (alive) setEnabledServices(r?.services ?? null); })
-          .catch(() => {});
       } catch (err: any) {
         if (alive) setLoadError(err?.message || "تعذّر تحميل البيانات");
       } finally {
@@ -290,6 +302,9 @@ export default function CashierPage() {
     })();
     return () => {
       alive = false;
+      window.clearInterval(serviceRefreshTimer);
+      window.removeEventListener("focus", refreshServiceAvailability);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

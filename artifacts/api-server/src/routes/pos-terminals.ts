@@ -31,16 +31,15 @@ function normalizeServices(v: unknown): string[] | null {
 }
 
 // Resolve the effective service list for a cashier on a terminal.
-// Precedence: admin/superadmin → all; else per-cashier override → terminal
-// default → (null on both) all (unconfigured is backwards-compatible).
+// Precedence: per-cashier override → terminal default → none (unconfigured
+// services stay hidden). These are POS navigation preferences, so explicit
+// terminal settings also apply when an admin is using that station.
 function effectiveServices(
   terminalServices: string[] | null,
   userServices: string[] | null,
-  isAdminLike: boolean,
 ): string[] {
-  if (isAdminLike) return [...SERVICE_KEYS];
   const base = userServices ?? terminalServices;
-  if (base == null) return [...SERVICE_KEYS];
+  if (base == null) return [];
   return SERVICE_KEYS.filter((k) => base.includes(k));
 }
 
@@ -204,15 +203,13 @@ router.get("/", async (req, res) => {
 
 // ─── GET /pos-terminals/effective-services ──────────────────────────────────
 // Resolve the service icons the CURRENT caller should see, based on their open
-// session's terminal (per-terminal default + per-cashier override). Admins and
-// superadmins always get the full set. Returns all services when the caller
-// has no open session / unconfigured terminal (backwards compatible).
+// session's terminal or the station selected at POS login (per-terminal
+// default + per-cashier override). Explicit station settings apply to admins
+// too; unconfigured services remain hidden until enabled.
 // Registered before "/:id/*" routes so the literal segment wins.
 router.get("/effective-services", async (req, res) => {
   const cid = getCid(req, res); if (!cid) return;
   const u = req.authUser!;
-  const isAdminLike = u.role === "admin" || u.role === "superadmin";
-  if (isAdminLike) { res.json({ services: [...SERVICE_KEYS], terminalId: null }); return; }
 
   const [sess] = await db
     .select({ posTerminalId: posSessionsTable.posTerminalId })
@@ -225,14 +222,21 @@ router.get("/effective-services", async (req, res) => {
     .orderBy(desc(posSessionsTable.openedAt))
     .limit(1);
 
-  const terminalId = sess?.posTerminalId ?? null;
-  if (!terminalId) { res.json({ services: [...SERVICE_KEYS], terminalId: null }); return; }
+  const requestedTerminalId = Number(req.query.terminalId);
+  const terminalId = sess?.posTerminalId ??
+    (Number.isInteger(requestedTerminalId) && requestedTerminalId > 0 ? requestedTerminalId : null);
+  if (!terminalId) { res.json({ services: [], terminalId: null }); return; }
 
   const [term] = await db
     .select({ enabledServices: posTerminalsTable.enabledServices })
     .from(posTerminalsTable)
-    .where(and(eq(posTerminalsTable.id, terminalId), eq(posTerminalsTable.companyId, cid)))
+    .where(and(
+      eq(posTerminalsTable.id, terminalId),
+      eq(posTerminalsTable.companyId, cid),
+      eq(posTerminalsTable.isActive, true),
+    ))
     .limit(1);
+  if (!term) { res.json({ services: [], terminalId }); return; }
   const [link] = await db
     .select({ enabledServices: posTerminalUsersTable.enabledServices })
     .from(posTerminalUsersTable)
@@ -244,7 +248,7 @@ router.get("/effective-services", async (req, res) => {
     .limit(1);
 
   res.json({
-    services: effectiveServices(term?.enabledServices ?? null, link?.enabledServices ?? null, false),
+    services: effectiveServices(term.enabledServices ?? null, link?.enabledServices ?? null),
     terminalId,
   });
 });

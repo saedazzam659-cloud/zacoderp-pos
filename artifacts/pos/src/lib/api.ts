@@ -463,10 +463,10 @@ export const api = {
     return req<PosTerminal[]>("GET", `/api/pos-terminals${s ? `?${s}` : ""}`);
   },
   // Service icons the current cashier should see (per-terminal default +
-  // per-cashier override; admins get all; unconfigured = all).
-  getEffectiveServices: () =>
+  // per-cashier override; services are hidden until explicitly enabled).
+  getEffectiveServices: (terminalId?: number | null) =>
     req<{ services: string[]; terminalId: number | null }>(
-      "GET", "/api/pos-terminals/effective-services",
+      "GET", `/api/pos-terminals/effective-services${terminalId ? `?terminalId=${terminalId}` : ""}`,
     ),
 
   // POS Sessions

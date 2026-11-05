@@ -73,7 +73,7 @@ type Draft = {
   cashBoxId:   string;
   isActive:    boolean;
   notes:       string;
-  // null = all services visible (backwards compatible default).
+  // null = no optional services enabled; arrays hold the enabled service keys.
   enabledServices: string[] | null;
 };
 
@@ -663,15 +663,15 @@ function TerminalEditor({
                 data-testid="btn-toggle-services-all"
               >
                 {draft.enabledServices === null
-                  ? (isRtl ? "تخصيص" : "Customize")
-                  : (isRtl ? "إظهار الكل" : "Show all")}
+                  ? (isRtl ? "اختيار الخدمات" : "Choose services")
+                  : (isRtl ? "إعادة للوضع الافتراضي" : "Reset to default")}
               </button>
             </div>
             <p className="text-[11px] text-muted-foreground">
               {draft.enabledServices === null
                 ? (isRtl
-                    ? "كل الخدمات ظاهرة (الوضع الافتراضي). اضغط «تخصيص» للتحكم."
-                    : "All services visible (default). Click \"Customize\" to control.")
+                    ? "لا تظهر أدوات إضافية افتراضياً. اختر الخدمات التي تريد إظهارها للكاشير."
+                    : "Optional services are hidden by default. Choose which ones the cashier can see.")
                 : (isRtl
                     ? "حدّد الخدمات التي تظهر في الشريط العلوي للكاشير على هذه المحطة."
                     : "Pick which services show in the cashier top bar on this terminal.")}
