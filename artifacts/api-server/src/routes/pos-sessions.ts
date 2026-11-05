@@ -421,6 +421,7 @@ router.get("/:id", async (req, res) => {
     vatAmount: salesInvoicesTable.vatAmount,
     status: salesInvoicesTable.status,
     paymentType: salesInvoicesTable.paymentType,
+    notes: salesInvoicesTable.notes,
     createdAt: salesInvoicesTable.createdAt,
   }).from(salesInvoicesTable)
     .where(eq(salesInvoicesTable.posSessionId, id))

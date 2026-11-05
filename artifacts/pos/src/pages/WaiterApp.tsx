@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight, Plus, Send, Trash2, Loader2, Users, Clock, X, RefreshCw, Settings,
-  Search, Utensils, MapPin, ShoppingBag, AlertCircle,
+  Search, Utensils, MapPin, ShoppingBag, AlertCircle, Truck, Phone, ClipboardList,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,20 +17,35 @@ export default function WaiterApp() {
   const [, setLocation] = useLocation();
   const qc = useQueryClient();
   const user = getStoredUser();
+  const [view, setView] = useState<"tables" | "delivery">(() =>
+    new URLSearchParams(window.location.search).get("view") === "delivery" ? "delivery" : "tables");
   const [openTableId, setOpenTableId] = useState<number | null>(null);
   const [activeOrder, setActiveOrder] = useState<(ROrder & { items: ROrderItem[] }) | null>(null);
   const [activeCat, setActiveCat] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [opening, setOpening] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [deliveryNotes, setDeliveryNotes] = useState("");
+  const [creatingDelivery, setCreatingDelivery] = useState(false);
+  const [deliveryError, setDeliveryError] = useState("");
 
   useEffect(() => { if (!getToken()) setLocation("/login"); }, [setLocation]);
 
   const tablesQ = useQuery({ queryKey: ["r-tables"], queryFn: () => api.rTables(), refetchInterval: 5000 });
   const catsQ = useQuery({ queryKey: ["r-cats"], queryFn: () => api.rCategories() });
   const itemsQ = useQuery({ queryKey: ["r-items"], queryFn: () => api.rMenuItems() });
+  const deliveryOrdersQ = useQuery({
+    queryKey: ["r-delivery-orders"],
+    queryFn: () => api.rOrders(),
+    refetchInterval: 5000,
+    select: orders => orders.filter(order =>
+      order.channel === "delivery" && !["billed", "cancelled"].includes(order.status)),
+  });
 
   // Select a table and reuse its open order, otherwise create a draft.
   useEffect(() => {
+    if (view === "delivery") { setOpening(false); return; }
     if (!openTableId) { setActiveOrder(null); setOpening(false); return; }
     const tbl = tablesQ.data?.find(t => t.id === openTableId);
     if (!tbl) return;
@@ -60,22 +75,29 @@ export default function WaiterApp() {
       if (!cancelled) setOpening(false);
     })();
     return () => { cancelled = true; };
-  }, [openTableId, tablesQ.data, qc]);
+  }, [openTableId, tablesQ.data, qc, view]);
 
   const addItem = useMutation({
     mutationFn: ({ orderId, menuItemId }: { orderId: number; menuItemId: number }) =>
       api.rAddItem(orderId, { menuItemId, qty: 1 }),
-    onSuccess: async () => { if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id)); },
+    onSuccess: async () => {
+      if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id));
+      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+    },
   });
   const removeItem = useMutation({
     mutationFn: ({ orderId, itemId }: { orderId: number; itemId: number }) => api.rRemoveItem(orderId, itemId),
-    onSuccess: async () => { if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id)); },
+    onSuccess: async () => {
+      if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id));
+      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+    },
   });
   const sendOrder = useMutation({
     mutationFn: (id: number) => api.rSendOrder(id),
     onSuccess: async () => {
       if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id));
       await qc.invalidateQueries({ queryKey: ["r-tables"] });
+      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
     },
   });
   const cancelOrder = useMutation({
@@ -83,6 +105,7 @@ export default function WaiterApp() {
     onSuccess: async () => {
       setActiveOrder(null); setOpenTableId(null);
       await qc.invalidateQueries({ queryKey: ["r-tables"] });
+      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
     },
   });
 
@@ -107,6 +130,53 @@ export default function WaiterApp() {
   }, [tablesQ.data]);
   const freeCount = (tablesQ.data ?? []).filter(table => table.status === "free").length;
   const selectedTable = tablesQ.data?.find(table => table.id === openTableId);
+  const deliveryBranchId =
+    Number(localStorage.getItem("pos_branch_id") || 0) ||
+    tablesQ.data?.[0]?.branchId ||
+    null;
+
+  async function createDelivery() {
+    if (!customerName.trim() || !customerPhone.trim()) {
+      setDeliveryError("أدخل اسم العميل ورقم التواصل لبدء طلب التوصيل.");
+      return;
+    }
+    if (!deliveryBranchId) {
+      setDeliveryError("تعذّر تحديد الفرع. تحقق من إعدادات نقطة البيع.");
+      return;
+    }
+    setCreatingDelivery(true);
+    setDeliveryError("");
+    try {
+      const order = await api.rCreateOrder({
+        branchId: deliveryBranchId,
+        channel: "delivery",
+        customerName: customerName.trim(),
+        customerPhone: customerPhone.trim(),
+        notes: deliveryNotes.trim() || undefined,
+      });
+      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+      setActiveOrder(await api.rOrder(order.id));
+      setCustomerName("");
+      setCustomerPhone("");
+      setDeliveryNotes("");
+    } catch (error: any) {
+      setDeliveryError(error?.message ?? "تعذّر إنشاء طلب التوصيل.");
+    } finally {
+      setCreatingDelivery(false);
+    }
+  }
+
+  async function resumeDelivery(orderId: number) {
+    setView("delivery");
+    setOpening(true);
+    try {
+      setActiveOrder(await api.rOrder(orderId));
+    } catch (error: any) {
+      setDeliveryError(error?.message ?? "تعذّر استعادة الطلب.");
+    } finally {
+      setOpening(false);
+    }
+  }
 
   const tableStatus = (table: RTable) => {
     switch (table.status) {
@@ -128,8 +198,8 @@ export default function WaiterApp() {
             <Utensils className="h-5 w-5" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-black sm:text-base">طاولات المطعم</div>
-            <div className="truncate text-xs text-muted-foreground">{user?.username ? `النادل · ${user.username}` : "إدارة الصالة والطلبات"}</div>
+            <div className="truncate text-sm font-black sm:text-base">طلبات المطعم</div>
+            <div className="truncate text-xs text-muted-foreground">{user?.username ? `النادل · ${user.username}` : "الصالة والتوصيل"}</div>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -144,6 +214,57 @@ export default function WaiterApp() {
 
       {!activeOrder ? (
         <main className="mx-auto w-full max-w-[1500px] flex-1 p-4 sm:p-6">
+          <div className="mb-6 flex w-full max-w-xl rounded-2xl border border-border bg-card p-1.5 shadow-sm" role="tablist" aria-label="قناة الطلب">
+            <button type="button" role="tab" aria-selected={view === "tables"} onClick={() => { setView("tables"); setDeliveryError(""); }}
+              data-testid="button-view-dine-in" className={`flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl text-sm font-black transition ${view === "tables" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted"}`}>
+              <Utensils className="h-4 w-4" /> الصالة والطاولات
+            </button>
+            <button type="button" role="tab" aria-selected={view === "delivery"} onClick={() => { setView("delivery"); setOpenTableId(null); setDeliveryError(""); }}
+              data-testid="button-view-delivery" className={`flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl text-sm font-black transition ${view === "delivery" ? "bg-orange-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted"}`}>
+              <Truck className="h-4 w-4" /> طلبات التوصيل
+            </button>
+          </div>
+          {view === "delivery" ? (
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+              <section className="overflow-hidden rounded-2xl border border-orange-200 bg-card shadow-sm">
+                <div className="flex items-center justify-between border-b border-orange-100 bg-orange-50/80 px-5 py-4">
+                  <div><p className="text-xs font-bold text-orange-700">قناة مستقلة · توصيل</p><h1 className="mt-1 text-xl font-black">طلبات التوصيل النشطة</h1></div>
+                  <span className="grid size-11 place-items-center rounded-xl bg-orange-100 text-orange-700"><Truck className="h-5 w-5" /></span>
+                </div>
+                <div className="space-y-2 p-4">
+                  {deliveryOrdersQ.isLoading ? Array.from({ length: 3 }, (_, i) => <div key={i} className="h-20 animate-pulse rounded-xl bg-muted" />) :
+                    deliveryOrdersQ.isError ? <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-sm text-destructive" role="alert">
+                      تعذّر تحميل الطلبات. <Button variant="outline" size="sm" onClick={() => deliveryOrdersQ.refetch()} className="mr-2">إعادة المحاولة</Button>
+                    </div> : (deliveryOrdersQ.data ?? []).length === 0 ?
+                      <div className="rounded-xl border border-dashed border-border px-5 py-10 text-center">
+                        <ClipboardList className="mx-auto mb-3 h-8 w-8 text-muted-foreground/60" />
+                        <p className="font-bold">لا توجد طلبات توصيل نشطة</p><p className="mt-1 text-sm text-muted-foreground">ستظهر الطلبات هنا لتتمكن من استكمالها.</p>
+                      </div> :
+                      deliveryOrdersQ.data!.map(order => (
+                        <button key={order.id} type="button" onClick={() => resumeDelivery(order.id)} data-testid={`button-resume-delivery-${order.id}`}
+                          className="flex w-full items-center justify-between gap-3 rounded-xl border border-orange-100 bg-background p-4 text-right transition hover:border-orange-300 hover:bg-orange-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500">
+                          <span className="min-w-0"><span className="flex items-center gap-2 font-black">{order.orderNumber}<span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-800">توصيل</span></span>
+                            <span className="mt-1 block truncate text-sm text-muted-foreground">{order.customerName || "عميل بدون اسم"} · {order.customerPhone || "لا يوجد رقم"}</span>
+                          </span><span className="shrink-0 text-left"><span className="block font-black">{Number(order.total).toFixed(2)} ر.س</span><span className="mt-1 block text-xs text-muted-foreground">{statusLabel(order.status)}</span></span>
+                        </button>
+                      ))}
+                </div>
+              </section>
+              <section className="h-fit rounded-2xl border border-border bg-card p-5 shadow-sm">
+                <div className="mb-5 flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-orange-100 text-orange-700"><Plus className="h-5 w-5" /></span>
+                  <div><p className="text-xs font-bold text-orange-700">طلب جديد</p><h2 className="text-lg font-black">بيانات التوصيل</h2></div></div>
+                <div className="space-y-4">
+                  <label className="block text-sm font-bold">اسم العميل<Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="اسم المستلم" data-testid="input-delivery-customer-name" className="mt-1.5 h-11 rounded-xl" /></label>
+                  <label className="block text-sm font-bold">رقم التواصل<div className="relative mt-1.5"><Phone className="absolute right-3 top-3.5 h-4 w-4 text-muted-foreground" /><Input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="05xxxxxxxx" inputMode="tel" data-testid="input-delivery-customer-phone" className="h-11 rounded-xl pr-10" /></div></label>
+                  <label className="block text-sm font-bold">ملاحظات التوصيل<textarea value={deliveryNotes} onChange={e => setDeliveryNotes(e.target.value)} placeholder="العنوان أو تعليمات إضافية" data-testid="input-delivery-notes" className="mt-1.5 min-h-24 w-full resize-y rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-normal outline-none transition focus-visible:ring-2 focus-visible:ring-ring" /></label>
+                  {deliveryError && <p className="text-sm text-destructive" role="alert">{deliveryError}</p>}
+                  <Button type="button" disabled={creatingDelivery || !deliveryBranchId} onClick={createDelivery} data-testid="button-create-delivery-order" className="h-12 w-full bg-orange-600 font-black text-white hover:bg-orange-700">
+                    {creatingDelivery ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Plus className="ml-2 h-4 w-4" />} إنشاء طلب التوصيل واختيار الأصناف
+                  </Button>
+                </div>
+              </section>
+            </div>
+          ) : <>
           <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
             <div>
               <p className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-primary"><MapPin className="h-3.5 w-3.5" /> الصالة الآن</p>
@@ -209,6 +330,7 @@ export default function WaiterApp() {
               ))}
             </div>
           )}
+          </>}
         </main>
       ) : (
         <main className="mx-auto grid min-h-0 w-full max-w-[1600px] flex-1 grid-cols-1 md:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
@@ -272,12 +394,12 @@ export default function WaiterApp() {
             <div className="border-b border-border p-4">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="text-xs font-bold text-primary">الطلب الحالي</p>
+                   <p className={`text-xs font-bold ${activeOrder.channel === "delivery" ? "text-orange-700" : "text-primary"}`}>{activeOrder.channel === "delivery" ? "طلب توصيل" : "طلب صالة · طاولة"}</p>
                   <h2 className="mt-1 text-lg font-black">{activeOrder.orderNumber}</h2>
-                  <p className="mt-0.5 text-sm text-muted-foreground">طاولة {selectedTable?.nameAr ?? activeOrder.tableId}</p>
+                   <p className="mt-0.5 text-sm text-muted-foreground">{activeOrder.channel === "delivery" ? `${activeOrder.customerName || "عميل"} · ${activeOrder.customerPhone || "لا يوجد رقم"}` : `طاولة ${selectedTable?.nameAr ?? activeOrder.tableId}`}</p>
                 </div>
                 <Button variant="ghost" size="icon" aria-label="إغلاق الطلب والعودة للطاولات" data-testid="button-close-order"
-                  onClick={() => { setActiveOrder(null); setOpenTableId(null); }}><X className="h-4 w-4" /></Button>
+                   onClick={() => { setActiveOrder(null); setOpenTableId(null); }}><X className="h-4 w-4" /></Button>
               </div>
               <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-xs font-bold text-muted-foreground" data-testid="status-active-order">
                 <span className="size-1.5 rounded-full bg-primary" />{statusLabel(activeOrder.status)}

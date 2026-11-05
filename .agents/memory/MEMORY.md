@@ -31,6 +31,7 @@
 - [Cashier company-login boundary](cashier-main-login-boundary.md) — allow station-linked cashiers through company login only to enter POS; use the station branch without duplicate user-branch links.
 - [POS station service visibility](pos-station-service-visibility.md) — only enabled station or cashier tools appear in POS shortcuts; unconfigured tools stay hidden.
 - [Restaurant table manager access](restaurant-table-manager-access.md) — managers can manage restaurant tables; preserve company module and per-user edit gates, and keep cashier login station-bound.
+- [Restaurant service channels](restaurant-service-channels.md) — keep delivery additive to dine-in tables and make the order channel clear in cashier billing and shift reports.
 - [Accounting and ZATCA index](accounting-zatca-index.md) — accounting, numbering, settlement, reports, documents, imports, and ZATCA implementation notes.
 - [Cash expense boundary](cash-expense-boundary.md) — explicit mobile grants, per-cashbox assignment, private receipts, and currency-safe reporting.
 - [Cash-transfer posting boundary](cash-transfer-posting-boundary.md) — deposits reuse the existing transfer lifecycle; preserve balance checks and exactly-once journal posting.

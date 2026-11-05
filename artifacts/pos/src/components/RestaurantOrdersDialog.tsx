@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { X, Loader2, Receipt, Banknote, CreditCard, Smartphone, Wallet, ChefHat, Clock } from "lucide-react";
+import { X, Loader2, Receipt, Banknote, CreditCard, Smartphone, Wallet, ChefHat, Clock, Truck, Utensils, Phone, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   api,
@@ -29,6 +29,7 @@ export default function RestaurantOrdersDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ id: number; method: string } | null>(null);
+  const [channelFilter, setChannelFilter] = useState<"all" | "dine_in" | "delivery">("all");
 
   const ordersQ = useQuery({
     queryKey: ["r-cashier-orders"],
@@ -40,6 +41,18 @@ export default function RestaurantOrdersDialog({
     enabled: open,
     refetchInterval: open ? 5000 : false,
   });
+  const tablesQ = useQuery({
+    queryKey: ["r-tables"],
+    queryFn: () => api.rTables(),
+    enabled: open,
+    refetchInterval: open ? 10000 : false,
+  });
+  const visibleOrders = useMemo(() => (ordersQ.data ?? []).filter(order =>
+    channelFilter === "all" || order.channel === channelFilter), [ordersQ.data, channelFilter]);
+  const tableName = (tableId?: number | null) => {
+    const table = tablesQ.data?.find(entry => entry.id === tableId);
+    return table ? `${table.nameAr} · ${table.code}` : tableId ? `طاولة ${tableId}` : "طاولة غير محددة";
+  };
 
   useEffect(() => {
     if (!open) { setSelected(null); setError(null); setDone(null); }
@@ -67,6 +80,11 @@ export default function RestaurantOrdersDialog({
       const { lines, subtotal, vatAmount, totalAmount } =
         buildRestaurantInvoicePricing(activeItems, defaultWarehouseId);
 
+      const orderContext = selected.channel === "dine_in"
+        ? `الصالة - ${tableName(selected.tableId)}`
+        : selected.channel === "delivery"
+          ? `توصيل - ${selected.customerName || "عميل"}`
+          : "سفري";
       const body: CreateInvoiceBody = {
         clientRequestId: `restaurant-order-${selected.id}`,
         invoiceDate: new Date().toISOString().slice(0, 10),
@@ -80,7 +98,7 @@ export default function RestaurantOrdersDialog({
         discountAmount: 0,
         totalAmount,
         priceIncludesVat: true,
-        notes: `طلب مطعم ${selected.orderNumber} — ${methodLabel(method)}`,
+        notes: `طلب مطعم ${selected.orderNumber} — ${orderContext} — ${methodLabel(method)}`,
         lines,
         posSessionId: getPosSessionId(),
       };
@@ -123,37 +141,56 @@ export default function RestaurantOrdersDialog({
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2">
             <ChefHat className="text-amber-500" />
-            <div className="font-bold text-lg">طلبات الصالة المفتوحة</div>
+            <div><div className="font-bold text-lg">فواتير طلبات المطعم</div><div className="text-xs text-muted-foreground">الصالة والتوصيل في مسارين واضحين</div></div>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
         </div>
 
         <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-2 min-h-0">
           {/* Left: list */}
-          <div className="border-l border-border overflow-y-auto p-3 space-y-2">
+          <div className="border-l border-border overflow-y-auto p-3">
+            <div className="mb-3 grid grid-cols-3 gap-1 rounded-xl bg-muted p-1" role="tablist" aria-label="تصفية قناة الطلب">
+              {([
+                ["all", "الكل"],
+                ["dine_in", "الصالة"],
+                ["delivery", "التوصيل"],
+              ] as const).map(([value, label]) => (
+                <button key={value} type="button" role="tab" aria-selected={channelFilter === value}
+                  onClick={() => setChannelFilter(value)} data-testid={`button-order-channel-${value}`}
+                  className={`rounded-lg px-2 py-2 text-xs font-bold transition ${channelFilter === value ? (value === "delivery" ? "bg-orange-600 text-white shadow-sm" : value === "dine_in" ? "bg-primary text-primary-foreground shadow-sm" : "bg-card text-foreground shadow-sm") : "text-muted-foreground hover:text-foreground"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
             {ordersQ.isLoading ? (
-              <Loader2 className="animate-spin mx-auto mt-8" />
-            ) : (ordersQ.data ?? []).length === 0 ? (
-              <div className="text-center text-muted-foreground py-12 text-sm">
-                لا توجد طلبات مفتوحة من النادل حالياً
+              <div className="space-y-2" role="status" aria-label="تحميل الطلبات">{[1, 2, 3].map(i => <div key={i} className="h-20 animate-pulse rounded-xl bg-muted" />)}</div>
+            ) : ordersQ.isError ? (
+              <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-center text-sm text-destructive" role="alert">
+                تعذّر تحميل الطلبات <Button size="sm" variant="outline" className="mt-3" onClick={() => ordersQ.refetch()}><RefreshCw className="ml-1 h-3.5 w-3.5" /> إعادة المحاولة</Button>
               </div>
-            ) : ordersQ.data!.map(o => {
+            ) : visibleOrders.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
+                {channelFilter === "all" ? "لا توجد طلبات مطعم مفتوحة حالياً" : channelFilter === "delivery" ? "لا توجد طلبات توصيل جاهزة للفوترة" : "لا توجد طلبات صالة جاهزة للفوترة"}
+              </div>
+            ) : visibleOrders.map(o => {
               const ago = Math.floor((Date.now() - new Date(o.openedAt).getTime()) / 60000);
               const active = selected?.id === o.id;
+              const delivery = o.channel === "delivery";
+              const dineIn = o.channel === "dine_in";
               return (
                 <button
                   key={o.id}
                   onClick={() => loadFull.mutate(o.id)}
-                  className={`w-full text-right p-3 rounded-xl border transition ${
-                    active ? "border-amber-500 bg-amber-500/10" : "border-border bg-card hover-elevate"
+                  data-testid={`button-select-restaurant-order-${o.id}`}
+                  className={`mb-2 w-full text-right p-3 rounded-xl border transition ${
+                    active ? (delivery ? "border-orange-500 bg-orange-50" : "border-primary bg-primary/5") : delivery ? "border-orange-100 bg-orange-50/30 hover:border-orange-300" : "border-border bg-card hover-elevate"
                   }`}
                 >
                   <div className="flex justify-between items-start">
                     <div>
-                      <div className="font-bold">{o.orderNumber}</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        {channelLabel(o.channel)} • {statusLabel(o.status)}
-                      </div>
+                      <div className="flex items-center gap-2 font-bold">{o.orderNumber}<span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${delivery ? "bg-orange-100 text-orange-800" : "bg-primary/10 text-primary"}`}>{delivery ? <Truck className="h-3 w-3" /> : <Utensils className="h-3 w-3" />}{channelLabel(o.channel)}</span></div>
+                      <div className="mt-1 text-xs font-semibold text-foreground">{delivery ? (o.customerName || "عميل بدون اسم") : dineIn ? tableName(o.tableId) : "طلب سفري"}</div>
+                      <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">{delivery ? <><Phone className="h-3 w-3" />{o.customerPhone || "لا يوجد رقم"}</> : dineIn ? `${o.guestCount || 0} ضيوف` : "استلام من المطعم"} · {statusLabel(o.status)}</div>
                     </div>
                     <div className="text-left">
                       <div className="text-amber-600 font-bold">{Number(o.total).toFixed(2)}</div>
@@ -189,7 +226,12 @@ export default function RestaurantOrdersDialog({
                 <div className="p-3 border-b border-border">
                   <div className="font-bold">{selected.orderNumber}</div>
                   <div className="text-xs text-muted-foreground">
-                    {selected.items.length} صنف • {channelLabel(selected.channel)}
+                    <span className={`mt-1 inline-flex items-center gap-1 rounded-full px-2 py-1 font-bold ${selected.channel === "delivery" ? "bg-orange-100 text-orange-800" : "bg-primary/10 text-primary"}`}>
+                      {selected.channel === "delivery" ? <Truck className="h-3 w-3" /> : <Utensils className="h-3 w-3" />}
+                      {selected.channel === "delivery" ? "طلب توصيل" : selected.channel === "dine_in" ? `طلب صالة · ${tableName(selected.tableId)}` : "طلب سفري"}
+                    </span>
+                    {selected.channel === "delivery" && <div className="mt-1 text-xs text-muted-foreground">{selected.customerName || "عميل"} · {selected.customerPhone || "لا يوجد رقم"}</div>}
+                    <div className="mt-1 text-xs text-muted-foreground">{selected.items.length} صنف</div>
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2">
@@ -267,7 +309,7 @@ function statusLabel(s: ROrder["status"]) {
   return m[s] ?? s;
 }
 function channelLabel(c: ROrder["channel"]) {
-  return c === "dine_in" ? "صالة" : c === "takeaway" ? "سفري" : "توصيل";
+  return c === "dine_in" ? "الصالة" : c === "takeaway" ? "سفري" : "توصيل";
 }
 function methodLabel(m: string) {
   return m === "cash" ? "نقداً" : m === "card" ? "شبكة" : m === "apple" ? "Apple Pay" : "محفظة";

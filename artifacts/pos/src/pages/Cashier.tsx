@@ -33,6 +33,8 @@ import {
   Package2,
   AlertCircle,
   Clock3,
+  Truck,
+  Utensils,
 } from "lucide-react";
 import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
 import CashMovementDialog from "@/components/CashMovementDialog";
@@ -1058,12 +1060,20 @@ export default function CashierPage() {
           {canShowService("waiter") && (
             <>
               <button
-                onClick={() => navigate("/waiter")}
-                title="تطبيق النادل (الطاولات)"
-                className="h-10 px-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
-                data-testid="svc-waiter"
+                onClick={() => navigate("/waiter?view=tables")}
+                title="فتح طلبات الصالة والطاولات"
+                className="h-10 px-3 rounded-xl border border-primary/25 bg-primary/[0.07] text-primary text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
+                data-testid="svc-waiter-tables"
               >
-                <Users className="w-4 h-4" /> النادل
+                <Utensils className="w-4 h-4" /> طاولات المطعم
+              </button>
+              <button
+                onClick={() => navigate("/waiter?view=delivery")}
+                title="فتح طلبات التوصيل"
+                className="h-10 px-3 rounded-xl border border-orange-300 bg-orange-50 text-orange-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
+                data-testid="svc-waiter-delivery"
+              >
+                <Truck className="w-4 h-4" /> طلب توصيل
               </button>
               <button
                 onClick={() => setRestaurantOpen(true)}
@@ -1143,9 +1153,13 @@ export default function CashierPage() {
         <nav aria-label="اختصارات التشغيل" className="flex shrink-0 gap-2 overflow-x-auto border-b border-border/70 bg-card/70 px-3 py-2 xl:hidden">
           {canShowService("waiter") && (
             <>
-              <button type="button" onClick={() => navigate("/waiter")} title="تطبيق النادل والطاولات" data-testid="svc-waiter-mobile"
+              <button type="button" onClick={() => navigate("/waiter?view=tables")} title="فتح الصالة والطاولات" data-testid="svc-waiter-tables-mobile"
                 className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-primary/15 bg-primary/[0.06] px-3 text-xs font-bold text-primary">
-                <Users className="size-4" /> النادل والطاولات
+                <Utensils className="size-4" /> طاولات المطعم
+              </button>
+              <button type="button" onClick={() => navigate("/waiter?view=delivery")} title="فتح طلبات التوصيل" data-testid="svc-waiter-delivery-mobile"
+                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 text-xs font-bold text-orange-800">
+                <Truck className="size-4" /> طلب توصيل
               </button>
               <button type="button" onClick={() => setRestaurantOpen(true)} title="طلبات الصالة" data-testid="svc-waiter-orders-mobile"
                 className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-background px-3 text-xs font-bold">
@@ -1374,6 +1388,9 @@ export default function CashierPage() {
             grandTotal={grandTotal}
             itemCount={itemCount}
             parkCurrentCart={parkCurrentCart}
+            openRestaurantTables={() => navigate("/waiter?view=tables")}
+            openRestaurantDelivery={() => navigate("/waiter?view=delivery")}
+            canShowRestaurantServices={canShowService("waiter")}
             paid={paid}
             pay={pay}
             methods={availableMethods}
@@ -1428,6 +1445,9 @@ export default function CashierPage() {
                 grandTotal={grandTotal}
                 itemCount={itemCount}
                 parkCurrentCart={parkCurrentCart}
+                openRestaurantTables={() => navigate("/waiter?view=tables")}
+                openRestaurantDelivery={() => navigate("/waiter?view=delivery")}
+                canShowRestaurantServices={canShowService("waiter")}
                 paid={paid}
                 pay={async (m) => {
                   await pay(m);
@@ -1664,6 +1684,9 @@ function CartPanel(props: {
   grandTotal: number;
   itemCount: number;
   parkCurrentCart: () => void;
+  openRestaurantTables: () => void;
+  openRestaurantDelivery: () => void;
+  canShowRestaurantServices: boolean;
   paid: boolean;
   pay: (method: "cash" | "card" | "apple" | "wallet" | "mixed") => void | Promise<void>;
   methods: { cash: boolean; card: boolean; apple: boolean; wallet: boolean; mixed: boolean };
@@ -1685,6 +1708,9 @@ function CartPanel(props: {
     grandTotal,
     itemCount,
     parkCurrentCart,
+    openRestaurantTables,
+    openRestaurantDelivery,
+    canShowRestaurantServices,
     paid,
     pay,
     methods,
@@ -1703,6 +1729,30 @@ function CartPanel(props: {
           </p>
         </div>
         <div className="flex items-center gap-1.5">
+          {canShowRestaurantServices && (
+            <>
+              <button
+                type="button"
+                onClick={openRestaurantTables}
+                title="إضافة أصناف لطاولات المطعم"
+                aria-label="فتح طاولات المطعم"
+                data-testid="cart-open-restaurant-tables"
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-primary/25 bg-primary/[0.06] px-2 text-[10px] font-extrabold text-primary hover:bg-primary/10"
+              >
+                <Utensils className="size-3.5" /> الطاولات
+              </button>
+              <button
+                type="button"
+                onClick={openRestaurantDelivery}
+                title="إنشاء طلب توصيل"
+                aria-label="فتح طلبات التوصيل"
+                data-testid="cart-open-restaurant-delivery"
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-orange-300 bg-orange-50 px-2 text-[10px] font-extrabold text-orange-800 hover:bg-orange-100"
+              >
+                <Truck className="size-3.5" /> توصيل
+              </button>
+            </>
+          )}
           {canCreatePosReturn && (
             <button
               type="button"

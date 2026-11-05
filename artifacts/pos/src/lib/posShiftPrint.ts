@@ -6,6 +6,7 @@ export type PosShiftInvoice = {
   vatAmount: string;
   status: string;
   paymentType: string;
+  notes?: string | null;
   createdAt: string;
 };
 
@@ -94,10 +95,11 @@ export function printPosShiftReport(
           <td>${escapeHtml(invoice.docNumber || `#${invoice.id}`)}</td>
           <td>${escapeHtml(dateTime(invoice.invoiceDate || invoice.createdAt))}</td>
           <td>${escapeHtml(paymentLabel[invoice.paymentType] || invoice.paymentType || "—")}</td>
+          <td>${escapeHtml(invoice.notes || "—")}</td>
           <td>${escapeHtml(invoiceStatusLabel[invoice.status] || invoice.status)}</td>
           <td class="amount">${money(invoice.totalAmount)}</td>
         </tr>`).join("")
-    : `<tr><td colspan="6" class="empty">لا توجد فواتير في هذه الوردية.</td></tr>`;
+    : `<tr><td colspan="7" class="empty">لا توجد فواتير في هذه الوردية.</td></tr>`;
 
   const movementRows = cash.movements.length
     ? cash.movements.map((movement, index) => `
@@ -155,7 +157,7 @@ export function printPosShiftReport(
           <div class="expected"><b>النقد المتوقع في الخزينة</b><strong>${money(cash.expectedCash)}</strong></div>
         </section>
         <h2>فواتير الوردية</h2>
-        <table><thead><tr><th>#</th><th>رقم الفاتورة</th><th>التاريخ</th><th>طريقة الدفع</th><th>الحالة</th><th>الإجمالي</th></tr></thead><tbody>${invoiceRows}</tbody></table>
+        <table><thead><tr><th>#</th><th>رقم الفاتورة</th><th>التاريخ</th><th>طريقة الدفع</th><th>البيان / نوع الطلب</th><th>الحالة</th><th>الإجمالي</th></tr></thead><tbody>${invoiceRows}</tbody></table>
         <h2>الحركات النقدية</h2>
         <table><thead><tr><th>#</th><th>التاريخ والوقت</th><th>رقم الحركة</th><th>النوع</th><th>البيان</th><th>المبلغ</th></tr></thead><tbody>${movementRows}</tbody></table>
         <div class="foot">تم إنشاء التقرير تلقائيًا عند إغلاق الوردية. إغلاق الخزينة محسوب من النقد الافتتاحي ومبيعات النقد وصافي الحركات المسجلة.</div>
