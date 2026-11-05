@@ -29,6 +29,95 @@ router.use((req, res, next) => {
   next();
 });
 
+type CashReportSession = {
+  id: number;
+  companyId: number;
+  userId: number;
+  cashBoxId: number | null;
+  openingCash: string | null;
+  openedAt: Date;
+  closedAt: Date | null;
+};
+
+async function buildCashMovementReport(session: CashReportSession) {
+  const from = session.openedAt;
+  const to = session.closedAt ?? new Date();
+  const [payments, receipts, transfers] = session.cashBoxId
+    ? await Promise.all([
+        db.select({
+          id: paymentVouchersTable.id, code: paymentVouchersTable.code,
+          date: paymentVouchersTable.date, description: paymentVouchersTable.description,
+          amount: paymentVouchersTable.amount, createdAt: paymentVouchersTable.createdAt,
+          createdBy: paymentVouchersTable.createdById, sourceType: paymentVouchersTable.sourceType,
+        }).from(paymentVouchersTable).where(and(
+          eq(paymentVouchersTable.companyId, session.companyId),
+          eq(paymentVouchersTable.cashBoxId, session.cashBoxId),
+          eq(paymentVouchersTable.status, "posted"),
+          or(eq(paymentVouchersTable.createdById, session.userId), eq(paymentVouchersTable.cashExpenseCreatedByUserId, session.userId)),
+          gte(paymentVouchersTable.createdAt, from), lte(paymentVouchersTable.createdAt, to),
+        )),
+        db.select({
+          id: receiptVouchersTable.id, code: receiptVouchersTable.code,
+          date: receiptVouchersTable.date, description: receiptVouchersTable.description,
+          amount: receiptVouchersTable.amount, createdAt: receiptVouchersTable.createdAt,
+          createdBy: receiptVouchersTable.createdById,
+        }).from(receiptVouchersTable).where(and(
+          eq(receiptVouchersTable.companyId, session.companyId),
+          eq(receiptVouchersTable.cashBoxId, session.cashBoxId),
+          eq(receiptVouchersTable.status, "posted"),
+          eq(receiptVouchersTable.createdById, session.userId),
+          gte(receiptVouchersTable.createdAt, from), lte(receiptVouchersTable.createdAt, to),
+        )),
+        db.select().from(cashTransfersTable).where(and(
+          eq(cashTransfersTable.companyId, session.companyId),
+          eq(cashTransfersTable.status, "posted"),
+          eq(cashTransfersTable.createdByUserId, session.userId),
+          gte(cashTransfersTable.createdAt, from), lte(cashTransfersTable.createdAt, to),
+          sql`(${cashTransfersTable.fromCashBoxId} = ${session.cashBoxId} OR ${cashTransfersTable.toCashBoxId} = ${session.cashBoxId})`,
+        )),
+      ])
+    : [[], [], []];
+
+  const movements = [
+    ...payments.map((row) => ({
+      id: `payment-${row.id}`, code: row.code, date: row.date, description: row.description,
+      amount: -Math.abs(Number(row.amount || 0)), kind: row.sourceType === "cash_expense" ? "expense" : "withdrawal",
+      createdAt: row.createdAt, createdBy: row.createdBy,
+    })),
+    ...receipts.map((row) => ({
+      id: `receipt-${row.id}`, code: row.code, date: row.date, description: row.description,
+      amount: Math.abs(Number(row.amount || 0)), kind: "deposit", createdAt: row.createdAt, createdBy: row.createdBy,
+    })),
+    ...transfers.map((row) => ({
+      id: `transfer-${row.id}`, code: row.code, date: row.date, description: row.description,
+      amount: row.toCashBoxId === session.cashBoxId ? Math.abs(Number(row.amount || 0)) : -Math.abs(Number(row.amount || 0)),
+      kind: "transfer", createdAt: row.createdAt, createdBy: row.createdByUserId,
+    })),
+  ].sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime());
+
+  const [{ totalCashSales } = { totalCashSales: "0" }] = await db.select({
+    totalCashSales: sql<string>`COALESCE(SUM(CASE
+      WHEN ${salesInvoicesTable.paymentType} = 'cash' THEN ${salesInvoicesTable.totalAmount}
+      WHEN ${salesInvoicesTable.paymentType} = 'mixed' THEN ${salesInvoicesTable.cashAmount}
+      ELSE 0 END), 0)`,
+  }).from(salesInvoicesTable).where(and(
+    eq(salesInvoicesTable.posSessionId, session.id),
+    eq(salesInvoicesTable.companyId, session.companyId),
+    eq(salesInvoicesTable.status, "posted"),
+  ));
+
+  const openingCash = Number(session.openingCash || 0);
+  const cashSales = Number(totalCashSales || 0);
+  const movementNet = movements.reduce((sum, movement) => sum + movement.amount, 0);
+  return {
+    movements,
+    openingCash,
+    cashSales,
+    movementNet,
+    expectedCash: openingCash + cashSales + movementNet,
+  };
+}
+
 // ─── GET /pos-sessions/current ────────────────────────────────────────────────
 // POS calls this on login to find an existing open session for this user.
 router.get("/current", async (req, res) => {
@@ -221,19 +310,8 @@ router.post("/:id/close", async (req, res) => {
   }
   if (s.status !== "open") { res.json(s); return; }
 
-  // Compute expected cash = openingCash + sum(cash sales in this session, scoped to its company).
-  const [{ totalCash } = { totalCash: "0" }] = await db.select({
-    totalCash: sql<string>`COALESCE(SUM(CASE
-      WHEN ${salesInvoicesTable.paymentType} = 'cash' THEN ${salesInvoicesTable.totalAmount}
-      WHEN ${salesInvoicesTable.paymentType} = 'mixed' THEN ${salesInvoicesTable.cashAmount}
-      ELSE 0 END), 0)`,
-  }).from(salesInvoicesTable).where(and(
-    eq(salesInvoicesTable.posSessionId, id),
-    eq(salesInvoicesTable.companyId, s.companyId),
-    eq(salesInvoicesTable.status, "posted"),
-    eq(salesInvoicesTable.paymentType, "cash"),
-  ));
-  const expected = Number(s.openingCash || 0) + Number(totalCash || 0);
+  const cashReport = await buildCashMovementReport(s);
+  const expected = cashReport.expectedCash;
   const closing = closingCash != null && closingCash !== "" ? Number(closingCash) : expected;
   const diff = closing - expected;
 
@@ -374,77 +452,7 @@ router.get("/:id/cash-movements", async (req, res) => {
   if (!session || (session.userId !== user.id && !["admin", "superadmin"].includes(user.role))) {
     res.status(404).json({ error: "الوردية غير موجودة" }); return;
   }
-  if (!session.cashBoxId) { res.json([]); return; }
-  const from = session.openedAt;
-  const to = session.closedAt ?? new Date();
-  const [payments, receipts, transfers] = await Promise.all([
-    db.select({
-      id: paymentVouchersTable.id, code: paymentVouchersTable.code,
-      date: paymentVouchersTable.date, description: paymentVouchersTable.description,
-      amount: paymentVouchersTable.amount, createdAt: paymentVouchersTable.createdAt,
-      createdBy: paymentVouchersTable.createdById, sourceType: paymentVouchersTable.sourceType,
-    }).from(paymentVouchersTable).where(and(
-      eq(paymentVouchersTable.companyId, user.companyId),
-      eq(paymentVouchersTable.cashBoxId, session.cashBoxId),
-      eq(paymentVouchersTable.status, "posted"),
-      or(eq(paymentVouchersTable.createdById, session.userId), eq(paymentVouchersTable.cashExpenseCreatedByUserId, session.userId)),
-      gte(paymentVouchersTable.createdAt, from), lte(paymentVouchersTable.createdAt, to),
-    )),
-    db.select({
-      id: receiptVouchersTable.id, code: receiptVouchersTable.code,
-      date: receiptVouchersTable.date, description: receiptVouchersTable.description,
-      amount: receiptVouchersTable.amount, createdAt: receiptVouchersTable.createdAt,
-      createdBy: receiptVouchersTable.createdById,
-    }).from(receiptVouchersTable).where(and(
-      eq(receiptVouchersTable.companyId, user.companyId),
-      eq(receiptVouchersTable.cashBoxId, session.cashBoxId),
-      eq(receiptVouchersTable.status, "posted"),
-      eq(receiptVouchersTable.createdById, session.userId),
-      gte(receiptVouchersTable.createdAt, from), lte(receiptVouchersTable.createdAt, to),
-    )),
-    db.select().from(cashTransfersTable).where(and(
-      eq(cashTransfersTable.companyId, user.companyId),
-      eq(cashTransfersTable.status, "posted"),
-      eq(cashTransfersTable.createdByUserId, session.userId),
-      gte(cashTransfersTable.createdAt, from), lte(cashTransfersTable.createdAt, to),
-      sql`(${cashTransfersTable.fromCashBoxId} = ${session.cashBoxId} OR ${cashTransfersTable.toCashBoxId} = ${session.cashBoxId})`,
-    )),
-  ]);
-  const movements = [
-    ...payments.map((row) => ({
-      id: `payment-${row.id}`, code: row.code, date: row.date, description: row.description,
-      amount: -Math.abs(Number(row.amount || 0)), kind: row.sourceType === "cash_expense" ? "expense" : "withdrawal",
-      createdAt: row.createdAt, createdBy: row.createdBy,
-    })),
-    ...receipts.map((row) => ({
-      id: `receipt-${row.id}`, code: row.code, date: row.date, description: row.description,
-      amount: Math.abs(Number(row.amount || 0)), kind: "deposit", createdAt: row.createdAt, createdBy: row.createdBy,
-    })),
-    ...transfers.map((row) => ({
-      id: `transfer-${row.id}`, code: row.code, date: row.date, description: row.description,
-      amount: row.toCashBoxId === session.cashBoxId ? Math.abs(Number(row.amount || 0)) : -Math.abs(Number(row.amount || 0)),
-      kind: "transfer", createdAt: row.createdAt, createdBy: row.createdByUserId,
-    })),
-  ].sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime());
-  const [{ totalCashSales } = { totalCashSales: "0" }] = await db.select({
-    totalCashSales: sql<string>`COALESCE(SUM(CASE
-      WHEN ${salesInvoicesTable.paymentType} = 'cash' THEN ${salesInvoicesTable.totalAmount}
-      WHEN ${salesInvoicesTable.paymentType} = 'mixed' THEN ${salesInvoicesTable.cashAmount}
-      ELSE 0 END), 0)`,
-  }).from(salesInvoicesTable).where(and(
-    eq(salesInvoicesTable.posSessionId, id),
-    eq(salesInvoicesTable.companyId, session.companyId),
-    eq(salesInvoicesTable.status, "posted"),
-  ));
-  const movementNet = movements.reduce((sum, movement) => sum + movement.amount, 0);
-  const opening = Number(session.openingCash || 0);
-  res.json({
-    movements,
-    openingCash: opening,
-    cashSales: Number(totalCashSales || 0),
-    movementNet,
-    expectedCash: opening + Number(totalCashSales || 0) + movementNet,
-  });
+  res.json(await buildCashMovementReport(session));
 });
 
 // ─── GET /pos-sessions/summary/today ──────────────────────────────────────────

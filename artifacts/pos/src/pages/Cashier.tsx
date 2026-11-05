@@ -66,6 +66,12 @@ import {
   getSalePriceOptionName,
 } from "@/lib/api";
 import { printPosThermalReceipt } from "@/lib/posThermalReceipt";
+import {
+  openPosShiftPrintWindow,
+  printPosShiftReport,
+  type PosShiftCashReport,
+  type PosShiftDetail,
+} from "@/lib/posShiftPrint";
 
 type CartLine = {
   item: Item;
@@ -440,6 +446,23 @@ export default function CashierPage() {
     return true;
   };
 
+  const closeAndPrintShift = async (sessionId: number, printWindow: Window) => {
+    try {
+      const [detail, cashReport] = await Promise.all([
+        api.request<PosShiftDetail>("GET", `/api/pos-sessions/${sessionId}`),
+        api.request<PosShiftCashReport>("GET", `/api/pos-sessions/${sessionId}/cash-movements`),
+      ]);
+      const closedSession = await api.closePosSession(sessionId, {});
+      printPosShiftReport(printWindow, {
+        ...detail,
+        closedAt: closedSession.closedAt,
+      }, cashReport);
+    } catch (error) {
+      printWindow.close();
+      throw error;
+    }
+  };
+
   const handleShiftAction = async () => {
     try {
       if (!posSession) {
@@ -455,18 +478,16 @@ export default function CashierPage() {
         return;
       }
 
-      if (!(await ensureShiftWorkComplete())) return;
-      const rawClosing = window.prompt(
-        "أدخل النقد المعدود لإغلاق الوردية. اتركه فارغاً لاستخدام النقد المتوقع.",
-        "",
-      );
-      if (rawClosing === null) return;
-      const closingCash = rawClosing.trim() === "" ? undefined : Number(rawClosing);
-      if (closingCash !== undefined && (!Number.isFinite(closingCash) || closingCash < 0)) {
-        window.alert("أدخل مبلغاً صحيحاً لا يقل عن صفر.");
+      const printWindow = openPosShiftPrintWindow();
+      if (!printWindow) {
+        window.alert("اسمح بفتح النوافذ المنبثقة لإغلاق الوردية وطباعة تقرير حركتها.");
         return;
       }
-      await api.closePosSession(posSession.id, { closingCash });
+      if (!(await ensureShiftWorkComplete())) {
+        printWindow.close();
+        return;
+      }
+      await closeAndPrintShift(posSession.id, printWindow);
       setPosSession(null);
       setPosSessionId(null);
       if (window.confirm("تم إغلاق الوردية. هل تريد فتح وردية جديدة الآن؟")) {
@@ -648,19 +669,17 @@ export default function CashierPage() {
   const handleLogout = async () => {
     const sessionId = getPosSessionId();
     if (sessionId) {
-      if (!(await ensureShiftWorkComplete())) return;
-      const rawClosing = window.prompt(
-        "أدخل النقد المعدود لإغلاق الوردية. اتركه فارغاً لاستخدام النقد المتوقع.",
-        "",
-      );
-      if (rawClosing === null) return;
-      const closingCash = rawClosing.trim() === "" ? undefined : Number(rawClosing);
-      if (closingCash !== undefined && (!Number.isFinite(closingCash) || closingCash < 0)) {
-        window.alert("أدخل مبلغاً صحيحاً لا يقل عن صفر.");
+      const printWindow = openPosShiftPrintWindow();
+      if (!printWindow) {
+        window.alert("اسمح بفتح النوافذ المنبثقة لإغلاق الوردية وطباعة تقرير حركتها.");
+        return;
+      }
+      if (!(await ensureShiftWorkComplete())) {
+        printWindow.close();
         return;
       }
       try {
-        await api.closePosSession(sessionId, { closingCash });
+        await closeAndPrintShift(sessionId, printWindow);
       } catch (error: any) {
         window.alert(error?.message || "تعذّر إغلاق الوردية؛ لم يتم تسجيل الخروج.");
         return;
