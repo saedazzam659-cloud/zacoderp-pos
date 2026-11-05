@@ -284,6 +284,7 @@ export type PosSession = {
   openedAt: string;
   closedAt: string | null;
   status: "open" | "closed" | "force_closed";
+  invoiceCount?: number;
 };
 
 export type SalesInvoice = {
@@ -529,6 +530,15 @@ export const api = {
     if (q?.tableId) qs.set("tableId", String(q.tableId));
     const s = qs.toString();
     return req<ROrder[]>("GET", `/api/pos-restaurant/orders${s ? `?${s}` : ""}`);
+  },
+  rActiveOrderCount: (branchId?: number | null) => {
+    const qs = new URLSearchParams();
+    if (branchId != null) qs.set("branchId", String(branchId));
+    const s = qs.toString();
+    return req<{ count: number }>(
+      "GET",
+      `/api/pos-restaurant/orders/active-count${s ? `?${s}` : ""}`,
+    );
   },
   rOrder: (id: number) =>
     req<ROrder & { items: ROrderItem[] }>("GET", `/api/pos-restaurant/orders/${id}`),

@@ -377,6 +377,24 @@ router.get("/orders", async (req, res) => {
   res.json(rows);
 });
 
+router.get("/orders/active-count", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const rawBranchId = req.query.branchId;
+  const branchId = rawBranchId == null ? null : Number(rawBranchId);
+  if (branchId != null && (!Number.isInteger(branchId) || branchId <= 0)) {
+    res.status(400).json({ error: "معرّف الفرع غير صالح" }); return;
+  }
+  const filters = [
+    eq(posOrdersTable.companyId, cid),
+    inArray(posOrdersTable.status, ["open", "sent", "preparing", "ready", "served"] as any),
+  ];
+  if (branchId != null) filters.push(eq(posOrdersTable.branchId, branchId));
+  const [{ count } = { count: 0 }] = await db.select({
+    count: sql<number>`COUNT(*)::int`,
+  }).from(posOrdersTable).where(and(...filters));
+  res.json({ count: Number(count) });
+});
+
 router.get("/orders/:id", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   const id = Number(req.params.id);

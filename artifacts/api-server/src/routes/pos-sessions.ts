@@ -42,7 +42,15 @@ router.get("/current", async (req, res) => {
     ))
     .orderBy(desc(posSessionsTable.openedAt))
     .limit(1);
-  res.json(row ?? null);
+  if (!row) { res.json(null); return; }
+  const [{ invoiceCount } = { invoiceCount: 0 }] = await db.select({
+    invoiceCount: sql<number>`COUNT(*)::int`,
+  }).from(salesInvoicesTable).where(and(
+    eq(salesInvoicesTable.posSessionId, row.id),
+    eq(salesInvoicesTable.companyId, u.companyId),
+    eq(salesInvoicesTable.status, "posted"),
+  ));
+  res.json({ ...row, invoiceCount: Number(invoiceCount) });
 });
 
 // ─── POST /pos-sessions/open ──────────────────────────────────────────────────

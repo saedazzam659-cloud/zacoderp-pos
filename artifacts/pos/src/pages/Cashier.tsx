@@ -218,12 +218,18 @@ export default function CashierPage() {
 
   // Online + clock
   useEffect(() => {
-    if (getToken()) {
+    const refreshCurrentSession = () => {
+      if (!getToken()) return;
       void api.getCurrentPosSession().then((session) => {
         setPosSession(session);
         setPosSessionId(session?.id ?? null);
       }).catch(() => {});
-    }
+    };
+    refreshCurrentSession();
+    const refreshSessionTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") refreshCurrentSession();
+    }, 15_000);
+    window.addEventListener("focus", refreshCurrentSession);
     const onO = () => {
       setOnline(true);
       // Auto-sync any queued offline invoices.
@@ -241,6 +247,8 @@ export default function CashierPage() {
     window.addEventListener("offline", onF);
     const t = setInterval(() => setTime(new Date()), 1000);
     return () => {
+      window.clearInterval(refreshSessionTimer);
+      window.removeEventListener("focus", refreshCurrentSession);
       window.removeEventListener("online", onO);
       window.removeEventListener("offline", onF);
       clearInterval(t);
@@ -387,9 +395,55 @@ export default function CashierPage() {
     setPosSessionId(session.id);
   };
 
+  const ensureShiftWorkComplete = async (): Promise<boolean> => {
+    const blockers: string[] = [];
+
+    if (cart.length > 0 && !paid) {
+      blockers.push(`السلة الحالية تحتوي على ${itemCount} صنف؛ أكمل البيع أو أفرغ السلة.`);
+    }
+    if (heldCarts.length > 0) {
+      blockers.push(`${heldCarts.length} فاتورة معلّقة على هذا الجهاز؛ استعدها أو احذفها يدويًا.`);
+    }
+
+    let queuedCount = await countQueued();
+    let syncError = "";
+    if (queuedCount > 0 && navigator.onLine) {
+      try {
+        await syncNow(getToken());
+      } catch (error: any) {
+        syncError = error?.message || "";
+      }
+      queuedCount = await countQueued();
+      setQueuedInvoices(queuedCount);
+    }
+    if (queuedCount > 0) {
+      blockers.push(
+        `${queuedCount} فاتورة غير متزامنة؛ اتصل بالإنترنت وأكمل المزامنة${syncError ? ` (${syncError})` : ""}.`,
+      );
+    }
+
+    if (canShowService("waiter")) {
+      try {
+        const { count } = await api.rActiveOrderCount(posSession?.branchId ?? branchId);
+        if (count > 0) {
+          blockers.push(`${count} طلب مطعم مفتوح؛ فوّتره أو ألغِه من طلبات الصالة أو تطبيق النادل.`);
+        }
+      } catch {
+        blockers.push("تعذّر التحقق من طلبات المطعم؛ أُوقف الإجراء حتى لا تُترك طلبات دون معالجة.");
+      }
+    }
+
+    if (blockers.length > 0) {
+      window.alert(`لا يمكن إغلاق الوردية أو فتح وردية جديدة قبل معالجة التالي:\n\n• ${blockers.join("\n• ")}`);
+      return false;
+    }
+    return true;
+  };
+
   const handleShiftAction = async () => {
     try {
       if (!posSession) {
+        if (!(await ensureShiftWorkComplete())) return;
         const rawOpening = window.prompt("أدخل مبلغ النقد الافتتاحي في الدرج", "0");
         if (rawOpening === null) return;
         const opening = Number(rawOpening);
@@ -401,6 +455,7 @@ export default function CashierPage() {
         return;
       }
 
+      if (!(await ensureShiftWorkComplete())) return;
       const rawClosing = window.prompt(
         "أدخل النقد المعدود لإغلاق الوردية. اتركه فارغاً لاستخدام النقد المتوقع.",
         "",
@@ -422,6 +477,7 @@ export default function CashierPage() {
           window.alert("أدخل مبلغاً صحيحاً لا يقل عن صفر.");
           return;
         }
+        if (!(await ensureShiftWorkComplete())) return;
         await openShift(opening);
       }
     } catch (error: any) {
@@ -592,6 +648,7 @@ export default function CashierPage() {
   const handleLogout = async () => {
     const sessionId = getPosSessionId();
     if (sessionId) {
+      if (!(await ensureShiftWorkComplete())) return;
       const rawClosing = window.prompt(
         "أدخل النقد المعدود لإغلاق الوردية. اتركه فارغاً لاستخدام النقد المتوقع.",
         "",
@@ -741,6 +798,11 @@ export default function CashierPage() {
           try {
             const posted = await api.postSalesInvoice(inv.id);
             setLastInvoice(posted);
+            if (posted.status === "posted") {
+              setPosSession((current) => current
+                ? { ...current, invoiceCount: (current.invoiceCount ?? 0) + 1 }
+                : current);
+            }
           } catch (postErr: any) {
             setLastInvoice(inv);
             setSubmitError(
@@ -789,6 +851,16 @@ export default function CashierPage() {
     minute: "2-digit",
     hour12: true,
   }).format(time);
+  const openedAtMs = posSession ? Date.parse(posSession.openedAt) : NaN;
+  const elapsedShiftSeconds = Number.isFinite(openedAtMs)
+    ? Math.max(0, Math.floor((time.getTime() - openedAtMs) / 1000))
+    : 0;
+  const elapsedShiftHours = Math.floor(elapsedShiftSeconds / 3600);
+  const elapsedShiftMinutes = Math.floor((elapsedShiftSeconds % 3600) / 60);
+  const elapsedShiftRemainder = elapsedShiftSeconds % 60;
+  const shiftDuration = posSession
+    ? `${String(elapsedShiftHours).padStart(2, "0")}:${String(elapsedShiftMinutes).padStart(2, "0")}:${String(elapsedShiftRemainder).padStart(2, "0")}`
+    : "--:--:--";
 
   return (
     <div
@@ -913,8 +985,34 @@ export default function CashierPage() {
               <span className="hidden sm:inline">وجبات الموظفين</span>
             </button>
           )}
-          <div className="hidden lg:flex items-center gap-2 text-xs font-semibold text-muted-foreground font-mono px-2.5 py-1.5 rounded-full bg-muted">
-            {timeStr}
+          <div
+            role="group"
+            aria-label={posSession ? `مدة الوردية ${shiftDuration}، ${posSession.invoiceCount ?? 0} فاتورة` : `الوقت الحالي ${timeStr}، لا توجد وردية مفتوحة`}
+            data-testid="pos-shift-summary"
+            className="hidden md:flex shrink-0 items-center gap-2 rounded-xl border border-primary/20 bg-gradient-to-l from-primary/10 via-white to-white px-2.5 py-1.5 shadow-sm"
+          >
+            <div className="min-w-[94px] text-center leading-none">
+              <span className="mb-1 block text-[9px] font-bold text-muted-foreground">
+                {posSession ? "مدة الوردية" : "لا توجد وردية"}
+              </span>
+              <span
+                dir="ltr"
+                role="timer"
+                aria-label={posSession ? `مدة الوردية ${shiftDuration}` : `الوقت الحالي ${timeStr}`}
+                data-testid="pos-shift-elapsed"
+                className="font-mono text-[15px] font-black tracking-[0.08em] text-black tabular-nums"
+              >
+                {posSession ? shiftDuration : timeStr}
+              </span>
+            </div>
+            <span aria-hidden="true" className="h-8 w-px bg-primary/20" />
+            <div className="flex min-w-[52px] items-center justify-center gap-1 text-primary">
+              <Receipt className="size-4" />
+              <span className="font-mono text-lg font-black leading-none text-black tabular-nums" data-testid="pos-shift-invoice-count">
+                {posSession?.invoiceCount ?? 0}
+              </span>
+              <span className="text-[9px] font-bold text-muted-foreground">فاتورة</span>
+            </div>
           </div>
           <button
             title={user?.username || "حساب"}
@@ -1469,6 +1567,11 @@ export default function CashierPage() {
           cashCashBoxId={posSettings?.posCashCashBoxId ?? defaultCashBoxId ?? null}
           cardBankAccountId={posSettings?.posCardBankAccountId ?? null}
           defaultWarehouseId={defaultWarehouseId ?? null}
+          onBilled={() => {
+            setPosSession((current) => current
+              ? { ...current, invoiceCount: (current.invoiceCount ?? 0) + 1 }
+              : current);
+          }}
         />
       )}
 

@@ -26,6 +26,7 @@
 - [POS Desktop update packages](pos-desktop-update-packages.md) — keep the small in-app/web MSI and large offline `/install` MSI on separate release channels.
 - [POS Desktop Windows validation](pos-desktop-windows-build-validation.md) — updater lifecycle changes require the pinned Windows build and a real MSI upgrade check; browser preview cannot verify installation.
 - [Web POS parked carts](web-pos-parked-carts.md) — held drafts stay device-local and scoped by company, cashier, branch, and terminal; checkout alone creates a cloud invoice.
+- [Web POS shift close](pos-shift-close-boundary.md) — block close/reopen while active carts, parked drafts, offline invoices, or restaurant orders remain unresolved.
 - [POS display-group boundary](pos-display-group-boundary.md) — cashier tabs use a dedicated display group; preserve the existing accounting item category unchanged.
 - [Cashier company-login boundary](cashier-main-login-boundary.md) — allow station-linked cashiers through company login only to enter POS; use the station branch without duplicate user-branch links.
 - [POS station service visibility](pos-station-service-visibility.md) — only enabled station or cashier tools appear in POS shortcuts; unconfigured tools stay hidden.
