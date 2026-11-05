@@ -101,6 +101,7 @@ export type AuthUser = {
     "view" | "create" | "edit" | "delete" | "post" | "cancel",
     boolean
   >>>;
+  mobilePermissions?: Record<string, boolean> | null;
   companyMenuPermissions?: Record<string, boolean>;
   nameAr?: string | null;
   nameEn?: string | null;
@@ -409,6 +410,8 @@ export const api = {
     ),
   getCashBoxes: (companyId: number) =>
     req<CashBox[]>("GET", `/api/cash-boxes?companyId=${companyId}`),
+  getCashBoxBalances: (companyId: number) =>
+    req<Array<{ cashBoxId: number; balance: number }>>("GET", `/api/cash-boxes/balances?companyId=${companyId}`),
 
   // Customers
   getCustomers: (companyId: number) =>

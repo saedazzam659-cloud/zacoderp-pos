@@ -8,7 +8,16 @@ type ShiftReport = {
   movements: Array<{ id: string; code?: string | null; date: string; description?: string | null; amount: number; kind: string; createdAt?: string | null }>;
   openingCash: number; cashSales: number; movementNet: number; expectedCash: number;
 };
-type Props = { open: boolean; onClose: () => void; companyId: number; session: PosSession | null; cashBoxes: CashBox[]; branchId: number | null; };
+type Props = {
+  open: boolean;
+  onClose: () => void;
+  companyId: number;
+  session: PosSession | null;
+  cashBoxes: CashBox[];
+  branchId: number | null;
+  canManageExpenses: boolean;
+  canManageOtherMovements: boolean;
+};
 type Kind = "expense" | "deposit" | "withdrawal" | "transfer" | "report";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -20,7 +29,7 @@ const kinds: { id: Kind; label: string; icon: typeof Receipt }[] = [
   { id: "report", label: "تقرير الوردية", icon: Receipt },
 ];
 
-export default function CashMovementDialog({ open, onClose, companyId, session, cashBoxes, branchId }: Props) {
+export default function CashMovementDialog({ open, onClose, companyId, session, cashBoxes, branchId, canManageExpenses, canManageOtherMovements }: Props) {
   const [kind, setKind] = useState<Kind>("expense");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<Account[]>([]);
@@ -39,17 +48,26 @@ export default function CashMovementDialog({ open, onClose, companyId, session, 
   const [reportBusy, setReportBusy] = useState(false);
   const sourceBoxId = session?.cashBoxId ?? null;
   const usableBoxes = useMemo(() => cashBoxes.filter((box) => box.id !== sourceBoxId), [cashBoxes, sourceBoxId]);
+  const visibleKinds = useMemo(
+    () => kinds.filter((item) => item.id === "expense" ? canManageExpenses : canManageOtherMovements),
+    [canManageExpenses, canManageOtherMovements],
+  );
+  const activeKind = visibleKinds.some((item) => item.id === kind)
+    ? kind
+    : visibleKinds[0]?.id ?? "report";
   const cashOptions = useMemo(() => {
-    if (kind === "expense") return expenseAccounts;
+    if (activeKind === "expense") return expenseAccounts;
     return accounts.filter((a) => a.isPosting !== false && a.isActive !== false);
-  }, [accounts, expenseAccounts, kind]);
+  }, [accounts, expenseAccounts, activeKind]);
 
   useEffect(() => {
     if (!open) return;
     let active = true;
     setError(""); setNotice("");
     void Promise.all([
-      api.request<ExpenseOptions>("GET", "/api/cash-expenses/options").catch(() => ({} as ExpenseOptions)),
+      canManageExpenses
+        ? api.request<ExpenseOptions>("GET", "/api/cash-expenses/options").catch(() => ({} as ExpenseOptions))
+        : Promise.resolve({} as ExpenseOptions),
       api.request<Account[] | { data?: Account[] }>("GET", `/api/accounts?companyId=${companyId}`).catch(() => []),
       api.request<typeof banks>("GET", `/api/bank-accounts?companyId=${companyId}`).catch(() => []),
     ]).then(([options, accountRows, bankRows]) => {
@@ -59,10 +77,10 @@ export default function CashMovementDialog({ open, onClose, companyId, session, 
       setBanks(Array.isArray(bankRows) ? bankRows : []);
     });
     return () => { active = false; };
-  }, [open, companyId]);
+  }, [open, companyId, canManageExpenses]);
 
   useEffect(() => {
-    if (!open || kind !== "report" || !session) return;
+    if (!open || visibleKinds.length === 0 || activeKind !== "report" || !session) return;
     let active = true;
     setReportBusy(true);
     api.request<ShiftReport>("GET", `/api/pos-sessions/${session.id}/cash-movements`)
@@ -70,7 +88,7 @@ export default function CashMovementDialog({ open, onClose, companyId, session, 
       .catch((e: any) => { if (active) setError(e?.message || "تعذّر تحميل تقرير الوردية."); })
       .finally(() => { if (active) setReportBusy(false); });
     return () => { active = false; };
-  }, [open, kind, session?.id]);
+  }, [open, activeKind, session?.id, visibleKinds.length]);
 
   if (!open) return null;
 
@@ -81,17 +99,17 @@ export default function CashMovementDialog({ open, onClose, companyId, session, 
     if (!session || !sourceBoxId) { setError("افتح وردية مرتبطة بخزينة أولاً."); return; }
     if (!Number.isFinite(value) || value <= 0 || Math.round(value * 100) !== value * 100) { setError("أدخل مبلغاً موجباً حتى منزلتين عشريتين."); return; }
     if (!description.trim()) { setError("البيان مطلوب."); return; }
-    if (kind !== "transfer" && !selectedAccount) { setError("اختر الحساب المقابل."); return; }
+    if (activeKind !== "transfer" && !selectedAccount) { setError("اختر الحساب المقابل."); return; }
     setBusy(true); setError(""); setNotice("");
     try {
       let created: any;
-      if (kind === "expense") {
+      if (activeKind === "expense") {
         created = await api.request<any>("POST", "/api/cash-expenses", {
           cashBoxId: sourceBoxId, expenseAccountId: selectedAccount, amount: value, description: description.trim(), date,
         });
         await api.request("POST", `/api/cash-expenses/${created.id}/post`);
-      } else if (kind === "deposit" || kind === "withdrawal") {
-        const receipt = kind === "deposit";
+      } else if (activeKind === "deposit" || activeKind === "withdrawal") {
+        const receipt = activeKind === "deposit";
         const path = receipt ? "/api/receipt-vouchers" : "/api/payment-vouchers";
         created = await api.request<any>("POST", path, {
           companyId, branchId, date, paymentType: "cash", cashBoxId: sourceBoxId,
@@ -122,8 +140,25 @@ export default function CashMovementDialog({ open, onClose, companyId, session, 
     } finally { setBusy(false); }
   };
 
-  const title = kinds.find((item) => item.id === kind)?.label;
+  const title = visibleKinds.find((item) => item.id === activeKind)?.label;
   const reportNet = movementRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  if (visibleKinds.length === 0) {
+    return (
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-3" dir="rtl" role="dialog" aria-modal="true" aria-label="المصروفات والحركات النقدية">
+        <section className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black">المصروفات والحركات النقدية</h2>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                لا تظهر العمليات لهذا المستخدم حتى تُمنح صلاحية إدارة الحركة النقدية أو صلاحيتا تسجيل مصروف الصندوق وترحيله.
+              </p>
+            </div>
+            <button type="button" onClick={onClose} aria-label="إغلاق" className="grid size-9 shrink-0 place-items-center rounded-lg hover:bg-muted"><X className="size-4" /></button>
+          </div>
+        </section>
+      </div>
+    );
+  }
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-3" dir="rtl" role="dialog" aria-modal="true" aria-label="الحركة النقدية">
       <section className="w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
@@ -132,9 +167,14 @@ export default function CashMovementDialog({ open, onClose, companyId, session, 
           <button type="button" onClick={onClose} aria-label="إغلاق" className="grid size-9 place-items-center rounded-lg hover:bg-muted"><X className="size-4" /></button>
         </header>
         <div className="grid grid-cols-5 gap-2 p-4 pb-0">
-          {kinds.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => { setKind(id); setError(""); setNotice(""); }} className={`flex flex-col items-center gap-1 rounded-xl border p-2 text-xs font-bold ${kind === id ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}><Icon className="size-4" />{label}</button>)}
+          {visibleKinds.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => { setKind(id); setError(""); setNotice(""); }} className={`flex flex-col items-center gap-1 rounded-xl border p-2 text-xs font-bold ${activeKind === id ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}><Icon className="size-4" />{label}</button>)}
         </div>
-        {kind === "report" ? <div className="space-y-3 p-5">
+        {!canManageExpenses && canManageOtherMovements && (
+          <p className="mx-4 mt-3 rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+            مصروفات الصندوق تحتاج صلاحية «تسجيل مصروفات الصندوق» للمستخدم.
+          </p>
+        )}
+        {activeKind === "report" ? <div className="space-y-3 p-5">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[["نقد افتتاحي", reportSummary?.openingCash ?? 0], ["مبيعات نقدية", reportSummary?.cashSales ?? 0], ["صافي الحركات", reportSummary?.movementNet ?? reportNet], ["النقد المتوقع", reportSummary?.expectedCash ?? 0]].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-muted/60 p-3"><p className="text-[11px] text-muted-foreground">{label}</p><strong className="mt-1 block text-sm">{Number(value).toFixed(2)} ر.س</strong></div>)}
           </div>
@@ -145,10 +185,10 @@ export default function CashMovementDialog({ open, onClose, companyId, session, 
             </article>)}
           </div> : <p className="py-8 text-center text-sm text-muted-foreground">لا توجد حركات نقدية مسجلة في هذه الوردية.</p>}
         </div> : <form onSubmit={submit} className="space-y-3 p-5">
-          {kind === "transfer" ? <>
+          {activeKind === "transfer" ? <>
             <label className="block text-xs font-bold">التحويل إلى<select value={transferTarget} onChange={(e) => { setTransferTarget(e.target.value as "cash" | "bank"); setTargetId(""); }} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm"><option value="cash">خزينة أخرى</option><option value="bank">حساب بنكي</option></select></label>
             <label className="block text-xs font-bold">الوجهة<select required value={targetId} onChange={(e) => setTargetId(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm"><option value="">اختر الوجهة</option>{transferTarget === "cash" ? usableBoxes.map((box) => <option key={box.id} value={box.id}>{box.nameAr} ({box.code})</option>) : banks.map((bank) => <option key={bank.id} value={bank.id}>{bank.nameAr || bank.name || `#${bank.id}`}</option>)}</select></label>
-          </> : <label className="block text-xs font-bold">{kind === "expense" ? "حساب المصروف" : "الحساب المقابل"}<select required value={accountId} onChange={(e) => setAccountId(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm"><option value="">اختر الحساب</option>{cashOptions.map((account) => <option key={account.id} value={account.id}>{account.code} — {account.nameAr}</option>)}</select></label>}
+          </> : <label className="block text-xs font-bold">{activeKind === "expense" ? "حساب المصروف" : "الحساب المقابل"}<select required value={accountId} onChange={(e) => setAccountId(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm"><option value="">اختر الحساب</option>{cashOptions.map((account) => <option key={account.id} value={account.id}>{account.code} — {account.nameAr}</option>)}</select></label>}
           <div className="grid grid-cols-2 gap-3">
             <label className="block text-xs font-bold">المبلغ<input required type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" /></label>
             <label className="block text-xs font-bold">التاريخ<input required type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" /></label>

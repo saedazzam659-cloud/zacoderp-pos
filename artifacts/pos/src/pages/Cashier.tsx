@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
 import CashMovementDialog from "@/components/CashMovementDialog";
+import CashBoxesDialog from "@/components/CashBoxesDialog";
 import EmployeeMealsDialog from "@/components/EmployeeMealsDialog";
 import PosAiPanel from "@/components/PosAiPanel";
 import ReturnsPage from "@/pages/Returns";
@@ -64,6 +65,7 @@ import {
   getSalePriceOptions,
   getSalePriceOptionName,
 } from "@/lib/api";
+import { printPosThermalReceipt } from "@/lib/posThermalReceipt";
 
 type CartLine = {
   item: Item;
@@ -189,7 +191,11 @@ export default function CashierPage() {
   const [heldCartsOpen, setHeldCartsOpen] = useState(false);
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [cashMovementOpen, setCashMovementOpen] = useState(false);
+  const [cashBoxesOpen, setCashBoxesOpen] = useState(false);
   const [employeeMealsOpen, setEmployeeMealsOpen] = useState(false);
+  const canManageCashExpenses = user?.mobilePermissions?.cash_expenses_create === true &&
+    user?.mobilePermissions?.cash_expenses_post === true;
+  const canManageOtherCashMovements = hasPosFeatureAccess(user, "pos_cashier", "edit");
   // Hide services until the selected station's configuration has loaded.
   // This never replaces company-module or signed-in-user permission checks.
   const [enabledServices, setEnabledServices] = useState<string[]>([]);
@@ -871,16 +877,28 @@ export default function CashierPage() {
             <Clock3 className="size-4" />
             <span className="hidden sm:inline">{posSession ? "إغلاق الوردية" : "فتح وردية"}</span>
           </button>
-          {hasPosFeatureAccess(user, "pos_cashier", "edit") && (
+          {hasPosFeatureAccess(user, "pos_cashier", "view") && (
+            <button
+              type="button"
+              onClick={() => setCashBoxesOpen(true)}
+              aria-label="عرض الخزائن المتاحة"
+              data-testid="button-pos-cash-boxes"
+              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/5 px-2.5 text-xs font-bold text-primary transition-colors hover-elevate"
+            >
+              <Wallet className="size-4" />
+              <span className="hidden sm:inline">الخزائن</span>
+            </button>
+          )}
+          {hasPosFeatureAccess(user, "pos_cashier", "view") && (
             <button
               type="button"
               onClick={() => setCashMovementOpen(true)}
-              aria-label="فتح الحركة النقدية"
+              aria-label="فتح المصروفات والحركات النقدية"
               data-testid="button-pos-cash-movements"
               className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-card px-2.5 text-xs font-bold text-foreground transition-colors hover-elevate"
             >
               <Banknote className="size-4" />
-              <span className="hidden sm:inline">الحركة النقدية</span>
+              <span className="hidden sm:inline">المصروفات والحركات</span>
             </button>
           )}
           {hasPosFeatureAccess(user, "pos_cashier", "view") && (
@@ -1434,6 +1452,10 @@ export default function CashierPage() {
             onClose={clearCart}
             companyLogo={((user?.company as any)?.logo ?? null) as string | null}
             companyNameAr={(user?.company?.nameAr ?? "") as string}
+            companyNameEn={(user?.company?.nameEn ?? "") as string}
+            companyVatNumber={(user?.company?.vatNumber ?? "") as string}
+            companyCrNumber={(user?.company?.crNumber ?? "") as string}
+            companyCity={(user?.company?.city ?? "") as string}
             cashierName={(user?.nameAr || user?.username || "") as string}
           />
         )}
@@ -1457,6 +1479,15 @@ export default function CashierPage() {
         session={posSession}
         cashBoxes={cashBoxes}
         branchId={branchId}
+        canManageExpenses={canManageCashExpenses}
+        canManageOtherMovements={canManageOtherCashMovements}
+      />
+      <CashBoxesDialog
+        open={cashBoxesOpen}
+        onClose={() => setCashBoxesOpen(false)}
+        companyId={Number(user?.companyId ?? 0)}
+        cashBoxes={cashBoxes}
+        currentCashBoxId={posSession?.cashBoxId ?? null}
       />
       <EmployeeMealsDialog
         open={employeeMealsOpen}
@@ -1481,70 +1512,6 @@ export default function CashierPage() {
       )}
     </div>
   );
-}
-
-// ─── Thermal receipt printing ────────────────────────────────────────────────
-// Injects a transient @page + visibility stylesheet so a single window.print()
-// call sends ONLY the receipt content to a thermal roll printer (typically
-// 80mm for restaurants / supermarkets, 58mm for compact handhelds). The
-// stylesheet is removed right after the print dialog closes so the next
-// browser print (e.g. plain "طباعة") still uses the user's default A4 setup.
-function printThermal(widthMm: 58 | 80 = 80) {
-  const css = `
-    @page { size: ${widthMm}mm auto; margin: 2mm; }
-    @media print {
-      html, body { background: #fff !important; }
-      body * { visibility: hidden !important; }
-      [data-thermal-root], [data-thermal-root] * { visibility: visible !important; }
-      [data-thermal-root] {
-        position: absolute !important;
-        inset: 0 !important;
-        width: ${widthMm}mm !important;
-        max-width: ${widthMm}mm !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        border: 0 !important;
-        box-shadow: none !important;
-        border-radius: 0 !important;
-        background: #fff !important;
-        color: #000 !important;
-        font-size: 11px !important;
-        line-height: 1.35 !important;
-      }
-      /* Compress padding inside the receipt so it fits the narrow roll. */
-      [data-thermal-root] .p-6 { padding: 6px !important; }
-      [data-thermal-root] .py-2 { padding-top: 4px !important; padding-bottom: 4px !important; }
-      [data-thermal-root] .pt-2 { padding-top: 4px !important; }
-      [data-thermal-root] .pt-3 { padding-top: 6px !important; }
-      [data-thermal-root] .pb-2 { padding-bottom: 4px !important; }
-      /* Drop the gradient header background — thermal printers can't render
-         colour, and the dark fill wastes ink-ribbon-equivalent paper darkness. */
-      [data-thermal-root] .bg-gradient-to-br,
-      [data-thermal-root] .bg-gradient-to-tr { background: #fff !important; color: #000 !important; }
-      [data-thermal-root] .text-primary,
-      [data-thermal-root] .text-primary-foreground { color: #000 !important; }
-      [data-thermal-root] .text-muted-foreground { color: #333 !important; }
-      [data-thermal-root] .ring-4, [data-thermal-root] .border-4 { box-shadow: none !important; }
-      [data-thermal-root] .rounded-3xl,
-      [data-thermal-root] .rounded-2xl,
-      [data-thermal-root] .rounded-xl { border-radius: 0 !important; }
-    }
-  `;
-  const tag = document.createElement("style");
-  tag.setAttribute("data-thermal-print", "1");
-  tag.textContent = css;
-  document.head.appendChild(tag);
-
-  const cleanup = () => {
-    tag.remove();
-    window.removeEventListener("afterprint", cleanup);
-  };
-  window.addEventListener("afterprint", cleanup);
-  // Safety net: also remove after a delay in case `afterprint` doesn't
-  // fire on some browsers (older Safari).
-  setTimeout(cleanup, 4000);
-
-  window.print();
 }
 
 function methodArabic(method: string) {
@@ -1934,6 +1901,10 @@ function ReceiptModal(props: {
   // empty when the company has no logo / name configured.
   companyLogo: string | null;
   companyNameAr: string;
+  companyNameEn: string;
+  companyVatNumber: string;
+  companyCrNumber: string;
+  companyCity: string;
   // The cashier who issued the sale. Shown on the printed slip; Arabic name
   // preferred (this screen is Arabic-only), falling back to the username.
   cashierName: string;
@@ -1950,8 +1921,20 @@ function ReceiptModal(props: {
     onClose,
     companyLogo,
     companyNameAr,
+    companyNameEn,
+    companyVatNumber,
+    companyCrNumber,
+    companyCity,
     cashierName,
   } = props;
+  const printReceipt = (widthMm: 58 | 80) => {
+    const opened = printPosThermalReceipt({
+      invoice, cart, subtotal, discountAmount, vatAmount, grandTotal, method,
+      companyName: companyNameAr, companyNameEn, companyVatNumber, companyCrNumber, companyCity,
+      companyLogo, cashierName, widthMm,
+    });
+    if (!opened) window.alert("اسمح بفتح النوافذ المنبثقة لطباعة الإيصال.");
+  };
 
   return (
     <motion.div
@@ -1966,10 +1949,6 @@ function ReceiptModal(props: {
         exit={{ scale: 0.95, opacity: 0 }}
         transition={{ type: "spring", damping: 22, stiffness: 250 }}
         className="bg-card rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-card-border"
-        // `data-thermal-root` is targeted by the thermal-print stylesheet
-        // (injected on demand) so only the receipt content reaches the
-        // 80mm/58mm thermal printer — everything else on the page is hidden.
-        data-thermal-root
       >
         {/*
           Print-only company header — hidden on screen (the modal already
@@ -2048,25 +2027,7 @@ function ReceiptModal(props: {
             </div>
           </div>
 
-          {/* QR placeholder */}
-          <div className="grid place-items-center py-2">
-            <div className="w-32 h-32 bg-white border-4 border-foreground/10 rounded-xl grid place-items-center p-2">
-              <div
-                className="w-full h-full"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(45deg, #000 25%, transparent 25%), linear-gradient(-45deg, #000 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #000 75%), linear-gradient(-45deg, transparent 75%, #000 75%)",
-                  backgroundSize: "8px 8px",
-                  backgroundPosition: "0 0, 0 4px, 4px -4px, -4px 0px",
-                }}
-              />
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-2 font-mono">
-              QR متوافق مع زاتكا
-            </p>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2 pt-2 print:hidden">
+          <div className="grid grid-cols-2 gap-2 pt-2 print:hidden">
             <button
               onClick={onClose}
               className="h-11 rounded-xl border border-border bg-card font-bold text-xs hover-elevate active-elevate-2"
@@ -2074,26 +2035,17 @@ function ReceiptModal(props: {
               فاتورة جديدة
             </button>
             <button
-              onClick={() => window.print()}
+              onClick={() => printReceipt(80)}
               className="h-11 rounded-xl bg-primary text-primary-foreground font-bold text-xs inline-flex items-center justify-center gap-1 hover-elevate active-elevate-2"
-              title="طباعة A4 على الطابعة الافتراضية"
+              title="طباعة بالنموذج الحراري الكلاسيكي رقم 6"
             >
               <Receipt className="w-4 h-4" />
-              طباعة
-            </button>
-            <button
-              onClick={() => printThermal(80)}
-              className="h-11 rounded-xl bg-emerald-600 text-white font-bold text-xs inline-flex items-center justify-center gap-1 hover-elevate active-elevate-2"
-              title="طباعة على طابعة الإيصالات الحرارية 80مم (سوبر ماركت / مطاعم)"
-              data-testid="btn-thermal-print"
-            >
-              <Receipt className="w-4 h-4" />
-              حرارية 80
+              حراري كلاسيكي 80
             </button>
           </div>
           <div className="text-[10px] text-muted-foreground text-center print:hidden">
             <button
-              onClick={() => printThermal(58)}
+              onClick={() => printReceipt(58)}
               className="underline hover:text-foreground"
               data-testid="btn-thermal-print-58"
             >
