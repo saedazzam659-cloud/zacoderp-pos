@@ -251,6 +251,7 @@ export default function CashierPage() {
   const [cashMovementOpen, setCashMovementOpen] = useState(false);
   const [cashBoxesOpen, setCashBoxesOpen] = useState(false);
   const [employeeMealsOpen, setEmployeeMealsOpen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
   const canManageCashExpenses = user?.mobilePermissions?.cash_expenses_create === true &&
     user?.mobilePermissions?.cash_expenses_post === true;
   const canManageOtherCashMovements = hasPosFeatureAccess(user, "pos_cashier", "edit");
@@ -1100,40 +1101,33 @@ export default function CashierPage() {
             <span className="hidden sm:inline">{posSession ? "إغلاق الوردية" : "فتح وردية"}</span>
           </button>
           {hasPosFeatureAccess(user, "pos_cashier", "view") && (
-            <button
-              type="button"
-              onClick={() => setCashBoxesOpen(true)}
-              aria-label="عرض الخزائن المتاحة"
-              data-testid="button-pos-cash-boxes"
-              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/5 px-2.5 text-xs font-bold text-primary transition-colors hover-elevate"
-            >
-              <Wallet className="size-4" />
-              <span className="hidden sm:inline">الخزائن</span>
-            </button>
-          )}
-          {hasPosFeatureAccess(user, "pos_cashier", "view") && (
-            <button
-              type="button"
-              onClick={() => setCashMovementOpen(true)}
-              aria-label="فتح المصروفات والحركات النقدية"
-              data-testid="button-pos-cash-movements"
-              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-card px-2.5 text-xs font-bold text-foreground transition-colors hover-elevate"
-            >
-              <Banknote className="size-4" />
-              <span className="hidden sm:inline">المصروفات والحركات</span>
-            </button>
-          )}
-          {hasPosFeatureAccess(user, "pos_cashier", "view") && (
-            <button
-              type="button"
-              onClick={() => setEmployeeMealsOpen(true)}
-              aria-label="فتح وجبات الموظفين"
-              data-testid="button-pos-employee-meals"
-              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-card px-2.5 text-xs font-bold text-foreground transition-colors hover-elevate"
-            >
-              <ChefHat className="size-4" />
-              <span className="hidden sm:inline">وجبات الموظفين</span>
-            </button>
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setControlsOpen(open => !open)}
+                aria-label="فتح قائمة التحكم"
+                aria-expanded={controlsOpen}
+                aria-haspopup="menu"
+                data-testid="button-pos-controls"
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/5 px-3 text-xs font-bold text-primary transition-colors hover-elevate"
+              >
+                <Settings className="size-4" />
+                <span>التحكم</span>
+              </button>
+              {controlsOpen && (
+                <div role="menu" aria-label="التحكم" className="absolute right-0 top-full z-[80] mt-2 min-w-56 overflow-hidden rounded-xl border border-border bg-card p-1.5 text-foreground shadow-xl">
+                  <button type="button" role="menuitem" onClick={() => { setControlsOpen(false); setEmployeeMealsOpen(true); }} data-testid="menu-pos-employee-meals" className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-right text-sm font-semibold hover:bg-muted">
+                    <ChefHat className="size-4 text-primary" /> وجبات الموظفين
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setControlsOpen(false); setCashBoxesOpen(true); }} data-testid="menu-pos-cash-boxes" className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-right text-sm font-semibold hover:bg-muted">
+                    <Wallet className="size-4 text-primary" /> الخزائن
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setControlsOpen(false); setCashMovementOpen(true); }} data-testid="menu-pos-cash-movements" className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-right text-sm font-semibold hover:bg-muted">
+                    <Banknote className="size-4 text-primary" /> المصروفات والحركات
+                  </button>
+                </div>
+              )}
+            </div>
           )}
           <div
             role="group"
