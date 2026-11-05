@@ -98,7 +98,7 @@ export const posOperationsApi = {
   summary:   (f: ListFilters = {}) => get<PosOpsSummary>(`/api/pos-operations/summary${qs(f)}`),
   insights:  ()                    => get<PosOpsInsights>(`/api/pos-operations-ai/insights`),
 
-  postInvoice:   (id: number) => patch<{ id: number; status: string }>(`/api/sales-invoices/${id}/post`),
-  unpostInvoice: (id: number) => patch<{ id: number; status: string }>(`/api/sales-invoices/${id}/unpost`),
-  postReturn:    (id: number) => patch<{ id: number; status: string }>(`/api/sales-returns/${id}/post`),
+  postInvoice:   (id: number) => patch<{ id: number; status: string }>(`/api/sales/sales-invoices/${id}/post`),
+  unpostInvoice: (id: number) => patch<{ id: number; status: string }>(`/api/sales/sales-invoices/${id}/unpost`),
+  postReturn:    (id: number) => patch<{ id: number; status: string }>(`/api/sales/sales-returns/${id}/post`),
 };
