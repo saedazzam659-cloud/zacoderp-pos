@@ -74,6 +74,7 @@ import {
   type PosShiftCashReport,
   type PosShiftDetail,
 } from "@/lib/posShiftPrint";
+import { usePosLanguage, tr } from "@/lib/posLanguage";
 
 type CartLine = {
   item: Item;
@@ -162,6 +163,8 @@ export default function CashierPage() {
   const [, navigate] = useLocation();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
+  const { language } = usePosLanguage();
+  const text = (ar: string, en: string) => tr(language, ar, en);
   const [items, setItems] = useState<Item[]>([]);
   const [groups, setGroups] = useState<PosItemGroup[]>([]);
   const [subgroups, setSubgroups] = useState<PosItemSubgroup[]>([]);
@@ -458,7 +461,7 @@ export default function CashierPage() {
       printPosShiftReport(printWindow, {
         ...detail,
         closedAt: closedSession.closedAt,
-      }, cashReport);
+      }, cashReport, language);
     } catch (error) {
       printWindow.close();
       throw error;
@@ -480,7 +483,7 @@ export default function CashierPage() {
         return;
       }
 
-      const printWindow = openPosShiftPrintWindow();
+      const printWindow = openPosShiftPrintWindow(language);
       if (!printWindow) {
         window.alert("اسمح بفتح النوافذ المنبثقة لإغلاق الوردية وطباعة تقرير حركتها.");
         return;
@@ -671,7 +674,7 @@ export default function CashierPage() {
   const handleLogout = async () => {
     const sessionId = getPosSessionId();
     if (sessionId) {
-      const printWindow = openPosShiftPrintWindow();
+      const printWindow = openPosShiftPrintWindow(language);
       if (!printWindow) {
         window.alert("اسمح بفتح النوافذ المنبثقة لإغلاق الوردية وطباعة تقرير حركتها.");
         return;
@@ -1061,27 +1064,27 @@ export default function CashierPage() {
             <>
               <button
                 onClick={() => navigate("/waiter?view=tables")}
-                title="فتح طلبات الصالة والطاولات"
+                title={text("فتح طلبات الصالة والطاولات", "Open dine-in tables")}
                 className="h-10 px-3 rounded-xl border border-primary/25 bg-primary/[0.07] text-primary text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
                 data-testid="svc-waiter-tables"
               >
-                <Utensils className="w-4 h-4" /> طاولات المطعم
+                <Utensils className="w-4 h-4" /> {text("طاولات المطعم", "Restaurant tables")}
               </button>
               <button
                 onClick={() => navigate("/waiter?view=delivery")}
-                title="فتح طلبات التوصيل"
+                title={text("فتح طلبات التوصيل", "Open delivery orders")}
                 className="h-10 px-3 rounded-xl border border-orange-300 bg-orange-50 text-orange-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
                 data-testid="svc-waiter-delivery"
               >
-                <Truck className="w-4 h-4" /> طلب توصيل
+                <Truck className="w-4 h-4" /> {text("طلب توصيل", "Delivery")}
               </button>
               <button
                 onClick={() => setRestaurantOpen(true)}
-                title="طلبات الصالة (المطعم)"
+                title={text("طلبات الصالة (المطعم)", "Restaurant orders")}
                 className="h-10 px-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
                 data-testid="svc-waiter-orders"
               >
-                <ChefHat className="w-4 h-4" /> طلبات الصالة
+                <ChefHat className="w-4 h-4" /> {text("طلبات الصالة", "Restaurant orders")}
               </button>
             </>
           )}
@@ -1153,17 +1156,17 @@ export default function CashierPage() {
         <nav aria-label="اختصارات التشغيل" className="flex shrink-0 gap-2 overflow-x-auto border-b border-border/70 bg-card/70 px-3 py-2 xl:hidden">
           {canShowService("waiter") && (
             <>
-              <button type="button" onClick={() => navigate("/waiter?view=tables")} title="فتح الصالة والطاولات" data-testid="svc-waiter-tables-mobile"
+              <button type="button" onClick={() => navigate("/waiter?view=tables")} title={text("فتح الصالة والطاولات", "Open dine-in tables")} data-testid="svc-waiter-tables-mobile"
                 className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-primary/15 bg-primary/[0.06] px-3 text-xs font-bold text-primary">
-                <Utensils className="size-4" /> طاولات المطعم
+                <Utensils className="size-4" /> {text("طاولات المطعم", "Restaurant tables")}
               </button>
-              <button type="button" onClick={() => navigate("/waiter?view=delivery")} title="فتح طلبات التوصيل" data-testid="svc-waiter-delivery-mobile"
+              <button type="button" onClick={() => navigate("/waiter?view=delivery")} title={text("فتح طلبات التوصيل", "Open delivery orders")} data-testid="svc-waiter-delivery-mobile"
                 className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 text-xs font-bold text-orange-800">
-                <Truck className="size-4" /> طلب توصيل
+                <Truck className="size-4" /> {text("طلب توصيل", "Delivery")}
               </button>
-              <button type="button" onClick={() => setRestaurantOpen(true)} title="طلبات الصالة" data-testid="svc-waiter-orders-mobile"
+              <button type="button" onClick={() => setRestaurantOpen(true)} title={text("طلبات الصالة", "Restaurant orders")} data-testid="svc-waiter-orders-mobile"
                 className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-background px-3 text-xs font-bold">
-                <ChefHat className="size-4" /> طلبات الصالة
+                <ChefHat className="size-4" /> {text("طلبات الصالة", "Restaurant orders")}
               </button>
             </>
           )}
@@ -1717,15 +1720,17 @@ function CartPanel(props: {
     submitting,
     submitError,
   } = props;
+  const { language } = usePosLanguage();
+  const cartText = (ar: string, en: string) => tr(language, ar, en);
 
   return (
     <>
       {/* Header */}
       <div className="shrink-0 border-b border-border/80 bg-card px-4 py-3 flex items-center justify-between">
         <div>
-          <p className="text-sm font-black">السلة الحالية</p>
+          <p className="text-sm font-black">{cartText("السلة الحالية", "Current cart")}</p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {itemCount} صنف في الفاتورة
+            {itemCount} {cartText("صنف في الفاتورة", "items")}
           </p>
         </div>
         <div className="flex items-center gap-1.5">
@@ -1734,22 +1739,22 @@ function CartPanel(props: {
               <button
                 type="button"
                 onClick={openRestaurantTables}
-                title="إضافة أصناف لطاولات المطعم"
-                aria-label="فتح طاولات المطعم"
+                title={cartText("إضافة أصناف لطاولات المطعم", "Add items to restaurant tables")}
+                aria-label={cartText("فتح طاولات المطعم", "Open restaurant tables")}
                 data-testid="cart-open-restaurant-tables"
                 className="inline-flex h-8 items-center gap-1 rounded-lg border border-primary/25 bg-primary/[0.06] px-2 text-[10px] font-extrabold text-primary hover:bg-primary/10"
               >
-                <Utensils className="size-3.5" /> الطاولات
+                <Utensils className="size-3.5" /> {cartText("الطاولات", "Tables")}
               </button>
               <button
                 type="button"
                 onClick={openRestaurantDelivery}
-                title="إنشاء طلب توصيل"
-                aria-label="فتح طلبات التوصيل"
+                title={cartText("إنشاء طلب توصيل", "Create delivery order")}
+                aria-label={cartText("فتح طلبات التوصيل", "Open delivery orders")}
                 data-testid="cart-open-restaurant-delivery"
                 className="inline-flex h-8 items-center gap-1 rounded-lg border border-orange-300 bg-orange-50 px-2 text-[10px] font-extrabold text-orange-800 hover:bg-orange-100"
               >
-                <Truck className="size-3.5" /> توصيل
+                <Truck className="size-3.5" /> {cartText("توصيل", "Delivery")}
               </button>
             </>
           )}
