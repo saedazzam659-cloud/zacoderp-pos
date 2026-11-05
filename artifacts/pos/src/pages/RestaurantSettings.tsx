@@ -537,6 +537,12 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
   const qc = useQueryClient();
   const catsQ = useQuery({ queryKey: ["r-cats-all"], queryFn: () => api.rCategories() });
   const itemsQ = useQuery({ queryKey: ["r-items-all"], queryFn: () => api.rMenuItems() });
+  const [bulkQuery, setBulkQuery] = useState("");
+  const [bulkSelected, setBulkSelected] = useState<Record<number, Item>>({});
+  const [bulkCategoryId, setBulkCategoryId] = useState("");
+  const [bulkStation, setBulkStation] = useState<RMenuItem["kitchenStation"]>("kitchen");
+  const [bulkVatIncluded, setBulkVatIncluded] = useState(true);
+  const [bulkMessage, setBulkMessage] = useState("");
   const [draft, setDraft] = useState({
     categoryId: "" as string | number, code: "", nameAr: "", price: 0,
     prepTimeMinutes: 0, kitchenStation: "kitchen" as RMenuItem["kitchenStation"],
@@ -545,6 +551,12 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
   });
   const [editId, setEditId] = useState<number | null>(null);
   const [editBuf, setEditBuf] = useState<Partial<RMenuItem>>({});
+  const bulkSearchQ = useQuery({
+    queryKey: ["restaurant-erp-bulk-search", companyId, bulkQuery.trim()],
+    queryFn: () => api.searchItems(companyId!, bulkQuery.trim()),
+    enabled: companyId != null && bulkQuery.trim().length >= 2,
+    staleTime: 30_000,
+  });
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["r-items-all"] });
@@ -572,6 +584,47 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
     mutationFn: (id: number) => api.rDeleteMenuItem(id),
     onSuccess: invalidate,
   });
+  const importSelected = useMutation({
+    mutationFn: async () => {
+      const linkedIds = new Set((itemsQ.data ?? []).map(item => item.itemId).filter((id): id is number => Number.isInteger(id)));
+      const selected = Object.values(bulkSelected).filter(item => !linkedIds.has(item.id));
+      const createdIds: number[] = [];
+      const failed: string[] = [];
+      for (const item of selected) {
+        try {
+          await api.rCreateMenuItem({
+            categoryId: Number(bulkCategoryId),
+            code: item.code,
+            nameAr: item.nameAr,
+            nameEn: item.nameEn ?? null,
+            price: String(item.salePrice ?? "0"),
+            prepTimeMinutes: 0,
+            kitchenStation: bulkStation,
+            itemId: item.id,
+            vatIncluded: bulkVatIncluded,
+          });
+          createdIds.push(item.id);
+        } catch {
+          failed.push(item.nameAr);
+        }
+      }
+      return { createdIds, failed };
+    },
+    onSuccess: ({ createdIds, failed }) => {
+      if (createdIds.length) invalidate();
+      setBulkSelected(current => Object.fromEntries(
+        Object.entries(current).filter(([id]) => !createdIds.includes(Number(id))),
+      ));
+      setBulkMessage(
+        failed.length
+          ? `تم استيراد ${createdIds.length} صنف، وتعذّر استيراد: ${failed.join("، ")}`
+          : `تمت إضافة ${createdIds.length} صنف إلى قائمة المطعم.`,
+      );
+    },
+  });
+  const linkedItemIds = new Set(
+    (itemsQ.data ?? []).map(item => item.itemId).filter((id): id is number => Number.isInteger(id)),
+  );
 
   const startEdit = (it: RMenuItem) => {
     setEditId(it.id);
@@ -582,6 +635,115 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
 
   return (
     <div className="space-y-4">
+      <details className="group rounded-2xl border border-border bg-card shadow-sm">
+        <summary className="cursor-pointer list-none p-4 font-bold marker:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+          <span className="inline-flex items-center gap-2"><Plus className="h-4 w-4 text-primary" />استيراد أصناف من المخزون</span>
+          <span className="float-left text-xs font-normal text-muted-foreground">اختر الأصناف والفئة قبل الإضافة</span>
+        </summary>
+        <div className="space-y-3 border-t border-border p-4">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <select
+              value={bulkCategoryId}
+              onChange={event => { setBulkCategoryId(event.target.value); setBulkMessage(""); }}
+              aria-label="فئة الأصناف المستوردة"
+              data-testid="select-bulk-import-category"
+              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+            >
+              <option value="">اختر فئة قائمة المطعم</option>
+              {(catsQ.data ?? []).map(category => <option key={category.id} value={category.id}>{category.nameAr}</option>)}
+            </select>
+            <select
+              value={bulkStation}
+              onChange={event => setBulkStation(event.target.value as RMenuItem["kitchenStation"])}
+              aria-label="محطة تحضير الأصناف المستوردة"
+              data-testid="select-bulk-import-station"
+              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+            >
+              <option value="kitchen">المطبخ</option>
+              <option value="grill">الشواية</option>
+              <option value="bar">البار</option>
+              <option value="cold">البارد</option>
+              <option value="dessert">الحلويات</option>
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={bulkVatIncluded}
+              onChange={event => setBulkVatIncluded(event.target.checked)}
+              data-testid="checkbox-bulk-import-vat-included"
+            />
+            سعر الصنف المستورد شامل ضريبة القيمة المضافة
+          </label>
+          <div>
+            <Input
+              value={bulkQuery}
+              onChange={event => { setBulkQuery(event.target.value); setBulkMessage(""); }}
+              placeholder="ابحث في المخزون بالاسم أو الرمز (حرفان فأكثر)"
+              aria-label="البحث عن أصناف للاستيراد"
+              data-testid="input-bulk-import-search"
+              disabled={companyId == null}
+              className="bg-background"
+            />
+          </div>
+          {Object.keys(bulkSelected).length > 0 && (
+            <p className="text-xs font-semibold text-primary" role="status">
+              محدد {Object.keys(bulkSelected).length} صنف — سيتم نسخ سعر البيع الحالي وربط كل صنف بسجله في المخزون.
+            </p>
+          )}
+          {bulkQuery.trim().length >= 2 && (
+            <div className="max-h-64 overflow-y-auto rounded-lg border border-border">
+              {bulkSearchQ.isFetching ? (
+                <p className="p-3 text-sm text-muted-foreground">جارٍ البحث في المخزون...</p>
+              ) : bulkSearchQ.isError ? (
+                <p className="p-3 text-sm text-destructive" role="alert">تعذّر البحث عن الأصناف.</p>
+              ) : (bulkSearchQ.data ?? []).length === 0 ? (
+                <p className="p-3 text-sm text-muted-foreground">لا توجد أصناف مخزون أو خدمات مطابقة.</p>
+              ) : (
+                (bulkSearchQ.data ?? []).map(item => {
+                  const linked = linkedItemIds.has(item.id);
+                  return (
+                    <label key={item.id} className={`flex items-center gap-3 border-b border-border/60 p-3 last:border-b-0 ${linked ? "opacity-55" : "cursor-pointer hover:bg-muted/40"}`}>
+                      <input
+                        type="checkbox"
+                        checked={linked || !!bulkSelected[item.id]}
+                        disabled={linked}
+                        onChange={event => {
+                          setBulkSelected(current => {
+                            const next = { ...current };
+                            if (event.target.checked) next[item.id] = item;
+                            else delete next[item.id];
+                            return next;
+                          });
+                        }}
+                        aria-label={`${linked ? "مضاف بالفعل" : "اختيار"} ${item.nameAr}`}
+                        data-testid={`checkbox-bulk-import-item-${item.id}`}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold">{item.nameAr}</span>
+                        <span className="block text-xs text-muted-foreground">{item.code} · {item.itemType === "stock" ? "مخزني" : "خدمة"}</span>
+                      </span>
+                      <span className="shrink-0 text-sm font-bold tabular-nums">{Number(item.salePrice || 0).toFixed(2)} ر.س</span>
+                      {linked && <span className="shrink-0 text-xs text-muted-foreground">مضاف</span>}
+                    </label>
+                  );
+                })
+              )}
+            </div>
+          )}
+          {bulkMessage && <p role="status" data-testid="status-bulk-import" className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm font-semibold text-primary">{bulkMessage}</p>}
+          <Button
+            type="button"
+            data-testid="button-bulk-import-items"
+            disabled={!bulkCategoryId || Object.keys(bulkSelected).length === 0 || importSelected.isPending}
+            onClick={() => { setBulkMessage(""); importSelected.mutate(); }}
+          >
+            {importSelected.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Plus className="ml-2 h-4 w-4" />}
+            إضافة الأصناف المحددة ({Object.keys(bulkSelected).length})
+          </Button>
+        </div>
+      </details>
+
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
         <div className="font-bold mb-3">إضافة صنف جديد</div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
