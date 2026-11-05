@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, getToken } from "@/lib/api";
+import PosPeriodComparison from "@/components/PosPeriodComparison";
 
 const DOW_AR = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
@@ -43,7 +44,7 @@ export default function RestaurantAI() {
             <ChevronRight className="h-4 w-4 ml-1" /> رجوع
           </Button>
           <Sparkles className="text-amber-400" />
-          <div className="font-bold">التحليلات الذكية</div>
+          <div className="font-bold">تقارير وتحليلات نقاط البيع</div>
         </div>
         <Button variant="ghost" size="sm" onClick={() => {
           qc.invalidateQueries({ queryKey: ["r-peaks"] });
@@ -57,6 +58,8 @@ export default function RestaurantAI() {
       </header>
 
       <main className="p-4 max-w-6xl mx-auto space-y-6">
+        <PosPeriodComparison />
+
         {/* KPI strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Stat label="الطلبات (30 يوم)" value={peaks?.totalOrders ?? 0} icon={TrendingUp} color="text-emerald-400" />

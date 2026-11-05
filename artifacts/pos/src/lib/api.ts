@@ -569,6 +569,12 @@ export const api = {
   rKitchenSetStatus: (lineId: number, status: "preparing" | "ready" | "served") =>
     req<{ ok: true }>("PUT", `/api/pos-restaurant/kitchen/items/${lineId}/status`, { status }),
 
+  rCustomPeriodComparison: (ranges: { period1From: string; period1To: string; period2From: string; period2To: string }) =>
+    req<{
+      period1: { from: string; to: string; currencies: PosPeriodReport[] };
+      period2: { from: string; to: string; currencies: PosPeriodReport[] };
+    }>("GET", `/api/pos-restaurant/reports/custom-period-comparison?${new URLSearchParams(ranges)}`),
+
   rInventoryForecast: (days = 30) =>
     req<{
       rangeDays: number;
@@ -610,6 +616,21 @@ export const api = {
     req<RSuspiciousOp[]>("GET", "/api/pos-restaurant/ai/suspicious"),
   rSuspiciousAck: (id: number) =>
     req<{ ok: true }>("PUT", `/api/pos-restaurant/ai/suspicious/${id}/ack`),
+};
+
+export type PosPeriodReport = {
+  currencyCode: string;
+  sales: number;
+  returns: number;
+  netSales: number;
+  orders: number;
+  averageOrder: number;
+  discounts: number;
+  returnCount: number;
+  voidCount: number;
+  voidAmount: number;
+  paymentMix: Array<{ paymentType: string; amount: number; count: number }>;
+  topItems: Array<{ itemId: number | null; name: string; qty: number; revenue: number }>;
 };
 
 // ─── Restaurant types ────────────────────────────────────────────────────

@@ -35,6 +35,7 @@ import {
   Clock3,
   Truck,
   Utensils,
+  BarChart3,
 } from "lucide-react";
 import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
 import CashMovementDialog from "@/components/CashMovementDialog";
@@ -1101,11 +1102,11 @@ export default function CashierPage() {
           {canShowService("analytics") && (
             <button
               onClick={() => navigate("/restaurant-ai")}
-              title="تحليلات الذكاء الاصطناعي"
+              title="تقارير وتحليلات نقاط البيع"
               className="h-10 px-3 rounded-xl border border-violet-300 bg-violet-50 text-violet-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden xl:flex"
               data-testid="svc-analytics"
             >
-              <Sparkles className="w-4 h-4" /> الذكاء
+              <BarChart3 className="w-4 h-4" /> التقارير
             </button>
           )}
           {canShowService("settings") && (

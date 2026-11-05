@@ -8,12 +8,14 @@ import {
   posOrderItemsTable,
   posSuspiciousOpsTable,
   salesInvoicesTable,
+  salesInvoiceLinesTable,
+  salesReturnsTable,
   itemsTable,
   usersTable,
   stockBalanceTable,
   branchesTable,
 } from "@workspace/db";
-import { and, eq, sql, desc, asc, isNull, gte, lte, inArray, ne } from "drizzle-orm";
+import { and, eq, sql, desc, asc, isNull, isNotNull, gte, lte, inArray, ne } from "drizzle-orm";
 import { branchScopeSpread, extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { generateRestaurantTables } from "../lib/posRestaurantTableBatch.js";
@@ -464,6 +466,115 @@ router.get("/reports/order-types", requirePermission("pos_waiter", "view"), asyn
     ...branchScopeSpread(req, posOrdersTable.branchId, branchId),
   )).groupBy(posOrdersTable.channel);
   res.json(rows.map(row => ({ channel: row.channel, count: Number(row.count) })));
+});
+
+router.get("/reports/custom-period-comparison", requirePermission("pos_waiter", "view"), async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const period1 = { from: String(req.query.period1From ?? ""), to: String(req.query.period1To ?? "") };
+  const period2 = { from: String(req.query.period2From ?? ""), to: String(req.query.period2To ?? "") };
+  const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+  if (!validDate(period1.from) || !validDate(period1.to) || !validDate(period2.from) || !validDate(period2.to) ||
+      period1.from > period1.to || period2.from > period2.to) {
+    res.status(400).json({ error: "حدد تاريخ بداية ونهاية صالحين لكل فترة مقارنة" }); return;
+  }
+  const rawBranchId = req.query.branchId;
+  const branchId = rawBranchId == null || rawBranchId === "" ? undefined : Number(rawBranchId);
+  if (branchId !== undefined && (!Number.isInteger(branchId) || branchId <= 0)) {
+    res.status(400).json({ error: "معرّف الفرع غير صالح" }); return;
+  }
+
+  const loadPeriod = async (range: { from: string; to: string }) => {
+    const invoiceWhere = and(
+      eq(salesInvoicesTable.companyId, cid),
+      isNotNull(salesInvoicesTable.posSessionId),
+      gte(salesInvoicesTable.invoiceDate, range.from),
+      lte(salesInvoicesTable.invoiceDate, range.to),
+      inArray(salesInvoicesTable.status, ["posted", "cancelled"]),
+      ...branchScopeSpread(req, salesInvoicesTable.branchId, branchId),
+    );
+    const [invoices, returns, payments, items] = await Promise.all([
+      db.select({
+        currencyCode: salesInvoicesTable.currencyCode,
+        sales: sql<string>`COALESCE(SUM(CASE WHEN ${salesInvoicesTable.status} = 'posted' THEN ${salesInvoicesTable.totalAmount} ELSE 0 END), 0)`,
+        orders: sql<number>`COUNT(*) FILTER (WHERE ${salesInvoicesTable.status} = 'posted')::int`,
+        discounts: sql<string>`COALESCE(SUM(CASE WHEN ${salesInvoicesTable.status} = 'posted' THEN ${salesInvoicesTable.discountAmount} ELSE 0 END), 0)`,
+        voidCount: sql<number>`COUNT(*) FILTER (WHERE ${salesInvoicesTable.status} = 'cancelled')::int`,
+        voidAmount: sql<string>`COALESCE(SUM(CASE WHEN ${salesInvoicesTable.status} = 'cancelled' THEN ${salesInvoicesTable.totalAmount} ELSE 0 END), 0)`,
+      }).from(salesInvoicesTable).where(invoiceWhere).groupBy(salesInvoicesTable.currencyCode),
+      db.select({
+        currencyCode: salesReturnsTable.currencyCode,
+        amount: sql<string>`COALESCE(SUM(${salesReturnsTable.totalAmount}), 0)`,
+        count: sql<number>`COUNT(*)::int`,
+      }).from(salesReturnsTable)
+        .innerJoin(salesInvoicesTable, eq(salesReturnsTable.invoiceId, salesInvoicesTable.id))
+        .where(and(
+          eq(salesReturnsTable.companyId, cid),
+          eq(salesReturnsTable.status, "posted"),
+          gte(salesReturnsTable.returnDate, range.from),
+          lte(salesReturnsTable.returnDate, range.to),
+          isNotNull(salesInvoicesTable.posSessionId),
+          ...branchScopeSpread(req, salesInvoicesTable.branchId, branchId),
+        )).groupBy(salesReturnsTable.currencyCode),
+      db.select({
+        currencyCode: salesInvoicesTable.currencyCode,
+        paymentType: salesInvoicesTable.paymentType,
+        amount: sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}), 0)`,
+        count: sql<number>`COUNT(*)::int`,
+      }).from(salesInvoicesTable).where(and(invoiceWhere, eq(salesInvoicesTable.status, "posted")))
+        .groupBy(salesInvoicesTable.currencyCode, salesInvoicesTable.paymentType),
+      db.select({
+        currencyCode: salesInvoicesTable.currencyCode,
+        itemId: salesInvoiceLinesTable.itemId,
+        name: salesInvoiceLinesTable.itemName,
+        qty: sql<string>`COALESCE(SUM(${salesInvoiceLinesTable.qty}), 0)`,
+        revenue: sql<string>`COALESCE(SUM(${salesInvoiceLinesTable.lineTotal}), 0)`,
+      }).from(salesInvoiceLinesTable)
+        .innerJoin(salesInvoicesTable, eq(salesInvoiceLinesTable.invoiceId, salesInvoicesTable.id))
+        .where(and(
+          eq(salesInvoiceLinesTable.companyId, cid),
+          eq(salesInvoicesTable.companyId, cid),
+          isNotNull(salesInvoicesTable.posSessionId),
+          eq(salesInvoicesTable.status, "posted"),
+          gte(salesInvoicesTable.invoiceDate, range.from),
+          lte(salesInvoicesTable.invoiceDate, range.to),
+          ...branchScopeSpread(req, salesInvoicesTable.branchId, branchId),
+        )).groupBy(salesInvoicesTable.currencyCode, salesInvoiceLinesTable.itemId, salesInvoiceLinesTable.itemName)
+        .orderBy(desc(sql`SUM(${salesInvoiceLinesTable.lineTotal})`)).limit(10),
+    ]);
+
+    const currencies = new Set([
+      ...invoices.map(row => row.currencyCode),
+      ...returns.map(row => row.currencyCode),
+      ...payments.map(row => row.currencyCode),
+      ...items.map(row => row.currencyCode),
+    ]);
+    return Array.from(currencies).sort().map(currencyCode => {
+      const invoice = invoices.find(row => row.currencyCode === currencyCode);
+      const returned = returns.find(row => row.currencyCode === currencyCode);
+      const sales = Number(invoice?.sales ?? 0);
+      const returnAmount = Number(returned?.amount ?? 0);
+      const orders = Number(invoice?.orders ?? 0);
+      return {
+        currencyCode,
+        sales,
+        returns: returnAmount,
+        netSales: sales - returnAmount,
+        orders,
+        averageOrder: orders ? (sales - returnAmount) / orders : 0,
+        discounts: Number(invoice?.discounts ?? 0),
+        returnCount: Number(returned?.count ?? 0),
+        voidCount: Number(invoice?.voidCount ?? 0),
+        voidAmount: Number(invoice?.voidAmount ?? 0),
+        paymentMix: payments.filter(row => row.currencyCode === currencyCode)
+          .map(row => ({ paymentType: row.paymentType, amount: Number(row.amount), count: Number(row.count) })),
+        topItems: items.filter(row => row.currencyCode === currencyCode)
+          .map(row => ({ itemId: row.itemId, name: row.name, qty: Number(row.qty), revenue: Number(row.revenue) })),
+      };
+    });
+  };
+
+  const [first, second] = await Promise.all([loadPeriod(period1), loadPeriod(period2)]);
+  res.json({ period1: { ...period1, currencies: first }, period2: { ...period2, currencies: second } });
 });
 
 router.get("/orders", async (req, res) => {
