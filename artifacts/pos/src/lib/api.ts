@@ -170,6 +170,8 @@ export type Item = {
   itemType: "stock" | "service" | "fixed_asset";
   salePrice: string;
   variantAttributes?: Record<string, unknown> | null;
+  restaurantModifierGroups?: RestaurantModifierGroup[];
+  status?: string;
   costPrice: string;
   vatRate: string;
   imageUrl?: string | null;
@@ -684,7 +686,12 @@ export type RMenuItem = {
 export type RestaurantModifierGroup = {
   id: string; nameAr: string; nameEn?: string | null; required: boolean;
   selectionMode: "single" | "multiple"; minSelect: number; maxSelect: number;
-  options: Array<{ id: string; itemId: number; extraPrice: number; consumptionQtyPerSelection?: number; nameAr: string; nameEn?: string | null; code: string }>;
+  options: Array<{
+    id: string; itemId: number; extraPrice: number; consumptionQtyPerSelection?: number;
+    nameAr: string; nameEn?: string | null; code: string;
+    itemType?: "stock" | "service"; unitId?: number | null; unitName?: string | null;
+    vatRate?: number | string;
+  }>;
 };
 export type RestaurantModifierSnapshot = {
   name: string; option: string; price: number; groupId?: string; optionId?: string;

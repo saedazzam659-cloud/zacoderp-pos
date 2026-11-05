@@ -26,6 +26,11 @@ export type RestaurantModifierGroup = {
     nameEn?: string | null;
     code: string;
     extraPrice: number;
+    consumptionQtyPerSelection?: number;
+    itemType?: "stock" | "service";
+    unitId?: number | null;
+    unitName?: string | null;
+    vatRate?: number | string;
   }>;
 };
 

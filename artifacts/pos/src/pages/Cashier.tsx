@@ -38,6 +38,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
+import RestaurantModifierDialog, { type RestaurantModifierSelection } from "@/components/RestaurantModifierDialog";
 import CashMovementDialog from "@/components/CashMovementDialog";
 import CashBoxesDialog from "@/components/CashBoxesDialog";
 import EmployeeMealsDialog from "@/components/EmployeeMealsDialog";
@@ -81,6 +82,7 @@ type CartLine = {
   item: Item;
   qty: number;
   selectedSaleOptionId?: string;
+  modifierSelection?: RestaurantModifierSelection;
 };
 
 type ParkedCart = {
@@ -148,6 +150,30 @@ function formatSAR(n: number) {
   }).format(n);
 }
 
+function modifierSelectionKey(selection: RestaurantModifierSelection = []) {
+  return selection
+    .map((entry) => `${entry.groupId}:${[...entry.optionIds].sort().join(",")}`)
+    .sort()
+    .join("|");
+}
+
+function cartLineKey(line: Pick<CartLine, "item" | "selectedSaleOptionId" | "modifierSelection">) {
+  return `${line.item.id}:${line.selectedSaleOptionId ?? ""}:${modifierSelectionKey(line.modifierSelection)}`;
+}
+
+function selectedRestaurantModifiers(line: CartLine) {
+  const selectedByGroup = new Map((line.modifierSelection ?? []).map(entry => [entry.groupId, new Set(entry.optionIds)]));
+  return (line.item.restaurantModifierGroups ?? []).flatMap(group =>
+    group.options
+      .filter(option => selectedByGroup.get(group.id)?.has(option.id))
+      .map(option => ({ group, option })),
+  );
+}
+
+function restaurantModifierPrice(line: CartLine) {
+  return selectedRestaurantModifiers(line).reduce((sum, entry) => sum + Number(entry.option.extraPrice || 0), 0);
+}
+
 function imageSrcFromUrl(u?: string | null): string | null {
   if (!u) return null;
   if (!u.startsWith("/objects/")) return u;
@@ -185,6 +211,7 @@ export default function CashierPage() {
   const [activeSubgroup, setActiveSubgroup] = useState<number | "all">("all");
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [modifierTarget, setModifierTarget] = useState<Item | null>(null);
   const [discountPct, setDiscountPct] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [paid, setPaid] = useState(false);
@@ -313,7 +340,41 @@ export default function CashierPage() {
           api.getPosSettings(cid).catch(() => null),
         ]);
         if (!alive) return;
-        setItems(its);
+        const modifierItemIds = [...new Set(its.flatMap(item => {
+          const rawGroups = item.variantAttributes?._restaurantModifierGroups;
+          if (!Array.isArray(rawGroups)) return [];
+          return rawGroups.flatMap((group: any) => Array.isArray(group?.options)
+            ? group.options.map((option: any) => Number(option?.itemId)).filter((id: number) => Number.isSafeInteger(id) && id > 0)
+            : []);
+        }))];
+        const linkedOptionItems: Item[] = [];
+        for (let offset = 0; offset < modifierItemIds.length; offset += 500) {
+          linkedOptionItems.push(...await api.lookupItems(cid, modifierItemIds.slice(offset, offset + 500)));
+        }
+        const optionItemsById = new Map(linkedOptionItems.map(item => [item.id, item]));
+        const itemsWithModifiers = its.map(item => {
+          const rawGroups = item.variantAttributes?._restaurantModifierGroups;
+          if (!Array.isArray(rawGroups)) return item;
+          const restaurantModifierGroups = rawGroups.map((group: any) => ({
+            ...group,
+            options: (Array.isArray(group?.options) ? group.options : []).flatMap((option: any) => {
+              const linked = optionItemsById.get(Number(option?.itemId));
+              if (!linked || linked.status !== "active" || !["stock", "service"].includes(linked.itemType)) return [];
+              return [{
+                ...option,
+                nameAr: linked.nameAr,
+                nameEn: linked.nameEn,
+                code: linked.code,
+                itemType: linked.itemType,
+                unitId: linked.unitId ?? null,
+                unitName: linked.unit?.nameAr ?? null,
+                vatRate: linked.vatRate,
+              }];
+            }),
+          }));
+          return { ...item, restaurantModifierGroups };
+        });
+        setItems(itemsWithModifiers);
         setGroups(grs);
         setSubgroups(sgs);
         setWarehouses(whs);
@@ -547,38 +608,45 @@ export default function CashierPage() {
     return list;
   }, [items, activeCat, activeSubgroup, search]);
 
-  const addToCart = (p: Item) => {
+  const addToCart = (p: Item, modifierSelection: RestaurantModifierSelection = []) => {
     setCart((c) => {
-      const existing = c.find((l) => l.item.id === p.id);
+      const nextLine = { item: p, qty: 1, modifierSelection };
+      const key = cartLineKey(nextLine);
+      const existing = c.find((l) => cartLineKey(l) === key);
       if (existing) {
         return c.map((l) =>
-          l.item.id === p.id ? { ...l, qty: l.qty + 1 } : l,
+          cartLineKey(l) === key ? { ...l, qty: l.qty + 1 } : l,
         );
       }
-      return [...c, { item: p, qty: 1 }];
+      return [...c, nextLine];
     });
   };
 
-  const selectSalePriceOption = (itemId: number, optionId: string) => {
+  const chooseItem = (item: Item) => {
+    if (item.restaurantModifierGroups?.length) setModifierTarget(item);
+    else addToCart(item);
+  };
+
+  const selectSalePriceOption = (lineKey: string, optionId: string) => {
     setCart((c) => c.map((line) =>
-      line.item.id === itemId
+      cartLineKey(line) === lineKey
         ? { ...line, selectedSaleOptionId: optionId || undefined }
         : line,
     ));
   };
 
-  const updateQty = (id: number, delta: number) => {
+  const updateQty = (key: string, delta: number) => {
     setCart((c) =>
       c
         .map((l) =>
-          l.item.id === id ? { ...l, qty: Math.max(0, l.qty + delta) } : l,
+          cartLineKey(l) === key ? { ...l, qty: Math.max(0, l.qty + delta) } : l,
         )
         .filter((l) => l.qty > 0),
     );
   };
 
-  const removeLine = (id: number) => {
-    setCart((c) => c.filter((l) => l.item.id !== id));
+  const removeLine = (key: string) => {
+    setCart((c) => c.filter((l) => cartLineKey(l) !== key));
   };
 
   const clearCart = () => {
@@ -658,16 +726,21 @@ export default function CashierPage() {
   };
 
   const subtotal = cart.reduce(
-    (s, l) => s + getItemSalePrice(l.item, l.selectedSaleOptionId) * l.qty,
+    (s, l) => s + (getItemSalePrice(l.item, l.selectedSaleOptionId) + restaurantModifierPrice(l)) * l.qty,
     0,
   );
   const discountAmount = (subtotal * discountPct) / 100;
   const afterDiscount = subtotal - discountAmount;
-  const vatAmount = cart.reduce((s, l) => {
-    const lineGross = getItemSalePrice(l.item, l.selectedSaleOptionId) * l.qty;
-    const lineDisc = (lineGross * discountPct) / 100;
-    const rate = Number(l.item.vatRate) || VAT_RATE;
-    return s + ((lineGross - lineDisc) * rate) / 100;
+  const vatAmount = cart.reduce((sum, line) => {
+    const discountFactor = 1 - discountPct / 100;
+    const baseGross = getItemSalePrice(line.item, line.selectedSaleOptionId) * line.qty * discountFactor;
+    const baseRate = Number.isFinite(Number(line.item.vatRate)) ? Number(line.item.vatRate) : VAT_RATE;
+    const modifierVat = selectedRestaurantModifiers(line).reduce((modifierSum, { option }) => {
+      const gross = Number(option.extraPrice) * line.qty * discountFactor;
+      const rate = Number.isFinite(Number(option.vatRate)) ? Number(option.vatRate) : baseRate;
+      return modifierSum + gross * rate / 100;
+    }, 0);
+    return sum + baseGross * baseRate / 100 + modifierVat;
   }, 0);
   const grandTotal = afterDiscount + vatAmount;
   const itemCount = cart.reduce((n, l) => n + l.qty, 0);
@@ -705,13 +778,13 @@ export default function CashierPage() {
       setSubmitting(true);
 
       const today = new Date().toISOString().slice(0, 10);
-      const lines: CreateInvoiceLine[] = cart.map((l) => {
+      const lines: CreateInvoiceLine[] = cart.flatMap((l) => {
         const unitPrice = getItemSalePrice(l.item, l.selectedSaleOptionId);
         const lineGross = unitPrice * l.qty;
         const lineDisc = (lineGross * discountPct) / 100;
         const option = getSalePriceOptions(l.item).find((candidate) => candidate.id === l.selectedSaleOptionId);
         const optionName = getSalePriceOptionName(option);
-        return {
+        const baseLine: CreateInvoiceLine = {
           itemId: l.item.id,
           itemName: optionName ? `${l.item.nameAr} — ${optionName}` : l.item.nameAr,
           itemCode: l.item.code,
@@ -725,6 +798,24 @@ export default function CashierPage() {
           vatRate: Number(l.item.vatRate) || VAT_RATE,
           lineTotal: lineGross - lineDisc,
         };
+        const addOnLines: CreateInvoiceLine[] = selectedRestaurantModifiers(l).map(({ group, option: addon }) => {
+          const consumption = Number(addon.consumptionQtyPerSelection) || 1;
+          const addonGross = Number(addon.extraPrice) * l.qty;
+          return {
+            itemId: addon.itemId,
+            itemName: `${addon.nameAr} — ${l.item.nameAr}`,
+            itemCode: addon.code,
+            unit: addon.unitName ?? null,
+            unitId: addon.unitId ?? null,
+            warehouseId: addon.itemType === "stock" ? defaultWarehouseId : null,
+            qty: l.qty * consumption,
+            unitPrice: Number(addon.extraPrice) / consumption,
+            discount: addonGross * discountPct / 100,
+            vatRate: Number.isFinite(Number(addon.vatRate)) ? Number(addon.vatRate) : Number(l.item.vatRate) || VAT_RATE,
+            lineTotal: addonGross * (1 - discountPct / 100),
+          };
+        });
+        return [baseLine, ...addOnLines];
       });
 
       // Route the payment based on company POS settings (admin maps each
@@ -1324,24 +1415,24 @@ export default function CashierPage() {
             ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {filtered.map((p) => {
-                  const inCart = cart.find((l) => l.item.id === p.id);
+                  const inCart = cart.filter((l) => l.item.id === p.id).reduce((sum, line) => sum + line.qty, 0);
                   return (
                     <motion.button
                       key={p.id}
                       layout
                       whileTap={{ scale: 0.97 }}
-                      onClick={() => addToCart(p)}
+                      onClick={() => chooseItem(p)}
                       aria-label={`إضافة ${p.nameAr} إلى السلة، ${formatSAR(Number(p.salePrice))} ريال`}
                       data-testid={`button-add-product-${p.id}`}
                       className={`group relative min-w-0 rounded-2xl border bg-card p-1.5 text-right shadow-[0_5px_18px_-16px_hsl(var(--foreground)/.35)] transition-all sm:p-2 ${
-                        inCart
+                        inCart > 0
                           ? "border-primary ring-2 ring-primary/15"
                           : "border-card-border hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md"
                       }`}
                     >
-                      {inCart && (
+                      {inCart > 0 && (
                         <div className="absolute left-2 top-2 z-10 grid h-7 min-w-7 place-items-center rounded-full bg-primary px-1.5 text-[11px] font-black text-primary-foreground shadow-md ring-2 ring-card">
-                          {inCart.qty}
+                          {inCart}
                         </div>
                       )}
                       <div className="relative mb-1.5 aspect-[1.7/1] overflow-hidden rounded-lg bg-gradient-to-br from-primary/[0.09] via-muted to-chart-2/[0.08]">
@@ -1792,9 +1883,13 @@ function CartPanel(props: {
         ) : (
           <ul className="space-y-1.5">
             <AnimatePresence initial={false}>
-              {cart.map((l) => (
+              {cart.map((l) => {
+                const lineKey = cartLineKey(l);
+                const modifiers = selectedRestaurantModifiers(l);
+                const displayUnitPrice = getItemSalePrice(l.item, l.selectedSaleOptionId) + restaurantModifierPrice(l);
+                return (
                 <motion.li
-                  key={l.item.id}
+                  key={lineKey}
                   layout
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1813,13 +1908,18 @@ function CartPanel(props: {
                       {l.item.nameAr}
                     </p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      {formatSAR(getItemSalePrice(l.item, l.selectedSaleOptionId))} ر.س /{" "}
+                      {formatSAR(displayUnitPrice)} ر.س /{" "}
                       {l.item.unit?.nameAr || "وحدة"}
                     </p>
+                    {modifiers.length > 0 && (
+                      <p className="mt-1 text-[11px] leading-5 text-primary/80" data-testid={`text-cart-modifiers-${l.item.id}`}>
+                        {modifiers.map(({ group, option }) => `${group.nameAr}: ${option.nameAr}`).join(" · ")}
+                      </p>
+                    )}
                     {getSalePriceOptions(l.item).length > 0 && (
                       <select
                         value={l.selectedSaleOptionId ?? ""}
-                        onChange={(event) => selectSalePriceOption(l.item.id, event.target.value)}
+                        onChange={(event) => selectSalePriceOption(lineKey, event.target.value)}
                         aria-label={`اختيار سعر ${l.item.nameAr}`}
                         data-testid={`select-price-option-${l.item.id}`}
                         className="mt-1 h-8 w-full rounded-md border border-primary/20 bg-background px-2 text-xs"
@@ -1835,11 +1935,11 @@ function CartPanel(props: {
                     <div className="mt-2 flex items-center justify-between">
                       <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
                         <button
-                          onClick={() => updateQty(l.item.id, -1)}
+                          onClick={() => updateQty(lineKey, -1)}
                           type="button"
                           className="grid size-8 place-items-center rounded-lg hover:bg-card hover:text-primary"
                           aria-label="إنقاص"
-                          data-testid={`button-decrease-quantity-${l.item.id}`}
+                          data-testid={`button-decrease-quantity-${lineKey}`}
                         >
                           <Minus className="w-3.5 h-3.5" />
                         </button>
@@ -1847,17 +1947,17 @@ function CartPanel(props: {
                           {l.qty}
                         </span>
                         <button
-                          onClick={() => updateQty(l.item.id, 1)}
+                          onClick={() => updateQty(lineKey, 1)}
                           type="button"
                           className="grid size-8 place-items-center rounded-lg hover:bg-card hover:text-primary"
                           aria-label="زيادة"
-                          data-testid={`button-increase-quantity-${l.item.id}`}
+                          data-testid={`button-increase-quantity-${lineKey}`}
                         >
                           <Plus className="w-3.5 h-3.5" />
                         </button>
                       </div>
                       <p className="text-sm font-black text-primary">
-                        {formatSAR(getItemSalePrice(l.item, l.selectedSaleOptionId) * l.qty)}
+                        {formatSAR(displayUnitPrice * l.qty)}
                         <span className="text-[10px] text-muted-foreground font-bold mr-0.5">
                           ر.س
                         </span>
@@ -1865,16 +1965,17 @@ function CartPanel(props: {
                     </div>
                   </div>
                   <button
-                    onClick={() => removeLine(l.item.id)}
+                    onClick={() => removeLine(lineKey)}
                     type="button"
                     className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     aria-label="حذف"
-                    data-testid={`button-remove-cart-line-${l.item.id}`}
+                    data-testid={`button-remove-cart-line-${lineKey}`}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </motion.li>
-              ))}
+                );
+              })}
             </AnimatePresence>
           </ul>
         )}
