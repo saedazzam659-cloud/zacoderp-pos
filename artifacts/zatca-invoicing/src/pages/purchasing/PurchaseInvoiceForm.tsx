@@ -30,7 +30,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
+import { findInventoryItemByCode, useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { localizedName } from "@/lib/localizedName";
 import { eligibleParties, withHistoricalParty } from "@/lib/partyEligibility";
 import { DocNavigator } from "@/components/DocNavigator";
@@ -2279,7 +2279,30 @@ function PurchaseInvoiceFormContent() {
                       {l.itemId && l.lineType !== "direct_expense" ? (
                         <button type="button" className="h-8 truncate rounded-md bg-muted/40 px-2 text-start text-xs font-mono text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={isRtl ? "عرض حركة الصنف مع المورد" : "View item history with this supplier"} onClick={() => setItemHistoryTarget({ itemId: String(l.itemId), code: l.itemCode })}>{l.itemCode || "—"}</button>
                       ) : <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={tr("auto")} value={l.itemCode}
-                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />}
+                        onChange={e => updateLine(l._id, "itemCode", e.target.value)}
+                        onKeyDown={event => {
+                          if (event.key !== "Enter" || l.lineType === "direct_expense") return;
+                          const code = event.currentTarget.value.trim();
+                          if (!code) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void findInventoryItemByCode(code, cid, authH)
+                            .then(async item => {
+                              if (!item) {
+                                toast({
+                                  title: isRtl ? "لم يتم العثور على صنف مطابق لهذا الكود" : "No item matches this code",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+                              await selectItem(l._id, String(item.id), item);
+                              setFocusLineId(l._id);
+                            })
+                            .catch(() => toast({
+                              title: isRtl ? "تعذر البحث عن الصنف بهذا الكود" : "Could not find the item by code",
+                              variant: "destructive",
+                            }));
+                        }} />}
                       {l.lineType === "direct_expense" ? (
                         <Input className="h-8 text-xs" placeholder="بيان المصروف" value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />

@@ -34,7 +34,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
+import { findInventoryItemByCode, useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { localizedName } from "@/lib/localizedName";
 import { eligibleParties, withHistoricalParty } from "@/lib/partyEligibility";
 import { DocNavigator } from "@/components/DocNavigator";
@@ -3503,7 +3503,30 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       {isInvoice && l.itemId ? (
                         <button type="button" className="h-8 truncate rounded-md bg-muted/40 px-2 text-start text-xs font-mono text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={isRtl ? "عرض حركة الصنف مع العميل" : "View item history with this customer"} onClick={() => setItemHistoryTarget({ itemId: String(l.itemId), code: l.itemCode })}>{l.itemCode || "—"}</button>
                       ) : <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
-                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />}
+                        onChange={e => updateLine(l._id, "itemCode", e.target.value)}
+                        onKeyDown={event => {
+                          if (event.key !== "Enter" || !isInvoice || viewMode) return;
+                          const code = event.currentTarget.value.trim();
+                          if (!code) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void findInventoryItemByCode(code, cid, authH)
+                            .then(async item => {
+                              if (!item) {
+                                toast({
+                                  title: isRtl ? "لم يتم العثور على صنف مطابق لهذا الكود" : "No item matches this code",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+                              await selectItem(l._id, String(item.id), item);
+                              setFocusLineId(l._id);
+                            })
+                            .catch(() => toast({
+                              title: isRtl ? "تعذر البحث عن الصنف بهذا الكود" : "Could not find the item by code",
+                              variant: "destructive",
+                            }));
+                        }} />}
                       {user ? (
                         <div className="min-w-0">
                           <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} onItemDoubleClick={isInvoice ? item => handleMultiItemAdd([item.value], l._id, [item]) : undefined} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />

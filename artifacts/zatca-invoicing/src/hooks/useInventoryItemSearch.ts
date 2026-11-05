@@ -4,6 +4,31 @@ import { fetchJsonArray } from "@/lib/fetchJsonArray";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+export async function findInventoryItemByCode(
+  rawCode: string,
+  companyId: number | undefined,
+  headers: HeadersInit,
+): Promise<any | null> {
+  const code = rawCode.trim();
+  if (!code) return null;
+
+  const params = new URLSearchParams({
+    includeHidden: "1",
+    q: code,
+    limit: "50",
+  });
+  if (companyId) params.set("companyId", String(companyId));
+
+  const candidates = await fetchJsonArray(
+    `${API}/api/inventory/items/search?${params}`,
+    headers,
+  );
+  const exactItems = [...new Map(candidates
+    .filter((item: any) => String(item.code ?? "").trim().toLowerCase() === code.toLowerCase())
+    .map((item: any) => [String(item.id), item])).values()];
+  return exactItems.length === 1 ? exactItems[0] : null;
+}
+
 /**
  * Loads only searched results and the items already present on the document.
  * The legacy full-catalog API remains available to reports that need every item.
