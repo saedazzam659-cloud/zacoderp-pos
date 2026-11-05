@@ -1176,21 +1176,23 @@ export default function CashierPage() {
                       onClick={() => { setActiveCat(c.id as any); setActiveSubgroup("all"); }}
                       aria-pressed={active}
                       data-testid={`button-pos-display-group-${String(c.id)}`}
-                      className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-bold whitespace-nowrap transition-colors ${
+                      className={`flex items-center gap-2 rounded-xl border font-bold whitespace-nowrap transition-all ${
                         active
-                          ? "border-primary bg-primary text-primary-foreground shadow-sm"
-                          : "border-border/80 bg-background text-foreground hover:border-primary/30 hover:bg-primary/[0.04]"
+                          ? "h-14 border-primary bg-primary px-5 text-base text-primary-foreground shadow-md ring-2 ring-primary/15"
+                          : "h-10 border-border/80 bg-background px-4 text-sm text-foreground hover:border-primary/30 hover:bg-primary/[0.04]"
                       }`}
                     >
                       {c.id !== "all" && (imageSrcFromUrl(c.imageUrl) ? (
                         <img
                           src={imageSrcFromUrl(c.imageUrl) ?? undefined}
                           alt=""
-                          className="h-6 w-6 rounded-md object-cover"
+                          className={`${active ? "h-9 w-9 rounded-lg" : "h-6 w-6 rounded-md"} object-cover`}
                           loading="lazy"
                         />
                       ) : (
-                        <span className={`grid h-6 w-6 place-items-center rounded-md text-[10px] font-black ${
+                        <span className={`grid place-items-center text-[10px] font-black ${
+                          active ? "h-9 w-9 rounded-lg" : "h-6 w-6 rounded-md"
+                        } ${
                           active ? "bg-primary-foreground/15 text-primary-foreground" : "bg-primary/10 text-primary"
                         }`} aria-hidden="true">
                           {c.nameAr.slice(0, 1)}
@@ -1294,7 +1296,7 @@ export default function CashierPage() {
                       onClick={() => addToCart(p)}
                       aria-label={`إضافة ${p.nameAr} إلى السلة، ${formatSAR(Number(p.salePrice))} ريال`}
                       data-testid={`button-add-product-${p.id}`}
-                      className={`group relative min-w-0 rounded-2xl border bg-card p-2.5 text-right shadow-[0_5px_18px_-16px_hsl(var(--foreground)/.35)] transition-all sm:p-3 ${
+                      className={`group relative min-w-0 rounded-2xl border bg-card p-1.5 text-right shadow-[0_5px_18px_-16px_hsl(var(--foreground)/.35)] transition-all sm:p-2 ${
                         inCart
                           ? "border-primary ring-2 ring-primary/15"
                           : "border-card-border hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md"
@@ -1305,32 +1307,29 @@ export default function CashierPage() {
                           {inCart.qty}
                         </div>
                       )}
-                      <div className="relative mb-2 aspect-[1.12/1] overflow-hidden rounded-xl bg-gradient-to-br from-primary/[0.09] via-muted to-chart-2/[0.08]">
+                      <div className="relative mb-1.5 aspect-[1.7/1] overflow-hidden rounded-lg bg-gradient-to-br from-primary/[0.09] via-muted to-chart-2/[0.08]">
                         {imageSrc(p) ? (
                           <img src={imageSrc(p)!} alt="" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
                         ) : (
                           <div className="grid h-full w-full place-items-center text-primary/65">
-                            <Package2 className="size-9 stroke-[1.5]" aria-hidden="true" />
+                            <Package2 className="size-7 stroke-[1.5]" aria-hidden="true" />
                           </div>
                         )}
-                        <span className="absolute bottom-2 left-2 grid size-7 place-items-center rounded-lg border border-white/60 bg-card/90 text-[10px] font-black text-primary shadow-sm">
-                          {(p.nameAr || "ص").slice(0, 1)}
-                        </span>
                       </div>
-                      <p className="min-h-[2.5rem] text-sm font-extrabold leading-snug line-clamp-2">
-                        {p.nameAr}
-                      </p>
-                      <div className="mt-2 flex items-baseline justify-between gap-1 border-t border-border/60 pt-2">
-                        <span className="text-[10px] text-muted-foreground font-mono">
-                          {p.code}
+                      <div className="flex min-h-8 items-center justify-between gap-1 border-t border-border/60 pt-1">
+                        <span className="min-w-0 flex-1 line-clamp-1 text-xs font-extrabold leading-tight sm:text-sm">
+                          {p.nameAr}
                         </span>
-                        <span className="text-sm font-black tabular-nums text-primary sm:text-base">
+                        <span className="shrink-0 whitespace-nowrap text-xs font-black tabular-nums text-primary sm:text-sm">
                           {formatSAR(Number(p.salePrice))}
-                          <span className="text-[10px] text-muted-foreground font-bold mr-0.5">
+                          <span className="mr-0.5 text-[9px] font-bold text-muted-foreground">
                             ر.س
                           </span>
                         </span>
                       </div>
+                      <span className="mt-0.5 block truncate text-[9px] font-mono leading-none text-muted-foreground">
+                        {p.code}
+                      </span>
                     </motion.button>
                   );
                 })}
