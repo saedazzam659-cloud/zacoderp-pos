@@ -3267,7 +3267,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         items={itemComboItems}
                         value={l.itemId}
                         onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined}
-                        onItemDoubleClick={isInvoice ? item => handleMultiItemAdd([item.value], l._id, [item]) : undefined}
+                        onItemDoubleClick={isInvoice ? item => {
+                          void selectItem(l._id, item.value, item.rawItem);
+                          setFocusLineId(l._id);
+                        } : undefined}
                         warehouseId={l.warehouseId || headerWarehouseId}
                         onValueChange={v => void selectItem(l._id, v)}
                         onSearchChange={setItemSearch}
@@ -3529,7 +3532,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         }} />}
                       {user ? (
                         <div className="min-w-0">
-                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} onItemDoubleClick={isInvoice ? item => handleMultiItemAdd([item.value], l._id, [item]) : undefined} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
+                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} onItemDoubleClick={isInvoice ? item => {
+                            void selectItem(l._id, item.value, item.rawItem);
+                            setFocusLineId(l._id);
+                          } : undefined} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
                           {renderSalesOptionPicker(l)}
                         </div>
                       ) : (
