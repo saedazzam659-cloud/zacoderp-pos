@@ -145,6 +145,7 @@ export const posOrderItemsTable = pgTable("pos_order_items", {
     itemType?: "stock" | "service";
     vatRate?: string | number;
     vatIncluded?: boolean;
+    consumptionQtyPerSelection?: number;
   }>>().notNull().default([]),
   kitchenStation: text("kitchen_station").notNull().default("kitchen"),
   status:         posLineStatusEnum("status").notNull().default("pending"),

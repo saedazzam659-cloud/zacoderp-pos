@@ -663,11 +663,12 @@ export type RMenuItem = {
 export type RestaurantModifierGroup = {
   id: string; nameAr: string; nameEn?: string | null; required: boolean;
   selectionMode: "single" | "multiple"; minSelect: number; maxSelect: number;
-  options: Array<{ id: string; itemId: number; extraPrice: number; nameAr: string; nameEn?: string | null; code: string }>;
+  options: Array<{ id: string; itemId: number; extraPrice: number; consumptionQtyPerSelection?: number; nameAr: string; nameEn?: string | null; code: string }>;
 };
 export type RestaurantModifierSnapshot = {
   name: string; option: string; price: number; groupId?: string; optionId?: string;
   itemId?: number; itemType?: "stock" | "service"; vatRate?: string | number; vatIncluded?: boolean;
+  consumptionQtyPerSelection?: number;
 };
 
 export type ROrder = {

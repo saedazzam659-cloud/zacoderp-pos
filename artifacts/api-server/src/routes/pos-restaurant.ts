@@ -13,11 +13,12 @@ import {
   stockBalanceTable,
   branchesTable,
 } from "@workspace/db";
-import { and, eq, sql, desc, asc, isNull, gte, inArray } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { and, eq, sql, desc, asc, isNull, gte, lte, inArray, ne } from "drizzle-orm";
+import { branchScopeSpread, extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { generateRestaurantTables } from "../lib/posRestaurantTableBatch.js";
 import { calculateRestaurantOrderTotals } from "../lib/restaurant-order-pricing.js";
+import { validateRestaurantModifierSelection } from "../lib/restaurant-modifier-selection.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -135,33 +136,7 @@ async function resolveRestaurantModifiers(
   vatIncluded: boolean,
 ) {
   const groups = configuredRestaurantModifierGroups(baseItem?.variantAttributes);
-  const selections = Array.isArray(rawSelections) ? rawSelections : [];
-  if (selections.length > groups.length) throw new Error("توجد اختيارات غير معروفة");
-  const byGroup = new Map<string, Set<string>>();
-  for (const raw of selections) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("بيانات الاختيارات غير صالحة");
-    const groupId = String((raw as any).groupId ?? "");
-    const optionIds = (raw as any).optionIds;
-    if (!groupId || byGroup.has(groupId) || !Array.isArray(optionIds)) throw new Error("بيانات الاختيارات غير صالحة");
-    const ids = optionIds.map((id: unknown) => String(id));
-    if (ids.some((id: string) => !id) || new Set(ids).size !== ids.length) throw new Error("الخيار مكرر أو غير صالح");
-    byGroup.set(groupId, new Set(ids));
-  }
-  const chosen: Array<{ group: any; option: any }> = [];
-  for (const group of groups) {
-    const selectedIds = byGroup.get(String(group.id)) ?? new Set<string>();
-    if (selectedIds.size < Number(group.minSelect) || selectedIds.size > Number(group.maxSelect)) {
-      throw new Error(`تحقق من عدد الاختيارات في مجموعة "${group.nameAr}"`);
-    }
-    for (const optionId of selectedIds) {
-      const option = (group.options ?? []).find((entry: any) => String(entry.id) === optionId);
-      if (!option) throw new Error("يوجد خيار غير مرتبط بهذه المجموعة");
-      chosen.push({ group, option });
-    }
-  }
-  for (const groupId of byGroup.keys()) {
-    if (!groups.some(group => String(group.id) === groupId)) throw new Error("توجد مجموعة اختيارات غير معروفة");
-  }
+  const chosen = validateRestaurantModifierSelection(groups, rawSelections);
   const itemIds = [...new Set(chosen.map(entry => Number(entry.option.itemId)))];
   if (!itemIds.length) return [];
   const linkedItems = await db.select({
@@ -182,6 +157,7 @@ async function resolveRestaurantModifiers(
       name: group.nameAr,
       option: item.nameAr,
       price: Number(option.extraPrice),
+      consumptionQtyPerSelection: Number(option.consumptionQtyPerSelection ?? 1),
       groupId: String(group.id),
       optionId: String(option.id),
       itemId: item.id,
@@ -465,6 +441,31 @@ router.delete("/menu/items/:id", async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════
 // ORDERS
 // ════════════════════════════════════════════════════════════════════════
+router.get("/reports/order-types", requirePermission("pos_waiter", "view"), async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const date = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+    res.status(400).json({ error: "تاريخ التقرير غير صالح" }); return;
+  }
+  const branchId = req.query.branchId ? Number(req.query.branchId) : undefined;
+  if (branchId !== undefined && (!Number.isInteger(branchId) || branchId <= 0)) {
+    res.status(400).json({ error: "معرّف الفرع غير صالح" }); return;
+  }
+  const from = new Date(`${date}T00:00:00.000Z`);
+  const to = new Date(from.getTime() + 86_400_000 - 1);
+  const rows = await db.select({
+    channel: posOrdersTable.channel,
+    count: sql<number>`COUNT(*)::int`,
+  }).from(posOrdersTable).where(and(
+    eq(posOrdersTable.companyId, cid),
+    gte(posOrdersTable.openedAt, from),
+    lte(posOrdersTable.openedAt, to),
+    ne(posOrdersTable.status, "cancelled"),
+    ...branchScopeSpread(req, posOrdersTable.branchId, branchId),
+  )).groupBy(posOrdersTable.channel);
+  res.json(rows.map(row => ({ channel: row.channel, count: Number(row.count) })));
+});
+
 router.get("/orders", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   const status = req.query.status as string | undefined;

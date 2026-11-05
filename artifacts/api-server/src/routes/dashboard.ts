@@ -315,7 +315,7 @@ router.get("/overview", async (req: any, res) => {
       };
     });
 
-    // ── 6. Monthly trend (last 12 months, posted)
+  // ── 6. Monthly trend (last 12 months, posted)
     const monthly12mRows = await db.select({
       month: sql<string>`TO_CHAR(${salesInvoicesTable.invoiceDate}::date, 'YYYY-MM')`,
       total: sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}::numeric), 0)`,
@@ -337,6 +337,24 @@ router.get("/overview", async (req: any, res) => {
         count: r ? Number(r.count) : 0,
       });
     }
+
+    // ── 6b. Hourly sales for the selected day, kept separate by currency.
+    const invoiceHour = sql<number>`EXTRACT(HOUR FROM COALESCE(${salesInvoicesTable.postedAt}, ${salesInvoicesTable.createdAt}))::int`;
+    const hourlySalesRows = await db.select({
+      hour: invoiceHour,
+      currencyCode: salesInvoicesTable.currencyCode,
+      total: sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}::numeric), 0)`,
+      count: sql<string>`COUNT(*)`,
+    }).from(salesInvoicesTable)
+      .where(baseWhere(today, today))
+      .groupBy(invoiceHour, salesInvoicesTable.currencyCode)
+      .orderBy(invoiceHour);
+    const hourlySales = hourlySalesRows.map(row => ({
+      hour: Number(row.hour),
+      currencyCode: row.currencyCode,
+      total: Number(row.total),
+      count: Number(row.count),
+    }));
 
     // ── 7. Alerts & Priorities (counts + small samples)
     const [zatcaPendingAgg, lowStockAgg, openSessionsAgg, unreadNotifsAgg] = await Promise.all([
@@ -509,7 +527,7 @@ router.get("/overview", async (req: any, res) => {
           qty:    Number(topItemRows[0].qty),
         } : null,
       },
-      charts: { sales30d, paymentMix, byBranch, monthly12m },
+      charts: { sales30d, paymentMix, byBranch, monthly12m, hourlySales },
       alerts: {
         zatcaPendingCount:      Number(zatcaPendingAgg[0]?.count ?? 0),
         lowStockCount:          Number(lowStockAgg[0]?.count     ?? 0),
@@ -559,7 +577,7 @@ function emptyOverview() {
       cashCollectedToday: 0, cashReceiptsCount: 0,
       topCustomer: null, topItem: null,
     },
-    charts: { sales30d: [], paymentMix: [], byBranch: [], monthly12m: [] },
+    charts: { sales30d: [], paymentMix: [], byBranch: [], monthly12m: [], hourlySales: [] },
     alerts: {
       zatcaPendingCount: 0, lowStockCount: 0, openPosSessionsCount: 0,
       unreadNotificationsCount: 0,

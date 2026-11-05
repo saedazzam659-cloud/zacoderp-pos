@@ -28,7 +28,7 @@ import SupportMessageCard from "@/components/SupportMessageCard";
 import { usePermission } from "@/hooks/usePermission";
 import { useFmt } from "@/hooks/use-fmt";
 import BranchFilter from "@/components/BranchFilter";
-import { dashboardOverviewApi, type DashboardOverview } from "@/lib/dashboardOverviewApi";
+import { dashboardOverviewApi, type DashboardOverview, type PosOrderTypeReport, type PendingInventoryOperationsReport } from "@/lib/dashboardOverviewApi";
 import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 import { useAgentModuleShortcutIcons } from "@/lib/agentBranding";
 import { appRouteHref } from "@/lib/appRouteHref";
@@ -227,6 +227,8 @@ export default function Dashboard() {
     (isArabic ? ar : (en || ar)) || ar || en || "—";
 
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+  const [reportDate, setReportDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [hourlyCurrency, setHourlyCurrency] = useState("");
 
   // Legacy summary still used for the existing 4 status tiles + recent invoices
   // (those endpoints already work and respect tenancy). We additively layer the
@@ -263,6 +265,14 @@ export default function Dashboard() {
   const canViewPurchaseReturns = usePermission("purchase_returns", "view");
   const canCreateReceiptVoucher = usePermission("receipt_vouchers", "create");
   const canCreatePaymentVoucher = usePermission("payment_vouchers", "create");
+  const canViewSalesReports = usePermission("sales_reports", "view");
+  const canViewInventoryReports = usePermission("inventory_reports", "view");
+  const canViewPurchaseReports = usePermission("purchase_invoices", "view");
+  const canViewAccountingReports = usePermission("accounting_reports", "view");
+  const canViewReceiptReports = usePermission("receipt_vouchers", "view");
+  const canViewPaymentReports = usePermission("payment_vouchers", "view");
+  const canViewCashReports = canViewReceiptReports || canViewPaymentReports;
+  const canViewPosReports = usePermission("pos_waiter", "view");
 
   const { data: recentInvoices, isLoading: loadingRecent } = useGetRecentInvoices(undefined, {
     query: { queryKey: ["recent-invoices", companyId], enabled: canViewRecentInvoices },
@@ -270,11 +280,85 @@ export default function Dashboard() {
 
   // ── New integrated overview payload (KPIs + charts + alerts + myDay) ────────
   const { data: overview, isLoading: loadingOverview } = useQuery<DashboardOverview>({
-    queryKey: ["dashboard-overview", companyId, branchId],
-    queryFn: () => dashboardOverviewApi.overview({ branchId }),
+    queryKey: ["dashboard-overview", companyId, branchId, reportDate],
+    queryFn: () => dashboardOverviewApi.overview({ branchId, date: reportDate }),
     refetchInterval: 60_000, // light auto-refresh once per minute
     staleTime: 30_000,
   });
+  const { data: orderTypeReport = [], isLoading: loadingOrderTypes } = useQuery<PosOrderTypeReport>({
+    queryKey: ["dashboard-order-types", companyId, branchId, reportDate],
+    queryFn: () => dashboardOverviewApi.orderTypes({ branchId, date: reportDate }),
+    enabled: canViewPosReports && canCharts,
+    staleTime: 30_000,
+  });
+  const { data: pendingInventory, isLoading: loadingPendingInventory } = useQuery<PendingInventoryOperationsReport>({
+    queryKey: ["dashboard-pending-inventory", companyId],
+    queryFn: () => dashboardOverviewApi.pendingInventoryOperations(),
+    enabled: canViewInventoryReports && canCharts,
+    staleTime: 60_000,
+  });
+
+  const currencyOptions = Array.from(new Set((overview?.charts.hourlySales ?? []).map(row => row.currencyCode)));
+  const activeHourlyCurrency = currencyOptions.includes(hourlyCurrency) ? hourlyCurrency : (currencyOptions[0] ?? "");
+  const hourlyRows = (overview?.charts.hourlySales ?? []).filter(row => row.currencyCode === activeHourlyCurrency);
+  const hourlyData = Array.from({ length: 24 }, (_, hour) => {
+    const row = hourlyRows.find(entry => entry.hour === hour);
+    return { hour: `${String(hour).padStart(2, "0")}:00`, total: row?.total ?? 0, count: row?.count ?? 0 };
+  });
+  const reportGroups = [
+    canViewSalesReports && {
+      title: isArabic ? "تقارير المبيعات" : "Sales reports", icon: TrendingUp, color: "text-blue-600 bg-blue-500/10",
+      links: [
+        [isArabic ? "حسب الفترة" : "By period", "/sales/reports/sales-by-period"],
+        [isArabic ? "حسب الصنف" : "By item", "/sales/reports/sales-by-item"],
+        [isArabic ? "طرق الدفع" : "Payment methods", "/sales/reports/payment-mix"],
+        [isArabic ? "أفضل العملاء" : "Top customers", "/sales/reports/top-customers"],
+        [isArabic ? "المرتجعات" : "Returns", "/sales/reports/returns"],
+        [isArabic ? "كل تقارير المبيعات" : "All sales reports", "/sales/reports"],
+      ] as [string, string][],
+    },
+    canViewInventoryReports && {
+      title: isArabic ? "تقارير المخزون" : "Inventory reports", icon: Package, color: "text-amber-600 bg-amber-500/10",
+      links: [
+        [isArabic ? "الأصناف عند الحد الأدنى" : "Low stock", "/inventory/reports/low-stock"],
+        [isArabic ? "أرصدة المخزون" : "Stock balance", "/inventory/reports/stock-balance"],
+        [isArabic ? "حركة المخزون" : "Stock ledger", "/inventory/reports/stock-ledger"],
+        [isArabic ? "تقييم المخزون" : "Valuation", "/inventory/reports/valuation"],
+        [isArabic ? "الأصناف بطيئة الحركة" : "Slow moving", "/inventory/reports/slow-moving"],
+        [isArabic ? "كل تقارير المخزون" : "All inventory reports", "/inventory/reports"],
+      ] as [string, string][],
+    },
+    canViewPurchaseReports && {
+      title: isArabic ? "تقارير المشتريات" : "Purchase reports", icon: ShoppingCart, color: "text-violet-600 bg-violet-500/10",
+      links: [
+        [isArabic ? "حسب الفترة" : "By period", "/purchasing/reports/purchases-by-period"],
+        [isArabic ? "حسب الصنف" : "By item", "/purchasing/reports/purchases-by-item"],
+        [isArabic ? "حسب المورد" : "By supplier", "/purchasing/reports/purchases-by-supplier"],
+        [isArabic ? "مرتجعات المشتريات" : "Purchase returns", "/purchasing/returns"],
+        [isArabic ? "كل تقارير المشتريات" : "All purchase reports", "/purchasing/reports"],
+      ] as [string, string][],
+    },
+    canViewAccountingReports && {
+      title: isArabic ? "تقارير المحاسبة" : "Accounting reports", icon: BookOpen, color: "text-emerald-600 bg-emerald-500/10",
+      links: [
+        [isArabic ? "ميزان المراجعة" : "Trial balance", "/accounting/reports/trial-balance"],
+        [isArabic ? "قائمة الدخل" : "Income statement", "/accounting/reports/income-statement"],
+        [isArabic ? "الميزانية العمومية" : "Balance sheet", "/accounting/reports/balance-sheet"],
+        [isArabic ? "التدفقات النقدية" : "Cash flow", "/accounting/reports/cash-flow"],
+        [isArabic ? "كل تقارير المحاسبة" : "All accounting reports", "/accounting/reports"],
+      ] as [string, string][],
+    },
+    canViewCashReports && {
+      title: isArabic ? "تقارير النقدية" : "Cash reports", icon: Wallet, color: "text-cyan-600 bg-cyan-500/10",
+      links: [
+        [isArabic ? "أرصدة الصناديق" : "Cash balances", "/cash/reports/cash-balances"],
+        [isArabic ? "أرصدة البنوك" : "Bank balances", "/cash/reports/bank-balances"],
+        [isArabic ? "كل تقارير النقدية" : "All cash reports", "/cash/reports"],
+      ] as [string, string][],
+    },
+  ].filter(Boolean) as Array<{
+    title: string; icon: React.ElementType; color: string; links: [string, string][];
+  }>;
 
   return (
     <div className="min-w-0 max-w-full space-y-6">
@@ -286,6 +370,17 @@ export default function Dashboard() {
         </div>
         <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
           <BranchFilter value={branchId} onChange={setBranchId} className="col-span-2 w-full min-w-0 sm:w-[180px]" />
+          <label className="col-span-2 flex h-9 items-center gap-2 rounded-md border bg-background px-3 text-xs text-muted-foreground sm:col-span-1">
+            <Calendar className="h-4 w-4 shrink-0" />
+            <span>{isArabic ? "تاريخ التقرير" : "Report date"}</span>
+            <input
+              type="date"
+              value={reportDate}
+              onChange={event => { if (event.target.value) setReportDate(event.target.value); }}
+              className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none"
+              aria-label={isArabic ? "تاريخ التقرير" : "Report date"}
+            />
+          </label>
           <Button asChild variant="outline" size="sm" className="min-w-0 gap-1.5">
             <Link href="/invoices"><FileText className="h-4 w-4" />{t("pages.dashboard.invoices")}</Link>
           </Button>
@@ -470,6 +565,98 @@ export default function Dashboard() {
       </div>
       )}
 
+      {reportGroups.length > 0 && (
+        <section className="space-y-3">
+          <SectionHeader
+            icon={FileText}
+            title={isArabic ? "مركز التقارير" : "Report center"}
+            desc={isArabic ? "وصول سريع للتقارير حسب الصلاحيات المتاحة" : "Quick access to reports available to your role"}
+            color="bg-sky-500"
+          />
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            {reportGroups.map(group => {
+              const Icon = group.icon;
+              return (
+                <Card key={group.title} className="overflow-hidden border-border/70 shadow-sm">
+                  <CardHeader className="flex flex-row items-center gap-3 space-y-0 border-b bg-muted/20 px-4 py-3">
+                    <span className={cn("flex h-9 w-9 items-center justify-center rounded-xl", group.color)}>
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <CardTitle className="text-sm">{group.title}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap gap-2 p-4">
+                    {group.links.map(([label, href]) => (
+                      <Link
+                        key={href}
+                        href={href}
+                        className="inline-flex items-center gap-1 rounded-full border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        {label}<ArrowUpRight className="h-3 w-3 opacity-60" />
+                      </Link>
+                    ))}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+          {canViewInventoryReports && (
+            <Card className="overflow-hidden border-amber-200/70 shadow-sm">
+              <CardHeader className="flex flex-row items-center justify-between gap-3 border-b bg-amber-500/[0.04] px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600">
+                    <Package className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <CardTitle className="text-sm">{isArabic ? "عمليات المخزون المعلقة" : "Pending inventory operations"}</CardTitle>
+                    <CardDescription className="text-xs">{isArabic ? "المستندات المسودة التي لم تُرحّل بعد" : "Draft documents awaiting posting"}</CardDescription>
+                  </div>
+                </div>
+                <span className="rounded-full bg-amber-500/10 px-3 py-1 text-sm font-bold tabular-nums text-amber-700">
+                  {loadingPendingInventory ? "…" : pendingInventory?.total ?? 0}
+                </span>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 gap-2 p-4 sm:grid-cols-2 lg:grid-cols-5">
+                {([
+                  ["transfer", isArabic ? "تحويل مخزني" : "Stock transfer"],
+                  ["adjustment", isArabic ? "تسوية مخزنية" : "Stock adjustment"],
+                  ["count", isArabic ? "جرد" : "Stock count"],
+                  ["receipt", isArabic ? "استلام بضاعة" : "Goods receipt"],
+                  ["delivery", isArabic ? "تسليم بضاعة" : "Goods delivery"],
+                ] as const).map(([type, label]) => (
+                  <div key={type} className="rounded-lg border bg-background px-3 py-2.5">
+                    <p className="text-[11px] text-muted-foreground">{label}</p>
+                    <p className="mt-1 text-lg font-semibold tabular-nums">
+                      {loadingPendingInventory ? "…" : pendingInventory?.byType[type] ?? 0}
+                    </p>
+                  </div>
+                ))}
+              </CardContent>
+              {(pendingInventory?.records.length ?? 0) > 0 && (
+                <div className="border-t divide-y">
+                  {pendingInventory!.records.slice(0, 5).map(record => (
+                    <Link key={`${record.type}-${record.id}`} href={record.href} className="flex items-center justify-between gap-3 px-4 py-2 text-xs hover:bg-muted/40">
+                      <span className="font-medium">
+                        {record.number || `#${record.id}`}
+                        <span className="ms-2 text-muted-foreground">
+                          {({
+                            transfer: isArabic ? "تحويل" : "Transfer",
+                            adjustment: isArabic ? "تسوية" : "Adjustment",
+                            count: isArabic ? "جرد" : "Count",
+                            receipt: isArabic ? "استلام" : "Receipt",
+                            delivery: isArabic ? "تسليم" : "Delivery",
+                          } as const)[record.type]}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-muted-foreground" dir="ltr">{record.date}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
+        </section>
+      )}
+
       {/* ─── INTERACTIVE CHARTS (2x2 grid) ──────────────────────────────── */}
       {canCharts && (
       <div>
@@ -620,6 +807,86 @@ export default function Dashboard() {
               )}
             </CardContent>
           </Card>
+
+          {/* Hourly sales, grouped by currency so values are never combined across currencies. */}
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <CardTitle className="text-sm">{isArabic ? "المبيعات حسب الساعة" : "Sales by hour"}</CardTitle>
+                  <CardDescription className="text-xs">{isArabic ? "إجمالي الفواتير المرحلة في يوم التقرير" : "Posted invoice totals for the report date"}</CardDescription>
+                </div>
+                {currencyOptions.length > 1 && (
+                  <div className="flex flex-wrap gap-1" aria-label={isArabic ? "عملة التقرير" : "Report currency"}>
+                    {currencyOptions.map(currency => (
+                      <button
+                        type="button"
+                        key={currency}
+                        onClick={() => setHourlyCurrency(currency)}
+                        className={cn("rounded-md border px-2 py-1 text-[10px]", activeHourlyCurrency === currency ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
+                      >
+                        {currency}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loadingOverview ? <Skeleton className="h-[220px] w-full" /> : (
+                hourlyRows.length === 0 ? (
+                  <div className="flex h-[220px] items-center justify-center text-xs text-muted-foreground">{t("pages.dashboard.overview.noData")}</div>
+                ) : (
+                  <div className="h-[220px] w-full" dir="ltr">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={hourlyData} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                        <XAxis dataKey="hour" stroke="hsl(var(--muted-foreground))" fontSize={9} tickLine={false} axisLine={false} interval={2} />
+                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} tickLine={false} axisLine={false} />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
+                          formatter={(value: number) => [`${Number(value).toLocaleString()} ${activeHourlyCurrency}`, isArabic ? "المبيعات" : "Sales"]}
+                        />
+                        <Bar dataKey="total" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} maxBarSize={26} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )
+              )}
+            </CardContent>
+          </Card>
+
+          {canViewPosReports && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{isArabic ? "الطلبات حسب النوع" : "Orders by type"}</CardTitle>
+                <CardDescription className="text-xs">{isArabic ? "طلبات اليوم المحدد، باستثناء الملغاة" : "Orders on the selected date, excluding cancelled orders"}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loadingOrderTypes ? <Skeleton className="h-[220px] w-full" /> : (
+                  orderTypeReport.length === 0 ? (
+                    <div className="flex h-[220px] items-center justify-center text-xs text-muted-foreground">{t("pages.dashboard.overview.noData")}</div>
+                  ) : (
+                    <div className="h-[220px] w-full" dir="ltr">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={[
+                          { name: isArabic ? "داخل المطعم" : "Dine-in", count: orderTypeReport.find(row => row.channel === "dine_in")?.count ?? 0 },
+                          { name: isArabic ? "سفري" : "Takeaway", count: orderTypeReport.find(row => row.channel === "takeaway")?.count ?? 0 },
+                          { name: isArabic ? "توصيل" : "Delivery", count: orderTypeReport.find(row => row.channel === "delivery")?.count ?? 0 },
+                        ]} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                          <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={10} tickLine={false} axisLine={false} />
+                          <YAxis allowDecimals={false} stroke="hsl(var(--muted-foreground))" fontSize={10} tickLine={false} axisLine={false} />
+                          <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }} />
+                          <Bar dataKey="count" name={isArabic ? "عدد الطلبات" : "Orders"} fill="hsl(var(--chart-4))" radius={[4, 4, 0, 0]} maxBarSize={48} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
       )}

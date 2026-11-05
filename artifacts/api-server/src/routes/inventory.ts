@@ -54,7 +54,7 @@ import { eq, ne, and, sql, desc, asc, gte, lte, lt, inArray, isNull, isNotNull, 
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { aliasedTable } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
-import { pathRbac, writeAudit } from "../middleware/permissions.js";
+import { pathRbac, requirePermission, writeAudit } from "../middleware/permissions.js";
 import { getItemUsageControls, normalizeUsageMode, isValidScreenKey, DEFAULT_USAGE_MODE, getScreenRules, isUsagePrivileged, checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import {
   ensureWarehouseAccount,
@@ -140,6 +140,7 @@ router.use(pathRbac([
   // other inventory reports so the company-level menu permission applies.
   ["/reports/free-quantities",      "items"],
   ["/reports/item-sales-valuation", "items"],
+  ["/reports/pending-operations",   "items"],
   ["/reports/batches",               "items"],
   ["/reports/brand-options",         "items"],
   // PRO Extension #6 — Smart Alerts: gate on "items" module like other
@@ -2025,14 +2026,22 @@ function validateVariantAttributes(input: unknown):
           const optionId = String(option.id ?? "").trim();
           const itemId = Number(option.itemId);
           const price = Number(option.extraPrice);
+          const consumptionRaw = String(option.consumptionQtyPerSelection ?? "1").trim();
+          const consumptionQtyPerSelection = Number(consumptionRaw);
           if (!optionId || optionId.length > 80 || optionIds.has(optionId)
             || !Number.isSafeInteger(itemId) || itemId <= 0 || linkedItemIds.has(itemId)
-            || String(option.extraPrice ?? "").trim() === "" || !Number.isFinite(price) || price < 0) {
+            || String(option.extraPrice ?? "").trim() === "" || !Number.isFinite(price) || price < 0
+            || !/^\d+(?:\.\d{1,4})?$/.test(consumptionRaw)
+            || !Number.isFinite(consumptionQtyPerSelection) || consumptionQtyPerSelection <= 0
+            || consumptionQtyPerSelection > 1_000_000) {
             return { ok: false, error: "اربط كل خيار بصنف مخزون أو خدمة وحدد سعراً إضافياً صحيحاً" };
           }
           optionIds.add(optionId);
           linkedItemIds.add(itemId);
-          options.push({ id: optionId, itemId, extraPrice: String(price) });
+          options.push({
+            id: optionId, itemId, extraPrice: String(price),
+            consumptionQtyPerSelection: String(consumptionQtyPerSelection),
+          });
         }
         normalizedGroups.push({
           id, nameAr, nameEn: nameEn || null, required, selectionMode, minSelect, maxSelect, options,
@@ -6974,6 +6983,59 @@ function batchPage(req: any, res: any): { page: number; pageSize: number } | nul
   }
   return { page, pageSize };
 }
+
+router.get("/reports/pending-operations", requirePermission("inventory_reports", "view"), async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const [transfers, adjustments, counts, receipts, deliveries] = await Promise.all([
+    db.select({ id: stockTransfersTable.id, number: stockTransfersTable.transferNumber, date: stockTransfersTable.transferDate })
+      .from(stockTransfersTable).where(and(eq(stockTransfersTable.companyId, cid), eq(stockTransfersTable.status, "draft")))
+      .orderBy(desc(stockTransfersTable.transferDate)).limit(25),
+    db.select({ id: stockAdjustmentsTable.id, number: stockAdjustmentsTable.adjustmentNumber, date: stockAdjustmentsTable.adjustmentDate })
+      .from(stockAdjustmentsTable).where(and(eq(stockAdjustmentsTable.companyId, cid), eq(stockAdjustmentsTable.status, "draft")))
+      .orderBy(desc(stockAdjustmentsTable.adjustmentDate)).limit(25),
+    db.select({ id: stockCountsTable.id, number: stockCountsTable.countNumber, date: stockCountsTable.countDate })
+      .from(stockCountsTable).where(and(eq(stockCountsTable.companyId, cid), eq(stockCountsTable.status, "draft")))
+      .orderBy(desc(stockCountsTable.countDate)).limit(25),
+    db.select({ id: goodsReceiptsTable.id, number: goodsReceiptsTable.docNumber, date: goodsReceiptsTable.receiptDate })
+      .from(goodsReceiptsTable).where(and(eq(goodsReceiptsTable.companyId, cid), eq(goodsReceiptsTable.status, "draft")))
+      .orderBy(desc(goodsReceiptsTable.receiptDate)).limit(25),
+    db.select({ id: goodsDeliveriesTable.id, number: goodsDeliveriesTable.docNumber, date: goodsDeliveriesTable.deliveryDate })
+      .from(goodsDeliveriesTable).where(and(eq(goodsDeliveriesTable.companyId, cid), eq(goodsDeliveriesTable.status, "draft")))
+      .orderBy(desc(goodsDeliveriesTable.deliveryDate)).limit(25),
+  ]);
+  const [transferCount, adjustmentCount, countCount, receiptCount, deliveryCount] = await Promise.all([
+    db.select({ count: sql<number>`COUNT(*)::int` }).from(stockTransfersTable)
+      .where(and(eq(stockTransfersTable.companyId, cid), eq(stockTransfersTable.status, "draft"))),
+    db.select({ count: sql<number>`COUNT(*)::int` }).from(stockAdjustmentsTable)
+      .where(and(eq(stockAdjustmentsTable.companyId, cid), eq(stockAdjustmentsTable.status, "draft"))),
+    db.select({ count: sql<number>`COUNT(*)::int` }).from(stockCountsTable)
+      .where(and(eq(stockCountsTable.companyId, cid), eq(stockCountsTable.status, "draft"))),
+    db.select({ count: sql<number>`COUNT(*)::int` }).from(goodsReceiptsTable)
+      .where(and(eq(goodsReceiptsTable.companyId, cid), eq(goodsReceiptsTable.status, "draft"))),
+    db.select({ count: sql<number>`COUNT(*)::int` }).from(goodsDeliveriesTable)
+      .where(and(eq(goodsDeliveriesTable.companyId, cid), eq(goodsDeliveriesTable.status, "draft"))),
+  ]);
+  const records = [
+    ...transfers.map(row => ({ id: row.id, type: "transfer", number: row.number, date: String(row.date), href: "/inventory/transfers" })),
+    ...adjustments.map(row => ({ id: row.id, type: "adjustment", number: row.number, date: String(row.date), href: "/inventory/adjustments" })),
+    ...counts.map(row => ({ id: row.id, type: "count", number: row.number, date: String(row.date), href: "/inventory/counts" })),
+    ...receipts.map(row => ({ id: row.id, type: "receipt", number: row.number, date: String(row.date), href: "/goods-receipts" })),
+    ...deliveries.map(row => ({ id: row.id, type: "delivery", number: row.number, date: String(row.date), href: "/goods-deliveries" })),
+  ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 25);
+  res.json({
+    total: Number(transferCount[0]?.count ?? 0) + Number(adjustmentCount[0]?.count ?? 0)
+      + Number(countCount[0]?.count ?? 0) + Number(receiptCount[0]?.count ?? 0)
+      + Number(deliveryCount[0]?.count ?? 0),
+    byType: {
+      transfer: Number(transferCount[0]?.count ?? 0),
+      adjustment: Number(adjustmentCount[0]?.count ?? 0),
+      count: Number(countCount[0]?.count ?? 0),
+      receipt: Number(receiptCount[0]?.count ?? 0),
+      delivery: Number(deliveryCount[0]?.count ?? 0),
+    },
+    records,
+  });
+});
 
 router.get("/reports/batches", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;

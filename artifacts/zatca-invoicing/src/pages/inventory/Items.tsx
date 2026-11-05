@@ -1444,7 +1444,7 @@ function AIAssistDialog({
 
 // deleted new item units panel here
 
-type RestaurantModifierOptionConfig = { id: string; itemId: number | null; extraPrice: string };
+type RestaurantModifierOptionConfig = { id: string; itemId: number | null; extraPrice: string; consumptionQtyPerSelection: string };
 type RestaurantModifierGroupConfig = {
   id: string; nameAr: string; nameEn: string; required: boolean;
   selectionMode: "single" | "multiple"; minSelect: number; maxSelect: number;
@@ -1482,7 +1482,7 @@ function RestaurantModifierGroupsEditor({
   const addGroup = () => onChange([...value, {
     id: crypto.randomUUID(), nameAr: "", nameEn: "", required: false,
     selectionMode: "single", minSelect: 0, maxSelect: 1,
-    options: [{ id: crypto.randomUUID(), itemId: null, extraPrice: "0" }],
+    options: [{ id: crypto.randomUUID(), itemId: null, extraPrice: "0", consumptionQtyPerSelection: "1" }],
   }]);
   const fieldClass = "h-9 w-full rounded-lg border border-input bg-background px-3 text-sm";
   return (
@@ -1525,7 +1525,7 @@ function RestaurantModifierGroupsEditor({
             </label>
           </div>
           {group.options.map((option, oi) => (
-            <div key={option.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_auto]">
+            <div key={option.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px_120px_auto]">
               <SearchCombobox
                 items={choices}
                 value={option.itemId == null ? "" : String(option.itemId)}
@@ -1538,8 +1538,12 @@ function RestaurantModifierGroupsEditor({
                 testId={`select-modifier-item-${gi}-${oi}`}
               />
               <Input type="number" min="0" step="0.01" value={option.extraPrice}
-                aria-label="السعر الإضافي" data-testid={`input-modifier-price-${gi}-${oi}`}
+                placeholder="سعر إضافي" aria-label="السعر الإضافي" data-testid={`input-modifier-price-${gi}-${oi}`}
                 onChange={e => updateOption(gi, oi, { extraPrice: e.target.value })} />
+              <Input type="number" min="0.0001" max="1000000" step="0.0001" value={option.consumptionQtyPerSelection}
+                placeholder="كمية/اختيار" aria-label="كمية الاستهلاك لكل اختيار" title="كمية الصنف المستهلكة لكل اختيار"
+                data-testid={`input-modifier-consumption-${gi}-${oi}`}
+                onChange={e => updateOption(gi, oi, { consumptionQtyPerSelection: e.target.value })} />
               <Button type="button" variant="outline" aria-label="حذف الخيار"
                 data-testid={`button-remove-modifier-option-${gi}-${oi}`}
                 onClick={() => updateGroup(gi, { options: group.options.filter((_, j) => j !== oi) })}>
@@ -1549,7 +1553,9 @@ function RestaurantModifierGroupsEditor({
           ))}
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" data-testid={`button-add-modifier-option-${gi}`}
-              onClick={() => updateGroup(gi, { options: [...group.options, { id: crypto.randomUUID(), itemId: null, extraPrice: "0" }] })}>
+              onClick={() => updateGroup(gi, { options: [...group.options, {
+                id: crypto.randomUUID(), itemId: null, extraPrice: "0", consumptionQtyPerSelection: "1",
+              }] })}>
               <Plus className="h-4 w-4" /> إضافة اختيار
             </Button>
             <Button type="button" variant="ghost" size="sm" data-testid={`button-remove-modifier-group-${gi}`}
@@ -1749,6 +1755,7 @@ export default function Items() {
         ? item.variantAttributes._restaurantModifierGroups.map((group: any) => ({
             ...group, nameEn: group.nameEn ?? "", options: (group.options ?? []).map((option: any) => ({
               ...option, extraPrice: String(option.extraPrice ?? "0"),
+              consumptionQtyPerSelection: String(option.consumptionQtyPerSelection ?? "1"),
             })),
           }))
         : [],
@@ -1777,7 +1784,10 @@ export default function Items() {
     const modifierGroups = Array.isArray(form.restaurantModifierGroups) ? form.restaurantModifierGroups : [];
     if (modifierGroups.some((group: RestaurantModifierGroupConfig) =>
       !group.nameAr.trim() || !group.options.length
-      || group.options.some(option => !option.itemId || !Number.isFinite(Number(option.extraPrice)) || Number(option.extraPrice) < 0)
+      || group.options.some(option => !option.itemId || !Number.isFinite(Number(option.extraPrice)) || Number(option.extraPrice) < 0
+        || !/^\d+(?:\.\d{1,4})?$/.test(String(option.consumptionQtyPerSelection).trim())
+        || !Number.isFinite(Number(option.consumptionQtyPerSelection))
+        || Number(option.consumptionQtyPerSelection) <= 0 || Number(option.consumptionQtyPerSelection) > 1_000_000)
       || group.minSelect < (group.required ? 1 : 0) || group.maxSelect < 1
       || group.minSelect > group.maxSelect || group.maxSelect > group.options.length
       || (group.selectionMode === "single" && group.maxSelect !== 1))) {
@@ -1850,6 +1860,7 @@ export default function Items() {
       minSelect: Number(group.minSelect), maxSelect: Number(group.maxSelect),
       options: group.options.map(option => ({
         id: option.id, itemId: Number(option.itemId), extraPrice: String(Number(option.extraPrice)),
+        consumptionQtyPerSelection: String(Number(option.consumptionQtyPerSelection)),
       })),
     }));
     if (normalizedModifierGroups.length) retailAttributes._restaurantModifierGroups = normalizedModifierGroups;

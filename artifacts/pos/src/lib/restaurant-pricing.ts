@@ -31,8 +31,8 @@ export function buildRestaurantInvoicePricing(
       erpVatRate: modifier.vatRate,
       vatIncluded: modifier.vatIncluded ?? item.vatIncluded,
       nameSnapshot: modifier.option,
-      qty: item.qty,
-      price: modifier.price,
+      qty: Number((Number(item.qty) * Number(modifier.consumptionQtyPerSelection ?? 1)).toFixed(4)),
+      price: Number((Number(modifier.price) / Number(modifier.consumptionQtyPerSelection ?? 1)).toFixed(4)),
       modifiers: [],
     }] : []),
   ]);

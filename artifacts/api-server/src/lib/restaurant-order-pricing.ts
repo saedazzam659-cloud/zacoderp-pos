@@ -8,6 +8,7 @@ export type RestaurantOrderPricingLine = {
   modifiers?: Array<{
     itemId?: number;
     price?: string | number;
+    consumptionQtyPerSelection?: string | number;
     vatRate?: string | number | null;
     vatIncluded?: boolean | null;
   }> | null;
@@ -36,11 +37,13 @@ export function calculateRestaurantOrderTotals(lines: RestaurantOrderPricingLine
     addLine(line);
     for (const modifier of line.modifiers ?? []) {
       if (!modifier.itemId || modifier.price == null) continue;
+      const consumptionQty = Number(modifier.consumptionQtyPerSelection ?? 1);
+      if (!Number.isFinite(consumptionQty) || consumptionQty <= 0) continue;
       addLine({
         menuItemId: line.menuItemId,
         erpItemId: modifier.itemId,
-        qty: line.qty,
-        price: modifier.price,
+        qty: Number((Number(line.qty) * consumptionQty).toFixed(4)),
+        price: Number((Number(modifier.price) / consumptionQty).toFixed(4)),
         vatIncluded: modifier.vatIncluded ?? line.vatIncluded,
         vatRate: modifier.vatRate,
       });

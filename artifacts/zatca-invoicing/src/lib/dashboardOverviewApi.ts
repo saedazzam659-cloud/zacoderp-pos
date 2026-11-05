@@ -46,6 +46,14 @@ export type DashboardCharts = {
   paymentMix:  Array<{ paymentType: string; total: number; count: number }>;
   byBranch:    Array<{ branchId: number | null; branchNameAr: string; branchNameEn: string | null; total: number; count: number }>;
   monthly12m:  Array<{ month: string; total: number; count: number }>;
+  hourlySales: Array<{ hour: number; currencyCode: string; total: number; count: number }>;
+};
+
+export type PosOrderTypeReport = Array<{ channel: "dine_in" | "takeaway" | "delivery"; count: number }>;
+export type PendingInventoryOperationsReport = {
+  total: number;
+  byType: Record<"transfer" | "adjustment" | "count" | "receipt" | "delivery", number>;
+  records: Array<{ id: number; type: "transfer" | "adjustment" | "count" | "receipt" | "delivery"; number: string | null; date: string; href: string }>;
 };
 
 export type DashboardAlerts = {
@@ -92,6 +100,19 @@ export const dashboardOverviewApi = {
       `${API}/api/dashboard/overview${qs({ date: opts.date, branchId: opts.branchId })}`,
       { headers: authHeaders() },
     );
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  async orderTypes(opts: { date?: string; branchId?: number } = {}): Promise<PosOrderTypeReport> {
+    const r = await fetch(
+      `${API}/api/pos-restaurant/reports/order-types${qs({ date: opts.date, branchId: opts.branchId })}`,
+      { headers: authHeaders() },
+    );
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  async pendingInventoryOperations(): Promise<PendingInventoryOperationsReport> {
+    const r = await fetch(`${API}/api/inventory/reports/pending-operations`, { headers: authHeaders() });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
