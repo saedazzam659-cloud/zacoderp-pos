@@ -2384,6 +2384,21 @@ export function template14(d: PrintData): string {
   // Keep their totals in normal flow so the summary cannot be pushed onto a
   // mostly empty second page by the single-page spacer.
   const anchorBottom = lines.length <= 12 && d.type !== "quotation";
+  const pageNumberContent = isEn
+    ? `"Page " counter(page) " of " counter(pages)`
+    : `"صفحة " counter(page) " من " counter(pages)`;
+  const pageRule = isQuot
+    ? `@page {
+        size: A4;
+        margin: 0 0 9mm 0 !important;
+        @bottom-center {
+          content: ${pageNumberContent};
+          font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+          font-size: 9pt;
+          color: #475569;
+        }
+      }`
+    : `@page { size: A4; margin: 0 !important; }`;
 
   const docHead = `<!DOCTYPE html><html dir="${dir}"><head><meta charset="UTF-8"><title>${titleMain} — ${docNo}</title>
   ${baseStyles("#0f172a")}
@@ -2399,7 +2414,7 @@ export function template14(d: PrintData): string {
     /* margin:0 also suppresses the browser's own print header/footer
        (URL + date line) — the page padding is recreated below via the
        body's side padding + the repeating running header/footer cells. */
-    @page { size: A4; margin: 0 !important; }
+     ${pageRule}
     :root { --ink:#0f172a; --line:#e5e7eb; --soft:#f8fafc; --gold:#b88a2a; --gold2:#e5c277; }
     html, body { padding: 0 !important; margin: 0 !important; color: var(--ink); }
     /* Horizontal padding on the body persists on every printed page
@@ -2421,7 +2436,9 @@ export function template14(d: PrintData): string {
        the old top (8mm) / bottom (10mm) @page margins now that the page
        margin itself is 0 (needed to kill the browser URL footer). */
     .running-header { padding-top: 10mm; padding-bottom: 4px; }
-    .running-footer { padding-top: 4px; padding-bottom: 11mm; }
+     .running-footer { padding-top: 4px; padding-bottom: ${isQuot ? "2mm" : "11mm"}; }
+     .quotation-pinned-bottom { margin-bottom: 6px; }
+     .quotation-pinned-bottom .bottom { margin-top: 0; }
 
     /* ── 3-column header ───────────────────────────────────────────── */
     .hdr { display:grid; grid-template-columns: 1fr 1.1fr 1fr; gap:12px; align-items:stretch; margin-bottom:14px; }
@@ -2779,6 +2796,24 @@ export function template14(d: PrintData): string {
               ${sarEqRowsHtml(totals, "__totalsRow", tl, nf)}
               ${(company?.printShowItemsSummary !== false) ? (isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)) : ""}`;
 
+  const bottomBlockHtml = `
+    <div class="bottom">
+      <div class="totals-card">
+        ${contractingTotalsHtml}
+      </div>
+      ${!contracting && showQrColumn ? `<div class="qr-col">
+        ${showQrInDocument ? `<div class="qr-card">
+          ${qrImgHtml(d, { size: 150 })}
+          <div class="lbl">QR — ZATCA</div>
+        </div>` : ""}
+        ${bankText ? `<div class="bank-box"><div class="bank-title">${tl("بيانات الحساب البنكي", "Bank Account Details")}</div><div class="bank-body">${escapePrintHtml(bankText)}</div></div>` : ""}
+        ${customNotesHtml}
+      </div>` : ""}
+    </div>`;
+  const runningFooterHtml = isQuot
+    ? `<div class="quotation-pinned-bottom">${bottomBlockHtml}</div>${footerHtml}`
+    : footerHtml;
+
   return `${docHead}
   <body><div class="sheet">
     <table class="page-frame">
@@ -2786,7 +2821,7 @@ export function template14(d: PrintData): string {
         <tr><td><div class="running-header">${headerHtml}</div></td></tr>
       </thead>
       <tfoot>
-        <tr><td><div class="running-footer">${footerHtml}</div></td></tr>
+        <tr><td><div class="running-footer">${runningFooterHtml}</div></td></tr>
       </tfoot>
       <tbody>
         <tr><td>
@@ -2801,20 +2836,8 @@ export function template14(d: PrintData): string {
                table stays in plain block flow and paginates reliably. -->
           ${anchorBottom ? `<div class="bottom-spacer"></div>` : ""}
 
-          <!-- Bottom : totals + QR (anchored to the page bottom) ──────── -->
-          <div class="bottom">
-            <div class="totals-card">
-              ${contractingTotalsHtml}
-            </div>
-            ${!contracting && showQrColumn ? `<div class="qr-col">
-              ${showQrInDocument ? `<div class="qr-card">
-                ${qrImgHtml(d, { size: 150 })}
-                <div class="lbl">QR — ZATCA</div>
-              </div>` : ""}
-              ${bankText ? `<div class="bank-box"><div class="bank-title">${tl("بيانات الحساب البنكي", "Bank Account Details")}</div><div class="bank-body">${escapePrintHtml(bankText)}</div></div>` : ""}
-              ${customNotesHtml}
-            </div>` : ""}
-          </div>
+          <!-- Quotation totals/bank/terms live in the repeated page footer. -->
+          ${isQuot ? "" : bottomBlockHtml}
           ${anchorBottom ? `</div>` : ""}
         </td></tr>
       </tbody>
