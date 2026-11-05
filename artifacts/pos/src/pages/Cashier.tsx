@@ -92,6 +92,15 @@ type ParkedCart = {
   discountPct: number;
 };
 
+type ShiftBlockers = {
+  currentCart: CartLine[];
+  parkedCarts: ParkedCart[];
+  queuedCount: number;
+  activeOrders: Array<{ id: number; orderNumber: string; branchId: number; channel: string; status: string; tableId?: number | null; customerName?: string | null }>;
+  additionalOrderCount: number;
+  errors: string[];
+};
+
 const VAT_RATE = 15;
 const SERVICE_ACCESS: Record<string, { feature: string; action: "view" | "edit" }> = {
   waiter: { feature: "pos_waiter", action: "view" },
@@ -237,6 +246,7 @@ export default function CashierPage() {
   const [restaurantOpen, setRestaurantOpen] = useState(false);
   const [heldCarts, setHeldCarts] = useState<ParkedCart[]>([]);
   const [heldCartsOpen, setHeldCartsOpen] = useState(false);
+  const [shiftBlockers, setShiftBlockers] = useState<ShiftBlockers | null>(null);
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [cashMovementOpen, setCashMovementOpen] = useState(false);
   const [cashBoxesOpen, setCashBoxesOpen] = useState(false);
@@ -478,14 +488,10 @@ export default function CashierPage() {
   };
 
   const ensureShiftWorkComplete = async (): Promise<boolean> => {
-    const blockers: string[] = [];
-
-    if (cart.length > 0 && !paid) {
-      blockers.push(`السلة الحالية تحتوي على ${itemCount} صنف؛ أكمل البيع أو أفرغ السلة.`);
-    }
-    if (heldCarts.length > 0) {
-      blockers.push(`${heldCarts.length} فاتورة معلّقة على هذا الجهاز؛ استعدها أو احذفها يدويًا.`);
-    }
+    const currentCart = cart.length > 0 && !paid ? [...cart] : [];
+    let activeOrders: ShiftBlockers["activeOrders"] = [];
+    let activeOrderCount = 0;
+    const errors: string[] = [];
 
     let queuedCount = await countQueued();
     let syncError = "";
@@ -498,28 +504,47 @@ export default function CashierPage() {
       queuedCount = await countQueued();
       setQueuedInvoices(queuedCount);
     }
-    if (queuedCount > 0) {
-      blockers.push(
-        `${queuedCount} فاتورة غير متزامنة؛ اتصل بالإنترنت وأكمل المزامنة${syncError ? ` (${syncError})` : ""}.`,
-      );
-    }
+    if (syncError) errors.push(`تعذّرت مزامنة بعض الفواتير: ${syncError}`);
 
     if (canShowService("waiter")) {
       try {
-        const { count } = await api.rActiveOrderCount(posSession?.branchId ?? branchId);
-        if (count > 0) {
-          blockers.push(`${count} طلب مطعم مفتوح؛ فوّتره أو ألغِه من طلبات الصالة أو تطبيق النادل.`);
-        }
+        const [countResult, orders] = await Promise.all([
+          api.rActiveOrderCount(posSession?.branchId ?? branchId),
+          api.rOrders(),
+        ]);
+        activeOrderCount = countResult.count;
+        activeOrders = orders
+          .filter(order => order.branchId === (posSession?.branchId ?? branchId) && !["billed", "cancelled"].includes(order.status))
+          .slice(0, 100);
       } catch {
-        blockers.push("تعذّر التحقق من طلبات المطعم؛ أُوقف الإجراء حتى لا تُترك طلبات دون معالجة.");
+        errors.push("تعذّر التحقق من طلبات المطعم؛ أُوقف الإجراء حتى لا تُترك طلبات دون معالجة.");
       }
     }
 
-    if (blockers.length > 0) {
-      window.alert(`لا يمكن إغلاق الوردية أو فتح وردية جديدة قبل معالجة التالي:\n\n• ${blockers.join("\n• ")}`);
+    const additionalOrderCount = Math.max(0, activeOrderCount - activeOrders.length);
+    if (currentCart.length || heldCarts.length || queuedCount || activeOrderCount || errors.length) {
+      setShiftBlockers({
+        currentCart,
+        parkedCarts: [...heldCarts],
+        queuedCount,
+        activeOrders,
+        additionalOrderCount,
+        errors,
+      });
       return false;
     }
     return true;
+  };
+
+  const retryShiftInvoiceSync = async () => {
+    try {
+      await syncNow(getToken());
+      const queuedCount = await countQueued();
+      setQueuedInvoices(queuedCount);
+      setShiftBlockers(current => current ? { ...current, queuedCount, errors: current.errors.filter(error => !error.startsWith("تعذّرت مزامنة")) } : current);
+    } catch (error: any) {
+      setShiftBlockers(current => current ? { ...current, errors: [...current.errors.filter(message => !message.startsWith("تعذّرت مزامنة")), `تعذّرت مزامنة بعض الفواتير: ${error?.message || "أعد المحاولة عند استقرار الاتصال."}`] } : current);
+    }
   };
 
   const closeAndPrintShift = async (sessionId: number, printWindow: Window) => {
@@ -1313,24 +1338,24 @@ export default function CashierPage() {
                       onClick={() => { setActiveCat(c.id as any); setActiveSubgroup("all"); }}
                       aria-pressed={active}
                       data-testid={`button-pos-display-group-${String(c.id)}`}
-                      className={`flex items-center gap-2 rounded-xl border font-bold whitespace-nowrap transition-all ${
+                      className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-bold whitespace-nowrap transition-all ${
                         active
-                          ? "h-14 border-primary bg-primary px-5 text-base text-primary-foreground shadow-md ring-2 ring-primary/15"
-                          : "h-10 border-border/80 bg-background px-4 text-sm text-foreground hover:border-primary/30 hover:bg-primary/[0.04]"
+                          ? "border-primary bg-primary text-primary-foreground shadow-sm ring-2 ring-primary/10"
+                          : "border-border/80 bg-background text-foreground hover:border-primary/30 hover:bg-primary/[0.04]"
                       }`}
                     >
                       {c.id !== "all" && (imageSrcFromUrl(c.imageUrl) ? (
                         <img
                           src={imageSrcFromUrl(c.imageUrl) ?? undefined}
                           alt=""
-                          className={`${active ? "h-9 w-9 rounded-lg" : "h-6 w-6 rounded-md"} object-cover`}
+                          className="h-6 w-6 rounded-md object-cover"
                           loading="lazy"
                         />
                       ) : (
                         <span className={`grid place-items-center text-[10px] font-black ${
-                          active ? "h-9 w-9 rounded-lg" : "h-6 w-6 rounded-md"
+                           "h-6 w-6 rounded-md"
                         } ${
-                          active ? "bg-primary-foreground/15 text-primary-foreground" : "bg-primary/10 text-primary"
+                         active ? "bg-primary-foreground/15 text-primary-foreground" : "bg-primary/10 text-primary"
                         }`} aria-hidden="true">
                           {c.nameAr.slice(0, 1)}
                         </span>
@@ -1570,6 +1595,69 @@ export default function CashierPage() {
           </>
         )}
       </AnimatePresence>
+
+      {shiftBlockers && (
+        <div className="fixed inset-0 z-[75] grid place-items-center bg-black/55 p-3 backdrop-blur-sm" role="presentation" onMouseDown={event => {
+          if (event.target === event.currentTarget) setShiftBlockers(null);
+        }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="shift-blockers-title" className="w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl" data-testid="dialog-shift-blockers">
+            <header className="flex items-center justify-between gap-3 border-b border-border bg-amber-50 px-5 py-4">
+              <div>
+                <h2 id="shift-blockers-title" className="font-black text-amber-950">عالج المعلّقات قبل متابعة الوردية</h2>
+                <p className="mt-1 text-xs text-amber-900/75">اختر إجراءً من هنا؛ لن تُغلق الوردية أو تُفتح وردية جديدة قبل إنهاء المعلّقات.</p>
+              </div>
+              <button type="button" onClick={() => setShiftBlockers(null)} aria-label="إغلاق التنبيه" className="grid size-9 place-items-center rounded-lg border border-amber-900/15 bg-white"><X className="size-4" /></button>
+            </header>
+            <div className="max-h-[70vh] space-y-3 overflow-y-auto p-4">
+              {shiftBlockers.currentCart.length > 0 && (
+                <article className="rounded-xl border border-border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div><p className="font-extrabold">الفاتورة الحالية غير المكتملة</p><p className="text-xs text-muted-foreground">{shiftBlockers.currentCart.reduce((sum, line) => sum + line.qty, 0)} صنف · {formatSAR(grandTotal)} ر.س</p></div>
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setShiftBlockers(null); setMobileCartOpen(true); }}>العودة للسلة</Button>
+                  </div>
+                </article>
+              )}
+              {shiftBlockers.parkedCarts.length > 0 && (
+                <article className="rounded-xl border border-border p-3">
+                  <p className="mb-2 font-extrabold">الفواتير المعلّقة على الجهاز ({shiftBlockers.parkedCarts.length})</p>
+                  <div className="space-y-2">
+                    {shiftBlockers.parkedCarts.map((parked, index) => (
+                      <div key={parked.id} className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 p-2">
+                        <div className="min-w-0"><p className="text-sm font-bold">فاتورة معلّقة {shiftBlockers.parkedCarts.length - index}</p><p className="text-xs text-muted-foreground">{parked.cart.map(line => line.item.nameAr).slice(0, 3).join("، ")} · {formatSAR(parkedCartTotal(parked))} ر.س</p></div>
+                        <Button type="button" size="sm" onClick={() => { setShiftBlockers(null); resumeParkedCart(parked.id); }}>استعادة</Button>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              )}
+              {shiftBlockers.queuedCount > 0 && (
+                <article className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                  <div><p className="font-extrabold">فواتير تنتظر المزامنة ({shiftBlockers.queuedCount})</p><p className="text-xs text-amber-900/75">تحقق من الاتصال ثم أعد المزامنة قبل متابعة الوردية.</p></div>
+                  <Button type="button" variant="outline" size="sm" onClick={retryShiftInvoiceSync}>مزامنة الآن</Button>
+                </article>
+              )}
+              {shiftBlockers.activeOrders.length > 0 && (
+                <article className="rounded-xl border border-border p-3">
+                  <p className="mb-2 font-extrabold">طلبات المطعم المفتوحة ({shiftBlockers.activeOrders.length + shiftBlockers.additionalOrderCount})</p>
+                  <div className="space-y-2">
+                    {shiftBlockers.activeOrders.map(order => (
+                      <div key={order.id} className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 p-2">
+                        <div><p className="text-sm font-bold">{order.orderNumber} · {order.channel === "delivery" ? "توصيل" : `طاولة ${order.tableId ?? "—"}`}</p><p className="text-xs text-muted-foreground">{order.customerName || order.status}</p></div>
+                        <Button type="button" variant="outline" size="sm" onClick={() => { setShiftBlockers(null); navigate(order.channel === "delivery" ? "/waiter?view=delivery" : "/waiter?view=tables"); }}>فتح الطلبات</Button>
+                      </div>
+                    ))}
+                    {shiftBlockers.additionalOrderCount > 0 && <p className="text-xs text-muted-foreground">وهناك {shiftBlockers.additionalOrderCount} طلبات أخرى؛ افتح طلبات المطعم لعرضها.</p>}
+                  </div>
+                </article>
+              )}
+              {shiftBlockers.errors.map((error, index) => <p key={index} role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">{error}</p>)}
+            </div>
+            <footer className="flex justify-end border-t border-border p-3">
+              <Button type="button" variant="outline" onClick={() => setShiftBlockers(null)}>إغلاق، ثم أعد محاولة الوردية</Button>
+            </footer>
+          </section>
+        </div>
+      )}
 
       {heldCartsOpen && (
         <motion.div
