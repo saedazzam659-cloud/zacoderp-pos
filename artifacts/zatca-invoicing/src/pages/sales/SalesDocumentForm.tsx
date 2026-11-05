@@ -3267,6 +3267,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         items={itemComboItems}
                         value={l.itemId}
                         onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined}
+                        closeOnDoubleClick={isInvoice}
                         onItemDoubleClick={isInvoice ? item => {
                           void selectItem(l._id, item.value, item.rawItem);
                           setFocusLineId(l._id);
@@ -3471,7 +3472,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 // identically across modes, so a newly added line inherits
                 // the default warehouse without any extra wiring here.
                 const showFreeQuantity = user?.company?.showFreeQuantity !== false;
-                const gridCols = `110px minmax(260px,1.4fr) 160px 120px 90px 80px${showFreeQuantity ? " 110px" : ""} 80px 100px 80px 130px 180px 40px`;
+                // Keep all numeric entry columns the same width in the classic
+                // one-page layout; wider text columns remain readable.
+                const gridCols = `96px minmax(260px,1.4fr) 144px 112px 96px 96px${showFreeQuantity ? " 96px" : ""} 96px 96px 96px 112px 170px 40px`;
                 const totalLabel = t("salesDocForm.colTotal");
                 const headers = [
                   t("salesDocForm.colItemCode"),
@@ -3504,8 +3507,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       style={{ gridTemplateColumns: gridCols }}
                     >
                       {isInvoice && l.itemId ? (
-                        <button type="button" className="h-8 truncate rounded-md bg-muted/40 px-2 text-start text-xs font-mono text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={isRtl ? "عرض حركة الصنف مع العميل" : "View item history with this customer"} onClick={() => setItemHistoryTarget({ itemId: String(l.itemId), code: l.itemCode })}>{l.itemCode || "—"}</button>
-                      ) : <Input className="h-8 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
+                        <button type="button" className="h-9 truncate rounded-md bg-muted/40 px-2 text-start text-xs font-mono text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={isRtl ? "عرض حركة الصنف مع العميل" : "View item history with this customer"} onClick={() => setItemHistoryTarget({ itemId: String(l.itemId), code: l.itemCode })}>{l.itemCode || "—"}</button>
+                      ) : <Input className="h-9 text-xs bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)}
                         onKeyDown={event => {
                           if (event.key !== "Enter" || !isInvoice || viewMode) return;
@@ -3532,18 +3535,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         }} />}
                       {user ? (
                         <div className="min-w-0">
-                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} onItemDoubleClick={isInvoice ? item => {
+                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} closeOnDoubleClick={isInvoice} onItemDoubleClick={isInvoice ? item => {
                             void selectItem(l._id, item.value, item.rawItem);
                             setFocusLineId(l._id);
                           } : undefined} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
                           {renderSalesOptionPicker(l)}
                         </div>
                       ) : (
-                        <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
+                        <Input className="h-9 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                       )}
                       {isServiceLine(l) ? (
-                        <div className="h-8 flex items-center justify-center rounded-md bg-muted/40 text-[11px] text-muted-foreground" title={t("inventoryMaster.items.serviceNoStockHint") as string}>
+                        <div className="h-9 flex items-center justify-center rounded-md bg-muted/40 text-[11px] text-muted-foreground" title={t("inventoryMaster.items.serviceNoStockHint") as string}>
                           {t("salesDocForm.serviceNoWarehouse")}
                         </div>
                       ) : warehouses.length > 0 ? (
@@ -3555,30 +3558,30 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                             placeholder={t("salesDocForm.warehousePlaceholder")}
                             searchPlaceholder={t("salesDocForm.searchItemPlaceholder")}
                             disabled={fp.isReadOnly("warehouse")}
-                            className="h-8 text-xs"
+                            className="h-9 text-xs"
                           />
                         </div>
                       ) : (
-                        <Input className="h-8 text-xs" placeholder="—" readOnly />
+                        <Input className="h-9 text-xs" placeholder="—" readOnly />
                       )}
                       {(() => {
                         const opts = salesLineUnitOptions(l.itemId, l.unitId);
                         return units.length > 0 ? (
                           <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)} disabled={!!l.itemId && opts.length === 0}>
-                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={l.itemId && opts.length === 0 ? t("inventoryMaster.units.baseRequired") : t("salesDocForm.colUnit")} /></SelectTrigger>
+                            <SelectTrigger className="h-9 text-xs"><SelectValue placeholder={l.itemId && opts.length === 0 ? t("inventoryMaster.units.baseRequired") : t("salesDocForm.colUnit")} /></SelectTrigger>
                             <SelectContent>
                           {opts.map((u: any) => <SelectItem key={u.value} value={u.value} disabled={u.disabled}>{u.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         ) : (
-                          <Input className="h-8 text-xs" placeholder={t("salesDocForm.colUnit")} value={l.unit}
+                          <Input className="h-9 text-xs" placeholder={t("salesDocForm.colUnit")} value={l.unit}
                             onChange={e => updateLine(l._id, "unit", e.target.value)} />
                         );
                       })()}
-                      <Input className="h-8 text-xs" type="text" inputMode="numeric" dir="ltr" value={l.qty}
+                      <Input className="h-9 text-xs" type="text" inputMode="numeric" dir="ltr" value={l.qty}
                         onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
                       {showFreeQuantity && <Input className={cn(
-                          "h-8 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono",
+                          "h-9 text-xs bg-amber-50 border-amber-200 text-amber-900 font-mono",
                           fp.isReadOnly("freeQty") && "bg-muted/40 cursor-not-allowed"
                         )}
                         type="text" inputMode="numeric" dir="ltr" value={l.freeQty}
@@ -3588,7 +3591,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <Input
                         data-testid={`input-sales-unit-price-${l._id}`}
                         className={cn(
-                          "h-8 text-xs",
+                          "h-9 text-xs",
                           l.appliedOfferId && l.appliedOfferName && "bg-emerald-50 border-emerald-300 text-emerald-800",
                           fp.isReadOnly("unitPrice") && "bg-muted/40 cursor-not-allowed"
                         )}
@@ -3600,7 +3603,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       {/* خصم% — نسبة مئوية تُطبَّق على (الكمية × سعر البيع). */}
                       <Input
                         className={cn(
-                          "h-8 text-xs",
+                          "h-9 text-xs",
                           l.appliedOfferId && "bg-emerald-50 border-emerald-300 text-emerald-800 font-semibold",
                           fp.isReadOnly("discount") && "bg-muted/40 cursor-not-allowed"
                         )}
@@ -3614,7 +3617,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                           تمامًا كما يُرحَّل الخصم بالنسبة. */}
                       <Input
                         className={cn(
-                          "h-8 text-xs font-mono tabular-nums",
+                          "h-9 text-xs font-mono tabular-nums",
                           fp.isReadOnly("discount") && "bg-muted/40 cursor-not-allowed"
                         )}
                         type="text" inputMode="decimal" dir="ltr" value={l.discountAmount}
@@ -3623,15 +3626,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         data-testid={`line-discount-amount-${l._id}`}
                         onChange={e => updateLine(l._id, "discountAmount", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input
-                        className={cn("h-8 text-xs", fp.isReadOnly("taxRate") && "bg-muted/40 cursor-not-allowed")}
+                        className={cn("h-9 text-xs", fp.isReadOnly("taxRate") && "bg-muted/40 cursor-not-allowed")}
                         type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
                         readOnly={fp.isReadOnly("taxRate")}
                       title={fp.isReadOnly("taxRate") ? (isRtl ? "للقراءة فقط حسب السياسة" : "Read-only under policy") : undefined}
                         onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
-                      <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
-                      <Input className="h-8 text-xs" value={l.notes}
+                      <Input className="h-9 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
+                      <Input className="h-9 text-xs" value={l.notes}
                         onChange={e => updateLine(l._id, "notes", e.target.value)} />
-                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"
+                      <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-destructive"
                         onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>

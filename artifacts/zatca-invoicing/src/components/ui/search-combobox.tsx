@@ -62,6 +62,8 @@ interface SearchComboboxProps {
   onAddSelected?: (values: string[], items: ComboboxItem[]) => void | Promise<void>;
   /** Immediately add one result on double-click while leaving other checked rows selected. */
   onItemDoubleClick?: (item: ComboboxItem) => void | Promise<void>;
+  /** Close the popup after the result's dedicated double-click action only. */
+  closeOnDoubleClick?: boolean;
 }
 
 export function SearchCombobox({
@@ -88,6 +90,7 @@ export function SearchCombobox({
   endAdornment,
   onAddSelected,
   onItemDoubleClick,
+  closeOnDoubleClick = false,
 }: SearchComboboxProps) {
   const { i18n } = useTranslation();
   const isEnglish = i18n.language?.toLowerCase().startsWith("en") ?? false;
@@ -203,7 +206,7 @@ export function SearchCombobox({
     }
   };
 
-  const addQuickly = (item: ComboboxItem) => {
+  const addQuickly = (item: ComboboxItem, closeAfterDoubleClick = false) => {
     if (item.disabled || !onAddSelected || !onItemDoubleClick) return;
     setMultiSelectedValues(current => current.filter(value => value !== item.value));
     setMultiSelectedItems(current => {
@@ -211,7 +214,13 @@ export function SearchCombobox({
       delete next[item.value];
       return next;
     });
-    void Promise.resolve(onItemDoubleClick(item)).catch(error => {
+    const result = onItemDoubleClick(item);
+    if (closeAfterDoubleClick) {
+      setOpen(false);
+      setSearch("");
+      onSearchChange?.("");
+    }
+    void Promise.resolve(result).catch(error => {
       console.error("[SearchCombobox] could not add item quickly", error);
     });
   };
@@ -248,7 +257,7 @@ export function SearchCombobox({
           if (dis || !onAddSelected || !onItemDoubleClick) return;
           if ((e.target as HTMLElement).closest('input[type="checkbox"]')) return;
           e.preventDefault();
-          addQuickly(item);
+          addQuickly(item, closeOnDoubleClick);
         }}
         onMouseEnter={() => { if (!dis) setHighlight(idx); }}
         aria-disabled={dis}
