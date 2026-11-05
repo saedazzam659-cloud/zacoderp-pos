@@ -569,11 +569,11 @@ export const api = {
   rKitchenSetStatus: (lineId: number, status: "preparing" | "ready" | "served") =>
     req<{ ok: true }>("PUT", `/api/pos-restaurant/kitchen/items/${lineId}/status`, { status }),
 
-  rCustomPeriodComparison: (ranges: { period1From: string; period1To: string; period2From: string; period2To: string }) =>
+  rCustomPeriodComparison: (ranges: { period1From: string; period1To: string; period2From: string; period2To: string; branchId?: number }) =>
     req<{
       period1: { from: string; to: string; currencies: PosPeriodReport[] };
       period2: { from: string; to: string; currencies: PosPeriodReport[] };
-    }>("GET", `/api/pos-restaurant/reports/custom-period-comparison?${new URLSearchParams(ranges)}`),
+    }>("GET", `/api/pos-restaurant/reports/custom-period-comparison?${new URLSearchParams(Object.fromEntries(Object.entries(ranges).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)])))}`),
 
   rInventoryForecast: (days = 30) =>
     req<{

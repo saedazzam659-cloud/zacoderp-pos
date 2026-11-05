@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDownRight, ArrowUpRight, CalendarRange, Loader2, Search } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, CalendarRange, Download, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api, type PosPeriodReport } from "@/lib/api";
+import { api, getStoredUser, type PosPeriodReport } from "@/lib/api";
 
-type Ranges = { period1From: string; period1To: string; period2From: string; period2To: string };
+type Ranges = { period1From: string; period1To: string; period2From: string; period2To: string; branchId: string };
 type Metric = "netSales" | "orders" | "averageOrder" | "discounts" | "returns" | "returnCount" | "voidCount" | "voidAmount";
 
 function localDate(date: Date) {
@@ -19,7 +19,7 @@ function shiftDate(day: string, offset: number) {
 
 function defaultRanges(): Ranges {
   const today = localDate(new Date());
-  return { period1From: shiftDate(today, -6), period1To: today, period2From: shiftDate(today, -13), period2To: shiftDate(today, -7) };
+  return { period1From: shiftDate(today, -6), period1To: today, period2From: shiftDate(today, -13), period2To: shiftDate(today, -7), branchId: "" };
 }
 
 function money(value: number, currency: string) {
@@ -52,12 +52,22 @@ function emptyPeriod(currencyCode: string): PosPeriodReport {
 }
 
 export default function PosPeriodComparison() {
+  const companyId = Number(getStoredUser()?.companyId ?? 0);
   const [draft, setDraft] = useState<Ranges>(defaultRanges);
   const [applied, setApplied] = useState<Ranges>(defaultRanges);
   const [formError, setFormError] = useState("");
+  const branches = useQuery({
+    queryKey: ["pos-report-branches", companyId],
+    queryFn: () => api.getBranches(companyId, { onlyUserBranches: true }),
+    enabled: companyId > 0,
+    staleTime: 5 * 60_000,
+  });
   const report = useQuery({
     queryKey: ["pos-period-comparison", applied],
-    queryFn: () => api.rCustomPeriodComparison(applied),
+    queryFn: () => api.rCustomPeriodComparison({
+      ...applied,
+      branchId: applied.branchId ? Number(applied.branchId) : undefined,
+    }),
   });
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -74,18 +84,68 @@ export default function PosPeriodComparison() {
     ...(report.data?.period1.currencies.map(item => item.currencyCode) ?? []),
     ...(report.data?.period2.currencies.map(item => item.currencyCode) ?? []),
   ])).sort();
+  const selectedBranchName = applied.branchId
+    ? branches.data?.find(branch => String(branch.id) === applied.branchId)?.nameAr ?? `فرع #${applied.branchId}`
+    : "كل الفروع المتاحة";
+
+  function downloadCsv() {
+    if (!report.data) return;
+    const rows: unknown[][] = [
+      ["القسم", "العملة", "الفترة", "من", "إلى", "الفرع", "المؤشر", "القيمة", "العدد"],
+    ];
+    const periods = [
+      { label: "الفترة الأولى", value: report.data.period1 },
+      { label: "فترة المقارنة", value: report.data.period2 },
+    ];
+    const allCurrencies = Array.from(new Set(periods.flatMap(period => period.value.currencies.map(item => item.currencyCode))));
+    for (const currency of allCurrencies) {
+      const first = report.data.period1.currencies.find(item => item.currencyCode === currency) ?? emptyPeriod(currency);
+      const second = report.data.period2.currencies.find(item => item.currencyCode === currency) ?? emptyPeriod(currency);
+      const metrics: Metric[] = ["netSales", "orders", "averageOrder", "discounts", "returns", "returnCount", "voidCount", "voidAmount"];
+      for (const metric of metrics) {
+        const value1 = Number(first[metric]);
+        const value2 = Number(second[metric]);
+        rows.push(["مؤشر", currency, "الفترة الأولى", applied.period1From, applied.period1To, selectedBranchName, metricLabels[metric], value1, ""]);
+        rows.push(["مؤشر", currency, "فترة المقارنة", applied.period2From, applied.period2To, selectedBranchName, metricLabels[metric], value2, ""]);
+        rows.push(["تغير", currency, "الأولى مقابل المقارنة", applied.period1From, applied.period1To, selectedBranchName, metricLabels[metric], delta(value1, value2), ""]);
+      }
+      for (const period of periods) {
+        const stats = period.label === "الفترة الأولى" ? first : second;
+        for (const payment of stats.paymentMix) {
+          rows.push(["وسيلة الدفع", currency, period.label, period.value.from, period.value.to, selectedBranchName, paymentName(payment.paymentType), payment.amount, payment.count]);
+        }
+        for (const item of stats.topItems) {
+          rows.push(["أصناف", currency, period.label, period.value.from, period.value.to, selectedBranchName, item.name, item.revenue, item.qty]);
+        }
+      }
+    }
+    const csv = `\uFEFF${rows.map(row => row.map(value => `"${String(value ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n")}`;
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `pos-comparison_${applied.period1From}_${applied.period1To}_vs_${applied.period2From}_${applied.period2To}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <section className="overflow-hidden rounded-2xl border border-white/10 bg-slate-900 shadow-xl" data-testid="section-pos-period-comparison">
-      <header className="flex items-center gap-3 border-b border-white/10 bg-gradient-to-l from-emerald-500/10 via-slate-900 to-slate-900 p-4">
-        <span className="grid size-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300"><CalendarRange className="size-5" /></span>
-        <div>
-          <h2 className="font-black">مقارنة فترتين</h2>
-          <p className="mt-0.5 text-xs text-white/55">قارن المبيعات والفواتير والخصومات والمرتجعات بين تاريخين</p>
+      <header className="flex items-center justify-between gap-3 border-b border-white/10 bg-gradient-to-l from-emerald-500/10 via-slate-900 to-slate-900 p-4">
+        <div className="flex items-center gap-3">
+          <span className="grid size-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300"><CalendarRange className="size-5" /></span>
+          <div>
+            <h2 className="font-black">مقارنة فترتين</h2>
+            <p className="mt-0.5 text-xs text-white/55">قارن المبيعات والفواتير والخصومات والمرتجعات بين تاريخين</p>
+          </div>
         </div>
+        <Button type="button" variant="outline" onClick={downloadCsv} disabled={!report.data || report.isFetching || branches.isLoading} className="shrink-0 border-white/15 bg-slate-950/50 text-white hover:bg-white/10" data-testid="button-export-pos-comparison">
+          <Download className="me-2 size-4" /> تنزيل CSV
+        </Button>
       </header>
 
-      <form onSubmit={submit} className="grid gap-3 border-b border-white/10 p-4 lg:grid-cols-[1fr_1fr_auto]">
+      <form onSubmit={submit} className="grid gap-3 border-b border-white/10 p-4 lg:grid-cols-[1fr_1fr_0.8fr_auto]">
         {([
           ["الفترة الأولى", "period1From", "period1To"],
           ["فترة المقارنة", "period2From", "period2To"],
@@ -100,6 +160,13 @@ export default function PosPeriodComparison() {
             </label>
           </fieldset>
         ))}
+        <label className="flex flex-col justify-end text-[11px] text-white/55">
+          الفرع
+          <select value={draft.branchId} onChange={event => setDraft(value => ({ ...value, branchId: event.target.value }))} className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-slate-900 px-2 text-sm text-white" data-testid="select-pos-report-branch">
+            <option value="">كل الفروع المتاحة</option>
+            {(branches.data ?? []).map(branch => <option key={branch.id} value={branch.id}>{branch.nameAr}</option>)}
+          </select>
+        </label>
         <div className="flex flex-col justify-end gap-2">
           <Button type="submit" className="h-10 bg-emerald-600 font-bold text-white hover:bg-emerald-500" data-testid="button-run-period-comparison">
             {report.isFetching ? <Loader2 className="me-2 size-4 animate-spin" /> : <Search className="me-2 size-4" />}
