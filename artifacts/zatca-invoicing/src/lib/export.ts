@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { saveBlob, saveWorkbook } from "./saveFile";
+import { findLastPaintedRow } from "./printCanvasPagination";
 import * as statementTemplate from "../../../mobile/lib/statementHtml";
 
 export interface ExportColumn {
@@ -1096,6 +1097,34 @@ export async function downloadHtmlAsPdf(
       logging:         false,
     });
 
+    // The iframe is deliberately expanded beyond the content so layout and
+    // font measurements settle. Some browsers include that extra viewport
+    // as white canvas pixels; slicing it as real content can create a final
+    // page that contains only the repeated table header.
+    let canvasContentHeight = canvas.height;
+    try {
+      const canvasContext = canvas.getContext("2d");
+      if (canvasContext) {
+        const chunkHeight = 64;
+        let lastPaintedRow = -1;
+        for (let bottom = canvas.height; bottom > 0; bottom -= chunkHeight) {
+          const top = Math.max(0, bottom - chunkHeight);
+          const pixels = canvasContext.getImageData(0, top, canvas.width, bottom - top).data;
+          const localRow = findLastPaintedRow(pixels, canvas.width, bottom - top);
+          if (localRow >= 0) {
+            lastPaintedRow = top + localRow;
+            break;
+          }
+        }
+        if (lastPaintedRow >= 0) {
+          canvasContentHeight = Math.min(canvas.height, lastPaintedRow + 1 + 8);
+        }
+      }
+    } catch {
+      // If the browser blocks pixel reads (for example, due to a remote
+      // image), keep the original canvas height rather than failing export.
+    }
+
     // Collect every safe break y-coordinate (in canvas pixels). A break
     // is "safe" when it sits BETWEEN two block-level report elements,
     // never inside one. We collect BOTH the TOP and the BOTTOM of every
@@ -1126,7 +1155,7 @@ export async function downloadHtmlAsPdf(
       safeBreaks.push(Math.max(0, Math.floor((rect.top    - bodyRect.top) * SCALE)));
       safeBreaks.push(Math.max(0, Math.ceil ((rect.bottom - bodyRect.top) * SCALE)));
     }
-    safeBreaks.push(canvas.height);
+    safeBreaks.push(canvasContentHeight);
     // Sort + dedupe.
     const breaks = Array.from(new Set(safeBreaks)).sort((a, b) => a - b);
 
@@ -1192,12 +1221,16 @@ export async function downloadHtmlAsPdf(
     let pageIdx = 0;
     // Max-iter cap: even at 1 page per canvas-pixel-row this is wildly
     // generous. Guards against any pathological non-finite geometry.
-    const MAX_ITERS = Math.max(1000, Math.ceil(canvas.height) + 10);
+    const MAX_ITERS = Math.max(1000, Math.ceil(canvasContentHeight) + 10);
     let iter = 0;
-    while (cursor < canvas.height) {
+    while (cursor < canvasContentHeight) {
       if (++iter > MAX_ITERS) {
         // eslint-disable-next-line no-console
-        console.error("downloadHtmlAsPdf: page-walk did not terminate", { cursor, canvasHeight: canvas.height });
+        console.error("downloadHtmlAsPdf: page-walk did not terminate", {
+          cursor,
+          canvasHeight: canvas.height,
+          contentHeight: canvasContentHeight,
+        });
         break;
       }
       // Pages after the first reserve vertical room for the repeated
@@ -1209,9 +1242,9 @@ export async function downloadHtmlAsPdf(
         throw new Error("downloadHtmlAsPdf: invalid pageHeightPx");
       }
       const idealCut = cursor + pageHeightPx;
-      let   nextCut  = Math.min(idealCut, canvas.height);
+      let   nextCut  = Math.min(idealCut, canvasContentHeight);
 
-      if (nextCut < canvas.height) {
+      if (nextCut < canvasContentHeight) {
         // Largest safe break in (cursor, idealCut].
         let bestFit = -1;
         // Smallest safe break > idealCut (used as overflow fallback).
