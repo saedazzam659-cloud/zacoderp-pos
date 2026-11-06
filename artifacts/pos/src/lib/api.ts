@@ -651,7 +651,7 @@ export const api = {
   rBillOrder: (id: number, b: { salesInvoiceId?: number; customerId?: number; pointsRedeemed?: number } = {}) =>
     req<{ ok: true }>("POST", `/api/pos-restaurant/orders/${id}/bill`, b),
   rCancelOrder: (id: number) =>
-    req<{ ok: true }>("POST", `/api/pos-restaurant/orders/${id}/cancel`),
+    req<{ ok: true; cancelledLineCount: number }>("POST", `/api/pos-restaurant/orders/${id}/cancel`),
 
   rKitchen: (station?: string) =>
     req<RKitchenTicket[]>(

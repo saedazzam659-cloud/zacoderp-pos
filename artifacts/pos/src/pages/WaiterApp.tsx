@@ -186,6 +186,8 @@ export default function WaiterApp() {
   const visibleServiceOrders = (serviceOrdersQ.data ?? []).filter(order => order.channel === view);
   const unsentItemCount = activeOrder?.items.filter(item => !item.sentAt && item.status === "pending").length ?? 0;
   const sentItemCount = activeOrder?.items.filter(item => Boolean(item.sentAt)).length ?? 0;
+  const hasUnservedKitchenItems = !!activeOrder?.items.some(item =>
+    Boolean(item.sentAt) && !["served", "cancelled"].includes(item.status));
   const isDeliveryView = view === "delivery";
   const selectedTable = tablesQ.data?.find(table => table.id === openTableId);
   const chooseMenuItem = (item: RMenuItem) => {
@@ -594,7 +596,12 @@ export default function WaiterApp() {
                     : text("إرسال للمطبخ", "Send to kitchen")}
               </Button>
               <Button variant="destructive" disabled={cancelOrder.isPending || opening} data-testid="button-cancel-order"
-                 onClick={() => { if (confirm(text("إلغاء الطلب نهائياً؟", "Cancel this order permanently?"))) cancelOrder.mutate(activeOrder.id); }}>
+                 onClick={() => {
+                   const message = hasUnservedKitchenItems
+                     ? text("سيُلغى الطلب وتذاكره غير المقدمة، وتُحرر الطاولة إذا كانت ما زالت مرتبطة به. هل تريد المتابعة؟", "This order and its unserved kitchen lines will be cancelled. Its table will be released only if it is still linked to this order. Continue?")
+                     : text("إلغاء الطلب نهائياً؟", "Cancel this order permanently?");
+                   if (confirm(message)) cancelOrder.mutate(activeOrder.id);
+                 }}>
                 {cancelOrder.isPending ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <X className="me-2 h-4 w-4" />} {text("إلغاء الطلب", "Cancel order")}
               </Button>
             </div>

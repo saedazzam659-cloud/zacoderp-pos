@@ -1547,18 +1547,46 @@ router.post("/orders/:id/bill", async (req, res) => {
 router.post("/orders/:id/cancel", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const [order] = await db.select().from(posOrdersTable)
-    .where(and(eq(posOrdersTable.id, id), eq(posOrdersTable.companyId, cid)));
-  if (!order) { res.status(404).json({ error: "not found" }); return; }
-  await db.update(posOrdersTable)
-    .set({ status: "cancelled", cancelledAt: new Date(), updatedAt: new Date() })
-    .where(eq(posOrdersTable.id, id));
-  if (order.tableId) {
-    await db.update(posTablesTable)
-      .set({ status: "free", currentOrderId: null, updatedAt: new Date() })
-      .where(eq(posTablesTable.id, order.tableId));
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف الطلب غير صالح" }); return; }
+  try {
+    const cancelledLineCount = await db.transaction(async tx => {
+      const [order] = await tx.select().from(posOrdersTable)
+        .where(and(eq(posOrdersTable.id, id), eq(posOrdersTable.companyId, cid)))
+        .for("update");
+      if (!order) throw Object.assign(new Error("الطلب غير موجود"), { statusCode: 404 });
+      if (order.status === "billed") {
+        throw Object.assign(new Error("لا يمكن إلغاء طلب مفوتر؛ استخدم مسار المرتجع"), { statusCode: 409 });
+      }
+      const now = new Date();
+      const cancelledLines = await tx.update(posOrderItemsTable)
+        .set({ status: "cancelled", updatedAt: now })
+        .where(and(
+          eq(posOrderItemsTable.orderId, id),
+          inArray(posOrderItemsTable.status, ["pending", "preparing", "ready"] as any),
+        ))
+        .returning({ id: posOrderItemsTable.id });
+      if (order.status !== "cancelled") {
+        await tx.update(posOrdersTable)
+          .set({ status: "cancelled", cancelledAt: now, updatedAt: now })
+          .where(and(eq(posOrdersTable.id, id), eq(posOrdersTable.companyId, cid)));
+      }
+      if (order.tableId) {
+        await tx.update(posTablesTable)
+          .set({ status: "free", currentOrderId: null, updatedAt: now })
+          .where(and(
+            eq(posTablesTable.id, order.tableId),
+            eq(posTablesTable.companyId, cid),
+            eq(posTablesTable.currentOrderId, id),
+          ));
+      }
+      return cancelledLines.length;
+    });
+    res.json({ ok: true, cancelledLineCount });
+  } catch (error) {
+    const statusCode = Number((error as { statusCode?: number })?.statusCode) || 500;
+    if (statusCode >= 500) req.log.error({ err: error, orderId: id }, "restaurant order cancellation failed");
+    res.status(statusCode).json({ error: error instanceof Error ? error.message : "تعذر إلغاء الطلب" });
   }
-  res.json({ ok: true });
 });
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1608,38 +1636,61 @@ router.get("/kitchen/tickets", async (req, res) => {
 router.put("/kitchen/items/:id/status", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف الصنف غير صالح" }); return; }
   const { status } = req.body ?? {};
   if (!["preparing", "ready", "served"].includes(status)) {
     res.status(400).json({ error: "حالة غير صحيحة" }); return;
   }
-  // Authz: line must belong to an order in user's company
-  const [line] = await db.select({
-    line: posOrderItemsTable, order: posOrdersTable,
-  }).from(posOrderItemsTable)
-    .innerJoin(posOrdersTable, eq(posOrdersTable.id, posOrderItemsTable.orderId))
-    .where(eq(posOrderItemsTable.id, id));
-  if (!line || line.order.companyId !== cid) { res.status(404).json({ error: "not found" }); return; }
-  const patch: any = { status, updatedAt: new Date() };
-  if (status === "ready") patch.readyAt = new Date();
-  await db.update(posOrderItemsTable).set(patch).where(eq(posOrderItemsTable.id, id));
-  // Roll up: if all lines ready → order=ready; if all served → order=served
-  const all = await db.select().from(posOrderItemsTable)
-    .where(eq(posOrderItemsTable.orderId, line.order.id));
-  const active = all.filter(l => l.status !== "cancelled");
-  if (active.every(l => l.status === "served")) {
-    await db.update(posOrdersTable)
-      .set({ status: "served", servedAt: new Date(), updatedAt: new Date() })
-      .where(eq(posOrdersTable.id, line.order.id));
-  } else if (active.every(l => ["ready","served"].includes(l.status))) {
-    await db.update(posOrdersTable)
-      .set({ status: "ready", readyAt: new Date(), updatedAt: new Date() })
-      .where(eq(posOrdersTable.id, line.order.id));
-  } else if (active.some(l => l.status === "preparing")) {
-    await db.update(posOrdersTable)
-      .set({ status: "preparing", updatedAt: new Date() })
-      .where(eq(posOrdersTable.id, line.order.id));
+  const [lineRef] = await db.select({ orderId: posOrderItemsTable.orderId })
+    .from(posOrderItemsTable).where(eq(posOrderItemsTable.id, id));
+  if (!lineRef) { res.status(404).json({ error: "not found" }); return; }
+  try {
+    await db.transaction(async tx => {
+      // Match cancellation's lock order: lock the order first, then its line.
+      const [order] = await tx.select().from(posOrdersTable).where(and(
+        eq(posOrdersTable.id, lineRef.orderId),
+        eq(posOrdersTable.companyId, cid),
+      )).for("update");
+      if (!order) throw Object.assign(new Error("not found"), { statusCode: 404 });
+      if (["cancelled", "billed"].includes(order.status)) {
+        throw Object.assign(new Error("لا يمكن تحديث صنف في طلب مغلق أو ملغى"), { statusCode: 409 });
+      }
+      const [line] = await tx.select().from(posOrderItemsTable).where(and(
+        eq(posOrderItemsTable.id, id),
+        eq(posOrderItemsTable.orderId, order.id),
+      )).for("update");
+      if (!line) throw Object.assign(new Error("not found"), { statusCode: 404 });
+      if (["served", "cancelled"].includes(line.status)) {
+        throw Object.assign(new Error("لا يمكن تحديث صنف تم تقديمه أو إلغاؤه"), { statusCode: 409 });
+      }
+      const now = new Date();
+      const patch: any = { status, updatedAt: now };
+      if (status === "ready") patch.readyAt = now;
+      await tx.update(posOrderItemsTable).set(patch).where(eq(posOrderItemsTable.id, id));
+
+      const all = await tx.select().from(posOrderItemsTable)
+        .where(eq(posOrderItemsTable.orderId, order.id));
+      const active = all.filter(item => item.status !== "cancelled");
+      if (active.length > 0 && active.every(item => item.status === "served")) {
+        await tx.update(posOrdersTable)
+          .set({ status: "served", servedAt: now, updatedAt: now })
+          .where(and(eq(posOrdersTable.id, order.id), eq(posOrdersTable.companyId, cid)));
+      } else if (active.length > 0 && active.every(item => ["ready", "served"].includes(item.status))) {
+        await tx.update(posOrdersTable)
+          .set({ status: "ready", readyAt: now, updatedAt: now })
+          .where(and(eq(posOrdersTable.id, order.id), eq(posOrdersTable.companyId, cid)));
+      } else if (active.some(item => item.status === "preparing")) {
+        await tx.update(posOrdersTable)
+          .set({ status: "preparing", updatedAt: now })
+          .where(and(eq(posOrdersTable.id, order.id), eq(posOrdersTable.companyId, cid)));
+      }
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    const statusCode = Number((error as { statusCode?: number })?.statusCode) || 500;
+    if (statusCode >= 500) req.log.error({ err: error, orderId: lineRef.orderId, lineId: id }, "restaurant kitchen item status update failed");
+    res.status(statusCode).json({ error: error instanceof Error ? error.message : "تعذر تحديث حالة الصنف" });
   }
-  res.json({ ok: true });
 });
 
 // ════════════════════════════════════════════════════════════════════════
