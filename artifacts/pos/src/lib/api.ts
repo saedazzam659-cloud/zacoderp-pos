@@ -575,6 +575,14 @@ export const api = {
 
   rMenuItems: (categoryId?: number) =>
     req<RMenuItem[]>("GET", `/api/pos-restaurant/menu/items${categoryId ? `?categoryId=${categoryId}` : ""}`),
+  rKitchenStations: () =>
+    req<RKitchenStation[]>("GET", "/api/pos-restaurant/menu/kitchen-stations"),
+  rKitchenDisplayStations: () =>
+    req<RKitchenStation[]>("GET", "/api/pos-restaurant/kitchen/stations"),
+  rCreateKitchenStation: (body: { nameAr: string; nameEn?: string }) =>
+    req<RKitchenStation>("POST", "/api/pos-restaurant/menu/kitchen-stations", body),
+  rUpdateKitchenStation: (id: number, body: Partial<Pick<RKitchenStation, "nameAr" | "nameEn" | "sortOrder" | "isActive">>) =>
+    req<RKitchenStation>("PUT", `/api/pos-restaurant/menu/kitchen-stations/${id}`, body),
   publicRTableMenu: (token: string) =>
     req<PublicRTableMenu>("GET", `/api/pos-restaurant/public/tables/${encodeURIComponent(token)}/menu`),
   publicRPlaceOrder: (token: string, body: PublicRPlaceOrderBody) =>
@@ -770,13 +778,23 @@ export type RMenuItem = {
   description?: string | null;
   price: string;
   prepTimeMinutes: number;
-  kitchenStation: "kitchen" | "bar" | "grill" | "cold" | "dessert";
+  kitchenStation: string;
   imageUrl?: string | null;
   itemId?: number | null;
   showInPos?: boolean;
   vatIncluded: boolean;
   modifiers?: any[];
   modifierGroups?: RestaurantModifierGroup[];
+  isActive: boolean;
+};
+
+export type RKitchenStation = {
+  id: number;
+  companyId: number;
+  stationKey: string;
+  nameAr: string;
+  nameEn?: string | null;
+  sortOrder: number;
   isActive: boolean;
 };
 

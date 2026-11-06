@@ -5,15 +5,6 @@ import { ChefHat, ChevronRight, Clock, Loader2, Check, Flame, RefreshCw } from "
 import { Button } from "@/components/ui/button";
 import { api, getToken, type ROrder, type ROrderItem } from "@/lib/api";
 
-const STATIONS = [
-  { id: "",        label: "الكل" },
-  { id: "kitchen", label: "المطبخ" },
-  { id: "grill",   label: "الشواية" },
-  { id: "bar",     label: "البار" },
-  { id: "cold",    label: "البارد" },
-  { id: "dessert", label: "الحلويات" },
-];
-
 export default function KitchenDisplay() {
   const [, setLocation] = useLocation();
   const qc = useQueryClient();
@@ -26,6 +17,15 @@ export default function KitchenDisplay() {
     queryFn: () => api.rKitchen(station || undefined),
     refetchInterval: 4000,
   });
+  const stationsQ = useQuery({
+    queryKey: ["r-kitchen-display-stations"],
+    queryFn: () => api.rKitchenDisplayStations(),
+    refetchInterval: 30_000,
+  });
+  const stations = [
+    { id: "", label: "الكل" },
+    ...(stationsQ.data ?? []).map(item => ({ id: item.stationKey, label: item.nameAr })),
+  ];
 
   const setStatus = useMutation({
     mutationFn: ({ id, status }: { id: number; status: "preparing" | "ready" | "served" }) =>
@@ -44,7 +44,7 @@ export default function KitchenDisplay() {
           <div className="font-bold">شاشة المطبخ</div>
         </div>
         <div className="flex gap-2 items-center">
-          {STATIONS.map(s => (
+          {stations.map(s => (
             <button
               key={s.id}
               onClick={() => setStation(s.id)}

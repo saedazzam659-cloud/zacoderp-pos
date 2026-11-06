@@ -79,9 +79,23 @@ export const posMenuCategoriesTable = pgTable("pos_menu_categories", {
   uniqCode: uniqueIndex("pos_menu_cat_company_code_uniq").on(t.companyId, t.code),
 }));
 
-// kitchenStation lets a single order's lines be split between kitchen / bar
-// / coffee tickets independently. Free-text (not enum) so each restaurant
-// can name their stations however they like.
+export const posRestaurantKitchenStationsTable = pgTable("pos_restaurant_kitchen_stations", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  stationKey: text("station_key").notNull(),
+  nameAr: text("name_ar").notNull(),
+  nameEn: text("name_en"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  companyStationUnique: uniqueIndex("pos_restaurant_kitchen_stations_company_key_uniq").on(t.companyId, t.stationKey),
+  byCompanyOrder: index("pos_restaurant_kitchen_stations_company_order_idx").on(t.companyId, t.sortOrder, t.id),
+}));
+
+// kitchenStation stores a stable catalog key so each restaurant can define
+// its own stations while order-line snapshots keep their routing identity.
 export const posMenuItemsTable = pgTable("pos_menu_items", {
   id:              serial("id").primaryKey(),
   companyId:       integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),

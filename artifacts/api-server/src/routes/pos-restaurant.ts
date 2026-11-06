@@ -4,6 +4,7 @@ import { db } from "@workspace/db";
 import {
   posTablesTable,
   posRestaurantReservationsTable,
+  posRestaurantKitchenStationsTable,
   posMenuCategoriesTable,
   posMenuItemsTable,
   posOrdersTable,
@@ -132,6 +133,46 @@ async function validateRestaurantErpItemLink(companyId: number, value: unknown):
     throw Object.assign(new Error("الصنف المرتبط غير موجود أو غير نشط أو ليس صنف مخزون/خدمة"), { statusCode: 400 });
   }
   return item.id;
+}
+
+const DEFAULT_RESTAURANT_STATIONS = [
+  { stationKey: "kitchen", nameAr: "المطبخ", sortOrder: 10 },
+  { stationKey: "grill", nameAr: "الشواية", sortOrder: 20 },
+  { stationKey: "bar", nameAr: "البار", sortOrder: 30 },
+  { stationKey: "cold", nameAr: "البارد", sortOrder: 40 },
+  { stationKey: "dessert", nameAr: "الحلويات", sortOrder: 50 },
+];
+
+async function listRestaurantKitchenStations(companyId: number) {
+  await db.insert(posRestaurantKitchenStationsTable).values(DEFAULT_RESTAURANT_STATIONS.map(station => ({
+    companyId, ...station,
+  }))).onConflictDoNothing();
+  const assigned = await db.select({ stationKey: posMenuItemsTable.kitchenStation })
+    .from(posMenuItemsTable).where(eq(posMenuItemsTable.companyId, companyId));
+  const known = new Set(DEFAULT_RESTAURANT_STATIONS.map(station => station.stationKey));
+  const legacy = [...new Set(assigned.map(row => row.stationKey.trim()).filter(key => key && !known.has(key)))];
+  if (legacy.length) {
+    await db.insert(posRestaurantKitchenStationsTable).values(legacy.map((stationKey, index) => ({
+      companyId, stationKey, nameAr: stationKey, sortOrder: 100 + index,
+    }))).onConflictDoNothing();
+  }
+  return db.select().from(posRestaurantKitchenStationsTable)
+    .where(eq(posRestaurantKitchenStationsTable.companyId, companyId))
+    .orderBy(asc(posRestaurantKitchenStationsTable.sortOrder), asc(posRestaurantKitchenStationsTable.id));
+}
+
+async function validateRestaurantKitchenStation(companyId: number, value: unknown): Promise<string> {
+  const stationKey = typeof value === "string" ? value.trim() : "";
+  if (!stationKey || stationKey.length > 100) throw Object.assign(new Error("اختر محطة مطبخ صحيحة"), { statusCode: 400 });
+  await listRestaurantKitchenStations(companyId);
+  const [station] = await db.select({ id: posRestaurantKitchenStationsTable.id })
+    .from(posRestaurantKitchenStationsTable).where(and(
+      eq(posRestaurantKitchenStationsTable.companyId, companyId),
+      eq(posRestaurantKitchenStationsTable.stationKey, stationKey),
+      eq(posRestaurantKitchenStationsTable.isActive, true),
+    ));
+  if (!station) throw Object.assign(new Error("محطة المطبخ غير موجودة أو غير نشطة"), { statusCode: 400 });
+  return stationKey;
 }
 
 function configuredRestaurantModifierGroups(attributes: unknown): any[] {
@@ -572,6 +613,79 @@ router.delete("/menu/categories/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
+router.get("/menu/kitchen-stations", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  res.json(await listRestaurantKitchenStations(cid));
+});
+
+router.get("/kitchen/stations", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  res.json((await listRestaurantKitchenStations(cid)).filter(station => station.isActive));
+});
+
+router.post("/menu/kitchen-stations", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const nameAr = typeof req.body?.nameAr === "string" ? req.body.nameAr.trim() : "";
+  const nameEn = typeof req.body?.nameEn === "string" ? req.body.nameEn.trim() : "";
+  if (!nameAr || nameAr.length > 80 || nameEn.length > 80) {
+    res.status(400).json({ error: "اسم المحطة مطلوب وبحد أقصى 80 حرفاً" }); return;
+  }
+  const stations = await listRestaurantKitchenStations(cid);
+  const [row] = await db.insert(posRestaurantKitchenStationsTable).values({
+    companyId: cid, stationKey: `custom-${randomBytes(6).toString("hex")}`,
+    nameAr, nameEn: nameEn || null,
+    sortOrder: stations.reduce((max, station) => Math.max(max, station.sortOrder), 0) + 10,
+  }).returning();
+  res.status(201).json(row);
+});
+
+router.put("/menu/kitchen-stations/:id", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف المحطة غير صالح" }); return; }
+  const [current] = await db.select().from(posRestaurantKitchenStationsTable)
+    .where(and(eq(posRestaurantKitchenStationsTable.id, id), eq(posRestaurantKitchenStationsTable.companyId, cid)));
+  if (!current) { res.status(404).json({ error: "المحطة غير موجودة" }); return; }
+  const patch: any = { updatedAt: new Date() };
+  if (req.body?.nameAr !== undefined) {
+    const nameAr = typeof req.body.nameAr === "string" ? req.body.nameAr.trim() : "";
+    if (!nameAr || nameAr.length > 80) { res.status(400).json({ error: "اسم المحطة غير صالح" }); return; }
+    patch.nameAr = nameAr;
+  }
+  if (req.body?.nameEn !== undefined) {
+    const nameEn = typeof req.body.nameEn === "string" ? req.body.nameEn.trim() : "";
+    if (nameEn.length > 80) { res.status(400).json({ error: "اسم المحطة الإنجليزية غير صالح" }); return; }
+    patch.nameEn = nameEn || null;
+  }
+  if (req.body?.sortOrder !== undefined) {
+    const sortOrder = Number(req.body.sortOrder);
+    if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 10000) {
+      res.status(400).json({ error: "ترتيب المحطة غير صالح" }); return;
+    }
+    patch.sortOrder = sortOrder;
+  }
+  if (req.body?.isActive === false && current.isActive) {
+    const [assigned] = await db.select({ id: posMenuItemsTable.id }).from(posMenuItemsTable)
+      .where(and(eq(posMenuItemsTable.companyId, cid), eq(posMenuItemsTable.kitchenStation, current.stationKey), eq(posMenuItemsTable.isActive, true)));
+    const [queued] = await db.select({ id: posOrderItemsTable.id }).from(posOrderItemsTable)
+      .innerJoin(posOrdersTable, eq(posOrdersTable.id, posOrderItemsTable.orderId))
+      .where(and(
+        eq(posOrdersTable.companyId, cid),
+        inArray(posOrdersTable.status, ["sent", "preparing", "ready"] as any),
+        eq(posOrderItemsTable.kitchenStation, current.stationKey),
+        inArray(posOrderItemsTable.status, ["pending", "preparing"] as any),
+      ));
+    if (assigned || queued) {
+      res.status(409).json({ error: "انقل أصناف القائمة والتذاكر النشطة إلى محطة أخرى قبل تعطيلها" }); return;
+    }
+  }
+  if (req.body?.isActive !== undefined) patch.isActive = !!req.body.isActive;
+  const [updated] = await db.update(posRestaurantKitchenStationsTable).set(patch)
+    .where(and(eq(posRestaurantKitchenStationsTable.id, id), eq(posRestaurantKitchenStationsTable.companyId, cid)))
+    .returning();
+  res.json(updated);
+});
+
 // ════════════════════════════════════════════════════════════════════════
 // MENU ITEMS
 // ════════════════════════════════════════════════════════════════════════
@@ -622,12 +736,13 @@ router.post("/menu/items", async (req, res) => {
   if (!categoryId || !code || !nameAr) { res.status(400).json({ error: "categoryId/code/nameAr مطلوبة" }); return; }
   try {
     const linkedItemId = await validateRestaurantErpItemLink(cid, itemId);
+    const stationKey = await validateRestaurantKitchenStation(cid, kitchenStation ?? "kitchen");
     const [row] = await db.insert(posMenuItemsTable).values({
       companyId: cid, categoryId: Number(categoryId), code, nameAr,
       nameEn: nameEn ?? null, description: description ?? null,
       price: String(price ?? "0"),
       prepTimeMinutes: Number(prepTimeMinutes ?? 0),
-      kitchenStation: kitchenStation ?? "kitchen",
+      kitchenStation: stationKey,
       imageUrl: imageUrl ?? null,
       itemId: linkedItemId,
       vatIncluded: vatIncluded !== false,
@@ -652,8 +767,17 @@ router.put("/menu/items/:id", async (req, res) => {
       return;
     }
   }
+  if (req.body?.kitchenStation !== undefined) {
+    try {
+      patch.kitchenStation = await validateRestaurantKitchenStation(cid, req.body.kitchenStation);
+    } catch (error) {
+      res.status(Number((error as { statusCode?: number })?.statusCode) || 400)
+        .json({ error: error instanceof Error ? error.message : "محطة التحضير غير صالحة" });
+      return;
+    }
+  }
   for (const k of ["nameAr","nameEn","description","kitchenStation","imageUrl","modifiers"]) {
-    if (req.body?.[k] !== undefined) patch[k] = req.body[k];
+    if (k !== "kitchenStation" && req.body?.[k] !== undefined) patch[k] = req.body[k];
   }
   if (req.body?.price !== undefined) patch.price = String(req.body.price);
   if (req.body?.prepTimeMinutes !== undefined) patch.prepTimeMinutes = Number(req.body.prepTimeMinutes);

@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode, Award, CalendarClock } from "lucide-react";
+import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode, Award, CalendarClock, ChefHat } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   api, getToken, getStoredUser,
-  type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem, type RLoyaltyProgram, type RLoyaltyRule, type RLoyaltyTier,
+  type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem, type RKitchenStation, type RLoyaltyProgram, type RLoyaltyRule, type RLoyaltyTier,
 } from "@/lib/api";
 import ShiftManagementTab from "@/components/ShiftManagementTab";
 import RestaurantReservationsTab from "@/components/RestaurantReservationsTab";
@@ -17,6 +17,7 @@ const TABS = [
   { id: "tables",  label: "الطاولات",   icon: ListOrdered },
   { id: "cats",    label: "فئات القائمة",     icon: Tags },
   { id: "items",   label: "أصناف القائمة",   icon: Utensils },
+  { id: "stations", label: "محطات المطبخ", icon: ChefHat },
   { id: "reservations", label: "الحجوزات", icon: CalendarClock },
   { id: "shifts",  label: "الورديات", icon: Clock3 },
   { id: "loyalty", label: "الولاء", icon: Award },
@@ -112,6 +113,7 @@ export default function RestaurantSettings() {
         )}
         {tab === "cats"   && <CategoriesTab />}
         {tab === "items"  && <ItemsTab companyId={cid} />}
+        {tab === "stations" && <KitchenStationsTab />}
         {tab === "reservations" && <RestaurantReservationsTab branches={branchesQ.data ?? []} />}
         {tab === "shifts" && canManageShifts && cid && <ShiftManagementTab companyId={cid} />}
         {tab === "loyalty" && canManageLoyalty && <RestaurantLoyaltyTab />}
@@ -586,15 +588,84 @@ function CategoriesTab() {
   );
 }
 
+function KitchenStationsTab() {
+  const qc = useQueryClient();
+  const [nameAr, setNameAr] = useState("");
+  const [nameEn, setNameEn] = useState("");
+  const [names, setNames] = useState<Record<number, string>>({});
+  const stationsQ = useQuery({ queryKey: ["r-kitchen-stations"], queryFn: () => api.rKitchenStations() });
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ["r-kitchen-stations"] });
+    void qc.invalidateQueries({ queryKey: ["r-kitchen-display-stations"] });
+    void qc.invalidateQueries({ queryKey: ["r-items-all"] });
+  };
+  const create = useMutation({
+    mutationFn: () => api.rCreateKitchenStation({ nameAr: nameAr.trim(), nameEn: nameEn.trim() || undefined }),
+    onSuccess: () => { setNameAr(""); setNameEn(""); refresh(); },
+    onError: (error: any) => alert(error?.message ?? "تعذرت إضافة المحطة"),
+  });
+  const update = useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: Partial<Pick<RKitchenStation, "nameAr" | "isActive">> }) =>
+      api.rUpdateKitchenStation(id, patch),
+    onSuccess: refresh,
+    onError: (error: any) => alert(error?.message ?? "تعذر تحديث المحطة"),
+  });
+
+  return (
+    <div className="space-y-4">
+      <p className="rounded-xl border border-border bg-muted/30 p-3 text-sm leading-6 text-muted-foreground">
+        أضف محطات التحضير وسمّها كما تعمل في مطعمك، ثم اربط أصناف القائمة بالمحطة المناسبة. لا يمكن تعطيل محطة ما زالت مرتبطة بأصناف أو تذاكر نشطة.
+      </p>
+      <div className="grid gap-2 rounded-2xl border border-border bg-card p-4 shadow-sm sm:grid-cols-[1fr_1fr_auto]">
+        <Input value={nameAr} onChange={event => setNameAr(event.target.value)} maxLength={80} placeholder="اسم المحطة بالعربية" aria-label="اسم محطة المطبخ بالعربية" />
+        <Input value={nameEn} onChange={event => setNameEn(event.target.value)} maxLength={80} placeholder="اسم المحطة بالإنجليزية (اختياري)" aria-label="اسم محطة المطبخ بالإنجليزية" />
+        <Button disabled={!nameAr.trim() || create.isPending} onClick={() => create.mutate()}><Plus className="ml-1 h-4 w-4" />إضافة محطة</Button>
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        {stationsQ.isLoading ? <div className="p-8 text-center"><Loader2 className="mx-auto animate-spin" /></div> :
+          stationsQ.isError ? <div className="p-5 text-sm text-destructive" role="alert">تعذر تحميل المحطات. <button className="underline" onClick={() => stationsQ.refetch()}>إعادة المحاولة</button></div> :
+          <div className="divide-y divide-border">
+            {(stationsQ.data ?? []).map(station => (
+              <div key={station.id} className="flex flex-wrap items-center gap-2 p-3 sm:flex-nowrap">
+                <Input
+                  value={names[station.id] ?? station.nameAr}
+                  onChange={event => setNames(current => ({ ...current, [station.id]: event.target.value }))}
+                  maxLength={80}
+                  aria-label={`اسم محطة ${station.nameAr}`}
+                  className="min-w-40 flex-1"
+                />
+                <span className={`min-w-16 text-xs ${station.isActive ? "text-emerald-700" : "text-muted-foreground"}`}>
+                  {station.isActive ? "نشطة" : "معطلة"}
+                </span>
+                <Button
+                  variant="outline" size="sm"
+                  disabled={update.isPending || !(names[station.id] ?? station.nameAr).trim() || (names[station.id] ?? station.nameAr) === station.nameAr}
+                  onClick={() => update.mutate({ id: station.id, patch: { nameAr: (names[station.id] ?? station.nameAr).trim() } })}
+                ><Save className="ml-1 h-4 w-4" />حفظ الاسم</Button>
+                <Button
+                  variant={station.isActive ? "ghost" : "outline"} size="sm"
+                  disabled={update.isPending}
+                  onClick={() => update.mutate({ id: station.id, patch: { isActive: !station.isActive } })}
+                >{station.isActive ? "تعطيل" : "تفعيل"}</Button>
+              </div>
+            ))}
+            {(stationsQ.data ?? []).length === 0 && <div className="p-6 text-center text-sm text-muted-foreground">لا توجد محطات بعد.</div>}
+          </div>}
+      </div>
+    </div>
+  );
+}
+
 // ─── Items ───────────────────────────────────────────────────────────────
 function ItemsTab({ companyId }: { companyId: number | null }) {
   const qc = useQueryClient();
   const catsQ = useQuery({ queryKey: ["r-cats-all"], queryFn: () => api.rCategories() });
   const itemsQ = useQuery({ queryKey: ["r-items-all"], queryFn: () => api.rMenuItems() });
+  const stationsQ = useQuery({ queryKey: ["r-kitchen-stations"], queryFn: () => api.rKitchenStations() });
   const [bulkQuery, setBulkQuery] = useState("");
   const [bulkSelected, setBulkSelected] = useState<Record<number, Item>>({});
   const [bulkCategoryId, setBulkCategoryId] = useState("");
-  const [bulkStation, setBulkStation] = useState<RMenuItem["kitchenStation"]>("kitchen");
+  const [bulkStation, setBulkStation] = useState<string>("kitchen");
   const [bulkVatIncluded, setBulkVatIncluded] = useState(true);
   const [bulkMessage, setBulkMessage] = useState("");
   const [draft, setDraft] = useState({
@@ -711,16 +782,12 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
             </select>
             <select
               value={bulkStation}
-              onChange={event => setBulkStation(event.target.value as RMenuItem["kitchenStation"])}
+              onChange={event => setBulkStation(event.target.value)}
               aria-label="محطة تحضير الأصناف المستوردة"
               data-testid="select-bulk-import-station"
               className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
             >
-              <option value="kitchen">المطبخ</option>
-              <option value="grill">الشواية</option>
-              <option value="bar">البار</option>
-              <option value="cold">البارد</option>
-              <option value="dessert">الحلويات</option>
+              {(stationsQ.data ?? []).filter(station => station.isActive).map(station => <option key={station.id} value={station.stationKey}>{station.nameAr}</option>)}
             </select>
           </div>
           <label className="flex items-center gap-2 text-sm font-medium">
@@ -824,13 +891,9 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
             onChange={e => setDraft({ ...draft, prepTimeMinutes: Number(e.target.value) })}
             aria-label="وقت تحضير الصنف بالدقائق" data-testid="input-item-prep-time" className="bg-background" />
           <select value={draft.kitchenStation}
-            onChange={e => setDraft({ ...draft, kitchenStation: e.target.value as any })}
+             onChange={e => setDraft({ ...draft, kitchenStation: e.target.value })}
             aria-label="محطة التحضير" data-testid="select-item-station" className="h-10 rounded-lg border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-            <option value="kitchen">المطبخ</option>
-            <option value="grill">الشواية</option>
-            <option value="bar">البار</option>
-            <option value="cold">البارد</option>
-            <option value="dessert">الحلويات</option>
+            {(stationsQ.data ?? []).filter(station => station.isActive).map(station => <option key={station.id} value={station.stationKey}>{station.nameAr}</option>)}
           </select>
         </div>
         <div className="mt-3">
@@ -905,13 +968,9 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
                     </td>
                     <td className="p-1">
                       <select value={editBuf.kitchenStation ?? "kitchen"}
-                        onChange={e => setEditBuf({ ...editBuf, kitchenStation: e.target.value as any })}
+                        onChange={e => setEditBuf({ ...editBuf, kitchenStation: e.target.value })}
                         aria-label="محطة تحضير الصنف" className="h-8 rounded-lg border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                        <option value="kitchen">المطبخ</option>
-                        <option value="grill">الشواية</option>
-                        <option value="bar">البار</option>
-                        <option value="cold">البارد</option>
-                        <option value="dessert">الحلويات</option>
+                        {(stationsQ.data ?? []).filter(station => station.isActive || station.stationKey === editBuf.kitchenStation).map(station => <option key={station.id} value={station.stationKey}>{station.nameAr}{station.isActive ? "" : " (معطلة)"}</option>)}
                       </select>
                     </td>
                     <td className="p-1"><Input aria-label="وقت التحضير" type="number" value={editBuf.prepTimeMinutes ?? 0} onChange={e => setEditBuf({ ...editBuf, prepTimeMinutes: Number(e.target.value) })} className="h-8 w-16 bg-background" /></td>
@@ -935,7 +994,7 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
                       </div>
                     </td>
                     <td className="p-2 text-muted-foreground">{catName(it.categoryId)}</td>
-                    <td className="p-2 text-xs">{stationLabel(it.kitchenStation)}</td>
+                    <td className="p-2 text-xs">{stationLabel(it.kitchenStation, stationsQ.data ?? [])}</td>
                     <td className="p-2">{it.prepTimeMinutes} د</td>
                     <td className="p-2 font-bold text-primary">{Number(it.price).toFixed(2)}</td>
                     <td className="p-2 text-left whitespace-nowrap">
@@ -959,8 +1018,8 @@ function ItemsTab({ companyId }: { companyId: number | null }) {
 function kindLabel(k: string) {
   return k === "food" ? "طعام" : k === "drink" ? "مشروبات" : k === "dessert" ? "حلويات" : "أخرى";
 }
-function stationLabel(s: string) {
-  return s === "kitchen" ? "المطبخ" : s === "grill" ? "الشواية" : s === "bar" ? "البار" : s === "cold" ? "البارد" : "الحلويات";
+function stationLabel(s: string, stations: RKitchenStation[]) {
+  return stations.find(station => station.stationKey === s)?.nameAr ?? s;
 }
 
 function ErpItemPicker({

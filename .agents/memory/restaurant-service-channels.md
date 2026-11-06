@@ -13,6 +13,8 @@ Reservations and waitlist entries are planning records, not restaurant orders. T
 
 Moving an active dine-in order keeps the same order record so kitchen tickets and billing stay linked. Merge and split are restricted to unsent draft orders; split moves whole lines only and must leave at least one line on the source order.
 
-**Why:** The user explicitly wants table orders preserved, delivery distinct from in-store pickup, and takeaway available as its own order flow. Reservation and waitlist records must not bypass the normal order-to-invoice lifecycle, and sent kitchen tickets must not be silently reassigned during a merge or split.
+Kitchen station keys remain stable when staff rename labels. Do not deactivate a station while active menu items or queued kitchen lines still use it.
+
+**Why:** The user explicitly wants table orders preserved, delivery distinct from in-store pickup, and takeaway available as its own order flow. Reservation and waitlist records must not bypass the normal order-to-invoice lifecycle, sent kitchen tickets must not be silently reassigned during a merge or split, and active kitchen routing must remain visible.
 
 **How to apply:** Keep dine-in, takeaway, and delivery entry points distinct; retain table IDs for dine-in; and include channel context in billing/report details without changing existing table records. Reservations may optionally reference a table, but never alter table status or create a POS order merely because a guest is seated. Transfer by changing the existing order's table link; do not duplicate its kitchen or invoice records. Add-ons reuse item IDs so normal invoice, stock, cost, and return paths remain authoritative. Public QR requests must map through the token to one table/company, use server-side prices, and create only normal restaurant orders.

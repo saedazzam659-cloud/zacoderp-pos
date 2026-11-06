@@ -507,6 +507,34 @@ async function ensureRestaurantReservationsSchema(): Promise<void> {
   }
 }
 
+async function ensureRestaurantKitchenStationsSchema(): Promise<void> {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS pos_restaurant_kitchen_stations (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      station_key TEXT NOT NULL,
+      name_ar TEXT NOT NULL,
+      name_en TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_restaurant_kitchen_stations_company_key_uniq
+      ON pos_restaurant_kitchen_stations(company_id, station_key)`,
+    `CREATE INDEX IF NOT EXISTS pos_restaurant_kitchen_stations_company_order_idx
+      ON pos_restaurant_kitchen_stations(company_id, sort_order, id)`,
+  ];
+  for (const statement of statements) {
+    try {
+      await execDDL(statement);
+    } catch (err) {
+      logger.error({ err, statement }, "ensureSchema: restaurant kitchen stations schema reconciliation failed");
+      throw err;
+    }
+  }
+}
+
 // Generic schema inspection can run after traffic starts in an external agent.
 // These source-fact columns are read during manufacturing close, so heal them
 // explicitly before any purchasing/production route can expose a tagged line.
@@ -4827,6 +4855,7 @@ async function runHeal(options: {
   await ensureRestaurantQrOrderSchema();
   await ensureRestaurantLoyaltySchema();
   await ensureRestaurantReservationsSchema();
+  await ensureRestaurantKitchenStationsSchema();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must
@@ -5042,6 +5071,7 @@ async function runHeal(options: {
   await ensureSupplierMetadataCompatibility();
   await ensureRestaurantLoyaltySchema();
   await ensureRestaurantReservationsSchema();
+  await ensureRestaurantKitchenStationsSchema();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must
