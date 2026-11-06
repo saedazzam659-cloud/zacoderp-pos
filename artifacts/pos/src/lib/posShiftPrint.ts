@@ -15,6 +15,8 @@ export type PosShiftDetail = {
   openedAt: string;
   closedAt: string | null;
   openingCash: string;
+  closingCash?: string | null;
+  difference?: string | null;
   user?: { nameAr?: string | null; username?: string | null } | null;
   branch?: { nameAr?: string | null } | null;
   cashBox?: { nameAr?: string | null } | null;
@@ -115,6 +117,13 @@ export function printPosShiftReport(
           <td class="amount ${movement.amount < 0 ? "negative" : "positive"}">${money(movement.amount, language)}</td>
         </tr>`).join("")
     : `<tr><td colspan="6" class="empty">${text(language, "لا توجد حركات نقدية إضافية.", "No additional cash movements.")}</td></tr>`;
+  const difference = Number(session.difference ?? 0);
+  const differenceLabel = difference < 0
+    ? text(language, "عجز", "Shortage")
+    : difference > 0
+      ? text(language, "زيادة", "Overage")
+      : text(language, "مطابق", "Balanced");
+  const differenceClass = difference < 0 ? "negative" : difference > 0 ? "positive" : "";
 
   const html = `<!doctype html>
     <html lang="${language}" dir="${language === "ar" ? "rtl" : "ltr"}">
@@ -129,7 +138,7 @@ export function printPosShiftReport(
           .meta div{padding:7px 0;border-bottom:1px solid #e5e9ed}.meta b{display:block;color:#687581;font-size:10px;margin-bottom:3px}
           .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
           .summary div{border:1px solid #dce4e7;border-radius:8px;padding:10px}.summary b{display:block;color:#687581;font-size:10px;margin-bottom:5px}
-          .summary strong{font-size:14px}.expected{background:#eaf8f4;border-color:#91d5c7!important}
+          .summary strong{font-size:14px}.expected{background:#eaf8f4;border-color:#91d5c7!important}.variance{background:#fff7ed}
           table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #dce2e6;padding:7px;text-align:start}
           th{background:#f1f5f6;font-weight:700}.amount{white-space:nowrap;font-weight:700}.positive{color:#087d63}.negative{color:#b42318}
           .empty{text-align:center;color:#697682;padding:14px}.foot{margin-top:24px;border-top:1px solid #dce2e6;padding-top:10px;color:#697682}
@@ -158,6 +167,8 @@ export function printPosShiftReport(
           <div><b>${text(language, "إجمالي المبيعات المرحلة", "Total posted sales")}</b><strong>${money(session.totalSales, language)}</strong></div>
           <div><b>${text(language, "عدد الفواتير", "Invoice count")}</b><strong>${postedInvoices.length}</strong></div>
           <div class="expected"><b>${text(language, "النقد المتوقع في الخزينة", "Expected cash in cash box")}</b><strong>${money(cash.expectedCash, language)}</strong></div>
+          <div><b>${text(language, "النقدية الفعلية بعد الجرد", "Counted cash")}</b><strong>${session.closingCash == null ? "—" : money(session.closingCash, language)}</strong></div>
+          <div class="variance"><b>${text(language, "فرق الجرد", "Cash difference")}</b><strong class="${differenceClass}">${differenceLabel} · ${money(Math.abs(difference), language)}</strong></div>
         </section>
         <h2>${text(language, "فواتير الوردية", "Shift invoices")}</h2>
         <table><thead><tr><th>#</th><th>${text(language, "رقم الفاتورة", "Invoice number")}</th><th>${text(language, "التاريخ", "Date")}</th><th>${text(language, "طريقة الدفع", "Payment method")}</th><th>${text(language, "البيان / نوع الطلب", "Description / order type")}</th><th>${text(language, "الحالة", "Status")}</th><th>${text(language, "الإجمالي", "Total")}</th></tr></thead><tbody>${invoiceRows}</tbody></table>

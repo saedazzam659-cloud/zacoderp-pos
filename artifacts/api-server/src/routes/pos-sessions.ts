@@ -292,6 +292,13 @@ router.post("/:id/close", async (req, res) => {
   const u = req.authUser!;
   const id = Number(req.params.id);
   const { closingCash, notes } = req.body ?? {};
+  if (closingCash != null && closingCash !== "") {
+    const countedCash = Number(closingCash);
+    if (!Number.isFinite(countedCash) || countedCash < 0 ||
+        Math.abs(countedCash * 100 - Math.round(countedCash * 100)) > 0.000001) {
+      res.status(400).json({ error: "أدخل النقدية الفعلية كمبلغ موجب وبحد أقصى منزلتين عشريتين" }); return;
+    }
+  }
 
   const [s] = await db.select().from(posSessionsTable).where(eq(posSessionsTable.id, id));
   if (!s) { res.status(404).json({ error: "الجلسة غير موجودة" }); return; }

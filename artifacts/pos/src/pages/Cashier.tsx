@@ -548,17 +548,35 @@ export default function CashierPage() {
     }
   };
 
-  const closeAndPrintShift = async (sessionId: number, printWindow: Window) => {
+  const closeAndPrintShift = async (sessionId: number, printWindow: Window): Promise<boolean> => {
     try {
       const [detail, cashReport] = await Promise.all([
         api.request<PosShiftDetail>("GET", `/api/pos-sessions/${sessionId}`),
         api.request<PosShiftCashReport>("GET", `/api/pos-sessions/${sessionId}/cash-movements`),
       ]);
-      const closedSession = await api.closePosSession(sessionId, {});
+      const rawCountedCash = window.prompt(
+        `النقدية المتوقعة في الخزنة: ${cashReport.expectedCash.toFixed(2)} ر.س\nأدخل النقدية الفعلية بعد الجرد:`,
+        cashReport.expectedCash.toFixed(2),
+      );
+      if (rawCountedCash === null) {
+        printWindow.close();
+        return false;
+      }
+      const countedCash = Number(rawCountedCash);
+      if (!Number.isFinite(countedCash) || countedCash < 0 ||
+          Math.abs(countedCash * 100 - Math.round(countedCash * 100)) > 0.000001) {
+        printWindow.close();
+        window.alert("أدخل النقدية الفعلية كمبلغ لا يقل عن صفر وبحد أقصى منزلتين عشريتين.");
+        return false;
+      }
+      const closedSession = await api.closePosSession(sessionId, { closingCash: countedCash });
       printPosShiftReport(printWindow, {
         ...detail,
         closedAt: closedSession.closedAt,
+        closingCash: closedSession.closingCash,
+        difference: closedSession.difference,
       }, cashReport, language);
+      return true;
     } catch (error) {
       printWindow.close();
       throw error;
@@ -589,7 +607,8 @@ export default function CashierPage() {
         printWindow.close();
         return;
       }
-      await closeAndPrintShift(posSession.id, printWindow);
+      const closed = await closeAndPrintShift(posSession.id, printWindow);
+      if (!closed) return;
       setPosSession(null);
       setPosSessionId(null);
       if (window.confirm("تم إغلاق الوردية. هل تريد فتح وردية جديدة الآن؟")) {
@@ -793,7 +812,8 @@ export default function CashierPage() {
         return;
       }
       try {
-        await closeAndPrintShift(sessionId, printWindow);
+        const closed = await closeAndPrintShift(sessionId, printWindow);
+        if (!closed) return;
       } catch (error: any) {
         window.alert(error?.message || "تعذّر إغلاق الوردية؛ لم يتم تسجيل الخروج.");
         return;

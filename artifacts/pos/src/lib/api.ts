@@ -283,6 +283,8 @@ export type PosSession = {
   posTerminalId?: number | null;
   openingCash: string;
   closingCash: string | null;
+  expectedCash?: string | null;
+  difference?: string | null;
   openedAt: string;
   closedAt: string | null;
   status: "open" | "closed" | "force_closed";
