@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import http from "node:http";
 import { after, before, test } from "node:test";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import {
   accountsTable,
   branchesTable,
@@ -18,6 +18,8 @@ import {
   posOrdersTable,
   salesInvoicesTable,
   salesInvoiceLinesTable,
+  salesReturnsTable,
+  salesReturnLinesTable,
   unitsTable,
   usersTable,
 } from "@workspace/db";
@@ -32,6 +34,7 @@ let baseUrl = "";
 let companyId = 0;
 let branchId = 0;
 let cashBoxId = 0;
+let cogsAccountId = 0;
 let token = "";
 
 async function api(path: string, method: string, body?: Record<string, unknown>) {
@@ -89,6 +92,10 @@ before(async () => {
   const [revenue] = await db.insert(accountsTable).values({
     companyId, code: "4101", nameAr: "إيراد الاختبار", accountType: "revenue",
   }).returning({ id: accountsTable.id });
+  const [cogsAccount] = await db.insert(accountsTable).values({
+    companyId, code: "5101", nameAr: "تكلفة مبيعات الاختبار", accountType: "expense",
+  }).returning({ id: accountsTable.id });
+  cogsAccountId = cogsAccount.id;
   await db.insert(accountsTable).values({
     companyId, code: "21041", nameAr: "ضريبة مخرجات الاختبار", accountType: "liability",
   });
@@ -161,6 +168,23 @@ after(async () => {
       await db.delete(posOrdersTable).where(eq(posOrdersTable.companyId, companyId));
       await db.delete(posMenuItemsTable).where(eq(posMenuItemsTable.companyId, companyId));
       await db.delete(posMenuCategoriesTable).where(eq(posMenuCategoriesTable.companyId, companyId));
+      await db.delete(salesReturnLinesTable).where(eq(salesReturnLinesTable.companyId, companyId));
+      const returns = await db.select({
+        id: salesReturnsTable.id,
+        journalEntryId: salesReturnsTable.journalEntryId,
+      }).from(salesReturnsTable).where(eq(salesReturnsTable.companyId, companyId));
+      const returnJournalEntryIds = [...new Set(returns
+        .map(ret => ret.journalEntryId)
+        .filter((id): id is number => id != null))];
+      if (returnJournalEntryIds.length) {
+        await db.update(salesReturnsTable).set({ journalEntryId: null })
+          .where(inArray(salesReturnsTable.id, returns.map(ret => ret.id)));
+        await db.delete(journalEntryLinesTable).where(inArray(journalEntryLinesTable.entryId, returnJournalEntryIds));
+      }
+      await db.delete(salesReturnsTable).where(eq(salesReturnsTable.companyId, companyId));
+      if (returnJournalEntryIds.length) {
+        await db.delete(journalEntriesTable).where(inArray(journalEntriesTable.id, returnJournalEntryIds));
+      }
       await db.delete(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.companyId, companyId));
       const invoices = await db.select({
         id: salesInvoicesTable.id,
@@ -275,4 +299,55 @@ test("restaurant order VAT matches a posted sales invoice and the billed order",
     { subtotal: Number(billedOrder.body.subtotal), vatAmount: Number(billedOrder.body.vatAmount), total: Number(billedOrder.body.total) },
     { subtotal: Number(invoice.subtotal), vatAmount: Number(invoice.vatAmount), total: Number(invoice.totalAmount) },
   );
+
+  const sourceLines = await db.select().from(salesInvoiceLinesTable)
+    .where(eq(salesInvoiceLinesTable.invoiceId, invoiceId))
+    .orderBy(asc(salesInvoiceLinesTable.id));
+  const sourceLine = sourceLines[0];
+  const returnGross = Number(sourceLine.lineTotal);
+  const returnVat = Number((returnGross - returnGross / (1 + Number(sourceLine.vatRate) / 100)).toFixed(2));
+  const createdReturn = await api("/api/sales/sales-returns", "POST", {
+    returnDate: DATE,
+    branchId,
+    invoiceId,
+    paymentType: "cash",
+    cashBoxId,
+    currencyCode: "SAR",
+    totalAmount: returnGross,
+    vatAmount: returnVat,
+    discountAmount: 0,
+    priceIncludesVat: true,
+    cogsAccountId,
+    notes: `${TEST_TAG} restaurant invoice return`,
+    lines: [{
+      sourceLineId: sourceLine.id,
+      itemId: sourceLine.itemId,
+      itemName: sourceLine.itemName,
+      itemCode: sourceLine.itemCode,
+      unit: sourceLine.unit,
+      unitId: sourceLine.unitId,
+      conversionFactor: Number(sourceLine.conversionFactor ?? 1),
+      warehouseId: sourceLine.warehouseId,
+      qty: 1,
+      freeQty: 0,
+      unitPrice: Number(sourceLine.unitPrice),
+      discount: Number(sourceLine.discount),
+      vatRate: Number(sourceLine.vatRate),
+      lineTotal: returnGross,
+    }],
+  });
+  assert.equal(createdReturn.status, 201, JSON.stringify(createdReturn.body));
+
+  const postedReturn = await api(`/api/sales/sales-returns/${createdReturn.body.id}/post`, "PATCH", {});
+  assert.equal(postedReturn.status, 200, JSON.stringify(postedReturn.body));
+  const [savedReturn] = await db.select().from(salesReturnsTable)
+    .where(eq(salesReturnsTable.id, Number(createdReturn.body.id)));
+  assert.equal(savedReturn.status, "posted");
+  assert.equal(savedReturn.invoiceId, invoiceId);
+  assert.equal(Number(savedReturn.totalAmount), returnGross);
+  assert.equal(Number(savedReturn.vatAmount), returnVat);
+  assert.ok(savedReturn.journalEntryId, "the linked return should post through normal sales accounting");
+
+  const blockedUnpost = await api(`/api/sales/sales-invoices/${invoiceId}/unpost`, "PATCH", {});
+  assert.equal(blockedUnpost.status, 409, JSON.stringify(blockedUnpost.body));
 });
