@@ -76,7 +76,12 @@ export default function KitchenDisplay() {
 }
 
 function TicketCard({ ticket, setStatus }: { ticket: RKitchenTicket; setStatus: any }) {
-  const minutesAgo = ticket.sentAt ? Math.floor((Date.now() - new Date(ticket.sentAt).getTime()) / 60000) : 0;
+  const oldestActiveLineSentAt = ticket.items
+    .map(item => item.sentAt)
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0];
+  const ticketStartedAt = oldestActiveLineSentAt ?? ticket.sentAt;
+  const minutesAgo = ticketStartedAt ? Math.floor((Date.now() - new Date(ticketStartedAt).getTime()) / 60000) : 0;
   const urgent = minutesAgo > 10;
   const allReady = ticket.items.every(i => ["ready", "served"].includes(i.status));
 

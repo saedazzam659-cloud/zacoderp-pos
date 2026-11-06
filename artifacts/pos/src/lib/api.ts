@@ -641,7 +641,7 @@ export const api = {
     req<{ ok: true; subtotal: string; vatAmount: string; total: string }>(
       "DELETE", `/api/pos-restaurant/orders/${orderId}/items/${itemId}`),
   rSendOrder: (id: number) =>
-    req<{ ok: true }>("POST", `/api/pos-restaurant/orders/${id}/send`),
+    req<{ ok: true; sentCount: number }>("POST", `/api/pos-restaurant/orders/${id}/send`),
   rLoyaltyProgram: () =>
     req<RLoyaltyProgram>("GET", "/api/pos-restaurant/loyalty"),
   rSaveLoyaltyProgram: (body: RLoyaltyProgram) =>

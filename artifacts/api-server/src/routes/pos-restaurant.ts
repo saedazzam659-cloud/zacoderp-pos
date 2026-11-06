@@ -1371,20 +1371,45 @@ router.delete("/orders/:id/items/:itemId", async (req, res) => {
   res.json({ ok: true, ...totals });
 });
 
-// Send to kitchen — locks lines as pending → ready for prep
+// Send only new, unsent lines; preserve the order's original first-send time.
 router.post("/orders/:id/send", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const [order] = await db.select().from(posOrdersTable)
-    .where(and(eq(posOrdersTable.id, id), eq(posOrdersTable.companyId, cid)));
-  if (!order) { res.status(404).json({ error: "not found" }); return; }
-  await db.update(posOrdersTable)
-    .set({ status: "sent", sentAt: new Date(), updatedAt: new Date() })
-    .where(eq(posOrdersTable.id, id));
-  await db.update(posOrderItemsTable)
-    .set({ sentAt: new Date(), updatedAt: new Date() })
-    .where(and(eq(posOrderItemsTable.orderId, id), isNull(posOrderItemsTable.sentAt)));
-  res.json({ ok: true });
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف الطلب غير صالح" }); return; }
+  try {
+    const sentCount = await db.transaction(async tx => {
+      const [order] = await tx.select().from(posOrdersTable)
+        .where(and(eq(posOrdersTable.id, id), eq(posOrdersTable.companyId, cid)))
+        .for("update");
+      if (!order) throw Object.assign(new Error("الطلب غير موجود"), { statusCode: 404 });
+      if (["billed", "cancelled"].includes(order.status)) {
+        throw Object.assign(new Error("لا يمكن إرسال طلب مغلق للمطبخ"), { statusCode: 409 });
+      }
+      const unsentLines = await tx.select({ id: posOrderItemsTable.id })
+        .from(posOrderItemsTable)
+        .where(and(
+          eq(posOrderItemsTable.orderId, id),
+          eq(posOrderItemsTable.status, "pending"),
+          isNull(posOrderItemsTable.sentAt),
+        ));
+      if (unsentLines.length === 0) {
+        throw Object.assign(new Error("لا توجد أصناف جديدة غير مرسلة"), { statusCode: 409 });
+      }
+      const now = new Date();
+      await tx.update(posOrderItemsTable)
+        .set({ sentAt: now, updatedAt: now })
+        .where(inArray(posOrderItemsTable.id, unsentLines.map(line => line.id)));
+      await tx.update(posOrdersTable)
+        .set({ status: "sent", sentAt: order.sentAt ?? now, updatedAt: now })
+        .where(and(eq(posOrdersTable.id, id), eq(posOrdersTable.companyId, cid)));
+      return unsentLines.length;
+    });
+    res.json({ ok: true, sentCount });
+  } catch (error) {
+    const statusCode = Number((error as { statusCode?: number })?.statusCode) || 500;
+    if (statusCode >= 500) req.log.error({ err: error, orderId: id }, "restaurant order kitchen send failed");
+    res.status(statusCode).json({ error: error instanceof Error ? error.message : "تعذر إرسال الطلب للمطبخ" });
+  }
 });
 
 // Bill — close the order; cashier links a salesInvoice

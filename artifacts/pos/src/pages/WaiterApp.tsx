@@ -184,6 +184,8 @@ export default function WaiterApp() {
   }, [tablesQ.data, language]);
   const freeCount = (tablesQ.data ?? []).filter(table => table.status === "free").length;
   const visibleServiceOrders = (serviceOrdersQ.data ?? []).filter(order => order.channel === view);
+  const unsentItemCount = activeOrder?.items.filter(item => !item.sentAt && item.status === "pending").length ?? 0;
+  const sentItemCount = activeOrder?.items.filter(item => Boolean(item.sentAt)).length ?? 0;
   const isDeliveryView = view === "delivery";
   const selectedTable = tablesQ.data?.find(table => table.id === openTableId);
   const chooseMenuItem = (item: RMenuItem) => {
@@ -582,9 +584,14 @@ export default function WaiterApp() {
               <Row label={text("الإجمالي", "Total")} v={activeOrder.total} language={language} bold />
             </div>
             <div className="grid grid-cols-2 gap-2 border-t border-border p-3">
-              <Button disabled={activeOrder.items.length === 0 || sendOrder.isPending || opening} onClick={() => sendOrder.mutate(activeOrder.id)}
+              <Button disabled={unsentItemCount === 0 || sendOrder.isPending || opening} onClick={() => sendOrder.mutate(activeOrder.id)}
                 data-testid="button-send-to-kitchen" className="h-11 font-bold">
-                {sendOrder.isPending ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Send className="me-2 h-4 w-4" />} {text("إرسال للمطبخ", "Send to kitchen")}
+                {sendOrder.isPending ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Send className="me-2 h-4 w-4" />}
+                {unsentItemCount === 0
+                  ? sentItemCount > 0 ? text("تم إرسال الأصناف", "Items already sent") : text("لا توجد أصناف للإرسال", "No items to send")
+                  : activeOrder.sentAt
+                    ? text("إرسال الأصناف الجديدة", "Send new items")
+                    : text("إرسال للمطبخ", "Send to kitchen")}
               </Button>
               <Button variant="destructive" disabled={cancelOrder.isPending || opening} data-testid="button-cancel-order"
                  onClick={() => { if (confirm(text("إلغاء الطلب نهائياً؟", "Cancel this order permanently?"))) cancelOrder.mutate(activeOrder.id); }}>
