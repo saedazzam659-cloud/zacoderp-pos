@@ -88,8 +88,8 @@ async function nextOrderNumber(cid: number): Promise<string> {
   return `ORD-${ym}-${String((c ?? 0) + 1).padStart(5, "0")}`;
 }
 
-async function recalculateOrderTotals(companyId: number, orderId: number) {
-  const lines = await db.select({
+async function recalculateOrderTotals(companyId: number, orderId: number, executor: any = db) {
+  const lines = await executor.select({
     menuItemId: posOrderItemsTable.menuItemId,
     erpItemId: posMenuItemsTable.itemId,
     qty: posOrderItemsTable.qty,
@@ -108,8 +108,8 @@ async function recalculateOrderTotals(companyId: number, orderId: number) {
       eq(itemsTable.companyId, companyId),
     ))
     .where(eq(posOrderItemsTable.orderId, orderId));
-  const totals = calculateRestaurantOrderTotals(lines.filter(line => line.status !== "cancelled"));
-  await db.update(posOrdersTable).set({ ...totals, updatedAt: new Date() })
+  const totals = calculateRestaurantOrderTotals(lines.filter((line: any) => line.status !== "cancelled"));
+  await executor.update(posOrdersTable).set({ ...totals, updatedAt: new Date() })
     .where(and(eq(posOrdersTable.id, orderId), eq(posOrdersTable.companyId, companyId)));
   return totals;
 }
@@ -1014,6 +1014,145 @@ router.post("/orders", async (req, res) => {
       .where(and(eq(posTablesTable.id, Number(tableId)), eq(posTablesTable.companyId, cid)));
   }
   res.status(201).json(row);
+});
+
+router.post("/orders/:id/table-operation", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const orderId = Number(req.params.id);
+  const { operation, targetTableId: rawTableId, targetOrderId: rawTargetOrderId, itemIds: rawItemIds, guestCount: rawGuestCount } = req.body ?? {};
+  const targetTableId = Number(rawTableId);
+  const targetOrderId = Number(rawTargetOrderId);
+  const splitGuestCount = Number(rawGuestCount ?? 1);
+  const itemIds = Array.isArray(rawItemIds) ? [...new Set(rawItemIds.map(Number))] : [];
+  if (!Number.isSafeInteger(orderId) || orderId <= 0 ||
+      !["move", "merge", "split"].includes(operation)) {
+    res.status(400).json({ error: "بيانات العملية غير صالحة" }); return;
+  }
+  if (operation !== "merge" && (!Number.isSafeInteger(targetTableId) || targetTableId <= 0)) {
+    res.status(400).json({ error: "اختر طاولة صحيحة" }); return;
+  }
+  if (operation === "merge" && (!Number.isSafeInteger(targetOrderId) || targetOrderId <= 0 || targetOrderId === orderId)) {
+    res.status(400).json({ error: "اختر طلباً آخر للدمج" }); return;
+  }
+  if (operation === "split" && (!itemIds.length || itemIds.some(id => !Number.isSafeInteger(id) || id <= 0))) {
+    res.status(400).json({ error: "اختر أصنافاً صحيحة للتقسيم" }); return;
+  }
+  if (operation === "split" && (!Number.isInteger(splitGuestCount) || splitGuestCount < 1 || splitGuestCount > 50)) {
+    res.status(400).json({ error: "عدد الضيوف في الطاولة الجديدة غير صالح" }); return;
+  }
+  const orderNumber = operation === "split" ? await nextOrderNumber(cid) : null;
+  try {
+    const result = await db.transaction(async tx => {
+      const orderLocks = [orderId, ...(operation === "merge" ? [targetOrderId] : [])].sort((a, b) => a - b);
+      for (const lockId of orderLocks) {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('restaurant-order:' || ${cid}::text || ':' || ${lockId}::text, 0))`);
+      }
+      const [source] = await tx.select().from(posOrdersTable)
+        .where(and(eq(posOrdersTable.id, orderId), eq(posOrdersTable.companyId, cid))).for("update");
+      if (!source) throw Object.assign(new Error("الطلب غير موجود"), { status: 404 });
+      if (source.channel !== "dine_in" || !source.tableId ||
+          !["open", "sent", "preparing", "ready", "served"].includes(source.status)) {
+        throw Object.assign(new Error("العملية متاحة فقط لطلب صالة مفتوح مرتبط بطاولة"), { status: 409 });
+      }
+      const [sourceTable] = await tx.select().from(posTablesTable)
+        .where(and(eq(posTablesTable.id, source.tableId), eq(posTablesTable.companyId, cid))).for("update");
+      if (!sourceTable || sourceTable.currentOrderId !== source.id) {
+        throw Object.assign(new Error("ارتباط الطلب بالطاولة تغيّر؛ حدّث الشاشة وحاول مجدداً"), { status: 409 });
+      }
+      const lines = await tx.select().from(posOrderItemsTable)
+        .where(eq(posOrderItemsTable.orderId, source.id));
+
+      if (operation === "move") {
+        if (sourceTable.id === targetTableId) throw Object.assign(new Error("الطلب على هذه الطاولة بالفعل"), { status: 400 });
+        const [targetTable] = await tx.select().from(posTablesTable)
+          .where(and(eq(posTablesTable.id, targetTableId), eq(posTablesTable.companyId, cid))).for("update");
+        if (!targetTable || targetTable.branchId !== source.branchId || !targetTable.isActive ||
+            targetTable.status !== "free" || targetTable.currentOrderId != null ||
+            targetTable.capacity < Number(source.guestCount)) {
+          throw Object.assign(new Error("الطاولة المستهدفة غير متاحة"), { status: 409 });
+        }
+        await tx.update(posTablesTable).set({ status: "free", currentOrderId: null, updatedAt: new Date() })
+          .where(and(eq(posTablesTable.id, sourceTable.id), eq(posTablesTable.companyId, cid)));
+        await tx.update(posTablesTable).set({ status: "occupied", currentOrderId: source.id, updatedAt: new Date() })
+          .where(and(eq(posTablesTable.id, targetTableId), eq(posTablesTable.companyId, cid)));
+        await tx.update(posOrdersTable).set({ tableId: targetTableId, updatedAt: new Date() })
+          .where(and(eq(posOrdersTable.id, source.id), eq(posOrdersTable.companyId, cid)));
+        return { activeOrderId: source.id };
+      }
+
+      if (source.status !== "open" || lines.some(line => line.sentAt || line.status !== "pending")) {
+        throw Object.assign(new Error("الدمج والتقسيم متاحان قبل إرسال الأصناف للمطبخ فقط"), { status: 409 });
+      }
+
+      if (operation === "merge") {
+        const [target] = await tx.select().from(posOrdersTable)
+          .where(and(eq(posOrdersTable.id, targetOrderId), eq(posOrdersTable.companyId, cid))).for("update");
+        if (!target || target.channel !== "dine_in" || target.branchId !== source.branchId ||
+            target.status !== "open" || !target.tableId) {
+          throw Object.assign(new Error("الطلب المستهدف غير متاح للدمج"), { status: 409 });
+        }
+        const targetLines = await tx.select().from(posOrderItemsTable)
+          .where(eq(posOrderItemsTable.orderId, target.id));
+        if (targetLines.some(line => line.sentAt || line.status !== "pending")) {
+          throw Object.assign(new Error("الدمج متاح قبل إرسال أصناف الطلبين للمطبخ فقط"), { status: 409 });
+        }
+        const [targetTable] = await tx.select().from(posTablesTable)
+          .where(and(eq(posTablesTable.id, target.tableId), eq(posTablesTable.companyId, cid))).for("update");
+        if (!targetTable || targetTable.currentOrderId !== target.id ||
+            targetTable.capacity < Number(source.guestCount) + Number(target.guestCount)) {
+          throw Object.assign(new Error("الطاولة المستهدفة لا تتسع لإجمالي الضيوف"), { status: 409 });
+        }
+        await tx.update(posOrderItemsTable).set({ orderId: target.id, updatedAt: new Date() })
+          .where(eq(posOrderItemsTable.orderId, source.id));
+        await tx.update(posOrdersTable).set({
+          status: "cancelled", cancelledAt: new Date(),
+          notes: [source.notes, `مدمج في ${target.orderNumber}`].filter(Boolean).join(" · "),
+          updatedAt: new Date(),
+        }).where(and(eq(posOrdersTable.id, source.id), eq(posOrdersTable.companyId, cid)));
+        await tx.update(posOrdersTable).set({ guestCount: Number(source.guestCount) + Number(target.guestCount), updatedAt: new Date() })
+          .where(and(eq(posOrdersTable.id, target.id), eq(posOrdersTable.companyId, cid)));
+        await tx.update(posTablesTable).set({ status: "free", currentOrderId: null, updatedAt: new Date() })
+          .where(and(eq(posTablesTable.id, sourceTable.id), eq(posTablesTable.companyId, cid)));
+        await recalculateOrderTotals(cid, target.id, tx);
+        return { activeOrderId: target.id };
+      }
+
+      const [targetTable] = await tx.select().from(posTablesTable)
+        .where(and(eq(posTablesTable.id, targetTableId), eq(posTablesTable.companyId, cid))).for("update");
+      if (!targetTable || targetTable.branchId !== source.branchId || !targetTable.isActive ||
+          targetTable.status !== "free" || targetTable.currentOrderId != null ||
+          targetTable.capacity < splitGuestCount || Number(source.guestCount) <= splitGuestCount) {
+        throw Object.assign(new Error("الطاولة المستهدفة غير متاحة"), { status: 409 });
+      }
+      const selectedLines = lines.filter(line => itemIds.includes(line.id));
+      if (selectedLines.length !== itemIds.length || selectedLines.length >= lines.length) {
+        throw Object.assign(new Error("يجب اختيار بعض الأصناف فقط، دون تكرار أو تقسيم كامل الطلب"), { status: 400 });
+      }
+      const [created] = await tx.insert(posOrdersTable).values({
+        companyId: cid, branchId: source.branchId, orderNumber: orderNumber!,
+        channel: "dine_in", tableId: targetTableId, waiterId: source.waiterId,
+        guestCount: splitGuestCount,
+        notes: [source.notes, `مقسم من ${source.orderNumber}`].filter(Boolean).join(" · "),
+      }).returning({ id: posOrdersTable.id });
+      await tx.update(posOrdersTable).set({
+        guestCount: Number(source.guestCount) - splitGuestCount,
+        notes: [source.notes, `تم تقسيمه إلى ${orderNumber}`].filter(Boolean).join(" · "),
+        updatedAt: new Date(),
+      }).where(and(eq(posOrdersTable.id, source.id), eq(posOrdersTable.companyId, cid)));
+      await tx.update(posOrderItemsTable).set({ orderId: created.id, updatedAt: new Date() })
+        .where(and(eq(posOrderItemsTable.orderId, source.id), inArray(posOrderItemsTable.id, itemIds)));
+      await tx.update(posTablesTable).set({ status: "occupied", currentOrderId: created.id, updatedAt: new Date() })
+        .where(and(eq(posTablesTable.id, targetTableId), eq(posTablesTable.companyId, cid)));
+      await recalculateOrderTotals(cid, source.id, tx);
+      await recalculateOrderTotals(cid, created.id, tx);
+      return { activeOrderId: created.id };
+    });
+    res.json({ ok: true, ...result });
+  } catch (error: any) {
+    const status = Number(error?.status) || 500;
+    if (status >= 500) req.log.error({ err: error }, "restaurant table operation failed");
+    res.status(status).json({ error: error?.message ?? "تعذّر تنفيذ العملية" });
+  }
 });
 
 router.post("/orders/:id/items", async (req, res) => {

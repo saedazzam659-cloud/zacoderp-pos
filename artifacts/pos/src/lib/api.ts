@@ -619,6 +619,10 @@ export const api = {
   }) => req<RRestaurantReservation>("POST", "/api/pos-restaurant/reservations", b),
   rUpdateReservationStatus: (id: number, status: "seated" | "cancelled" | "no_show") =>
     req<RRestaurantReservation>("PATCH", `/api/pos-restaurant/reservations/${id}/status`, { status }),
+  rTableOperation: (
+    id: number,
+    body: { operation: "move" | "merge" | "split"; targetTableId?: number; targetOrderId?: number; itemIds?: number[]; guestCount?: number },
+  ) => req<{ ok: true; activeOrderId: number }>("POST", `/api/pos-restaurant/orders/${id}/table-operation`, body),
   rAddItem: (orderId: number, b: { menuItemId: number; qty?: number; notes?: string; modifiers?: Array<{ groupId: string; optionIds: string[] }> }) =>
     req<{ ok: true; subtotal: string; vatAmount: string; total: string }>(
       "POST", `/api/pos-restaurant/orders/${orderId}/items`, b),
@@ -818,7 +822,7 @@ export type ROrder = {
   deliveryAddress?: string | null;
   waiterId?: number | null;
   guestCount: number;
-  status: "draft" | "sent" | "preparing" | "ready" | "served" | "billed" | "cancelled";
+  status: "open" | "sent" | "preparing" | "ready" | "served" | "billed" | "cancelled";
   subtotal: string;
   vatAmount: string;
   total: string;

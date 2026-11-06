@@ -389,10 +389,10 @@ function lineGross(line: ROrderItem): number {
 
 function statusLabel(s: ROrder["status"], language: "ar" | "en") {
   const m: Record<string, string> = language === "ar" ? {
-    draft: "مسودة", sent: "أُرسل", preparing: "قيد التحضير", ready: "جاهز",
+    open: "مفتوح", sent: "أُرسل", preparing: "قيد التحضير", ready: "جاهز",
     served: "تم التقديم", billed: "مفوتر", cancelled: "ملغى",
   } : {
-    draft: "Draft", sent: "Sent", preparing: "Preparing", ready: "Ready",
+    open: "Open", sent: "Sent", preparing: "Preparing", ready: "Ready",
     served: "Served", billed: "Billed", cancelled: "Cancelled",
   };
   return m[s] ?? s;

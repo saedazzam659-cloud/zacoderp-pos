@@ -37,6 +37,11 @@ export default function WaiterApp() {
   const [creatingDelivery, setCreatingDelivery] = useState(false);
   const [deliveryError, setDeliveryError] = useState("");
   const [modifierTarget, setModifierTarget] = useState<{ item: RMenuItem; line?: ROrderItem } | null>(null);
+  const [tableOperationOpen, setTableOperationOpen] = useState(false);
+  const [tableOperationKind, setTableOperationKind] = useState<"move" | "merge" | "split">("move");
+  const [tableOperationTarget, setTableOperationTarget] = useState("");
+  const [splitItemIds, setSplitItemIds] = useState<number[]>([]);
+  const [splitGuestCount, setSplitGuestCount] = useState(1);
 
   useEffect(() => { if (!getToken()) setLocation("/login"); }, [setLocation]);
 
@@ -49,6 +54,13 @@ export default function WaiterApp() {
     refetchInterval: 5000,
     select: orders => orders.filter(order =>
       ["delivery", "takeaway"].includes(order.channel) && !["billed", "cancelled"].includes(order.status)),
+  });
+  const draftTableOrdersQ = useQuery({
+    queryKey: ["r-table-operation-orders", activeOrder?.id],
+    queryFn: () => api.rOrders(),
+    enabled: tableOperationOpen && tableOperationKind === "merge",
+    select: orders => orders.filter(order =>
+      order.id !== activeOrder?.id && order.channel === "dine_in" && order.status === "open" && !!order.tableId),
   });
 
   // Select a table and reuse its open order, otherwise create a draft.
@@ -122,6 +134,26 @@ export default function WaiterApp() {
     mutationFn: (id: number) => api.rCancelOrder(id),
     onSuccess: async () => {
       setActiveOrder(null); setOpenTableId(null);
+      await qc.invalidateQueries({ queryKey: ["r-tables"] });
+      await qc.invalidateQueries({ queryKey: ["r-service-orders"] });
+    },
+  });
+  const tableOperationMutation = useMutation({
+    mutationFn: () => {
+      if (!activeOrder) throw new Error("لا يوجد طلب مفتوح");
+      return api.rTableOperation(activeOrder.id, tableOperationKind === "merge"
+        ? { operation: "merge", targetOrderId: Number(tableOperationTarget) }
+        : tableOperationKind === "split"
+          ? { operation: "split", targetTableId: Number(tableOperationTarget), itemIds: splitItemIds, guestCount: splitGuestCount }
+          : { operation: "move", targetTableId: Number(tableOperationTarget) });
+    },
+    onSuccess: async result => {
+      const updatedOrder = await api.rOrder(result.activeOrderId);
+      setActiveOrder(updatedOrder);
+      setOpenTableId(updatedOrder.tableId ?? null);
+      setTableOperationOpen(false);
+      setSplitItemIds([]);
+      setTableOperationTarget("");
       await qc.invalidateQueries({ queryKey: ["r-tables"] });
       await qc.invalidateQueries({ queryKey: ["r-service-orders"] });
     },
@@ -489,8 +521,15 @@ export default function WaiterApp() {
                     <p className="mt-0.5 text-sm text-muted-foreground">{activeOrder.channel !== "dine_in" ? [activeOrder.customerName, activeOrder.customerPhone].filter(Boolean).join(" · ") || text("طلب استلام", "Pickup order") : `${text("طاولة", "Table")} ${selectedTable?.nameAr ?? activeOrder.tableId}`}</p>
                     {activeOrder.channel === "delivery" && activeOrder.deliveryAddress && <p className="mt-1 max-w-sm text-xs leading-5 text-orange-800">{activeOrder.deliveryAddress}</p>}
                 </div>
-                 <Button variant="ghost" size="icon" aria-label={text("إغلاق الطلب والعودة للطاولات", "Close order and return")} data-testid="button-close-order"
-                   onClick={() => { setActiveOrder(null); setOpenTableId(null); }}><X className="h-4 w-4" /></Button>
+                  <div className="flex items-center gap-1">
+                    {activeOrder.channel === "dine_in" && activeOrder.tableId && !["billed", "cancelled"].includes(activeOrder.status) &&
+                      <Button variant="outline" size="sm" onClick={() => { tableOperationMutation.reset(); setTableOperationKind("move"); setTableOperationTarget(""); setSplitItemIds([]); setSplitGuestCount(1); setTableOperationOpen(true); }}
+                        data-testid="button-table-order-operations">
+                        <MapPin className="me-1 h-4 w-4" /> {text("إدارة الطاولة", "Table actions")}
+                      </Button>}
+                    <Button variant="ghost" size="icon" aria-label={text("إغلاق الطلب والعودة للطاولات", "Close order and return")} data-testid="button-close-order"
+                      onClick={() => { setActiveOrder(null); setOpenTableId(null); }}><X className="h-4 w-4" /></Button>
+                  </div>
               </div>
               <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-xs font-bold text-muted-foreground" data-testid="status-active-order">
                  <span className="size-1.5 rounded-full bg-primary" />{statusLabel(activeOrder.status, language)}
@@ -571,6 +610,81 @@ export default function WaiterApp() {
           onConfirm={confirmModifiers}
         />
       )}
+      {tableOperationOpen && activeOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="table-operation-title" className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 id="table-operation-title" className="text-lg font-black">{text("إدارة الطلب والطاولة", "Manage table order")}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">{activeOrder.orderNumber} · {text("الطاولة", "Table")} {activeOrder.tableId}</p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setTableOperationOpen(false)} aria-label={text("إغلاق", "Close")}><X className="h-4 w-4" /></Button>
+            </div>
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              {([
+                ["move", text("نقل", "Move")],
+                ["merge", text("دمج", "Merge")],
+                ["split", text("تقسيم", "Split")],
+              ] as const).map(([kind, label]) => {
+                const draftOnly = kind !== "move";
+                const draftReady = activeOrder.status === "open" && activeOrder.items.every(line => !line.sentAt && line.status === "pending");
+                return <button key={kind} type="button" disabled={draftOnly && !draftReady}
+                  aria-pressed={tableOperationKind === kind} onClick={() => { tableOperationMutation.reset(); setTableOperationKind(kind); setTableOperationTarget(""); setSplitItemIds([]); setSplitGuestCount(1); }}
+                  className={`min-h-10 rounded-xl border px-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40 ${tableOperationKind === kind ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted"}`}>
+                  {label}
+                </button>;
+              })}
+            </div>
+            {tableOperationKind !== "merge" ? (
+              <label className="mt-4 block text-sm font-bold">{text("الطاولة المتاحة", "Available table")}
+                <select value={tableOperationTarget} onChange={e => setTableOperationTarget(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-input bg-background px-3">
+                  <option value="">{text("اختر طاولة", "Choose a table")}</option>
+                  {(tablesQ.data ?? []).filter(table => table.branchId === activeOrder.branchId && table.id !== activeOrder.tableId && table.status === "free" && table.isActive &&
+                    table.capacity >= (tableOperationKind === "split" ? splitGuestCount : Number(activeOrder.guestCount))).map(table =>
+                    <option key={table.id} value={table.id}>{table.nameAr} · {table.code} · {table.capacity}</option>)}
+                </select>
+              </label>
+            ) : (
+              <label className="mt-4 block text-sm font-bold">{text("الطلب المفتوح على الطاولة الأخرى", "Open order on the other table")}
+                <select value={tableOperationTarget} onChange={e => setTableOperationTarget(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-input bg-background px-3">
+                  <option value="">{text("اختر طلباً", "Choose an order")}</option>
+                  {(draftTableOrdersQ.data ?? []).filter(order => order.branchId === activeOrder.branchId).map(order =>
+                    <option key={order.id} value={order.id}>{order.orderNumber} · {text("طاولة", "Table")} {order.tableId}</option>)}
+                </select>
+              </label>
+            )}
+            {tableOperationKind === "split" && (
+              <fieldset className="mt-4 space-y-2">
+                <legend className="text-sm font-bold">{text("اختر الأصناف التي ستُنقل", "Choose items to move")}</legend>
+                <label className="block text-sm font-bold">{text("عدد الضيوف على الطاولة الجديدة", "Guests at the new table")}
+                  <Input type="number" min={1} max={Math.max(1, Number(activeOrder.guestCount) - 1)} value={splitGuestCount}
+                    onChange={e => setSplitGuestCount(Number(e.target.value))} className="mt-1 h-10" />
+                </label>
+                {activeOrder.items.filter(line => !line.sentAt && line.status === "pending").map(line => (
+                  <label key={line.id} className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm">
+                    <input type="checkbox" checked={splitItemIds.includes(line.id)}
+                      onChange={e => setSplitItemIds(current => e.target.checked ? [...current, line.id] : current.filter(id => id !== line.id))} />
+                    <span className="flex-1">{line.nameSnapshot} × {Number(line.qty).toFixed(0)}</span><span>{Number(line.total).toFixed(2)}</span>
+                  </label>
+                ))}
+                <p className="text-xs text-muted-foreground">{text("التقسيم ينقل أصنافاً كاملة فقط، ويُبقي صنفاً واحداً على الأقل في الطلب الأصلي.", "Split moves whole lines only and keeps at least one line in the original order.")}</p>
+              </fieldset>
+            )}
+            {tableOperationKind !== "move" && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-900">{text("الدمج والتقسيم متاحان قبل إرسال الأصناف للمطبخ فقط.", "Merge and split are available only before items are sent to the kitchen.")}</p>}
+            {tableOperationMutation.isError && <p role="alert" className="mt-3 text-sm text-destructive">{(tableOperationMutation.error as Error).message || text("تعذّر تنفيذ العملية.", "Could not complete the operation.")}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setTableOperationOpen(false)}>{text("إلغاء", "Cancel")}</Button>
+              <Button disabled={tableOperationMutation.isPending || !tableOperationTarget ||
+                (tableOperationKind === "split" && (splitItemIds.length === 0 || splitItemIds.length >= activeOrder.items.length ||
+                  splitGuestCount < 1 || splitGuestCount >= Number(activeOrder.guestCount)))}
+                onClick={() => tableOperationMutation.mutate()}>
+                {tableOperationMutation.isPending && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
+                {text("تنفيذ", "Apply")}
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -581,10 +695,10 @@ function Row({ label, v, bold, language }: { label: string; v: string; bold?: bo
 }
 function statusLabel(s: ROrder["status"] | ROrderItem["status"], language: "ar" | "en") {
   const labels: Record<string, string> = language === "ar" ? {
-    draft: "مسودة", sent: "أُرسل", preparing: "قيد التحضير", ready: "جاهز",
+    open: "مفتوح", sent: "أُرسل", preparing: "قيد التحضير", ready: "جاهز",
     served: "تم التقديم", billed: "مفوتر", cancelled: "ملغى", pending: "بانتظار",
   } : {
-    draft: "Draft", sent: "Sent", preparing: "Preparing", ready: "Ready",
+    open: "Open", sent: "Sent", preparing: "Preparing", ready: "Ready",
     served: "Served", billed: "Billed", cancelled: "Cancelled", pending: "Pending",
   };
   return labels[s] ?? s;
