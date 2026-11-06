@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, Loader2, Printer, RefreshCw, Search, UserRoundCheck, Plus, Trash2, Save } from "lucide-react";
-import { api, type PosSession, type PosShiftSettings } from "@/lib/api";
+import { Download, Eye, Loader2, Printer, RefreshCw, Search, UserRoundCheck, Plus, Trash2, Save } from "lucide-react";
+import { api, type Branch, type PosSession, type PosShiftSettings } from "@/lib/api";
 import {
   openPosShiftPrintWindow,
   printPosShiftReport,
@@ -50,6 +50,12 @@ export default function ShiftManagementTab({ companyId }: { companyId: number })
     queryFn: async () => (await api.getPosSettings(companyId)).posShiftSettings ?? defaultPolicy,
     enabled: companyId > 0,
   });
+  const branchesQ = useQuery({
+    queryKey: ["pos-shift-management-branches", companyId],
+    queryFn: () => api.getBranches(companyId, { onlyUserBranches: true }),
+    enabled: companyId > 0,
+    staleTime: 5 * 60_000,
+  });
   const usersQ = useQuery({
     queryKey: ["pos-shift-policy-users", companyId],
     queryFn: () => api.request<UserOption[]>("GET", `/api/users?companyId=${companyId}`),
@@ -77,7 +83,7 @@ export default function ShiftManagementTab({ companyId }: { companyId: number })
     const q = query.trim().toLocaleLowerCase();
     return (shiftsQ.data ?? []).filter(row => {
       if (!q) return true;
-      return [row.user?.nameAr, row.user?.username, row.branch?.nameAr, row.cashBox?.nameAr, String(row.id)]
+      return [row.user?.nameAr, row.user?.username, row.branch?.nameAr, row.cashBox?.nameAr, row.shiftName, row.status, String(row.id)]
         .some(value => String(value ?? "").toLocaleLowerCase().includes(q));
     });
   }, [shiftsQ.data, query]);
@@ -86,6 +92,42 @@ export default function ShiftManagementTab({ companyId }: { companyId: number })
     sales: sum.sales + Number(row.totalSales || 0),
     invoices: sum.invoices + Number(row.invoiceCount || 0),
   }), { sales: 0, invoices: 0 }), [rows]);
+
+  const downloadCsv = () => {
+    const csvRows: Array<Array<string | number | null | undefined>> = [
+      ["رقم الوردية", "الحالة", "اسم الوردية", "الكاشير", "الفرع", "الخزنة", "بداية الوردية", "نهاية الوردية", "الرصيد الافتتاحي", "النقد المتوقع", "النقد الفعلي", "الفرق", "الفواتير المرحلة", "إجمالي المبيعات"],
+      ...rows.map(row => [
+        row.id,
+        row.status === "open" ? "مفتوحة" : row.status === "force_closed" ? "إغلاق إداري" : "مغلقة",
+        row.shiftName,
+        row.user?.nameAr || row.user?.username || `مستخدم ${row.userId}`,
+        row.branch?.nameAr || "—",
+        row.cashBox?.nameAr || "—",
+        row.openedAt,
+        row.closedAt,
+        row.openingCash == null ? null : Number(row.openingCash),
+        row.expectedCash == null ? null : Number(row.expectedCash),
+        row.closingCash == null ? null : Number(row.closingCash),
+        row.difference == null ? null : Number(row.difference),
+        row.invoiceCount ?? 0,
+        row.totalSales ?? 0,
+      ]),
+    ];
+    const csvCell = (value: string | number | null | undefined) => {
+      const raw = String(value ?? "");
+      const safe = typeof value === "string" && /^[\s\u0000-\u001f]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
+    const csv = `\uFEFF${csvRows.map(row => row.map(csvCell).join(",")).join("\r\n")}`;
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `pos-shifts-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
   const savePolicy = async () => {
     setPolicyBusy(true);
@@ -230,24 +272,30 @@ export default function ShiftManagementTab({ companyId }: { companyId: number })
       </div>
       <div className="flex flex-wrap items-end gap-2 rounded-xl border border-border bg-card p-3">
         <label className="min-w-36 flex-1 text-xs font-bold">الحالة
-          <select value={status} onChange={event => setStatus(event.target.value as typeof status)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm">
+          <select data-testid="select-shift-status" value={status} onChange={event => setStatus(event.target.value as typeof status)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm">
             <option value="open">مفتوحة</option><option value="closed">مغلقة</option><option value="all">الكل</option>
           </select>
         </label>
-        <label className="min-w-36 flex-1 text-xs font-bold">رقم الفرع
-          <input value={branchId} onChange={event => setBranchId(event.target.value.replace(/\D/g, ""))} placeholder="كل الفروع" className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" />
+        <label className="min-w-36 flex-1 text-xs font-bold">الفرع
+          <select data-testid="select-shift-branch" value={branchId} onChange={event => setBranchId(event.target.value)} disabled={branchesQ.isLoading || branchesQ.isError} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm disabled:opacity-60">
+            <option value="">{branchesQ.isLoading ? "جارٍ تحميل الفروع..." : "كل الفروع المتاحة"}</option>
+            {(branchesQ.data ?? []).map((branch: Branch) => <option key={branch.id} value={branch.id}>{branch.nameAr}</option>)}
+          </select>
+          {branchesQ.isError && <span role="alert" className="mt-1 block text-[11px] text-destructive">تعذّر تحميل قائمة الفروع.</span>}
         </label>
         <label className="min-w-36 flex-1 text-xs font-bold">من تاريخ
-          <input type="date" value={from} onChange={event => setFrom(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" />
+          <input data-testid="input-shift-from" type="date" value={from} onChange={event => setFrom(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" />
         </label>
         <label className="min-w-36 flex-1 text-xs font-bold">إلى تاريخ
-          <input type="date" value={to} onChange={event => setTo(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" />
+          <input data-testid="input-shift-to" type="date" value={to} onChange={event => setTo(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" />
         </label>
         <label className="min-w-48 flex-[2] text-xs font-bold">بحث
-          <span className="relative mt-1 block"><Search className="absolute right-3 top-3 size-4 text-muted-foreground" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="الكاشير أو الخزنة أو رقم الوردية" className="h-10 w-full rounded-lg border border-border bg-background pr-9 pl-3 text-sm" /></span>
+          <span className="relative mt-1 block"><Search className="absolute right-3 top-3 size-4 text-muted-foreground" /><input data-testid="input-shift-search" value={query} onChange={event => setQuery(event.target.value)} placeholder="الكاشير أو الوردية أو الفرع" className="h-10 w-full rounded-lg border border-border bg-background pr-9 pl-3 text-sm" /></span>
         </label>
-        <button type="button" onClick={() => void shiftsQ.refetch()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-sm font-bold hover:bg-muted"><RefreshCw className="size-4" /> تحديث</button>
+        <button type="button" data-testid="button-refresh-shifts" onClick={() => void shiftsQ.refetch()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-sm font-bold hover:bg-muted"><RefreshCw className="size-4" /> تحديث</button>
+        <button type="button" data-testid="button-export-shifts-csv" disabled={rows.length === 0} onClick={downloadCsv} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-bold text-primary-foreground disabled:opacity-50"><Download className="size-4" /> تصدير CSV</button>
       </div>
+      <p className="text-xs text-muted-foreground">التصدير يشمل النتائج المحمّلة بعد تطبيق الفلاتر والبحث، بحد أقصى ٥٠٠ وردية.</p>
       {error && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
       {notice && <p role="status" className="rounded-lg bg-emerald-500/10 p-3 text-sm text-emerald-800">{notice}</p>}
       {shiftsQ.isLoading ? <div className="flex justify-center p-10"><Loader2 className="size-6 animate-spin" /></div> : shiftsQ.isError ? (
