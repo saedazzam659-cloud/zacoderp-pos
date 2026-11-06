@@ -11,6 +11,7 @@ import {
   posOrderItemsTable,
   posOrdersTable,
   posTablesTable,
+  salesInvoicesTable,
   usersTable,
 } from "@workspace/db";
 import app from "../src/app.ts";
@@ -110,6 +111,7 @@ after(async () => {
       await db.delete(posOrderItemsTable).where(eq(posOrderItemsTable.orderId, orderId));
       await db.delete(posOrdersTable).where(eq(posOrdersTable.companyId, companyId));
       await db.delete(posTablesTable).where(eq(posTablesTable.companyId, companyId));
+      await db.delete(salesInvoicesTable).where(eq(salesInvoicesTable.companyId, companyId));
       await db.delete(usersTable).where(eq(usersTable.companyId, companyId));
       await db.delete(branchesTable).where(eq(branchesTable.companyId, companyId));
       await db.delete(companiesTable).where(and(
@@ -168,4 +170,40 @@ test("cancelling a sent order cancels unserved lines and serializes with kitchen
   assert.equal(billedCancel.status, 409, JSON.stringify(billedCancel.body));
   const [stillBilled] = await db.select().from(posOrdersTable).where(eq(posOrdersTable.id, replacement.id));
   assert.equal(stillBilled.status, "billed");
+});
+
+test("billing and cancellation cannot both finalize the same restaurant order", async () => {
+  const [raceOrder] = await db.insert(posOrdersTable).values({
+    companyId,
+    branchId,
+    orderNumber: `${TEST_TAG}-BILL-CANCEL-RACE`,
+    channel: "takeaway",
+    status: "open",
+  }).returning({ id: posOrdersTable.id });
+  const [invoice] = await db.insert(salesInvoicesTable).values({
+    companyId,
+    branchId,
+    docNumber: `${TEST_TAG}-BILL-CANCEL-RACE-INVOICE`,
+    invoiceDate: new Date().toISOString().slice(0, 10),
+    paymentType: "cash",
+    currencyCode: "SAR",
+    status: "posted",
+  }).returning({ id: salesInvoicesTable.id });
+
+  const [bill, cancel] = await Promise.all([
+    api(`/api/pos-restaurant/orders/${raceOrder.id}/bill`, "POST", { salesInvoiceId: invoice.id }),
+    api(`/api/pos-restaurant/orders/${raceOrder.id}/cancel`, "POST", {}),
+  ]);
+  assert.deepEqual([bill.status, cancel.status].sort(), [200, 409]);
+
+  const [finalOrder] = await db.select().from(posOrdersTable)
+    .where(eq(posOrdersTable.id, raceOrder.id));
+  assert.ok(["billed", "cancelled"].includes(finalOrder.status));
+  if (finalOrder.status === "billed") {
+    assert.equal(finalOrder.billedInvoiceId, invoice.id);
+    assert.equal(cancel.status, 409);
+  } else {
+    assert.equal(finalOrder.billedInvoiceId, null);
+    assert.equal(bill.status, 409);
+  }
 });
