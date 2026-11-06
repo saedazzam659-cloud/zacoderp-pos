@@ -422,6 +422,51 @@ async function ensureRestaurantQrOrderSchema(): Promise<void> {
   }
 }
 
+async function ensureRestaurantLoyaltySchema(): Promise<void> {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS pos_restaurant_loyalty_programs (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      earn_every NUMERIC(12,4) NOT NULL DEFAULT 1,
+      redeem_value_per_100 NUMERIC(12,4) NOT NULL DEFAULT 1,
+      min_redeem_points INTEGER NOT NULL DEFAULT 100,
+      expiry_days INTEGER NOT NULL DEFAULT 365,
+      rules JSONB NOT NULL DEFAULT '[]'::jsonb,
+      tiers JSONB NOT NULL DEFAULT '[]'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_restaurant_loyalty_programs_company_uniq
+      ON pos_restaurant_loyalty_programs(company_id)`,
+    `CREATE TABLE IF NOT EXISTS pos_restaurant_loyalty_ledger (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      points INTEGER NOT NULL,
+      spend_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+      source_earn_id INTEGER,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS pos_restaurant_loyalty_ledger_customer_idx
+      ON pos_restaurant_loyalty_ledger(company_id, customer_id, created_at)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_restaurant_loyalty_ledger_earn_once
+      ON pos_restaurant_loyalty_ledger(company_id, invoice_id) WHERE type = 'earn'`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_restaurant_loyalty_ledger_redeem_once_per_lot
+      ON pos_restaurant_loyalty_ledger(company_id, invoice_id, source_earn_id) WHERE type = 'redeem'`,
+  ];
+  for (const statement of statements) {
+    try {
+      await execDDL(statement);
+    } catch (err) {
+      logger.error({ err, statement }, "ensureSchema: restaurant loyalty schema reconciliation failed");
+      throw err;
+    }
+  }
+}
+
 // Generic schema inspection can run after traffic starts in an external agent.
 // These source-fact columns are read during manufacturing close, so heal them
 // explicitly before any purchasing/production route can expose a tagged line.
@@ -4740,6 +4785,7 @@ async function runHeal(options: {
   // agent package update, so a partially-upgraded agent must heal first.
   await ensureSupplierMetadataCompatibility();
   await ensureRestaurantQrOrderSchema();
+  await ensureRestaurantLoyaltySchema();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must
@@ -4953,6 +4999,7 @@ async function runHeal(options: {
   // posting writes these JE-line fields during the same request that follows an
   // agent package update, so a partially-upgraded agent must heal first.
   await ensureSupplierMetadataCompatibility();
+  await ensureRestaurantLoyaltySchema();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must

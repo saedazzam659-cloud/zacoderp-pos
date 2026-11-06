@@ -234,6 +234,39 @@ export type Customer = {
   phone?: string | null;
 };
 
+export type RLoyaltyRule = {
+  id: number | string;
+  name: string;
+  channel: "all" | "dine_in" | "takeaway" | "delivery";
+  minInvoiceAmount: number;
+  customerGroupId: number | null;
+  pointsMultiplier: number;
+  isActive: boolean;
+};
+export type RLoyaltyTier = {
+  id: number | string;
+  name: string;
+  minLifetimeSpend: number;
+  pointsMultiplier: number;
+  isActive: boolean;
+};
+export type RLoyaltyProgram = {
+  enabled: boolean;
+  earnEvery: number;
+  redeemValuePer100: number;
+  minRedeemPoints: number;
+  expiryDays: number;
+  rules: RLoyaltyRule[];
+  tiers: RLoyaltyTier[];
+};
+export type RLoyaltyPreview = {
+  balance: number;
+  maxRedeemPoints: number;
+  redeemAmount: number;
+  earnedPoints: number;
+  tierName: string | null;
+};
+
 export type CreateInvoiceLine = {
   itemId: number | null;
   itemName: string;
@@ -584,7 +617,13 @@ export const api = {
       "DELETE", `/api/pos-restaurant/orders/${orderId}/items/${itemId}`),
   rSendOrder: (id: number) =>
     req<{ ok: true }>("POST", `/api/pos-restaurant/orders/${id}/send`),
-  rBillOrder: (id: number, b: { salesInvoiceId?: number } = {}) =>
+  rLoyaltyProgram: () =>
+    req<RLoyaltyProgram>("GET", "/api/pos-restaurant/loyalty"),
+  rSaveLoyaltyProgram: (body: RLoyaltyProgram) =>
+    req<RLoyaltyProgram>("PUT", "/api/pos-restaurant/loyalty", body),
+  rLoyaltyPreview: (orderId: number, customerId: number, pointsRequested: number) =>
+    req<RLoyaltyPreview>("GET", `/api/pos-restaurant/orders/${orderId}/loyalty-preview?customerId=${customerId}&pointsRequested=${pointsRequested}`),
+  rBillOrder: (id: number, b: { salesInvoiceId?: number; customerId?: number; pointsRedeemed?: number } = {}) =>
     req<{ ok: true }>("POST", `/api/pos-restaurant/orders/${id}/bill`, b),
   rCancelOrder: (id: number) =>
     req<{ ok: true }>("POST", `/api/pos-restaurant/orders/${id}/cancel`),

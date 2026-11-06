@@ -15,6 +15,9 @@ import {
   usersTable,
   stockBalanceTable,
   branchesTable,
+  customersTable,
+  posRestaurantLoyaltyProgramsTable,
+  posRestaurantLoyaltyLedgerTable,
 } from "@workspace/db";
 import { and, eq, sql, desc, asc, isNull, isNotNull, gte, lte, inArray, ne } from "drizzle-orm";
 import { branchScopeSpread, extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -46,6 +49,9 @@ router.use((req, res, next) => {
     else if (path.endsWith("/cancel")) action = "cancel";
     else if (path === "/orders" && req.method === "POST") action = "create";
     else action = "edit";
+  } else if (path === "/loyalty" || path.startsWith("/loyalty/")) {
+    module = "pos_waiter";
+    action = req.method === "GET" ? "view" : "edit";
   } else if (
     path === "/tables" || path.startsWith("/tables/") ||
     path.startsWith("/menu/")
@@ -169,6 +175,79 @@ async function resolveRestaurantModifiers(
       vatIncluded,
     };
   });
+}
+
+const DEFAULT_RESTAURANT_LOYALTY = {
+  enabled: false,
+  earnEvery: 1,
+  redeemValuePer100: 1,
+  minRedeemPoints: 100,
+  expiryDays: 365,
+  rules: [] as any[],
+  tiers: [] as any[],
+};
+
+async function loyaltyProgram(companyId: number, executor: any = db) {
+  const [row] = await executor.select().from(posRestaurantLoyaltyProgramsTable)
+    .where(eq(posRestaurantLoyaltyProgramsTable.companyId, companyId)).limit(1);
+  return row ?? { companyId, ...DEFAULT_RESTAURANT_LOYALTY };
+}
+
+async function availableLoyaltyLots(companyId: number, customerId: number, executor: any = db) {
+  const rows = await executor.select().from(posRestaurantLoyaltyLedgerTable).where(and(
+    eq(posRestaurantLoyaltyLedgerTable.companyId, companyId),
+    eq(posRestaurantLoyaltyLedgerTable.customerId, customerId),
+  ));
+  const now = Date.now();
+  const earns = rows.filter((row: any) => row.type === "earn" && (!row.expiresAt || new Date(row.expiresAt).getTime() > now));
+  const redeemed = new Map<number, number>();
+  for (const row of rows.filter((entry: any) => entry.type === "redeem")) {
+    if (row.sourceEarnId != null) redeemed.set(row.sourceEarnId, (redeemed.get(row.sourceEarnId) ?? 0) + Math.abs(Number(row.points)));
+  }
+  const lots = earns.map((earn: any) => ({
+    id: earn.id,
+    points: Math.max(0, Number(earn.points) - (redeemed.get(earn.id) ?? 0)),
+    expiresAt: earn.expiresAt,
+    spendAmount: Number(earn.spendAmount ?? 0),
+  })).filter((lot: any) => lot.points > 0)
+    .sort((a: any, b: any) => (a.expiresAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER) - (b.expiresAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER));
+  let debt = rows.filter((entry: any) => entry.type === "debt").reduce((sum: number, entry: any) => sum + Math.abs(Number(entry.points)), 0);
+  for (const lot of lots) {
+    const used = Math.min(debt, lot.points);
+    lot.points -= used;
+    debt -= used;
+    if (debt <= 0) break;
+  }
+  const available = lots.filter((lot: any) => lot.points > 0);
+  (available as any).lifetimeSpend = rows.filter((entry: any) => entry.type === "earn")
+    .reduce((sum: number, entry: any) => sum + Number(entry.spendAmount ?? 0), 0);
+  return available;
+}
+
+function restaurantLoyaltyQuote(program: any, order: any, customer: any, lots: any[], requestedPoints = 0) {
+  const balance = lots.reduce((sum: number, lot: any) => sum + lot.points, 0);
+  const total = Math.max(0, Number(order.total ?? 0));
+  const perPoint = Number(program.redeemValuePer100) / 100;
+  const maxRedeemPoints = perPoint > 0 ? Math.min(balance, Math.floor(total / perPoint + 1e-8)) : 0;
+  const requested = Math.max(0, Math.min(maxRedeemPoints, Math.floor(Number(requestedPoints) || 0)));
+  const redeemAmount = Math.round(requested * perPoint * 100) / 100;
+  const lifetimeSpend = Number((lots as any).lifetimeSpend ??
+    lots.reduce((sum: number, lot: any) => sum + Number(lot.spendAmount ?? 0), 0));
+  const tier = [...(program.tiers ?? [])].filter((entry: any) =>
+    entry.isActive && Number(entry.minLifetimeSpend) <= lifetimeSpend,
+  ).sort((a: any, b: any) => Number(b.minLifetimeSpend) - Number(a.minLifetimeSpend))[0];
+  const matchingRule = [...(program.rules ?? [])].filter((entry: any) =>
+    entry.isActive &&
+    (entry.channel === "all" || entry.channel === order.channel) &&
+    Number(entry.minInvoiceAmount ?? 0) <= total &&
+    (entry.customerGroupId == null || Number(entry.customerGroupId) === Number(customer.customerGroupId)),
+  ).sort((a: any, b: any) => Number(b.minInvoiceAmount ?? 0) - Number(a.minInvoiceAmount ?? 0))[0];
+  const eligibleSpend = Math.max(0, Number(order.subtotal ?? 0) - redeemAmount);
+  const multiplier = Number(tier?.pointsMultiplier ?? 1) * Number(matchingRule?.pointsMultiplier ?? 1);
+  const earnedPoints = Number(program.earnEvery) > 0
+    ? Math.floor(eligibleSpend / Number(program.earnEvery) * multiplier)
+    : 0;
+  return { balance, maxRedeemPoints, redeemAmount, earnedPoints, tierName: tier?.name ?? null };
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -465,6 +544,92 @@ router.delete("/menu/items/:id", async (req, res) => {
   await db.update(posMenuItemsTable).set({ isActive: false })
     .where(and(eq(posMenuItemsTable.id, id), eq(posMenuItemsTable.companyId, cid)));
   res.json({ ok: true });
+});
+
+router.get("/loyalty", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  res.json(await loyaltyProgram(cid));
+});
+
+router.put("/loyalty", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const body = req.body ?? {};
+  const earnEvery = Number(body.earnEvery);
+  const redeemValuePer100 = Number(body.redeemValuePer100);
+  const minRedeemPoints = Number(body.minRedeemPoints);
+  const expiryDays = Number(body.expiryDays);
+  const rules = body.rules;
+  const tiers = body.tiers;
+  if (!Number.isFinite(earnEvery) || earnEvery <= 0 ||
+      !Number.isFinite(redeemValuePer100) || redeemValuePer100 <= 0 ||
+      !Number.isInteger(minRedeemPoints) || minRedeemPoints < 1 ||
+      !Number.isInteger(expiryDays) || expiryDays < 0 ||
+      typeof body.enabled !== "boolean" ||
+      !Array.isArray(rules) || rules.length > 50 ||
+      !Array.isArray(tiers) || tiers.length > 50) {
+    res.status(400).json({ error: "إعدادات الولاء أو قواعده غير صالحة" }); return;
+  }
+  const validRules = rules.every((rule: any) =>
+    rule && typeof rule.name === "string" && rule.name.trim().length > 0 && rule.name.length <= 80 &&
+    ["all", "dine_in", "takeaway", "delivery"].includes(rule.channel) &&
+    Number.isFinite(Number(rule.minInvoiceAmount)) && Number(rule.minInvoiceAmount) >= 0 &&
+    Number.isFinite(Number(rule.pointsMultiplier)) && Number(rule.pointsMultiplier) > 0 && Number(rule.pointsMultiplier) <= 20 &&
+    typeof rule.isActive === "boolean" &&
+    (rule.customerGroupId == null || (Number.isInteger(Number(rule.customerGroupId)) && Number(rule.customerGroupId) > 0)),
+  );
+  const validTiers = tiers.every((tier: any) =>
+    tier && typeof tier.name === "string" && tier.name.trim().length > 0 && tier.name.length <= 80 &&
+    Number.isFinite(Number(tier.minLifetimeSpend)) && Number(tier.minLifetimeSpend) >= 0 &&
+    Number.isFinite(Number(tier.pointsMultiplier)) && Number(tier.pointsMultiplier) > 0 && Number(tier.pointsMultiplier) <= 20 &&
+    typeof tier.isActive === "boolean",
+  );
+  if (!validRules || !validTiers) { res.status(400).json({ error: "تحقق من أسماء وشروط قواعد الولاء ومستوياته" }); return; }
+  const normalizedRules = rules.map((r: any) => ({
+    id: String(r.id ?? randomBytes(12).toString("hex")),
+    name: r.name.trim(), channel: r.channel, minInvoiceAmount: Number(r.minInvoiceAmount),
+    customerGroupId: r.customerGroupId == null ? null : Number(r.customerGroupId),
+    pointsMultiplier: Number(r.pointsMultiplier), isActive: r.isActive,
+  }));
+  const normalizedTiers = tiers.map((t: any) => ({
+    id: String(t.id ?? randomBytes(12).toString("hex")),
+    name: t.name.trim(), minLifetimeSpend: Number(t.minLifetimeSpend),
+    pointsMultiplier: Number(t.pointsMultiplier), isActive: t.isActive,
+  }));
+  const [saved] = await db.insert(posRestaurantLoyaltyProgramsTable).values({
+    companyId: cid, enabled: body.enabled, earnEvery: earnEvery.toFixed(4),
+    redeemValuePer100: redeemValuePer100.toFixed(4), minRedeemPoints, expiryDays,
+    rules: normalizedRules, tiers: normalizedTiers, updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: posRestaurantLoyaltyProgramsTable.companyId,
+    set: {
+      enabled: body.enabled, earnEvery: earnEvery.toFixed(4),
+      redeemValuePer100: redeemValuePer100.toFixed(4), minRedeemPoints, expiryDays,
+      rules: normalizedRules, tiers: normalizedTiers, updatedAt: new Date(),
+    },
+  }).returning();
+  res.json(saved);
+});
+
+router.get("/orders/:id/loyalty-preview", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const orderId = Number(req.params.id);
+  const customerId = Number(req.query.customerId);
+  const pointsRequested = Number(req.query.pointsRequested ?? 0);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0 || !Number.isSafeInteger(customerId) || customerId <= 0 ||
+      !Number.isInteger(pointsRequested) || pointsRequested < 0) {
+    res.status(400).json({ error: "بيانات معاينة الولاء غير صالحة" }); return;
+  }
+  const program = await loyaltyProgram(cid);
+  if (!program.enabled) { res.status(409).json({ error: "برنامج الولاء غير مفعّل" }); return; }
+  const [[order], [customer]] = await Promise.all([
+    db.select().from(posOrdersTable).where(and(eq(posOrdersTable.id, orderId), eq(posOrdersTable.companyId, cid))).limit(1),
+    db.select().from(customersTable).where(and(eq(customersTable.id, customerId), eq(customersTable.companyId, cid))).limit(1),
+  ]);
+  if (!order || ["billed", "cancelled"].includes(order.status)) { res.status(404).json({ error: "طلب المطعم غير متاح" }); return; }
+  if (!customer) { res.status(404).json({ error: "العميل غير موجود في الشركة" }); return; }
+  const lots = await availableLoyaltyLots(cid, customerId);
+  const quote = restaurantLoyaltyQuote(program, order, customer, lots, pointsRequested);
+  res.json(quote);
 });
 
 // ════════════════════════════════════════════════════════════════════════
@@ -827,8 +992,14 @@ router.post("/orders/:id/bill", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const salesInvoiceId = Number(req.body?.salesInvoiceId);
+  const requestedCustomerId = req.body?.customerId == null ? null : Number(req.body.customerId);
+  const pointsRedeemed = Number(req.body?.pointsRedeemed ?? 0);
   if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(salesInvoiceId) || salesInvoiceId <= 0) {
     res.status(400).json({ error: "معرّف الطلب والفاتورة مطلوبان" }); return;
+  }
+  if (!Number.isInteger(pointsRedeemed) || pointsRedeemed < 0 ||
+      (pointsRedeemed > 0 && (!Number.isSafeInteger(requestedCustomerId) || Number(requestedCustomerId) <= 0))) {
+    res.status(400).json({ error: "بيانات استبدال نقاط الولاء غير صالحة" }); return;
   }
   try {
     await db.transaction(async (tx) => {
@@ -840,8 +1011,10 @@ router.post("/orders/:id/bill", async (req, res) => {
       const [invoice] = await tx.select({
         id: salesInvoicesTable.id,
         status: salesInvoicesTable.status,
+        customerId: salesInvoicesTable.customerId,
         subtotal: salesInvoicesTable.subtotal,
         vatAmount: salesInvoicesTable.vatAmount,
+        discountAmount: salesInvoicesTable.discountAmount,
         totalAmount: salesInvoicesTable.totalAmount,
       }).from(salesInvoicesTable)
         .where(and(
@@ -860,6 +1033,60 @@ router.post("/orders/:id/bill", async (req, res) => {
       }
       if (order.status === "cancelled") {
         throw Object.assign(new Error("لا يمكن فوترة طلب ملغى"), { statusCode: 409 });
+      }
+
+      const program = await loyaltyProgram(cid, tx);
+      if (pointsRedeemed > 0 && (!program.enabled || Number(program.minRedeemPoints) > pointsRedeemed)) {
+        throw Object.assign(new Error("برنامج الولاء غير مفعّل أو أن النقاط أقل من حد الاستبدال"), { statusCode: 409 });
+      }
+      if (requestedCustomerId != null && Number(invoice.customerId) !== requestedCustomerId) {
+        throw Object.assign(new Error("العميل في الفاتورة لا يطابق عميل نقاط الولاء"), { statusCode: 409 });
+      }
+      if (program.enabled && requestedCustomerId != null) {
+        const [customer] = await tx.select().from(customersTable).where(and(
+          eq(customersTable.id, requestedCustomerId), eq(customersTable.companyId, cid),
+        )).for("update");
+        if (!customer) throw Object.assign(new Error("عميل الولاء غير موجود في الشركة"), { statusCode: 404 });
+        const expectedDiscount = Math.round(pointsRedeemed * Number(program.redeemValuePer100) / 100 * 100) / 100;
+        if (Math.abs(Number(invoice.discountAmount) - expectedDiscount) > 0.01) {
+          throw Object.assign(new Error("خصم الفاتورة لا يطابق قيمة نقاط الولاء"), { statusCode: 409 });
+        }
+        const lots = await availableLoyaltyLots(cid, requestedCustomerId, tx);
+        const orderForQuote = {
+          ...order,
+          subtotal: invoice.subtotal,
+          total: Number(invoice.totalAmount) + Number(invoice.discountAmount),
+        };
+        const quote = restaurantLoyaltyQuote(program, orderForQuote, customer, lots, pointsRedeemed);
+        let pointsLeft = pointsRedeemed;
+        for (const lot of lots) {
+          if (pointsLeft <= 0) break;
+          const used = Math.min(pointsLeft, lot.points);
+          if (used <= 0) continue;
+          await tx.insert(posRestaurantLoyaltyLedgerTable).values({
+            companyId: cid, customerId: requestedCustomerId, invoiceId: salesInvoiceId,
+            type: "redeem", points: -used, sourceEarnId: lot.id,
+            expiresAt: lot.expiresAt ?? null,
+          }).onConflictDoNothing();
+          pointsLeft -= used;
+        }
+        if (pointsLeft > 0) {
+          await tx.insert(posRestaurantLoyaltyLedgerTable).values({
+            companyId: cid, customerId: requestedCustomerId, invoiceId: salesInvoiceId,
+            type: "debt", points: -pointsLeft,
+          }).onConflictDoNothing();
+        }
+        if (quote.earnedPoints > 0) {
+          const expiry = Number(program.expiryDays) > 0
+            ? new Date(Date.now() + Number(program.expiryDays) * 86_400_000)
+            : null;
+          await tx.insert(posRestaurantLoyaltyLedgerTable).values({
+            companyId: cid, customerId: requestedCustomerId, invoiceId: salesInvoiceId,
+            type: "earn", points: quote.earnedPoints,
+            spendAmount: Math.max(0, Number(invoice.subtotal) - Number(invoice.discountAmount)).toFixed(2),
+            expiresAt: expiry,
+          }).onConflictDoNothing();
+        }
       }
 
       await tx.update(posOrdersTable)

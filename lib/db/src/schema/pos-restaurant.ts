@@ -2,10 +2,13 @@ import {
   pgTable, serial, integer, text, numeric, timestamp, boolean, pgEnum,
   uniqueIndex, index, jsonb,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
 import { usersTable } from "./users";
 import { posSessionsTable } from "./pos";
+import { customersTable } from "./customers";
+import { salesInvoicesTable } from "./sales";
 
 // ─── Restaurant / Cafe POS — extension of the basic cashier POS ─────────────
 // Adds dine-in tables, a configurable menu, waiter-side order taking,
@@ -159,6 +162,45 @@ export const posOrderItemsTable = pgTable("pos_order_items", {
 }, (t) => ({
   byOrder:   index("pos_order_items_order_idx").on(t.orderId),
   byStation: index("pos_order_items_station_status_idx").on(t.kitchenStation, t.status),
+}));
+
+export const posRestaurantLoyaltyProgramsTable = pgTable("pos_restaurant_loyalty_programs", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  earnEvery: numeric("earn_every", { precision: 12, scale: 4 }).notNull().default("1"),
+  redeemValuePer100: numeric("redeem_value_per_100", { precision: 12, scale: 4 }).notNull().default("1"),
+  minRedeemPoints: integer("min_redeem_points").notNull().default(100),
+  expiryDays: integer("expiry_days").notNull().default(365),
+  rules: jsonb("rules").$type<Array<{
+    id: string | number; name: string; channel: "all" | "dine_in" | "takeaway" | "delivery";
+    minInvoiceAmount: number; customerGroupId: number | null; pointsMultiplier: number; isActive: boolean;
+  }>>().notNull().default([]),
+  tiers: jsonb("tiers").$type<Array<{
+    id: string | number; name: string; minLifetimeSpend: number; pointsMultiplier: number; isActive: boolean;
+  }>>().notNull().default([]),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  companyUnique: uniqueIndex("pos_restaurant_loyalty_programs_company_uniq").on(t.companyId),
+}));
+
+export const posRestaurantLoyaltyLedgerTable = pgTable("pos_restaurant_loyalty_ledger", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  customerId: integer("customer_id").notNull().references(() => customersTable.id, { onDelete: "cascade" }),
+  invoiceId: integer("invoice_id").notNull().references(() => salesInvoicesTable.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  points: integer("points").notNull(),
+  spendAmount: numeric("spend_amount", { precision: 15, scale: 2 }).notNull().default("0"),
+  sourceEarnId: integer("source_earn_id"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  byCustomer: index("pos_restaurant_loyalty_ledger_customer_idx").on(t.companyId, t.customerId, t.createdAt),
+  earnOnce: uniqueIndex("pos_restaurant_loyalty_ledger_earn_once")
+    .on(t.companyId, t.invoiceId).where(sql`${t.type} = 'earn'`),
+  redeemOncePerLot: uniqueIndex("pos_restaurant_loyalty_ledger_redeem_once_per_lot")
+    .on(t.companyId, t.invoiceId, t.sourceEarnId).where(sql`${t.type} = 'redeem'`),
 }));
 
 // ─── Suspicious cashier ops (rule-based now, AI-enriched later) ────────────

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { X, Loader2, Receipt, Banknote, CreditCard, Smartphone, Wallet, ChefHat, Clock, Truck, Utensils, Phone, RefreshCw, Languages } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   api,
   getPosSessionId,
-  type ROrder, type ROrderItem,
+  getStoredUser, type ROrder, type ROrderItem,
   type CreateInvoiceBody,
 } from "@/lib/api";
 import { buildRestaurantInvoicePricing } from "@/lib/restaurant-pricing";
@@ -27,12 +27,32 @@ export default function RestaurantOrdersDialog({
   open, onClose, branchId, cashCashBoxId, cardBankAccountId, defaultWarehouseId, onBilled,
 }: Props) {
   const { language, setLanguage } = usePosLanguage();
+  const qc = useQueryClient();
   const text = (ar: string, en: string) => tr(language, ar, en);
   const [selected, setSelected] = useState<FullOrder | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ id: number; method: string } | null>(null);
   const [channelFilter, setChannelFilter] = useState<"all" | "dine_in" | "delivery">("all");
+  const [customerId, setCustomerId] = useState<number | "">("");
+  const [pointsRequested, setPointsRequested] = useState(0);
+  const companyId = getStoredUser()?.companyId ?? null;
+  const customersQ = useQuery({
+    queryKey: ["customers", companyId],
+    queryFn: () => companyId ? api.getCustomers(companyId) : Promise.resolve([]),
+    enabled: open && !!companyId,
+  });
+  const loyaltyQ = useQuery({
+    queryKey: ["r-loyalty-program"],
+    queryFn: () => api.rLoyaltyProgram(),
+    enabled: open,
+  });
+  const previewQ = useQuery({
+    queryKey: ["r-loyalty-preview", selected?.id, customerId, pointsRequested],
+    queryFn: () => api.rLoyaltyPreview(selected!.id, Number(customerId), pointsRequested),
+    enabled: open && !!selected && !!customerId && loyaltyQ.data?.enabled === true,
+    retry: false,
+  });
 
   const ordersQ = useQuery({
     queryKey: ["r-cashier-orders"],
@@ -60,8 +80,12 @@ export default function RestaurantOrdersDialog({
   };
 
   useEffect(() => {
-    if (!open) { setSelected(null); setError(null); setDone(null); }
+    if (!open) { setSelected(null); setError(null); setDone(null); setCustomerId(""); setPointsRequested(0); }
   }, [open]);
+  useEffect(() => {
+    setPointsRequested(0);
+    setCustomerId("");
+  }, [selected?.id]);
 
   const loadFull = useMutation({
     mutationFn: (id: number) => api.rOrder(id),
@@ -84,6 +108,13 @@ export default function RestaurantOrdersDialog({
 
       const { lines, subtotal, vatAmount, totalAmount } =
         buildRestaurantInvoicePricing(activeItems, defaultWarehouseId);
+      const redeeming = Boolean(customerId && loyaltyQ.data?.enabled && pointsRequested > 0);
+      if (redeeming && (!previewQ.data || pointsRequested < (loyaltyQ.data?.minRedeemPoints ?? 0) ||
+          pointsRequested > previewQ.data.maxRedeemPoints)) {
+        throw new Error(text("راجع رصيد العميل والحد الأدنى قبل استبدال النقاط", "Review the customer balance and minimum before redeeming points"));
+      }
+      const loyaltyDiscount = redeeming ? Number(previewQ.data?.redeemAmount ?? 0) : 0;
+      const finalTotal = Math.max(0, Number((totalAmount - loyaltyDiscount).toFixed(2)));
 
       const orderContext = selected.channel === "dine_in"
           ? `${text("الصالة", "Dine-in")} - ${tableName(selected.tableId)}`
@@ -94,14 +125,15 @@ export default function RestaurantOrdersDialog({
         clientRequestId: `restaurant-order-${selected.id}`,
         invoiceDate: new Date().toISOString().slice(0, 10),
         branchId: branchId ?? null,
+        customerId: customerId ? Number(customerId) : null,
         paymentType: method === "cash" ? "cash" : "bank",
         cashBoxId: method === "cash" ? cashCashBoxId : null,
         bankAccountId: method !== "cash" ? cardBankAccountId : null,
         currencyCode: "SAR",
         subtotal,
         vatAmount,
-        discountAmount: 0,
-        totalAmount,
+        discountAmount: loyaltyDiscount,
+        totalAmount: finalTotal,
         priceIncludesVat: true,
         notes: `${text("طلب مطعم", "Restaurant order")} ${selected.orderNumber} — ${orderContext} — ${methodLabel(method, language)}`,
         lines,
@@ -115,7 +147,8 @@ export default function RestaurantOrdersDialog({
         (
           Math.abs(Number(inv.subtotal) - subtotal) > 0.01 ||
           Math.abs(Number(inv.vatAmount) - vatAmount) > 0.01 ||
-          Math.abs(Number(inv.totalAmount) - totalAmount) > 0.01
+          Math.abs(Number(inv.totalAmount) - finalTotal) > 0.01 ||
+          Math.abs(Number(inv.discountAmount) - loyaltyDiscount) > 0.01
         )
       ) {
         throw new Error(text("توجد مسودة قديمة للطلب بإجماليات ضريبية مختلفة. راجعها قبل المتابعة حتى لا تُرحّل مبالغ غير مطابقة.", "An older draft has different tax totals. Review it before continuing to avoid posting mismatched amounts."));
@@ -127,10 +160,17 @@ export default function RestaurantOrdersDialog({
       if (inv.status !== "posted") {
         throw new Error(text("لم يتم ترحيل الفاتورة؛ ظل الطلب مفتوحاً ويمكن إعادة المحاولة", "The invoice was not posted. The order remains open and can be retried."));
       }
-      await api.rBillOrder(selected.id, { salesInvoiceId: inv.id });
+      await api.rBillOrder(selected.id, {
+        salesInvoiceId: inv.id,
+        ...(customerId ? { customerId: Number(customerId) } : {}),
+        ...(customerId && loyaltyQ.data?.enabled && pointsRequested > 0 ? { pointsRedeemed: Math.min(pointsRequested, previewQ.data?.maxRedeemPoints ?? 0) } : {}),
+      });
       setDone({ id: inv.id, method: methodLabel(method, language) });
       onBilled?.(inv.id);
       ordersQ.refetch();
+      await qc.invalidateQueries({ queryKey: ["r-loyalty-preview"] });
+      await qc.invalidateQueries({ queryKey: ["r-loyalty-program"] });
+      if (customerId) await qc.invalidateQueries({ queryKey: ["customers", companyId] });
     } catch (e: any) {
       setError(e?.message ?? text("تعذر إصدار الفاتورة", "Could not issue the invoice"));
     } finally {
@@ -264,6 +304,35 @@ export default function RestaurantOrdersDialog({
                     </div>
                   ))}
                 </div>
+                {loyaltyQ.data?.enabled && (
+                  <section className="mx-3 mb-2 rounded-xl border border-primary/20 bg-primary/[0.04] p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div><div className="text-sm font-bold">{text("نقاط الولاء", "Loyalty points")}</div><p className="text-[11px] text-muted-foreground">{text("اختر العميل لمعاينة الرصيد والاستبدال.", "Choose a customer to preview balance and redemption.")}</p></div>
+                      {customersQ.isLoading && <div className="h-4 w-20 animate-pulse rounded bg-muted" />}
+                    </div>
+                    <select aria-label={text("اختيار عميل للولاء", "Select loyalty customer")} data-testid="select-loyalty-customer" value={customerId} onChange={e => { setCustomerId(e.target.value ? Number(e.target.value) : ""); setPointsRequested(0); }} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm">
+                      <option value="">{text("اختر العميل", "Select customer")}</option>
+                      {(customersQ.data ?? []).map(customer => <option key={customer.id} value={customer.id}>{customer.nameAr}{customer.phone ? ` · ${customer.phone}` : ""}</option>)}
+                    </select>
+                    {customersQ.isError && <p role="alert" className="mt-1 text-xs text-destructive">{text("تعذر تحميل العملاء.", "Could not load customers.")} <button type="button" className="underline" onClick={() => customersQ.refetch()}>{text("إعادة المحاولة", "Retry")}</button></p>}
+                    {customerId && (
+                      <>
+                        {previewQ.isLoading ? <div role="status" className="mt-2 h-12 animate-pulse rounded-lg bg-muted" /> : previewQ.isError ? <p role="alert" className="mt-2 text-xs text-destructive">{text("تعذر معاينة نقاط العميل.", "Could not preview customer points.")} <button type="button" className="underline" onClick={() => previewQ.refetch()}>{text("إعادة المحاولة", "Retry")}</button></p> : previewQ.data && (
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                            <div className="rounded-lg bg-background p-2"><span className="text-muted-foreground">{text("الرصيد", "Balance")}</span><div className="font-black">{previewQ.data.balance.toLocaleString(language === "ar" ? "ar-SA" : "en-US")} {text("نقطة", "pts")}</div></div>
+                            <div className="rounded-lg bg-background p-2"><span className="text-muted-foreground">{text("المستوى", "Tier")}</span><div className="font-black">{previewQ.data.tierName || text("أساسي", "Base")}</div></div>
+                            <label className="col-span-2 space-y-1 text-xs font-semibold text-muted-foreground">{text("النقاط المراد استبدالها", "Points to redeem")}
+                              <input type="number" min={0} max={previewQ.data.maxRedeemPoints} step={1} value={pointsRequested || ""} onChange={e => setPointsRequested(Math.max(0, Math.min(previewQ.data!.maxRedeemPoints, Math.floor(Number(e.target.value) || 0))))} aria-label={text("النقاط المراد استبدالها", "Points to redeem")} data-testid="input-loyalty-points-redeemed" className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground" />
+                            </label>
+                            {pointsRequested > 0 && pointsRequested < (loyaltyQ.data?.minRedeemPoints ?? 0) && <p role="alert" className="col-span-2 text-xs text-destructive">{text("الحد الأدنى للاستبدال", "Minimum redemption")}: {loyaltyQ.data?.minRedeemPoints} {text("نقطة", "pts")}</p>}
+                            <div className="col-span-2 flex justify-between rounded-lg bg-background p-2"><span className="text-muted-foreground">{text("الخصم التقديري", "Estimated redemption")}</span><strong>{new Intl.NumberFormat(language === "ar" ? "ar-SA" : "en-US", { minimumFractionDigits: 2 }).format(pointsRequested ? previewQ.data.redeemAmount : 0)} {text("ر.س", "SAR")}</strong></div>
+                            <div className="col-span-2 text-[11px] text-muted-foreground">{text("النقاط المكتسبة بعد الفاتورة", "Points earned after billing")}: {previewQ.data.earnedPoints} {text("نقطة", "pts")}</div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </section>
+                )}
                 <div className="p-3 border-t border-border space-y-1 text-sm">
               <Row label={text("المجموع الفرعي", "Subtotal")} v={selected.subtotal} language={language} />
               <Row label={text("ضريبة القيمة المضافة", "VAT")} v={selected.vatAmount} language={language} />
@@ -273,16 +342,16 @@ export default function RestaurantOrdersDialog({
                   <div className="px-3 pb-2 text-xs text-rose-600">{error}</div>
                 )}
                 <div className="grid grid-cols-2 gap-2 p-3 border-t border-border bg-muted/30">
-                  <Button disabled={submitting} onClick={() => bill("cash")} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                  <Button disabled={submitting || (!!customerId && loyaltyQ.data?.enabled === true && pointsRequested > 0 && (pointsRequested < (loyaltyQ.data.minRedeemPoints ?? 0) || !previewQ.data || previewQ.isLoading || previewQ.isError))} onClick={() => bill("cash")} className="bg-emerald-600 hover:bg-emerald-700 text-white">
                     <Banknote className="h-4 w-4 me-1" /> {text("نقداً", "Cash")}
                   </Button>
-                  <Button disabled={submitting} onClick={() => bill("card")} className="bg-blue-600 hover:bg-blue-700 text-white">
+                  <Button disabled={submitting || (!!customerId && loyaltyQ.data?.enabled === true && pointsRequested > 0 && (pointsRequested < (loyaltyQ.data.minRedeemPoints ?? 0) || !previewQ.data || previewQ.isLoading || previewQ.isError))} onClick={() => bill("card")} className="bg-blue-600 hover:bg-blue-700 text-white">
                     <CreditCard className="h-4 w-4 me-1" /> {text("شبكة", "Card")}
                   </Button>
-                  <Button disabled={submitting} onClick={() => bill("apple")} variant="outline">
+                  <Button disabled={submitting || (!!customerId && loyaltyQ.data?.enabled === true && pointsRequested > 0 && (pointsRequested < (loyaltyQ.data.minRedeemPoints ?? 0) || !previewQ.data || previewQ.isLoading || previewQ.isError))} onClick={() => bill("apple")} variant="outline">
                     <Smartphone className="h-4 w-4 me-1" /> Apple Pay
                   </Button>
-                  <Button disabled={submitting} onClick={() => bill("wallet")} variant="outline">
+                  <Button disabled={submitting || (!!customerId && loyaltyQ.data?.enabled === true && pointsRequested > 0 && (pointsRequested < (loyaltyQ.data.minRedeemPoints ?? 0) || !previewQ.data || previewQ.isLoading || previewQ.isError))} onClick={() => bill("wallet")} variant="outline">
                     <Wallet className="h-4 w-4 me-1" /> {text("محفظة", "Wallet")}
                   </Button>
                   {submitting && (

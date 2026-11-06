@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode } from "lucide-react";
+import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode, Award } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   api, getToken, getStoredUser,
-  type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem,
+  type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem, type RLoyaltyProgram, type RLoyaltyRule, type RLoyaltyTier,
 } from "@/lib/api";
 import ShiftManagementTab from "@/components/ShiftManagementTab";
 
@@ -17,6 +17,7 @@ const TABS = [
   { id: "cats",    label: "فئات القائمة",     icon: Tags },
   { id: "items",   label: "أصناف القائمة",   icon: Utensils },
   { id: "shifts",  label: "الورديات", icon: Clock3 },
+  { id: "loyalty", label: "الولاء", icon: Award },
 ] as const;
 
 type Tab = typeof TABS[number]["id"];
@@ -39,7 +40,8 @@ export default function RestaurantSettings() {
   const user = getStoredUser();
   const cid = user?.companyId ?? null;
   const canManageShifts = user?.role === "admin" || user?.role === "superadmin";
-  const visibleTabs = TABS.filter(item => item.id !== "shifts" || canManageShifts);
+  const canManageLoyalty = canManageShifts || user?.role === "manager";
+  const visibleTabs = TABS.filter(item => item.id !== "shifts" || canManageShifts).filter(item => item.id !== "loyalty" || canManageLoyalty);
 
   const branchesQ = useQuery({
     queryKey: ["branches", cid],
@@ -109,6 +111,7 @@ export default function RestaurantSettings() {
         {tab === "cats"   && <CategoriesTab />}
         {tab === "items"  && <ItemsTab companyId={cid} />}
         {tab === "shifts" && canManageShifts && cid && <ShiftManagementTab companyId={cid} />}
+        {tab === "loyalty" && canManageLoyalty && <RestaurantLoyaltyTab />}
       </main>
     </div>
   );
@@ -1039,4 +1042,79 @@ function ErpItemPicker({
       )}
     </div>
   );
+}
+
+function RestaurantLoyaltyTab() {
+  const qc = useQueryClient();
+  const programQ = useQuery({ queryKey: ["r-loyalty-program"], queryFn: () => api.rLoyaltyProgram() });
+  const [draft, setDraft] = useState<RLoyaltyProgram | null>(null);
+  useEffect(() => {
+    if (programQ.data) setDraft(structuredClone(programQ.data));
+  }, [programQ.data]);
+  const save = useMutation({
+    mutationFn: () => api.rSaveLoyaltyProgram(draft!),
+    onSuccess: value => {
+      qc.setQueryData(["r-loyalty-program"], value);
+      qc.invalidateQueries({ queryKey: ["r-loyalty-program"] });
+      setDraft(structuredClone(value));
+    },
+  });
+  const patch = <K extends keyof RLoyaltyProgram>(key: K, value: RLoyaltyProgram[K]) =>
+    setDraft(current => current ? { ...current, [key]: value } : current);
+  const patchRule = (index: number, values: Partial<RLoyaltyRule>) =>
+    patch("rules", (draft?.rules ?? []).map((rule, i) => i === index ? { ...rule, ...values } : rule));
+  const patchTier = (index: number, values: Partial<RLoyaltyTier>) =>
+    patch("tiers", (draft?.tiers ?? []).map((tier, i) => i === index ? { ...tier, ...values } : tier));
+  if (programQ.isLoading) return <div role="status" className="rounded-2xl border bg-card p-10 text-center text-muted-foreground"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-primary" />جارٍ تحميل إعدادات الولاء</div>;
+  if (programQ.isError) return <div role="alert" className="rounded-2xl border border-destructive/20 bg-card p-6 text-center text-destructive">تعذّر تحميل إعدادات الولاء. <button className="font-bold underline" onClick={() => programQ.refetch()}>إعادة المحاولة</button></div>;
+  if (!draft) return null;
+  const field = (label: string, key: "earnEvery" | "redeemValuePer100" | "minRedeemPoints" | "expiryDays", help: string) => (
+    <label className="space-y-1 text-xs font-bold text-muted-foreground">{label}
+      <Input type="number" min={0} step="any" value={draft[key]} onChange={e => patch(key, Number(e.target.value))} className="h-10 bg-background text-foreground" />
+      <span className="block font-normal">{help}</span>
+    </label>
+  );
+  return <div className="space-y-4">
+    <section className="rounded-2xl border border-primary/20 bg-card p-4 shadow-sm sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
+        <div className="flex items-center gap-3"><div className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary"><Award className="h-5 w-5" /></div><div><h2 className="font-black text-lg">برنامج ولاء المطعم</h2><p className="text-sm text-muted-foreground">اضبط كسب النقاط واستبدالها لعملائك.</p></div></div>
+        <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-border px-3 py-2 text-sm font-bold"><input type="checkbox" checked={draft.enabled} onChange={e => patch("enabled", e.target.checked)} className="size-4 accent-primary" />تفعيل البرنامج</label>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {field("كل كم ريال تُكتسب نقطة؟", "earnEvery", "قيمة الإنفاق اللازمة لاكتساب نقطة واحدة.")}
+        {field("قيمة كل ١٠٠ نقطة (ر.س)", "redeemValuePer100", "المبلغ الذي يُخصم مقابل مئة نقطة.")}
+        {field("أقل نقاط للاستبدال", "minRedeemPoints", "الحد الأدنى عند فوترة الطلب.")}
+        {field("صلاحية النقاط بالأيام", "expiryDays", "اتركها ٠ دون انتهاء إذا كانت السياسة تسمح بذلك.")}
+      </div>
+    </section>
+    <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
+      <div className="mb-3 flex items-center justify-between gap-2"><div><h3 className="font-black">قواعد اكتساب النقاط</h3><p className="text-xs text-muted-foreground">القناة والحد الأدنى ومضاعف النقاط لكل قاعدة.</p></div><Button variant="outline" size="sm" onClick={() => patch("rules", [...draft.rules, { id: `new-${Date.now()}`, name: "", channel: "all", minInvoiceAmount: 0, customerGroupId: null, pointsMultiplier: 1, isActive: true }])}><Plus className="ml-1 h-4 w-4" />إضافة قاعدة</Button></div>
+      <div className="space-y-2">{draft.rules.map((rule, i) => <div key={rule.id} className="grid gap-2 rounded-xl border border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-6">
+        <Input aria-label="اسم القاعدة" placeholder="اسم القاعدة" value={rule.name} onChange={e => patchRule(i, { name: e.target.value })} className="bg-background" />
+        <select aria-label="قناة الطلب" value={rule.channel} onChange={e => patchRule(i, { channel: e.target.value as RLoyaltyRule["channel"] })} className="h-10 rounded-lg border border-input bg-background px-2 text-sm"><option value="all">كل القنوات</option><option value="dine_in">الصالة</option><option value="takeaway">سفري</option><option value="delivery">توصيل</option></select>
+        <Input aria-label="الحد الأدنى للفاتورة" type="number" min="0" value={rule.minInvoiceAmount} onChange={e => patchRule(i, { minInvoiceAmount: Number(e.target.value) })} placeholder="أقل فاتورة" className="bg-background" />
+        <Input aria-label="معرّف مجموعة العملاء" type="number" min="0" value={rule.customerGroupId ?? ""} onChange={e => patchRule(i, { customerGroupId: e.target.value ? Number(e.target.value) : null })} placeholder="مجموعة العملاء (اختياري)" className="bg-background" />
+        <Input aria-label="مضاعف النقاط" type="number" min="0.1" step="0.1" value={rule.pointsMultiplier} onChange={e => patchRule(i, { pointsMultiplier: Number(e.target.value) })} placeholder="المضاعف" className="bg-background" />
+        <div className="flex items-center justify-between gap-2"><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={rule.isActive} onChange={e => patchRule(i, { isActive: e.target.checked })} className="accent-primary" />نشطة</label><Button variant="ghost" size="icon" aria-label="حذف القاعدة" onClick={() => patch("rules", draft.rules.filter((_, n) => n !== i))}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>
+      </div>)}
+      {draft.rules.length === 0 && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">لا توجد قواعد مضافة.</p>}</div>
+    </section>
+    <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
+      <div className="mb-3 flex items-center justify-between gap-2"><div><h3 className="font-black">مستويات العملاء</h3><p className="text-xs text-muted-foreground">يُطبّق المستوى بحسب إجمالي إنفاق العميل مدى الحياة.</p></div><Button variant="outline" size="sm" onClick={() => patch("tiers", [...draft.tiers, { id: `new-${Date.now()}`, name: "", minLifetimeSpend: 0, pointsMultiplier: 1, isActive: true }])}><Plus className="ml-1 h-4 w-4" />إضافة مستوى</Button></div>
+      <div className="space-y-2">{draft.tiers.map((tier, i) => <div key={tier.id} className="grid gap-2 rounded-xl border border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Input aria-label="اسم المستوى" placeholder="اسم المستوى" value={tier.name} onChange={e => patchTier(i, { name: e.target.value })} className="bg-background" />
+        <Input aria-label="الحد الأدنى للإنفاق مدى الحياة" type="number" min="0" value={tier.minLifetimeSpend} onChange={e => patchTier(i, { minLifetimeSpend: Number(e.target.value) })} placeholder="أقل إنفاق مدى الحياة" className="bg-background" />
+        <Input aria-label="مضاعف نقاط المستوى" type="number" min="0.1" step="0.1" value={tier.pointsMultiplier} onChange={e => patchTier(i, { pointsMultiplier: Number(e.target.value) })} placeholder="مضاعف النقاط" className="bg-background" />
+        <label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={tier.isActive} onChange={e => patchTier(i, { isActive: e.target.checked })} className="accent-primary" />نشط</label>
+        <Button variant="ghost" className="justify-self-start" aria-label="حذف المستوى" onClick={() => patch("tiers", draft.tiers.filter((_, n) => n !== i))}><Trash2 className="ml-1 h-4 w-4 text-destructive" />حذف</Button>
+      </div>)}
+      {draft.tiers.length === 0 && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">لا توجد مستويات مضافة.</p>}</div>
+    </section>
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/15 bg-primary/[0.04] p-3">
+      <p className="text-xs text-muted-foreground">التعديلات لا تُطبّق حتى تحفظها. تأكد من مراجعة سياسة الاستبدال قبل التفعيل.</p>
+      <Button disabled={save.isPending || draft.earnEvery <= 0 || draft.redeemValuePer100 < 0 || draft.minRedeemPoints < 0 || draft.expiryDays < 0} onClick={() => save.mutate()}><Save className="ml-2 h-4 w-4" />{save.isPending ? "جارٍ الحفظ..." : "حفظ إعدادات الولاء"}</Button>
+      {save.isError && <p role="alert" className="w-full text-sm text-destructive">{save.error.message}</p>}
+      {save.isSuccess && <p role="status" className="w-full text-sm font-bold text-primary">تم حفظ إعدادات برنامج الولاء.</p>}
+    </div>
+  </div>;
 }
