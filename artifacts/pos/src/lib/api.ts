@@ -507,6 +507,10 @@ export const api = {
 
   // ─── POS Restaurant ─────────────────────────────────────────────────────
   rTables: () => req<RTable[]>("GET", "/api/pos-restaurant/tables"),
+  rCreateTableQrToken: (id: number) =>
+    req<{ token: string }>("POST", `/api/pos-restaurant/tables/${id}/qr-token`, {}),
+  rRevokeTableQrToken: (id: number) =>
+    req<{ ok: boolean }>("DELETE", `/api/pos-restaurant/tables/${id}/qr-token`),
   rCreateTable: (b: Partial<RTable> & { branchId: number; code: string; nameAr: string }) =>
     req<RTable>("POST", "/api/pos-restaurant/tables", b),
   rCreateTablesBatch: (b: {
@@ -667,6 +671,7 @@ export type RTable = {
   status: "free" | "occupied" | "reserved" | "cleaning";
   currentOrderId?: number | null;
   notes?: string | null;
+  publicOrderToken?: string | null;
   isActive: boolean;
 };
 

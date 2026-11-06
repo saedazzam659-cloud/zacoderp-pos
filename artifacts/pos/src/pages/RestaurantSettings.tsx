@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3 } from "lucide-react";
+import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -142,6 +144,7 @@ function TablesTab({
   });
   const [editId, setEditId] = useState<number | null>(null);
   const [editBuf, setEditBuf] = useState<Partial<RTable>>({});
+  const [qrTable, setQrTable] = useState<{ id: number; nameAr: string; token: string } | null>(null);
 
   useEffect(() => {
     if (!branches.length) return;
@@ -198,6 +201,15 @@ function TablesTab({
   const del = useMutation({
     mutationFn: (id: number) => api.rDeleteTable(id),
     onSuccess: invalidate,
+  });
+
+  const createQr = useMutation({
+    mutationFn: (table: RTable) => api.rCreateTableQrToken(table.id),
+    onSuccess: (result, table) => setQrTable({ id: table.id, nameAr: table.nameAr, token: result.token }),
+  });
+  const revokeQr = useMutation({
+    mutationFn: (id: number) => api.rRevokeTableQrToken(id),
+    onSuccess: () => { setQrTable(null); invalidate(); },
   });
 
   const startEdit = (t: RTable) => { setEditId(t.id); setEditBuf({ code: t.code, nameAr: t.nameAr, capacity: t.capacity, area: t.area, status: t.status }); };
@@ -398,6 +410,9 @@ function TablesTab({
                     <td className="p-2 text-muted-foreground">{t.area ?? "—"}</td>
                     <td className="p-2 text-xs">{t.status === "free" ? "متاحة" : t.status === "occupied" ? "مشغولة" : t.status === "reserved" ? "محجوزة" : "تنظيف"}</td>
                     <td className="p-2 text-left whitespace-nowrap">
+                      <Button variant="ghost" size="sm" aria-label={`إنشاء QR لـ ${t.nameAr}`} data-testid={`button-table-qr-${t.id}`} disabled={createQr.isPending} onClick={() => createQr.mutate(t)}>
+                        <QrCode className="h-4 w-4 text-primary" />
+                      </Button>
                       <Button variant="ghost" size="sm" aria-label={`تعديل ${t.nameAr}`} data-testid={`button-edit-table-${t.id}`} onClick={() => startEdit(t)}>
                         <Pencil className="h-4 w-4 text-primary" />
                       </Button>
@@ -411,6 +426,16 @@ function TablesTab({
             </table>
           )}
       </div>
+      <Dialog open={!!qrTable} onOpenChange={open => !open && setQrTable(null)}>
+        <DialogContent className="max-w-sm text-center">
+          <DialogHeader><DialogTitle>رمز الطلب الذاتي · {qrTable?.nameAr}</DialogTitle></DialogHeader>
+          {qrTable && <div className="flex flex-col items-center gap-4">
+            <QRCodeSVG value={`${window.location.origin}${import.meta.env.BASE_URL}qr-order/${qrTable.token}`} size={240} level="M" includeMargin />
+            <p className="text-sm text-muted-foreground">امسح الرمز لعرض قائمة الطعام وإرسال طلب ينتظر تأكيد الموظف.</p>
+            <Button variant="destructive" disabled={revokeQr.isPending} onClick={() => revokeQr.mutate(qrTable.id)}>إلغاء هذا الرمز</Button>
+          </div>}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

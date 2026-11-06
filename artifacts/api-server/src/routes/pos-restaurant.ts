@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomBytes } from "node:crypto";
 import { db } from "@workspace/db";
 import {
   posTablesTable,
@@ -175,10 +176,36 @@ async function resolveRestaurantModifiers(
 // ════════════════════════════════════════════════════════════════════════
 router.get("/tables", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
-  const rows = await db.select().from(posTablesTable)
+  const rows = await db.select({
+    id: posTablesTable.id, companyId: posTablesTable.companyId, branchId: posTablesTable.branchId,
+    code: posTablesTable.code, nameAr: posTablesTable.nameAr, capacity: posTablesTable.capacity,
+    area: posTablesTable.area, status: posTablesTable.status, currentOrderId: posTablesTable.currentOrderId,
+    isActive: posTablesTable.isActive, notes: posTablesTable.notes,
+  }).from(posTablesTable)
     .where(and(eq(posTablesTable.companyId, cid), eq(posTablesTable.isActive, true)))
     .orderBy(asc(posTablesTable.code));
   res.json(rows);
+});
+
+router.post("/tables/:id/qr-token", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف الطاولة غير صالح" }); return; }
+  const token = randomBytes(32).toString("base64url");
+  const [table] = await db.update(posTablesTable)
+    .set({ publicOrderToken: token, updatedAt: new Date() })
+    .where(and(eq(posTablesTable.id, id), eq(posTablesTable.companyId, cid), eq(posTablesTable.isActive, true)))
+    .returning({ id: posTablesTable.id });
+  if (!table) { res.status(404).json({ error: "الطاولة غير موجودة أو غير نشطة" }); return; }
+  res.json({ token });
+});
+
+router.delete("/tables/:id/qr-token", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  await db.update(posTablesTable).set({ publicOrderToken: null, updatedAt: new Date() })
+    .where(and(eq(posTablesTable.id, id), eq(posTablesTable.companyId, cid)));
+  res.json({ ok: true });
 });
 
 router.post("/tables", async (req, res) => {

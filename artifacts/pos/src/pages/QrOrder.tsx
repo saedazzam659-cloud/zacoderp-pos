@@ -300,7 +300,7 @@ export default function QrOrderPage() {
           <DialogHeader>
             <span className="mx-auto mb-2 grid size-16 place-items-center rounded-2xl bg-[#e9f0e6] text-[#31715c]"><Check className="size-8" /></span>
             <DialogTitle className="text-2xl font-black">{text("تم استلام طلبك", "Order received")}</DialogTitle>
-            <DialogDescription>{text("بدأنا تجهيز طلبك. ادفع نقداً عند استلامه.", "We’re getting your order ready. Pay cash when you collect.")}</DialogDescription>
+            <DialogDescription>{text("وصل طلبك إلى الموظف للمراجعة والتأكيد. الدفع نقداً عند الاستلام.", "Your order is waiting for staff review and confirmation. Pay cash when you collect.")}</DialogDescription>
           </DialogHeader>
           <div className="my-5 rounded-2xl bg-[#f2f4ec] px-4 py-4">
             <p className="text-xs font-bold text-[#748176]">{text("رقم الطلب", "Order number")}</p>

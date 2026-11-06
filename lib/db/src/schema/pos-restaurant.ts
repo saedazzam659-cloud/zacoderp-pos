@@ -25,6 +25,7 @@ export const posTablesTable = pgTable("pos_tables", {
   area:           text("area"),
   status:         posTableStatusEnum("status").notNull().default("free"),
   currentOrderId: integer("current_order_id"),
+  publicOrderToken: text("public_order_token"),
   isActive:       boolean("is_active").notNull().default(true),
   notes:          text("notes"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),

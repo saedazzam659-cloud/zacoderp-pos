@@ -412,6 +412,16 @@ async function ensureSupplierMetadataCompatibility(): Promise<void> {
   }
 }
 
+async function ensureRestaurantQrOrderSchema(): Promise<void> {
+  const stmt = `ALTER TABLE IF EXISTS pos_tables ADD COLUMN IF NOT EXISTS public_order_token TEXT`;
+  try {
+    await execDDL(stmt);
+  } catch (err) {
+    logger.error({ err, stmt }, "ensureSchema: restaurant QR order schema reconciliation failed");
+    throw err;
+  }
+}
+
 // Generic schema inspection can run after traffic starts in an external agent.
 // These source-fact columns are read during manufacturing close, so heal them
 // explicitly before any purchasing/production route can expose a tagged line.
@@ -4729,6 +4739,7 @@ async function runHeal(options: {
   // posting writes these JE-line fields during the same request that follows an
   // agent package update, so a partially-upgraded agent must heal first.
   await ensureSupplierMetadataCompatibility();
+  await ensureRestaurantQrOrderSchema();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must
