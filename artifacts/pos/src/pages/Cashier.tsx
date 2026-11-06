@@ -33,6 +33,7 @@ import {
   Package2,
   AlertCircle,
   Clock3,
+  Award,
   Truck,
   Utensils,
   BarChart3,
@@ -257,6 +258,11 @@ export default function CashierPage() {
   const canManageCashExpenses = user?.mobilePermissions?.cash_expenses_create === true &&
     user?.mobilePermissions?.cash_expenses_post === true;
   const canManageOtherCashMovements = hasPosFeatureAccess(user, "pos_cashier", "edit");
+  const canOpenRestaurantSettings = hasPosFeatureAccess(user, "pos_waiter", "edit");
+  const canManageRestaurantShifts = canOpenRestaurantSettings &&
+    (user?.role === "admin" || user?.role === "superadmin");
+  const canManageRestaurantLoyalty = canOpenRestaurantSettings &&
+    (user?.role === "admin" || user?.role === "superadmin" || user?.role === "manager");
   // Hide services until the selected station's configuration has loaded.
   // This never replaces company-module or signed-in-user permission checks.
   const [enabledServices, setEnabledServices] = useState<string[]>([]);
@@ -1147,6 +1153,16 @@ export default function CashierPage() {
                   <button type="button" role="menuitem" onClick={() => { setControlsOpen(false); setCashMovementOpen(true); }} data-testid="menu-pos-cash-movements" className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-right text-sm font-semibold hover:bg-muted">
                     <Banknote className="size-4 text-primary" /> المصروفات والحركات
                   </button>
+                  {canManageRestaurantLoyalty && (
+                    <button type="button" role="menuitem" onClick={() => { setControlsOpen(false); navigate("/restaurant-settings?tab=loyalty&returnTo=cashier"); }} data-testid="menu-pos-restaurant-loyalty" className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-right text-sm font-semibold hover:bg-muted">
+                      <Award className="size-4 text-primary" /> إعدادات نقاط الولاء
+                    </button>
+                  )}
+                  {canManageRestaurantShifts && (
+                    <button type="button" role="menuitem" onClick={() => { setControlsOpen(false); navigate("/restaurant-settings?tab=shifts&returnTo=cashier"); }} data-testid="menu-pos-restaurant-shifts" className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-right text-sm font-semibold hover:bg-muted">
+                      <Clock3 className="size-4 text-primary" /> إعدادات فتح وغلق الورديات
+                    </button>
+                  )}
                 </div>
               )}
             </div>

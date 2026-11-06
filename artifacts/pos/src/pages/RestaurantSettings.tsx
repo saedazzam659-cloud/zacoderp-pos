@@ -62,7 +62,7 @@ export default function RestaurantSettings() {
           <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm"><Settings className="h-5 w-5" /></div>
           <div className="min-w-0">
             <div className="truncate text-base font-black">إعدادات المطعم</div>
-            <p className="text-xs text-muted-foreground">الطاولات وقائمة النادل ومسار الطلب للمطبخ والكاشير</p>
+            <p className="text-xs text-muted-foreground">الطاولات والقائمة ونقاط الولاء وإعدادات الورديات</p>
           </div>
         </div>
       </header>
