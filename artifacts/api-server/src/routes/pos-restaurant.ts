@@ -1551,6 +1551,18 @@ router.get("/kitchen/tickets", async (req, res) => {
     .orderBy(asc(posOrdersTable.sentAt));
   const orderIds = orders.map(o => o.id);
   if (orderIds.length === 0) { res.json([]); return; }
+  const tableIds = [...new Set(orders.map(order => order.tableId).filter((id): id is number => id != null))];
+  const tables = tableIds.length
+    ? await db.select({
+        id: posTablesTable.id,
+        code: posTablesTable.code,
+        nameAr: posTablesTable.nameAr,
+      }).from(posTablesTable).where(and(
+        eq(posTablesTable.companyId, cid),
+        inArray(posTablesTable.id, tableIds),
+      ))
+    : [];
+  const tableById = new Map(tables.map(table => [table.id, table]));
   const lineConds: any[] = [
     inArray(posOrderItemsTable.orderId, orderIds),
     // Keep ready lines visible so the kitchen can mark them served. Served
@@ -1565,7 +1577,7 @@ router.get("/kitchen/tickets", async (req, res) => {
   for (const it of items) (byOrder[it.orderId] ??= []).push(it);
   res.json(orders
     .filter(o => byOrder[o.id]?.length)
-    .map(o => ({ ...o, items: byOrder[o.id] })));
+    .map(o => ({ ...o, tableInfo: o.tableId ? tableById.get(o.tableId) ?? null : null, items: byOrder[o.id] })));
 });
 
 router.put("/kitchen/items/:id/status", async (req, res) => {

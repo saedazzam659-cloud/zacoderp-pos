@@ -654,7 +654,7 @@ export const api = {
     req<{ ok: true }>("POST", `/api/pos-restaurant/orders/${id}/cancel`),
 
   rKitchen: (station?: string) =>
-    req<(ROrder & { items: ROrderItem[] })[]>(
+    req<RKitchenTicket[]>(
       "GET", `/api/pos-restaurant/kitchen/tickets${station ? `?station=${station}` : ""}`),
   rKitchenSetStatus: (lineId: number, status: "preparing" | "ready" | "served") =>
     req<{ ok: true }>("PUT", `/api/pos-restaurant/kitchen/items/${lineId}/status`, { status }),
@@ -872,6 +872,11 @@ export type ROrderItem = {
   notes?: string | null;
   sentAt?: string | null;
   readyAt?: string | null;
+};
+
+export type RKitchenTicket = ROrder & {
+  items: ROrderItem[];
+  tableInfo: Pick<RTable, "id" | "code" | "nameAr"> | null;
 };
 
 export type RSuspiciousOp = {

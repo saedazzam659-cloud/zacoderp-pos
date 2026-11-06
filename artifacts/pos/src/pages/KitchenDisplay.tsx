@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChefHat, ChevronRight, Clock, Loader2, Check, Flame, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api, getToken, type ROrder, type ROrderItem } from "@/lib/api";
+import { api, getToken, type RKitchenTicket } from "@/lib/api";
 
 export default function KitchenDisplay() {
   const [, setLocation] = useLocation();
@@ -75,7 +75,7 @@ export default function KitchenDisplay() {
   );
 }
 
-function TicketCard({ ticket, setStatus }: { ticket: ROrder & { items: ROrderItem[] }; setStatus: any }) {
+function TicketCard({ ticket, setStatus }: { ticket: RKitchenTicket; setStatus: any }) {
   const minutesAgo = ticket.sentAt ? Math.floor((Date.now() - new Date(ticket.sentAt).getTime()) / 60000) : 0;
   const urgent = minutesAgo > 10;
   const allReady = ticket.items.every(i => ["ready", "served"].includes(i.status));
@@ -86,6 +86,11 @@ function TicketCard({ ticket, setStatus }: { ticket: ROrder & { items: ROrderIte
         <div>
           <div className="font-bold">{ticket.orderNumber}</div>
           <div className="text-[11px] text-white/70">{ticket.channel === "dine_in" ? "صالة" : ticket.channel === "takeaway" ? "سفري" : "توصيل"}</div>
+          {ticket.channel === "dine_in" && (ticket.tableInfo || ticket.tableId != null) && (
+            <div className="mt-1 inline-flex rounded bg-rose-500/20 px-2 py-0.5 text-xs font-bold text-rose-200" data-testid={`text-kitchen-table-${ticket.id}`}>
+              طاولة {ticket.tableInfo?.nameAr || ticket.tableInfo?.code || ticket.tableId}
+            </div>
+          )}
         </div>
         <div className={`flex items-center gap-1 text-sm ${urgent ? "text-rose-300 font-bold" : "text-white/70"}`}>
           {urgent && <Flame className="h-4 w-4" />}
