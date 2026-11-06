@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { hasDemoOperationalPrivilege } from "../middleware/permissions.js";
+import { hasDemoOperationalPrivilege, writeAudit } from "../middleware/permissions.js";
 import { db } from "@workspace/db";
 import {
   posSessionsTable,
@@ -16,6 +16,7 @@ import {
   paymentVouchersTable,
   receiptVouchersTable,
   cashTransfersTable,
+  companiesTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, isNull, gte, lte, inArray, or } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -28,6 +29,29 @@ router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرّح" }); return; }
   next();
 });
+
+type ShiftPolicy = {
+  enabled?: boolean;
+  enforceSchedule?: boolean;
+  graceMinutes?: number;
+  allowOutsideSchedule?: boolean;
+  timeZone?: string;
+  shifts?: Array<{ id: string; nameAr: string; startTime: string; endTime: string }>;
+  openUserIds?: number[];
+  closeUserIds?: number[];
+};
+
+function withinShiftOpeningWindow(now: number, startText: string, endText: string, graceMinutes: number) {
+  const toMinute = (text: string) => {
+    const [hours, minutes] = text.split(":").map(Number);
+    return hours * 60 + minutes;
+  };
+  const start = toMinute(startText);
+  const end = toMinute(endText);
+  const duration = (end - start + 1440) % 1440 || 1440;
+  const elapsed = (now - start + 1440) % 1440;
+  return elapsed <= duration + graceMinutes;
+}
 
 type CashReportSession = {
   id: number;
@@ -148,6 +172,42 @@ router.post("/open", async (req, res) => {
   const u = req.authUser;
   if (!u || !u.companyId) { res.status(401).json({ error: "غير مصرّح" }); return; }
   const { branchId, cashBoxId, openingCash, device, posTerminalId, machineCode } = req.body ?? {};
+  const [companyPolicyRow] = await db.select({ settings: companiesTable.posShiftSettings })
+    .from(companiesTable).where(eq(companiesTable.id, u.companyId)).limit(1);
+  const shiftPolicy = (companyPolicyRow?.settings ?? {}) as ShiftPolicy;
+  const isCompanyAdmin = u.role === "admin" || u.role === "superadmin";
+  let matchedShiftName: string | null = null;
+  let openedOutsideSchedule = false;
+  if (shiftPolicy.enabled && !isCompanyAdmin &&
+      Array.isArray(shiftPolicy.openUserIds) && shiftPolicy.openUserIds.length > 0 &&
+      !shiftPolicy.openUserIds.includes(u.id)) {
+    res.status(403).json({ error: "لا تملك صلاحية فتح الورديات" }); return;
+  }
+  if (shiftPolicy.enabled && ((shiftPolicy.shifts?.length ?? 0) > 0 || shiftPolicy.enforceSchedule)) {
+    let currentMinute: number;
+    try {
+      const businessTimeZone = shiftPolicy.timeZone || "Asia/Riyadh";
+      const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: businessTimeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+      }).formatToParts(new Date());
+      currentMinute = Number(parts.find(part => part.type === "hour")?.value) * 60 +
+        Number(parts.find(part => part.type === "minute")?.value);
+    } catch {
+      res.status(400).json({ error: "تعذّر تحديد المنطقة الزمنية للجهاز للتحقق من موعد الوردية" }); return;
+    }
+    const graceMinutes = Math.max(0, Math.min(180, Number(shiftPolicy.graceMinutes) || 0));
+    const matchingShift = (shiftPolicy.shifts ?? []).find(shift =>
+      withinShiftOpeningWindow(currentMinute, shift.startTime, shift.endTime, graceMinutes),
+    );
+    matchedShiftName = matchingShift?.nameAr ?? null;
+    if (shiftPolicy.enforceSchedule && !matchingShift && !(isCompanyAdmin && shiftPolicy.allowOutsideSchedule)) {
+      res.status(403).json({ error: (shiftPolicy.shifts ?? []).length
+        ? "لا يمكن فتح الوردية خارج مواعيدها. اطلب من المدير فتحها عند الضرورة."
+        : "لم يحدد المدير مواعيد للورديات؛ لا يمكن فتح الوردية مع تفعيل القيود الزمنية." });
+      return;
+    }
+    openedOutsideSchedule = !!shiftPolicy.enforceSchedule && !matchingShift;
+  }
 
   // Cashiers are POS-only and station-bound: they may never open a manual
   // (no-terminal) session. A branch with zero stations therefore cannot be
@@ -268,18 +328,44 @@ router.post("/open", async (req, res) => {
         if (t.cash_box_id) resolvedCashBoxId = t.cash_box_id;
       }
 
+      if (shiftPolicy.enabled && resolvedCashBoxId) {
+        await tx.select({ id: cashBoxesTable.id }).from(cashBoxesTable)
+          .where(and(
+            eq(cashBoxesTable.id, Number(resolvedCashBoxId)),
+            eq(cashBoxesTable.companyId, Number(u.companyId)),
+          )).for("update");
+        const [drawerBusy] = await tx.select({ id: posSessionsTable.id })
+          .from(posSessionsTable)
+          .where(and(
+            eq(posSessionsTable.companyId, Number(u.companyId)),
+            eq(posSessionsTable.cashBoxId, Number(resolvedCashBoxId)),
+            eq(posSessionsTable.status, "open"),
+          )).limit(1);
+        if (drawerBusy) {
+          throw Object.assign(new Error("هناك وردية مفتوحة بالفعل على درج النقدية هذا"), { status: 409 });
+        }
+      }
+
       const [inserted] = await tx.insert(posSessionsTable).values({
         companyId:     Number(u.companyId),
         userId:        u.id,
         branchId:      resolvedBranchId,
         cashBoxId:     resolvedCashBoxId,
         posTerminalId: posTerminalId ? Number(posTerminalId) : null,
+        shiftName: matchedShiftName ?? (openedOutsideSchedule ? "فتح إداري خارج الموعد" : null),
         openingCash:   String(openingCash ?? "0"),
         device:        device ?? null,
       }).returning();
       return inserted;
     });
 
+    await writeAudit({
+      userId: u.id, username: u.username ?? null, role: u.role, companyId: Number(u.companyId),
+      module: "pos", action: "create", entityType: "pos_session", entityId: String(row.id),
+      method: req.method, path: req.originalUrl, statusCode: 201, ip: req.ip ?? null,
+      userAgent: req.headers["user-agent"]?.slice(0, 500) ?? null,
+      metadata: { branchId: row.branchId, terminalId: row.posTerminalId, cashBoxId: row.cashBoxId, shiftName: row.shiftName },
+    });
     res.status(201).json(row);
   } catch (e: any) {
     const status = e?.status ?? 500;
@@ -303,6 +389,15 @@ router.post("/:id/close", async (req, res) => {
   const [s] = await db.select().from(posSessionsTable).where(eq(posSessionsTable.id, id));
   if (!s) { res.status(404).json({ error: "الجلسة غير موجودة" }); return; }
 
+  const [companyPolicyRow] = await db.select({ settings: companiesTable.posShiftSettings })
+    .from(companiesTable).where(eq(companiesTable.id, s.companyId)).limit(1);
+  const shiftPolicy = (companyPolicyRow?.settings ?? {}) as ShiftPolicy;
+  if (shiftPolicy.enabled && u.role !== "admin" && u.role !== "superadmin" &&
+      Array.isArray(shiftPolicy.closeUserIds) && shiftPolicy.closeUserIds.length > 0 &&
+      !shiftPolicy.closeUserIds.includes(u.id)) {
+    res.status(403).json({ error: "لا تملك صلاحية إغلاق الورديات" }); return;
+  }
+
   // Tenant isolation: superadmins may close any session, otherwise the session
   // must belong to the caller's company AND the caller must be the owning user
   // OR an admin within that same company.
@@ -321,6 +416,9 @@ router.post("/:id/close", async (req, res) => {
   const expected = cashReport.expectedCash;
   const closing = closingCash != null && closingCash !== "" ? Number(closingCash) : expected;
   const diff = closing - expected;
+  const adminCloseNotes = s.userId !== u.id
+    ? `إغلاق إداري بواسطة المستخدم رقم ${u.id}${notes ? ` — ${String(notes).slice(0, 1000)}` : ""}`
+    : notes ?? null;
 
   const [row] = await db.update(posSessionsTable).set({
     status:       u.id === s.userId ? "closed" : "force_closed",
@@ -328,8 +426,22 @@ router.post("/:id/close", async (req, res) => {
     expectedCash: String(expected.toFixed(2)),
     difference:   String(diff.toFixed(2)),
     closedAt:     new Date(),
-    closedNotes:  notes ?? null,
+    closedNotes:  adminCloseNotes,
+    closeReason:  s.userId !== u.id ? "admin_force_close" : s.closeReason,
   }).where(eq(posSessionsTable.id, id)).returning();
+  await writeAudit({
+    userId: u.id, username: u.username ?? null, role: u.role, companyId: s.companyId,
+    module: "pos", action: "close", entityType: "pos_session", entityId: String(id),
+    method: req.method, path: req.originalUrl, statusCode: 200, ip: req.ip ?? null,
+    userAgent: req.headers["user-agent"]?.slice(0, 500) ?? null,
+    metadata: {
+      cashierUserId: s.userId,
+      administrative: s.userId !== u.id,
+      expectedCash: expected,
+      closingCash: closing,
+      difference: diff,
+    },
+  });
 
   // Note: each POS invoice posts its own complete JE (Dr cash/bank/AR + Dr
   // discount + Dr COGS / Cr sales + Cr VAT + Cr inventory) at /post time, so
@@ -345,7 +457,9 @@ router.get("/", async (req, res) => {
   const filters: any[] = [];
   if (cid) filters.push(eq(posSessionsTable.companyId, cid));
   const status = String(req.query.status ?? "");
-  if (status === "open" || status === "closed" || status === "force_closed") {
+  if (status === "closed") {
+    filters.push(inArray(posSessionsTable.status, ["closed", "force_closed"]));
+  } else if (status === "open" || status === "force_closed") {
     filters.push(eq(posSessionsTable.status, status));
   }
   // Branch scope: applies the user's branch restriction even when no explicit

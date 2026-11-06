@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle } from "lucide-react";
+import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   api, getToken, getStoredUser,
   type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem,
 } from "@/lib/api";
+import ShiftManagementTab from "@/components/ShiftManagementTab";
 
 const TABS = [
   { id: "tables",  label: "الطاولات",   icon: ListOrdered },
   { id: "cats",    label: "فئات القائمة",     icon: Tags },
   { id: "items",   label: "أصناف القائمة",   icon: Utensils },
+  { id: "shifts",  label: "الورديات", icon: Clock3 },
 ] as const;
 
 type Tab = typeof TABS[number]["id"];
@@ -34,6 +36,8 @@ export default function RestaurantSettings() {
 
   const user = getStoredUser();
   const cid = user?.companyId ?? null;
+  const canManageShifts = user?.role === "admin" || user?.role === "superadmin";
+  const visibleTabs = TABS.filter(item => item.id !== "shifts" || canManageShifts);
 
   const branchesQ = useQuery({
     queryKey: ["branches", cid],
@@ -57,7 +61,7 @@ export default function RestaurantSettings() {
       </header>
 
       <nav className="sticky top-16 z-10 flex overflow-x-auto border-b border-border bg-card/95 px-3 backdrop-blur" aria-label="أقسام إعدادات المطعم">
-        {TABS.map(t => {
+        {visibleTabs.map(t => {
           const Icon = t.icon;
           return (
             <button
@@ -102,6 +106,7 @@ export default function RestaurantSettings() {
         )}
         {tab === "cats"   && <CategoriesTab />}
         {tab === "items"  && <ItemsTab companyId={cid} />}
+        {tab === "shifts" && canManageShifts && cid && <ShiftManagementTab companyId={cid} />}
       </main>
     </div>
   );

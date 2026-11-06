@@ -139,6 +139,17 @@ export type CashBox = {
   currencyId?: number | null;
 };
 
+export type PosShiftSettings = {
+  enabled: boolean;
+  enforceSchedule: boolean;
+  graceMinutes: number;
+  allowOutsideSchedule: boolean;
+  timeZone: string;
+  shifts: Array<{ id: string; nameAr: string; startTime: string; endTime: string }>;
+  openUserIds: number[];
+  closeUserIds: number[];
+};
+
 export type PosItemGroup = {
   id: number;
   code: string;
@@ -281,6 +292,7 @@ export type PosSession = {
   branchId: number | null;
   cashBoxId: number | null;
   posTerminalId?: number | null;
+  shiftName?: string | null;
   openingCash: string;
   closingCash: string | null;
   expectedCash?: string | null;
@@ -429,6 +441,7 @@ export const api = {
       posCardBankAccountId:   number | null;
       posAppleBankAccountId:  number | null;
       posWalletBankAccountId: number | null;
+      posShiftSettings?: PosShiftSettings | null;
     }>("GET", `/api/companies/${companyId}/pos-settings`),
 
   // Sales

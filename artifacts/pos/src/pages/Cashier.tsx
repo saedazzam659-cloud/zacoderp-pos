@@ -65,6 +65,7 @@ import {
   type SalesInvoice,
   type CreateInvoiceLine,
   type PosSession,
+  type PosShiftSettings,
   getItemSalePrice,
   getSalePriceOptions,
   getSalePriceOptionName,
@@ -221,6 +222,7 @@ export default function CashierPage() {
     posCardBankAccountId:   number | null;
     posAppleBankAccountId:  number | null;
     posWalletBankAccountId: number | null;
+    posShiftSettings?: PosShiftSettings | null;
   } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

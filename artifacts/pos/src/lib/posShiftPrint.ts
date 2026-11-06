@@ -15,6 +15,7 @@ export type PosShiftDetail = {
   openedAt: string;
   closedAt: string | null;
   openingCash: string;
+  shiftName?: string | null;
   closingCash?: string | null;
   difference?: string | null;
   user?: { nameAr?: string | null; username?: string | null } | null;
@@ -156,6 +157,7 @@ export function printPosShiftReport(
           <div><b>${text(language, "الكاشير", "Cashier")}</b>${escapeHtml(session.user?.nameAr || session.user?.username || "—")}</div>
           <div><b>${text(language, "الفرع", "Branch")}</b>${escapeHtml(session.branch?.nameAr || "—")}</div>
           <div><b>${text(language, "الخزينة", "Cash box")}</b>${escapeHtml(session.cashBox?.nameAr || "—")}</div>
+          <div><b>${text(language, "الوردية", "Shift")}</b>${escapeHtml(session.shiftName || "—")}</div>
           <div><b>${text(language, "بداية الوردية", "Shift opened")}</b>${escapeHtml(dateTime(session.openedAt, language))}</div>
           <div><b>${text(language, "إغلاق الوردية", "Shift closed")}</b>${escapeHtml(dateTime(session.closedAt, language))}</div>
           <div><b>${text(language, "عدد الفواتير المرحلة", "Posted invoices")}</b>${postedInvoices.length}</div>

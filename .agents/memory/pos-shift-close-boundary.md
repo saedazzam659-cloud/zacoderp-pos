@@ -7,6 +7,8 @@ For the web POS, block closing a shift or opening its replacement while the acti
 
 When a shift closes, calculate expected cash from opening cash, cash portions of posted sales (including mixed payments), and net posted cash movements. Require the cashier to enter counted cash, persist actual and expected amounts plus the difference, and print all three clearly in the final report. Apply this to logout-triggered closure too.
 
+Keep company shift schedules, grace periods, timezone, and open/close user grants as optional settings on the existing POS session flow. Constraints remain disabled until explicitly enabled; never create parallel invoice, inventory, or accounting lifecycles. Store the scheduled shift name on the session, and record manager overrides and administrative closures in the audit trail.
+
 **Why:** The user requires an actual cash count after physical reconciliation, with shortages and overages visible, while also preventing unresolved work from being lost or attributed to the wrong shift.
 
-**How to apply:** Keep parked carts device-local and preserve completed invoices. Count posted invoices against the active session; handle pending offline invoices before closing. Preserve legacy behavior when shift constraints are disabled, and do not extend web-only close behavior to POS Desktop without an explicit request.
+**How to apply:** Keep parked carts device-local and preserve completed invoices. Count posted invoices against the active session; handle pending offline invoices before closing. Use the company's configured timezone for schedule checks; preserve legacy behavior when constraints are disabled, and do not extend web-only close behavior to POS Desktop without an explicit request.

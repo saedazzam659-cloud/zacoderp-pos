@@ -3483,6 +3483,10 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMP` },
     { label: "pos_sessions add close_reason",
       sql:   `ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS close_reason TEXT` },
+    { label: "pos_sessions add shift_name",
+      sql:   `ALTER TABLE pos_sessions ADD COLUMN IF NOT EXISTS shift_name TEXT` },
+    { label: "companies add pos_shift_settings",
+      sql:   `ALTER TABLE companies ADD COLUMN IF NOT EXISTS pos_shift_settings JSONB` },
     { label: "pos_sessions_open_stale_idx",
       sql:   `CREATE INDEX IF NOT EXISTS pos_sessions_open_stale_idx ON pos_sessions (status, last_heartbeat_at) WHERE status = 'open'` },
 

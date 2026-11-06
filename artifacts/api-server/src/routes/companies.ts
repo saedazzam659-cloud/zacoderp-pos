@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
 import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, cashBoxesTable, bankAccountsTable, accountsTable, negativeStockCostSettlementsTable, stockBalanceTable } from "@workspace/db";
-import { eq, and, isNull, asc, sql } from "drizzle-orm";
+import { eq, and, isNull, asc, sql, inArray } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
 import { z } from "zod";
 import { extractAuth } from "../middleware/auth.js";
@@ -1573,6 +1573,7 @@ router.get("/:id/pos-settings", extractAuth, async (req, res) => {
     posCardBankAccountId:   companiesTable.posCardBankAccountId,
     posAppleBankAccountId:  companiesTable.posAppleBankAccountId,
     posWalletBankAccountId: companiesTable.posWalletBankAccountId,
+    posShiftSettings:       companiesTable.posShiftSettings,
   }).from(companiesTable).where(eq(companiesTable.id, id));
   if (!c) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
   res.json(c);
@@ -1598,15 +1599,88 @@ router.patch("/:id/pos-settings", extractAuth, async (req, res) => {
       updates[key] = v;
     }
   }
+  if ("posShiftSettings" in body) {
+    const value = body.posShiftSettings;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      res.status(400).json({ error: "إعدادات الورديات غير صالحة" }); return;
+    }
+    const settings = value as Record<string, unknown>;
+    const shifts = Array.isArray(settings.shifts) ? settings.shifts : [];
+    if (shifts.length > 8 || shifts.some((raw: any) =>
+      !raw || typeof raw !== "object" ||
+      typeof raw.id !== "string" || !/^[a-zA-Z0-9_-]{1,40}$/.test(raw.id) ||
+      typeof raw.nameAr !== "string" || !raw.nameAr.trim() || raw.nameAr.length > 80 ||
+      !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(raw.startTime)) ||
+      !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(raw.endTime))
+    )) {
+      res.status(400).json({ error: "تحقق من أسماء ومواعيد الورديات؛ الحد الأقصى 8 ورديات" }); return;
+    }
+    const shiftIds = shifts.map((shift: any) => shift.id);
+    if (new Set(shiftIds).size !== shiftIds.length) {
+      res.status(400).json({ error: "معرّفات الورديات يجب أن تكون فريدة" }); return;
+    }
+    const openUserIds = Array.isArray(settings.openUserIds) ? settings.openUserIds : [];
+    const closeUserIds = Array.isArray(settings.closeUserIds) ? settings.closeUserIds : [];
+    if ([...openUserIds, ...closeUserIds].some(id => !Number.isSafeInteger(id) || Number(id) <= 0) ||
+        typeof settings.enabled !== "boolean" ||
+        typeof settings.enforceSchedule !== "boolean" ||
+        typeof settings.allowOutsideSchedule !== "boolean" ||
+        typeof settings.timeZone !== "string" || settings.timeZone.length > 80 ||
+        !Number.isInteger(settings.graceMinutes) || Number(settings.graceMinutes) < 0 || Number(settings.graceMinutes) > 180) {
+      res.status(400).json({ error: "قيم صلاحيات أو فترة السماح غير صالحة" }); return;
+    }
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: settings.timeZone as string });
+    } catch {
+      res.status(400).json({ error: "المنطقة الزمنية غير معروفة" }); return;
+    }
+    const requestedUserIds = [...new Set([...openUserIds, ...closeUserIds] as number[])];
+    if (requestedUserIds.length) {
+      const companyUsers = await db.select({ id: usersTable.id }).from(usersTable).where(and(
+        eq(usersTable.companyId, id),
+        inArray(usersTable.id, requestedUserIds),
+      ));
+      if (companyUsers.length !== requestedUserIds.length) {
+        res.status(400).json({ error: "قائمة الصلاحيات تحتوي مستخدمًا غير تابع لهذه الشركة" }); return;
+      }
+    }
+    updates.posShiftSettings = {
+      enabled: settings.enabled,
+      enforceSchedule: settings.enforceSchedule,
+      graceMinutes: settings.graceMinutes,
+      allowOutsideSchedule: settings.allowOutsideSchedule,
+      timeZone: settings.timeZone,
+      shifts: shifts.map((shift: any) => ({
+        id: shift.id, nameAr: shift.nameAr.trim(), startTime: shift.startTime, endTime: shift.endTime,
+      })),
+      openUserIds: [...new Set(openUserIds as number[])],
+      closeUserIds: [...new Set(closeUserIds as number[])],
+    };
+  }
 
   const [company] = await db.update(companiesTable).set(updates)
     .where(eq(companiesTable.id, id)).returning();
   if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+  if ("posShiftSettings" in body) {
+    const actor = (req as any).authUser;
+    await writeAudit({
+      userId: actor?.id ?? null, username: actor?.username ?? null, role: actor?.role ?? null,
+      companyId: id, module: "pos", action: "update", entityType: "pos_shift_settings",
+      entityId: String(id), method: req.method, path: req.originalUrl, statusCode: 200,
+      ip: req.ip ?? null, userAgent: req.headers["user-agent"]?.slice(0, 500) ?? null,
+      metadata: {
+        enabled: company.posShiftSettings?.enabled ?? false,
+        enforceSchedule: company.posShiftSettings?.enforceSchedule ?? false,
+        shiftCount: company.posShiftSettings?.shifts?.length ?? 0,
+      },
+    });
+  }
   res.json({
     posCashCashBoxId:       company.posCashCashBoxId,
     posCardBankAccountId:   company.posCardBankAccountId,
     posAppleBankAccountId:  company.posAppleBankAccountId,
     posWalletBankAccountId: company.posWalletBankAccountId,
+    posShiftSettings: company.posShiftSettings,
   });
 });
 

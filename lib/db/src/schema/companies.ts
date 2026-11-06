@@ -298,6 +298,16 @@ export const companiesTable = pgTable("companies", {
   posCardBankAccountId:      integer("pos_card_bank_account_id"),
   posAppleBankAccountId:     integer("pos_apple_bank_account_id"),
   posWalletBankAccountId:    integer("pos_wallet_bank_account_id"),
+  posShiftSettings: jsonb("pos_shift_settings").$type<{
+    enabled?: boolean;
+    enforceSchedule?: boolean;
+    graceMinutes?: number;
+    allowOutsideSchedule?: boolean;
+    timeZone?: string;
+    shifts?: Array<{ id: string; nameAr: string; startTime: string; endTime: string }>;
+    openUserIds?: number[];
+    closeUserIds?: number[];
+  }>(),
   // ─── Print footer customization (thermal/A4 templates) ───────────────
   printFooterInvoice:   text("print_footer_invoice").notNull().default("شكراً لزيارتكم — نتمنى لكم يوماً سعيداً"),
   printFooterReturn:    text("print_footer_return").notNull().default("تم استلام المرتجع — شكراً لتعاملكم"),

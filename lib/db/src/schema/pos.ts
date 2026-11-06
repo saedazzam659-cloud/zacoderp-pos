@@ -68,6 +68,7 @@ export const posSessionsTable = pgTable("pos_sessions", {
   // The terminal this session is bound to (added with the طرق البيع feature).
   // Nullable for backwards compatibility with older sessions.
   posTerminalId: integer("pos_terminal_id"),
+  shiftName: text("shift_name"),
   openingCash:  numeric("opening_cash", { precision: 15, scale: 2 }).notNull().default("0"),
   closingCash:  numeric("closing_cash", { precision: 15, scale: 2 }),
   expectedCash: numeric("expected_cash", { precision: 15, scale: 2 }),
