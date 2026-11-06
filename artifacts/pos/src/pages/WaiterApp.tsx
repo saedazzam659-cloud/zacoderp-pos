@@ -22,8 +22,9 @@ export default function WaiterApp() {
   const { language, setLanguage } = usePosLanguage();
   const dir = language === "ar" ? "rtl" : "ltr";
   const text = (ar: string, en: string) => tr(language, ar, en);
-  const [view, setView] = useState<"tables" | "delivery">(() =>
-    new URLSearchParams(window.location.search).get("view") === "delivery" ? "delivery" : "tables");
+  const [view, setView] = useState<"tables" | "delivery" | "takeaway">(() =>
+    new URLSearchParams(window.location.search).get("view") === "delivery" ? "delivery"
+      : new URLSearchParams(window.location.search).get("view") === "takeaway" ? "takeaway" : "tables");
   const [openTableId, setOpenTableId] = useState<number | null>(null);
   const [activeOrder, setActiveOrder] = useState<(ROrder & { items: ROrderItem[] }) | null>(null);
   const [activeCat, setActiveCat] = useState<number | null>(null);
@@ -42,17 +43,17 @@ export default function WaiterApp() {
   const tablesQ = useQuery({ queryKey: ["r-tables"], queryFn: () => api.rTables(), refetchInterval: 5000 });
   const catsQ = useQuery({ queryKey: ["r-cats"], queryFn: () => api.rCategories() });
   const itemsQ = useQuery({ queryKey: ["r-items"], queryFn: () => api.rMenuItems() });
-  const deliveryOrdersQ = useQuery({
-    queryKey: ["r-delivery-orders"],
+  const serviceOrdersQ = useQuery({
+    queryKey: ["r-service-orders"],
     queryFn: () => api.rOrders(),
     refetchInterval: 5000,
     select: orders => orders.filter(order =>
-      order.channel === "delivery" && !["billed", "cancelled"].includes(order.status)),
+      ["delivery", "takeaway"].includes(order.channel) && !["billed", "cancelled"].includes(order.status)),
   });
 
   // Select a table and reuse its open order, otherwise create a draft.
   useEffect(() => {
-    if (view === "delivery") { setOpening(false); return; }
+    if (view !== "tables") { setOpening(false); return; }
     if (!openTableId) { setActiveOrder(null); setOpening(false); return; }
     const tbl = tablesQ.data?.find(t => t.id === openTableId);
     if (!tbl) return;
@@ -89,7 +90,7 @@ export default function WaiterApp() {
       api.rAddItem(orderId, { menuItemId, qty: 1, modifiers }),
     onSuccess: async () => {
       if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id));
-      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+      await qc.invalidateQueries({ queryKey: ["r-service-orders"] });
       setModifierTarget(null);
     },
   });
@@ -98,7 +99,7 @@ export default function WaiterApp() {
       api.rUpdateItemModifiers(orderId, itemId, modifiers),
     onSuccess: async () => {
       if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id));
-      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+      await qc.invalidateQueries({ queryKey: ["r-service-orders"] });
       setModifierTarget(null);
     },
   });
@@ -106,7 +107,7 @@ export default function WaiterApp() {
     mutationFn: ({ orderId, itemId }: { orderId: number; itemId: number }) => api.rRemoveItem(orderId, itemId),
     onSuccess: async () => {
       if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id));
-      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+      await qc.invalidateQueries({ queryKey: ["r-service-orders"] });
     },
   });
   const sendOrder = useMutation({
@@ -114,7 +115,7 @@ export default function WaiterApp() {
     onSuccess: async () => {
       if (activeOrder) setActiveOrder(await api.rOrder(activeOrder.id));
       await qc.invalidateQueries({ queryKey: ["r-tables"] });
-      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+      await qc.invalidateQueries({ queryKey: ["r-service-orders"] });
     },
   });
   const cancelOrder = useMutation({
@@ -122,7 +123,7 @@ export default function WaiterApp() {
     onSuccess: async () => {
       setActiveOrder(null); setOpenTableId(null);
       await qc.invalidateQueries({ queryKey: ["r-tables"] });
-      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+      await qc.invalidateQueries({ queryKey: ["r-service-orders"] });
     },
   });
 
@@ -150,6 +151,8 @@ export default function WaiterApp() {
       .map(([area, tables]) => ({ area, tables: tables.sort((a, b) => a.code.localeCompare(b.code, language === "ar" ? "ar" : "en")) }));
   }, [tablesQ.data, language]);
   const freeCount = (tablesQ.data ?? []).filter(table => table.status === "free").length;
+  const visibleServiceOrders = (serviceOrdersQ.data ?? []).filter(order => order.channel === view);
+  const isDeliveryView = view === "delivery";
   const selectedTable = tablesQ.data?.find(table => table.id === openTableId);
   const chooseMenuItem = (item: RMenuItem) => {
     if (item.modifierGroups?.length) setModifierTarget({ item });
@@ -202,7 +205,7 @@ export default function WaiterApp() {
         deliveryAddress: deliveryAddress.trim(),
         notes: deliveryNotes.trim() || undefined,
       });
-      await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
+      await qc.invalidateQueries({ queryKey: ["r-service-orders"] });
       setActiveOrder(await api.rOrder(order.id));
       setCustomerName("");
       setCustomerPhone("");
@@ -215,8 +218,35 @@ export default function WaiterApp() {
     }
   }
 
-  async function resumeDelivery(orderId: number) {
-    setView("delivery");
+  async function createTakeaway() {
+    if (!deliveryBranchId) {
+      setDeliveryError(text("تعذّر تحديد الفرع. تحقق من إعدادات نقطة البيع.", "Could not identify the branch. Check the POS settings."));
+      return;
+    }
+    setCreatingDelivery(true);
+    setDeliveryError("");
+    try {
+      const order = await api.rCreateOrder({
+        branchId: deliveryBranchId,
+        channel: "takeaway",
+        customerName: customerName.trim() || undefined,
+        customerPhone: customerPhone.trim() || undefined,
+        notes: deliveryNotes.trim() || undefined,
+      });
+      await qc.invalidateQueries({ queryKey: ["r-service-orders"] });
+      setActiveOrder(await api.rOrder(order.id));
+      setCustomerName("");
+      setCustomerPhone("");
+      setDeliveryNotes("");
+    } catch (error: any) {
+      setDeliveryError(error?.message ?? text("تعذّر إنشاء طلب السفري.", "Could not create the takeaway order."));
+    } finally {
+      setCreatingDelivery(false);
+    }
+  }
+
+  async function resumeServiceOrder(orderId: number, channel: "delivery" | "takeaway") {
+    setView(channel);
     setOpening(true);
     try {
       setActiveOrder(await api.rOrder(orderId));
@@ -248,7 +278,7 @@ export default function WaiterApp() {
           </div>
           <div className="min-w-0">
             <div className="truncate text-sm font-black sm:text-base">{text("طلبات المطعم", "Restaurant orders")}</div>
-            <div className="truncate text-xs text-muted-foreground">{user?.username ? `${text("النادل", "Waiter")} · ${user.username}` : text("الصالة والتوصيل", "Dine-in and delivery")}</div>
+            <div className="truncate text-xs text-muted-foreground">{user?.username ? `${text("النادل", "Waiter")} · ${user.username}` : text("الصالة والسفري والتوصيل", "Dine-in, takeaway, and delivery")}</div>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -266,37 +296,41 @@ export default function WaiterApp() {
 
       {!activeOrder ? (
         <main className="mx-auto w-full max-w-[1500px] flex-1 p-4 sm:p-6">
-          <div className="mb-6 flex w-full max-w-xl rounded-2xl border border-border bg-card p-1.5 shadow-sm" role="tablist" aria-label={text("قناة الطلب", "Order channel")}>
+          <div className="mb-6 grid w-full max-w-3xl grid-cols-3 rounded-2xl border border-border bg-card p-1.5 shadow-sm" role="tablist" aria-label={text("قناة الطلب", "Order channel")}>
             <button type="button" role="tab" aria-selected={view === "tables"} onClick={() => { setView("tables"); setDeliveryError(""); }}
               data-testid="button-view-dine-in" className={`flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl text-sm font-black transition ${view === "tables" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted"}`}>
               <Utensils className="h-4 w-4" /> {text("الصالة والطاولات", "Dine-in tables")}
+            </button>
+            <button type="button" role="tab" aria-selected={view === "takeaway"} onClick={() => { setView("takeaway"); setOpenTableId(null); setDeliveryError(""); }}
+              data-testid="button-view-takeaway" className={`flex min-h-12 items-center justify-center gap-2 rounded-xl text-sm font-black transition ${view === "takeaway" ? "bg-amber-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted"}`}>
+              <ShoppingBag className="h-4 w-4" /> {text("طلبات السفري", "Takeaway")}
             </button>
             <button type="button" role="tab" aria-selected={view === "delivery"} onClick={() => { setView("delivery"); setOpenTableId(null); setDeliveryError(""); }}
               data-testid="button-view-delivery" className={`flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl text-sm font-black transition ${view === "delivery" ? "bg-orange-600 text-white shadow-sm" : "text-muted-foreground hover:bg-muted"}`}>
               <Truck className="h-4 w-4" /> {text("طلبات التوصيل", "Delivery orders")}
             </button>
           </div>
-          {view === "delivery" ? (
+          {view !== "tables" ? (
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
-              <section className="overflow-hidden rounded-2xl border border-orange-200 bg-card shadow-sm">
-                <div className="flex items-center justify-between border-b border-orange-100 bg-orange-50/80 px-5 py-4">
-                  <div><p className="text-xs font-bold text-orange-700">{text("قناة مستقلة · توصيل", "Separate channel · Delivery")}</p><h1 className="mt-1 text-xl font-black">{text("طلبات التوصيل النشطة", "Active delivery orders")}</h1></div>
-                  <span className="grid size-11 place-items-center rounded-xl bg-orange-100 text-orange-700"><Truck className="h-5 w-5" /></span>
+              <section className={`overflow-hidden rounded-2xl border bg-card shadow-sm ${isDeliveryView ? "border-orange-200" : "border-amber-200"}`}>
+                <div className={`flex items-center justify-between border-b px-5 py-4 ${isDeliveryView ? "border-orange-100 bg-orange-50/80" : "border-amber-100 bg-amber-50/80"}`}>
+                  <div><p className={`text-xs font-bold ${isDeliveryView ? "text-orange-700" : "text-amber-700"}`}>{isDeliveryView ? text("قناة مستقلة · توصيل", "Separate channel · Delivery") : text("قناة مستقلة · استلام", "Separate channel · Pickup")}</p><h1 className="mt-1 text-xl font-black">{isDeliveryView ? text("طلبات التوصيل النشطة", "Active delivery orders") : text("طلبات السفري النشطة", "Active takeaway orders")}</h1></div>
+                  <span className={`grid size-11 place-items-center rounded-xl ${isDeliveryView ? "bg-orange-100 text-orange-700" : "bg-amber-100 text-amber-700"}`}>{isDeliveryView ? <Truck className="h-5 w-5" /> : <ShoppingBag className="h-5 w-5" />}</span>
                 </div>
                 <div className="space-y-2 p-4">
-                  {deliveryOrdersQ.isLoading ? Array.from({ length: 3 }, (_, i) => <div key={i} className="h-20 animate-pulse rounded-xl bg-muted" />) :
-                    deliveryOrdersQ.isError ? <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-sm text-destructive" role="alert">
-                      {text("تعذّر تحميل الطلبات.", "Could not load orders.")} <Button variant="outline" size="sm" onClick={() => deliveryOrdersQ.refetch()} className="ms-2">{text("إعادة المحاولة", "Try again")}</Button>
-                    </div> : (deliveryOrdersQ.data ?? []).length === 0 ?
+                  {serviceOrdersQ.isLoading ? Array.from({ length: 3 }, (_, i) => <div key={i} className="h-20 animate-pulse rounded-xl bg-muted" />) :
+                    serviceOrdersQ.isError ? <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-sm text-destructive" role="alert">
+                      {text("تعذّر تحميل الطلبات.", "Could not load orders.")} <Button variant="outline" size="sm" onClick={() => serviceOrdersQ.refetch()} className="ms-2">{text("إعادة المحاولة", "Try again")}</Button>
+                    </div> : visibleServiceOrders.length === 0 ?
                       <div className="rounded-xl border border-dashed border-border px-5 py-10 text-center">
                         <ClipboardList className="mx-auto mb-3 h-8 w-8 text-muted-foreground/60" />
-                        <p className="font-bold">{text("لا توجد طلبات توصيل نشطة", "No active delivery orders")}</p><p className="mt-1 text-sm text-muted-foreground">{text("ستظهر الطلبات هنا لتتمكن من استكمالها.", "Delivery orders will appear here so you can continue them.")}</p>
+                        <p className="font-bold">{isDeliveryView ? text("لا توجد طلبات توصيل نشطة", "No active delivery orders") : text("لا توجد طلبات سفري نشطة", "No active takeaway orders")}</p><p className="mt-1 text-sm text-muted-foreground">{text("ستظهر الطلبات هنا لتتمكن من استكمالها.", "Orders will appear here so you can continue them.")}</p>
                       </div> :
-                      deliveryOrdersQ.data!.map(order => (
-                        <button key={order.id} type="button" onClick={() => resumeDelivery(order.id)} data-testid={`button-resume-delivery-${order.id}`}
-                          className="flex w-full items-center justify-between gap-3 rounded-xl border border-orange-100 bg-background p-4 text-start transition hover:border-orange-300 hover:bg-orange-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500">
-                          <span className="min-w-0"><span className="flex items-center gap-2 font-black">{order.orderNumber}<span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-800">{text("توصيل", "Delivery")}</span></span>
-                            <span className="mt-1 block truncate text-sm text-muted-foreground">{order.customerName || text("عميل بدون اسم", "Unnamed customer")} · {order.customerPhone || text("لا يوجد رقم", "No phone")}</span>
+                      visibleServiceOrders.map(order => (
+                        <button key={order.id} type="button" onClick={() => resumeServiceOrder(order.id, isDeliveryView ? "delivery" : "takeaway")} data-testid={`button-resume-${order.channel}-${order.id}`}
+                          className={`flex w-full items-center justify-between gap-3 rounded-xl border bg-background p-4 text-start transition focus-visible:outline-none focus-visible:ring-2 ${isDeliveryView ? "border-orange-100 hover:border-orange-300 hover:bg-orange-50/50 focus-visible:ring-orange-500" : "border-amber-100 hover:border-amber-300 hover:bg-amber-50/50 focus-visible:ring-amber-500"}`}>
+                          <span className="min-w-0"><span className="flex items-center gap-2 font-black">{order.orderNumber}<span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${isDeliveryView ? "bg-orange-100 text-orange-800" : "bg-amber-100 text-amber-800"}`}>{isDeliveryView ? text("توصيل", "Delivery") : text("سفري", "Takeaway")}</span></span>
+                            {(order.customerName || order.customerPhone) && <span className="mt-1 block truncate text-sm text-muted-foreground">{[order.customerName, order.customerPhone].filter(Boolean).join(" · ")}</span>}
                             {order.deliveryAddress && <span className="mt-1 block truncate text-xs text-orange-800">{order.deliveryAddress}</span>}
                           </span><span className="shrink-0 text-end"><span className="block font-black">{Number(order.total).toFixed(2)} {text("ر.س", "SAR")}</span><span className="mt-1 block text-xs text-muted-foreground">{statusLabel(order.status, language)}</span></span>
                         </button>
@@ -304,16 +338,16 @@ export default function WaiterApp() {
                 </div>
               </section>
               <section className="h-fit rounded-2xl border border-border bg-card p-5 shadow-sm">
-                <div className="mb-5 flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-orange-100 text-orange-700"><Plus className="h-5 w-5" /></span>
-                  <div><p className="text-xs font-bold text-orange-700">{text("طلب جديد", "New order")}</p><h2 className="text-lg font-black">{text("بيانات التوصيل", "Delivery details")}</h2></div></div>
+                <div className="mb-5 flex items-center gap-3"><span className={`grid size-10 place-items-center rounded-xl ${isDeliveryView ? "bg-orange-100 text-orange-700" : "bg-amber-100 text-amber-700"}`}><Plus className="h-5 w-5" /></span>
+                  <div><p className={`text-xs font-bold ${isDeliveryView ? "text-orange-700" : "text-amber-700"}`}>{text("طلب جديد", "New order")}</p><h2 className="text-lg font-black">{isDeliveryView ? text("بيانات التوصيل", "Delivery details") : text("بيانات طلب السفري", "Takeaway details")}</h2></div></div>
                 <div className="space-y-4">
-                  <label className="block text-sm font-bold">{text("اسم العميل", "Customer name")}<Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder={text("اسم المستلم", "Recipient name")} data-testid="input-delivery-customer-name" className="mt-1.5 h-11 rounded-xl" /></label>
-                  <label className="block text-sm font-bold">{text("رقم التواصل", "Phone number")}<div className="relative mt-1.5"><Phone className={`absolute ${dir === "rtl" ? "right-3" : "left-3"} top-3.5 h-4 w-4 text-muted-foreground`} /><Input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="05xxxxxxxx" inputMode="tel" data-testid="input-delivery-customer-phone" className={`h-11 rounded-xl ${dir === "rtl" ? "pr-10" : "pl-10"}`} /></div></label>
-                  <label className="block text-sm font-bold">{text("عنوان التوصيل", "Delivery address")}<textarea required value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} placeholder={text("المدينة، الحي، الشارع، رقم المبنى أو علامة مميزة", "City, district, street, building number or landmark")} data-testid="input-delivery-address" className="mt-1.5 min-h-20 w-full resize-y rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-normal outline-none transition focus-visible:ring-2 focus-visible:ring-ring" /></label>
-                  <label className="block text-sm font-bold">{text("تعليمات إضافية", "Additional instructions")}<textarea value={deliveryNotes} onChange={e => setDeliveryNotes(e.target.value)} placeholder={text("الدور، الشقة، أو تعليمات الوصول", "Floor, apartment, or access instructions")} data-testid="input-delivery-notes" className="mt-1.5 min-h-20 w-full resize-y rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-normal outline-none transition focus-visible:ring-2 focus-visible:ring-ring" /></label>
+                  <label className="block text-sm font-bold">{text("اسم العميل (اختياري)", "Customer name (optional)")}<Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder={text("اسم المستلم", "Recipient name")} data-testid={`input-${view}-customer-name`} className="mt-1.5 h-11 rounded-xl" /></label>
+                  <label className="block text-sm font-bold">{text("رقم التواصل", "Phone number")}<div className="relative mt-1.5"><Phone className={`absolute ${dir === "rtl" ? "right-3" : "left-3"} top-3.5 h-4 w-4 text-muted-foreground`} /><Input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="05xxxxxxxx" inputMode="tel" data-testid={`input-${view}-customer-phone`} className={`h-11 rounded-xl ${dir === "rtl" ? "pr-10" : "pl-10"}`} /></div></label>
+                  {isDeliveryView && <label className="block text-sm font-bold">{text("عنوان التوصيل", "Delivery address")}<textarea required value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} placeholder={text("المدينة، الحي، الشارع، رقم المبنى أو علامة مميزة", "City, district, street, building number or landmark")} data-testid="input-delivery-address" className="mt-1.5 min-h-20 w-full resize-y rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-normal outline-none transition focus-visible:ring-2 focus-visible:ring-ring" /></label>}
+                  <label className="block text-sm font-bold">{text("ملاحظة للطلب", "Order note")}<textarea value={deliveryNotes} onChange={e => setDeliveryNotes(e.target.value)} placeholder={isDeliveryView ? text("الدور، الشقة، أو تعليمات الوصول", "Floor, apartment, or access instructions") : text("اسم صاحب الطلب أو ملاحظات التحضير", "Pickup name or preparation notes")} data-testid={`input-${view}-notes`} className="mt-1.5 min-h-20 w-full resize-y rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-normal outline-none transition focus-visible:ring-2 focus-visible:ring-ring" /></label>
                   {deliveryError && <p className="text-sm text-destructive" role="alert">{deliveryError}</p>}
-                  <Button type="button" disabled={creatingDelivery || !deliveryBranchId} onClick={createDelivery} data-testid="button-create-delivery-order" className="h-12 w-full bg-orange-600 font-black text-white hover:bg-orange-700">
-                    {creatingDelivery ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Plus className="me-2 h-4 w-4" />} {text("إنشاء طلب التوصيل واختيار الأصناف", "Create delivery order and choose items")}
+                  <Button type="button" disabled={creatingDelivery || !deliveryBranchId} onClick={isDeliveryView ? createDelivery : createTakeaway} data-testid={`button-create-${view}-order`} className={`h-12 w-full font-black text-white ${isDeliveryView ? "bg-orange-600 hover:bg-orange-700" : "bg-amber-600 hover:bg-amber-700"}`}>
+                    {creatingDelivery ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Plus className="me-2 h-4 w-4" />} {isDeliveryView ? text("إنشاء طلب التوصيل واختيار الأصناف", "Create delivery order and choose items") : text("إنشاء طلب سفري واختيار الأصناف", "Create takeaway order and choose items")}
                   </Button>
                 </div>
               </section>
@@ -450,9 +484,9 @@ export default function WaiterApp() {
             <div className="border-b border-border p-4">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                   <p className={`text-xs font-bold ${activeOrder.channel === "delivery" ? "text-orange-700" : "text-primary"}`}>{activeOrder.channel === "delivery" ? text("طلب توصيل", "Delivery order") : text("طلب صالة · طاولة", "Dine-in · Table")}</p>
+                   <p className={`text-xs font-bold ${activeOrder.channel === "delivery" ? "text-orange-700" : activeOrder.channel === "takeaway" ? "text-amber-700" : "text-primary"}`}>{activeOrder.channel === "delivery" ? text("طلب توصيل", "Delivery order") : activeOrder.channel === "takeaway" ? text("طلب سفري", "Takeaway order") : text("طلب صالة · طاولة", "Dine-in · Table")}</p>
                   <h2 className="mt-1 text-lg font-black">{activeOrder.orderNumber}</h2>
-                    <p className="mt-0.5 text-sm text-muted-foreground">{activeOrder.channel === "delivery" ? `${activeOrder.customerName || text("عميل", "Customer")} · ${activeOrder.customerPhone || text("لا يوجد رقم", "No phone")}` : `${text("طاولة", "Table")} ${selectedTable?.nameAr ?? activeOrder.tableId}`}</p>
+                    <p className="mt-0.5 text-sm text-muted-foreground">{activeOrder.channel !== "dine_in" ? [activeOrder.customerName, activeOrder.customerPhone].filter(Boolean).join(" · ") || text("طلب استلام", "Pickup order") : `${text("طاولة", "Table")} ${selectedTable?.nameAr ?? activeOrder.tableId}`}</p>
                     {activeOrder.channel === "delivery" && activeOrder.deliveryAddress && <p className="mt-1 max-w-sm text-xs leading-5 text-orange-800">{activeOrder.deliveryAddress}</p>}
                 </div>
                  <Button variant="ghost" size="icon" aria-label={text("إغلاق الطلب والعودة للطاولات", "Close order and return")} data-testid="button-close-order"

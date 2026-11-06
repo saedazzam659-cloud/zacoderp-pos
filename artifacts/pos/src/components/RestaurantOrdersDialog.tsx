@@ -33,7 +33,7 @@ export default function RestaurantOrdersDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ id: number; method: string } | null>(null);
-  const [channelFilter, setChannelFilter] = useState<"all" | "dine_in" | "delivery">("all");
+  const [channelFilter, setChannelFilter] = useState<"all" | "dine_in" | "takeaway" | "delivery">("all");
   const [customerId, setCustomerId] = useState<number | "">("");
   const [pointsRequested, setPointsRequested] = useState(0);
   const companyId = getStoredUser()?.companyId ?? null;
@@ -186,7 +186,7 @@ export default function RestaurantOrdersDialog({
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2">
             <ChefHat className="text-amber-500" />
-            <div><div className="font-bold text-lg">{text("فواتير طلبات المطعم", "Restaurant order billing")}</div><div className="text-xs text-muted-foreground">{text("الصالة والتوصيل في مسارين واضحين", "Dine-in and delivery are shown separately")}</div></div>
+             <div><div className="font-bold text-lg">{text("فواتير طلبات المطعم", "Restaurant order billing")}</div><div className="text-xs text-muted-foreground">{text("الصالة والسفري والتوصيل في مسارات واضحة", "Dine-in, takeaway, and delivery are shown separately")}</div></div>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => setLanguage(language === "ar" ? "en" : "ar")} aria-label={text("التبديل إلى الإنجليزية", "Switch to Arabic")} data-testid="button-restaurant-orders-language"><Languages className="h-4 w-4" />{language === "ar" ? "EN" : "AR"}</Button>
@@ -197,15 +197,16 @@ export default function RestaurantOrdersDialog({
         <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-2 min-h-0">
           {/* Left: list */}
           <div className="border-s border-border overflow-y-auto p-3">
-            <div className="mb-3 grid grid-cols-3 gap-1 rounded-xl bg-muted p-1" role="tablist" aria-label={text("تصفية قناة الطلب", "Filter order channel")}>
+            <div className="mb-3 grid grid-cols-4 gap-1 rounded-xl bg-muted p-1" role="tablist" aria-label={text("تصفية قناة الطلب", "Filter order channel")}>
               {([
                 ["all", text("الكل", "All")],
                 ["dine_in", text("الصالة", "Dine-in")],
+                ["takeaway", text("السفري", "Takeaway")],
                 ["delivery", text("التوصيل", "Delivery")],
               ] as const).map(([value, label]) => (
                 <button key={value} type="button" role="tab" aria-selected={channelFilter === value}
                   onClick={() => setChannelFilter(value)} data-testid={`button-order-channel-${value}`}
-                  className={`rounded-lg px-2 py-2 text-xs font-bold transition ${channelFilter === value ? (value === "delivery" ? "bg-orange-600 text-white shadow-sm" : value === "dine_in" ? "bg-primary text-primary-foreground shadow-sm" : "bg-card text-foreground shadow-sm") : "text-muted-foreground hover:text-foreground"}`}>
+                  className={`rounded-lg px-2 py-2 text-xs font-bold transition ${channelFilter === value ? (value === "delivery" ? "bg-orange-600 text-white shadow-sm" : value === "takeaway" ? "bg-amber-600 text-white shadow-sm" : value === "dine_in" ? "bg-primary text-primary-foreground shadow-sm" : "bg-card text-foreground shadow-sm") : "text-muted-foreground hover:text-foreground"}`}>
                   {label}
                 </button>
               ))}
@@ -218,7 +219,7 @@ export default function RestaurantOrdersDialog({
               </div>
             ) : visibleOrders.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
-                {channelFilter === "all" ? text("لا توجد طلبات مطعم مفتوحة حالياً", "No open restaurant orders") : channelFilter === "delivery" ? text("لا توجد طلبات توصيل جاهزة للفوترة", "No delivery orders ready for billing") : text("لا توجد طلبات صالة جاهزة للفوترة", "No dine-in orders ready for billing")}
+                {channelFilter === "all" ? text("لا توجد طلبات مطعم مفتوحة حالياً", "No open restaurant orders") : channelFilter === "delivery" ? text("لا توجد طلبات توصيل جاهزة للفوترة", "No delivery orders ready for billing") : channelFilter === "takeaway" ? text("لا توجد طلبات سفري جاهزة للفوترة", "No takeaway orders ready for billing") : text("لا توجد طلبات صالة جاهزة للفوترة", "No dine-in orders ready for billing")}
               </div>
             ) : visibleOrders.map(o => {
               const ago = Math.floor((Date.now() - new Date(o.openedAt).getTime()) / 60000);
