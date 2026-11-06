@@ -1553,7 +1553,9 @@ router.get("/kitchen/tickets", async (req, res) => {
   if (orderIds.length === 0) { res.json([]); return; }
   const lineConds: any[] = [
     inArray(posOrderItemsTable.orderId, orderIds),
-    inArray(posOrderItemsTable.status, ["pending", "preparing"] as any),
+    // Keep ready lines visible so the kitchen can mark them served. Served
+    // lines leave the active display and remain available in order history.
+    inArray(posOrderItemsTable.status, ["pending", "preparing", "ready"] as any),
   ];
   if (station) lineConds.push(eq(posOrderItemsTable.kitchenStation, station));
   const items = await db.select().from(posOrderItemsTable)
