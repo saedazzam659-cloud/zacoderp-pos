@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode, Award } from "lucide-react";
+import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode, Award, CalendarClock } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -11,11 +11,13 @@ import {
   type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem, type RLoyaltyProgram, type RLoyaltyRule, type RLoyaltyTier,
 } from "@/lib/api";
 import ShiftManagementTab from "@/components/ShiftManagementTab";
+import RestaurantReservationsTab from "@/components/RestaurantReservationsTab";
 
 const TABS = [
   { id: "tables",  label: "الطاولات",   icon: ListOrdered },
   { id: "cats",    label: "فئات القائمة",     icon: Tags },
   { id: "items",   label: "أصناف القائمة",   icon: Utensils },
+  { id: "reservations", label: "الحجوزات", icon: CalendarClock },
   { id: "shifts",  label: "الورديات", icon: Clock3 },
   { id: "loyalty", label: "الولاء", icon: Award },
 ] as const;
@@ -110,6 +112,7 @@ export default function RestaurantSettings() {
         )}
         {tab === "cats"   && <CategoriesTab />}
         {tab === "items"  && <ItemsTab companyId={cid} />}
+        {tab === "reservations" && <RestaurantReservationsTab branches={branchesQ.data ?? []} />}
         {tab === "shifts" && canManageShifts && cid && <ShiftManagementTab companyId={cid} />}
         {tab === "loyalty" && canManageLoyalty && <RestaurantLoyaltyTab />}
       </main>

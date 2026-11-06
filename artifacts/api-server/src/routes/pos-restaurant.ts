@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { db } from "@workspace/db";
 import {
   posTablesTable,
+  posRestaurantReservationsTable,
   posMenuCategoriesTable,
   posMenuItemsTable,
   posOrdersTable,
@@ -55,7 +56,7 @@ router.use((req, res, next) => {
     action = req.method === "GET" ? "view" : "edit";
   } else if (
     path === "/tables" || path.startsWith("/tables/") ||
-    path.startsWith("/menu/")
+    path.startsWith("/menu/") || path.startsWith("/reservations")
   ) {
     module = "pos_waiter";
     action = req.method === "GET" ? "view" : "edit";
@@ -303,6 +304,116 @@ router.delete("/tables/:id/qr-token", async (req, res) => {
   await db.update(posTablesTable).set({ publicOrderToken: null, updatedAt: new Date() })
     .where(and(eq(posTablesTable.id, id), eq(posTablesTable.companyId, cid)));
   res.json({ ok: true });
+});
+
+router.get("/reservations", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const branchId = req.query.branchId == null ? null : Number(req.query.branchId);
+  if (branchId != null && (!Number.isSafeInteger(branchId) || branchId <= 0)) {
+    res.status(400).json({ error: "معرّف الفرع غير صالح" }); return;
+  }
+  const filters: any[] = [eq(posRestaurantReservationsTable.companyId, cid)];
+  if (branchId != null) filters.push(eq(posRestaurantReservationsTable.branchId, branchId));
+  const rows = await db.select().from(posRestaurantReservationsTable)
+    .where(and(...filters))
+    .orderBy(asc(posRestaurantReservationsTable.scheduledAt), desc(posRestaurantReservationsTable.createdAt))
+    .limit(200);
+  res.json(rows);
+});
+
+router.post("/reservations", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const body = req.body ?? {};
+  const branchId = Number(body.branchId);
+  const tableId = body.tableId == null || body.tableId === "" ? null : Number(body.tableId);
+  const kind = body.kind === "waitlist" ? "waitlist" : body.kind === "reservation" ? "reservation" : null;
+  const customerName = typeof body.customerName === "string" ? body.customerName.trim() : "";
+  const customerPhone = typeof body.customerPhone === "string" ? body.customerPhone.trim() : "";
+  const guestCount = Number(body.guestCount);
+  const durationMinutes = Number(body.durationMinutes ?? 90);
+  const scheduledAt = body.scheduledAt == null && kind === "waitlist"
+    ? new Date()
+    : new Date(body.scheduledAt);
+  if (!Number.isSafeInteger(branchId) || branchId <= 0 ||
+      (tableId != null && (!Number.isSafeInteger(tableId) || tableId <= 0)) ||
+      !kind || !customerName || customerName.length > 150 ||
+      customerPhone.length > 40 || !Number.isInteger(guestCount) || guestCount < 1 || guestCount > 50 ||
+      !Number.isFinite(scheduledAt.getTime()) ||
+      !Number.isInteger(durationMinutes) || durationMinutes < 15 || durationMinutes > 360) {
+    res.status(400).json({ error: "تحقق من الفرع والاسم وعدد الضيوف والموعد ومدة الحجز" }); return;
+  }
+  const [branch] = await db.select({ id: branchesTable.id }).from(branchesTable)
+    .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid), eq(branchesTable.status, "active")));
+  if (!branch) { res.status(400).json({ error: "الفرع غير موجود أو غير نشط" }); return; }
+
+  try {
+    const row = await db.transaction(async tx => {
+      if (tableId != null) {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, ${tableId})`);
+        const [table] = await tx.select({
+          id: posTablesTable.id, branchId: posTablesTable.branchId,
+          capacity: posTablesTable.capacity, isActive: posTablesTable.isActive,
+        }).from(posTablesTable)
+          .where(and(eq(posTablesTable.id, tableId), eq(posTablesTable.companyId, cid)));
+        if (!table || !table.isActive || table.branchId !== branchId) {
+          throw Object.assign(new Error("الطاولة غير متاحة لهذا الفرع"), { status: 400 });
+        }
+        if (table.capacity < guestCount) {
+          throw Object.assign(new Error("عدد الضيوف يتجاوز سعة الطاولة"), { status: 400 });
+        }
+        if (kind === "reservation") {
+          const scheduledEnd = new Date(scheduledAt.getTime() + durationMinutes * 60_000);
+          const [conflict] = await tx.select({ id: posRestaurantReservationsTable.id })
+            .from(posRestaurantReservationsTable)
+            .where(and(
+              eq(posRestaurantReservationsTable.companyId, cid),
+              eq(posRestaurantReservationsTable.tableId, tableId),
+              eq(posRestaurantReservationsTable.kind, "reservation"),
+              eq(posRestaurantReservationsTable.status, "confirmed"),
+              sql`${posRestaurantReservationsTable.scheduledAt} < ${scheduledEnd}`,
+              sql`${posRestaurantReservationsTable.scheduledAt} + (${posRestaurantReservationsTable.durationMinutes} * interval '1 minute') > ${scheduledAt}`,
+            )).limit(1);
+          if (conflict) throw Object.assign(new Error("هذه الطاولة محجوزة في الموعد المحدد"), { status: 409 });
+        }
+      }
+      const [created] = await tx.insert(posRestaurantReservationsTable).values({
+        companyId: cid, branchId, tableId, kind,
+        status: kind === "waitlist" ? "waiting" : "confirmed",
+        customerName, customerPhone: customerPhone || null, guestCount,
+        scheduledAt, durationMinutes,
+        notes: typeof body.notes === "string" ? body.notes.trim().slice(0, 500) || null : null,
+        createdByUserId: req.authUser?.id ?? null,
+      }).returning();
+      return created;
+    });
+    res.status(201).json(row);
+  } catch (error: any) {
+    const status = Number(error?.status) || 500;
+    if (status >= 500) req.log.error({ err: error }, "create restaurant reservation failed");
+    res.status(status).json({ error: error?.message ?? "تعذّر إنشاء الحجز" });
+  }
+});
+
+router.patch("/reservations/:id/status", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const nextStatus = String(req.body?.status ?? "");
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف الحجز غير صالح" }); return; }
+  if (!["seated", "cancelled", "no_show"].includes(nextStatus)) {
+    res.status(400).json({ error: "حالة الحجز غير صالحة" }); return;
+  }
+  const [current] = await db.select().from(posRestaurantReservationsTable)
+    .where(and(eq(posRestaurantReservationsTable.id, id), eq(posRestaurantReservationsTable.companyId, cid)));
+  if (!current) { res.status(404).json({ error: "الحجز غير موجود" }); return; }
+  const allowed = current.kind === "waitlist"
+    ? current.status === "waiting" && ["seated", "cancelled"].includes(nextStatus)
+    : current.status === "confirmed" && ["seated", "cancelled", "no_show"].includes(nextStatus);
+  if (!allowed) { res.status(409).json({ error: "لا يمكن تغيير حالة هذا السجل" }); return; }
+  const [updated] = await db.update(posRestaurantReservationsTable)
+    .set({ status: nextStatus, updatedAt: new Date() })
+    .where(and(eq(posRestaurantReservationsTable.id, id), eq(posRestaurantReservationsTable.companyId, cid)))
+    .returning();
+  res.json(updated);
 });
 
 router.post("/tables", async (req, res) => {

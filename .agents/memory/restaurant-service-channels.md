@@ -9,6 +9,8 @@ Restaurant modifiers must link to existing company inventory/service items. Snap
 
 For customer self-ordering, the user chose QR codes at dine-in tables and cash on collection. Keep it opt-in per table, use an opaque revocable token, and leave guest orders pending staff confirmation before kitchen dispatch.
 
-**Why:** The user explicitly wants table orders preserved, delivery distinct from in-store pickup, and takeaway available as its own order flow.
+Reservations and waitlist entries are planning records, not restaurant orders. They must not create kitchen tickets, inventory movements, sales invoices, or customer charges until staff starts the existing order flow.
 
-**How to apply:** Keep dine-in, takeaway, and delivery entry points distinct; retain table IDs for dine-in; and include channel context in billing/report details without changing existing table records. Add-ons reuse item IDs so normal invoice, stock, cost, and return paths remain authoritative. Public QR requests must map through the token to one table/company, use server-side prices, and create only normal restaurant orders.
+**Why:** The user explicitly wants table orders preserved, delivery distinct from in-store pickup, and takeaway available as its own order flow. Reservation and waitlist records must not bypass the normal order-to-invoice lifecycle.
+
+**How to apply:** Keep dine-in, takeaway, and delivery entry points distinct; retain table IDs for dine-in; and include channel context in billing/report details without changing existing table records. Reservations may optionally reference a table, but never alter table status or create a POS order merely because a guest is seated. Add-ons reuse item IDs so normal invoice, stock, cost, and return paths remain authoritative. Public QR requests must map through the token to one table/company, use server-side prices, and create only normal restaurant orders.

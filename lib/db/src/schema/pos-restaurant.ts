@@ -38,6 +38,27 @@ export const posTablesTable = pgTable("pos_tables", {
   byBranch: index("pos_tables_branch_idx").on(t.branchId, t.status),
 }));
 
+export const posRestaurantReservationsTable = pgTable("pos_restaurant_reservations", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId: integer("branch_id").notNull().references(() => branchesTable.id, { onDelete: "cascade" }),
+  tableId: integer("table_id").references(() => posTablesTable.id, { onDelete: "set null" }),
+  kind: text("kind").notNull().default("reservation"),
+  status: text("status").notNull().default("confirmed"),
+  customerName: text("customer_name").notNull(),
+  customerPhone: text("customer_phone"),
+  guestCount: integer("guest_count").notNull().default(1),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+  durationMinutes: integer("duration_minutes").notNull().default(90),
+  notes: text("notes"),
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  bySchedule: index("pos_restaurant_reservations_schedule_idx").on(t.companyId, t.branchId, t.scheduledAt),
+  byTable: index("pos_restaurant_reservations_table_idx").on(t.companyId, t.tableId, t.scheduledAt),
+}));
+
 export const POS_MENU_KINDS = ["food", "drink", "dessert", "other"] as const;
 export const posMenuKindEnum = pgEnum("pos_menu_kind", POS_MENU_KINDS);
 

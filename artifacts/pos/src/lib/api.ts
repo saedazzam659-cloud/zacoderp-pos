@@ -610,6 +610,15 @@ export const api = {
     deliveryAddress?: string;
     guestCount?: number; notes?: string;
   }) => req<ROrder>("POST", "/api/pos-restaurant/orders", b),
+  rReservations: (branchId?: number) =>
+    req<RRestaurantReservation[]>("GET", `/api/pos-restaurant/reservations${branchId ? `?branchId=${branchId}` : ""}`),
+  rCreateReservation: (b: {
+    branchId: number; kind: "reservation" | "waitlist"; tableId?: number | null;
+    customerName: string; customerPhone?: string; guestCount: number;
+    scheduledAt?: string; durationMinutes?: number; notes?: string;
+  }) => req<RRestaurantReservation>("POST", "/api/pos-restaurant/reservations", b),
+  rUpdateReservationStatus: (id: number, status: "seated" | "cancelled" | "no_show") =>
+    req<RRestaurantReservation>("PATCH", `/api/pos-restaurant/reservations/${id}/status`, { status }),
   rAddItem: (orderId: number, b: { menuItemId: number; qty?: number; notes?: string; modifiers?: Array<{ groupId: string; optionIds: string[] }> }) =>
     req<{ ok: true; subtotal: string; vatAmount: string; total: string }>(
       "POST", `/api/pos-restaurant/orders/${orderId}/items`, b),
@@ -716,6 +725,22 @@ export type RTable = {
   notes?: string | null;
   publicOrderToken?: string | null;
   isActive: boolean;
+};
+
+export type RRestaurantReservation = {
+  id: number;
+  companyId: number;
+  branchId: number;
+  tableId?: number | null;
+  kind: "reservation" | "waitlist";
+  status: "confirmed" | "waiting" | "seated" | "cancelled" | "no_show";
+  customerName: string;
+  customerPhone?: string | null;
+  guestCount: number;
+  scheduledAt: string;
+  durationMinutes: number;
+  notes?: string | null;
+  createdAt: string;
 };
 
 export type RMenuCategory = {
