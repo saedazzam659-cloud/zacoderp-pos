@@ -654,15 +654,27 @@ router.get("/orders/:id", async (req, res) => {
 
 router.post("/orders", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
-  const { branchId, channel, tableId, customerName, customerPhone, guestCount, notes } = req.body ?? {};
+  const { branchId, channel, tableId, customerName, customerPhone, deliveryAddress, guestCount, notes } = req.body ?? {};
   if (!branchId) { res.status(400).json({ error: "branchId مطلوب" }); return; }
+  const normalizedChannel = channel ?? "dine_in";
+  const normalizedDeliveryAddress = typeof deliveryAddress === "string" ? deliveryAddress.trim() : "";
+  if (normalizedChannel === "delivery" && (
+    normalizedDeliveryAddress.length < 4 ||
+    normalizedDeliveryAddress.length > 500 ||
+    typeof customerName !== "string" || !customerName.trim() ||
+    typeof customerPhone !== "string" || customerPhone.trim().length < 3
+  )) {
+    res.status(400).json({ error: "لطلب التوصيل أدخل اسم العميل ورقمًا صحيحًا وعنوانًا لا يقل عن 4 أحرف" });
+    return;
+  }
   const orderNumber = await nextOrderNumber(cid);
   const [row] = await db.insert(posOrdersTable).values({
     companyId: cid, branchId: Number(branchId), orderNumber,
-    channel: channel ?? "dine_in",
+    channel: normalizedChannel,
     tableId: tableId ? Number(tableId) : null,
     customerName: customerName ?? null,
     customerPhone: customerPhone ?? null,
+    deliveryAddress: normalizedChannel === "delivery" ? normalizedDeliveryAddress : null,
     waiterId: req.authUser?.id ?? null,
     guestCount: Number(guestCount ?? 1),
     notes: notes ?? null,

@@ -31,6 +31,7 @@ export default function WaiterApp() {
   const [opening, setOpening] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
   const [deliveryNotes, setDeliveryNotes] = useState("");
   const [creatingDelivery, setCreatingDelivery] = useState(false);
   const [deliveryError, setDeliveryError] = useState("");
@@ -182,6 +183,10 @@ export default function WaiterApp() {
       setDeliveryError(text("أدخل اسم العميل ورقم التواصل لبدء طلب التوصيل.", "Enter the customer's name and phone number to start a delivery order."));
       return;
     }
+    if (deliveryAddress.trim().length < 4) {
+      setDeliveryError(text("أدخل عنوان توصيل واضحًا (4 أحرف على الأقل).", "Enter a delivery address (at least 4 characters)."));
+      return;
+    }
     if (!deliveryBranchId) {
       setDeliveryError(text("تعذّر تحديد الفرع. تحقق من إعدادات نقطة البيع.", "Could not identify the branch. Check the POS settings."));
       return;
@@ -194,12 +199,14 @@ export default function WaiterApp() {
         channel: "delivery",
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
+        deliveryAddress: deliveryAddress.trim(),
         notes: deliveryNotes.trim() || undefined,
       });
       await qc.invalidateQueries({ queryKey: ["r-delivery-orders"] });
       setActiveOrder(await api.rOrder(order.id));
       setCustomerName("");
       setCustomerPhone("");
+      setDeliveryAddress("");
       setDeliveryNotes("");
     } catch (error: any) {
       setDeliveryError(error?.message ?? text("تعذّر إنشاء طلب التوصيل.", "Could not create the delivery order."));
@@ -290,6 +297,7 @@ export default function WaiterApp() {
                           className="flex w-full items-center justify-between gap-3 rounded-xl border border-orange-100 bg-background p-4 text-start transition hover:border-orange-300 hover:bg-orange-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500">
                           <span className="min-w-0"><span className="flex items-center gap-2 font-black">{order.orderNumber}<span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-800">{text("توصيل", "Delivery")}</span></span>
                             <span className="mt-1 block truncate text-sm text-muted-foreground">{order.customerName || text("عميل بدون اسم", "Unnamed customer")} · {order.customerPhone || text("لا يوجد رقم", "No phone")}</span>
+                            {order.deliveryAddress && <span className="mt-1 block truncate text-xs text-orange-800">{order.deliveryAddress}</span>}
                           </span><span className="shrink-0 text-end"><span className="block font-black">{Number(order.total).toFixed(2)} {text("ر.س", "SAR")}</span><span className="mt-1 block text-xs text-muted-foreground">{statusLabel(order.status, language)}</span></span>
                         </button>
                       ))}
@@ -301,7 +309,8 @@ export default function WaiterApp() {
                 <div className="space-y-4">
                   <label className="block text-sm font-bold">{text("اسم العميل", "Customer name")}<Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder={text("اسم المستلم", "Recipient name")} data-testid="input-delivery-customer-name" className="mt-1.5 h-11 rounded-xl" /></label>
                   <label className="block text-sm font-bold">{text("رقم التواصل", "Phone number")}<div className="relative mt-1.5"><Phone className={`absolute ${dir === "rtl" ? "right-3" : "left-3"} top-3.5 h-4 w-4 text-muted-foreground`} /><Input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="05xxxxxxxx" inputMode="tel" data-testid="input-delivery-customer-phone" className={`h-11 rounded-xl ${dir === "rtl" ? "pr-10" : "pl-10"}`} /></div></label>
-                  <label className="block text-sm font-bold">{text("ملاحظات التوصيل", "Delivery notes")}<textarea value={deliveryNotes} onChange={e => setDeliveryNotes(e.target.value)} placeholder={text("العنوان أو تعليمات إضافية", "Address or delivery instructions")} data-testid="input-delivery-notes" className="mt-1.5 min-h-24 w-full resize-y rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-normal outline-none transition focus-visible:ring-2 focus-visible:ring-ring" /></label>
+                  <label className="block text-sm font-bold">{text("عنوان التوصيل", "Delivery address")}<textarea required value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} placeholder={text("المدينة، الحي، الشارع، رقم المبنى أو علامة مميزة", "City, district, street, building number or landmark")} data-testid="input-delivery-address" className="mt-1.5 min-h-20 w-full resize-y rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-normal outline-none transition focus-visible:ring-2 focus-visible:ring-ring" /></label>
+                  <label className="block text-sm font-bold">{text("تعليمات إضافية", "Additional instructions")}<textarea value={deliveryNotes} onChange={e => setDeliveryNotes(e.target.value)} placeholder={text("الدور، الشقة، أو تعليمات الوصول", "Floor, apartment, or access instructions")} data-testid="input-delivery-notes" className="mt-1.5 min-h-20 w-full resize-y rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-normal outline-none transition focus-visible:ring-2 focus-visible:ring-ring" /></label>
                   {deliveryError && <p className="text-sm text-destructive" role="alert">{deliveryError}</p>}
                   <Button type="button" disabled={creatingDelivery || !deliveryBranchId} onClick={createDelivery} data-testid="button-create-delivery-order" className="h-12 w-full bg-orange-600 font-black text-white hover:bg-orange-700">
                     {creatingDelivery ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <Plus className="me-2 h-4 w-4" />} {text("إنشاء طلب التوصيل واختيار الأصناف", "Create delivery order and choose items")}
@@ -444,6 +453,7 @@ export default function WaiterApp() {
                    <p className={`text-xs font-bold ${activeOrder.channel === "delivery" ? "text-orange-700" : "text-primary"}`}>{activeOrder.channel === "delivery" ? text("طلب توصيل", "Delivery order") : text("طلب صالة · طاولة", "Dine-in · Table")}</p>
                   <h2 className="mt-1 text-lg font-black">{activeOrder.orderNumber}</h2>
                     <p className="mt-0.5 text-sm text-muted-foreground">{activeOrder.channel === "delivery" ? `${activeOrder.customerName || text("عميل", "Customer")} · ${activeOrder.customerPhone || text("لا يوجد رقم", "No phone")}` : `${text("طاولة", "Table")} ${selectedTable?.nameAr ?? activeOrder.tableId}`}</p>
+                    {activeOrder.channel === "delivery" && activeOrder.deliveryAddress && <p className="mt-1 max-w-sm text-xs leading-5 text-orange-800">{activeOrder.deliveryAddress}</p>}
                 </div>
                  <Button variant="ghost" size="icon" aria-label={text("إغلاق الطلب والعودة للطاولات", "Close order and return")} data-testid="button-close-order"
                    onClick={() => { setActiveOrder(null); setOpenTableId(null); }}><X className="h-4 w-4" /></Button>

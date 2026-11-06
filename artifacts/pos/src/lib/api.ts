@@ -562,6 +562,7 @@ export const api = {
   rCreateOrder: (b: {
     branchId: number; channel?: string; tableId?: number;
     customerName?: string; customerPhone?: string;
+    deliveryAddress?: string;
     guestCount?: number; notes?: string;
   }) => req<ROrder>("POST", "/api/pos-restaurant/orders", b),
   rAddItem: (orderId: number, b: { menuItemId: number; qty?: number; notes?: string; modifiers?: Array<{ groupId: string; optionIds: string[] }> }) =>
@@ -723,6 +724,7 @@ export type ROrder = {
   tableId?: number | null;
   customerName?: string | null;
   customerPhone?: string | null;
+  deliveryAddress?: string | null;
   waiterId?: number | null;
   guestCount: number;
   status: "draft" | "sent" | "preparing" | "ready" | "served" | "billed" | "cancelled";

@@ -99,6 +99,7 @@ export const posOrdersTable = pgTable("pos_orders", {
   tableId:         integer("table_id"),
   customerName:    text("customer_name"),
   customerPhone:   text("customer_phone"),
+  deliveryAddress: text("delivery_address"),
   waiterId:        integer("waiter_id"),
   status:          posOrderStatusEnum("status").notNull().default("open"),
   guestCount:      integer("guest_count").notNull().default(1),
