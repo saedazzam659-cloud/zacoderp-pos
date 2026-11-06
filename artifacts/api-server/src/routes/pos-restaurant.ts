@@ -16,6 +16,7 @@ import {
   stockBalanceTable,
   branchesTable,
   customersTable,
+  customerGroupsTable,
   posRestaurantLoyaltyProgramsTable,
   posRestaurantLoyaltyLedgerTable,
 } from "@workspace/db";
@@ -584,6 +585,14 @@ router.put("/loyalty", async (req, res) => {
     typeof tier.isActive === "boolean",
   );
   if (!validRules || !validTiers) { res.status(400).json({ error: "تحقق من أسماء وشروط قواعد الولاء ومستوياته" }); return; }
+  for (const groupId of new Set(rules.map((rule: any) => rule.customerGroupId == null ? null : Number(rule.customerGroupId)).filter((id: number | null): id is number => id !== null))) {
+    const [group] = await db.select({ id: customerGroupsTable.id }).from(customerGroupsTable).where(and(
+      eq(customerGroupsTable.id, groupId),
+      eq(customerGroupsTable.companyId, cid),
+      eq(customerGroupsTable.isActive, true),
+    )).limit(1);
+    if (!group) { res.status(400).json({ error: "إحدى قواعد الولاء تشير إلى مجموعة عملاء غير نشطة أو غير موجودة" }); return; }
+  }
   const normalizedRules = rules.map((r: any) => ({
     id: String(r.id ?? randomBytes(12).toString("hex")),
     name: r.name.trim(), channel: r.channel, minInvoiceAmount: Number(r.minInvoiceAmount),

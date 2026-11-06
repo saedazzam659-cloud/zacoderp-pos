@@ -1046,6 +1046,12 @@ function ErpItemPicker({
 
 function RestaurantLoyaltyTab() {
   const qc = useQueryClient();
+  const companyId = getStoredUser()?.companyId ?? null;
+  const groupsQ = useQuery({
+    queryKey: ["customer-groups", companyId],
+    queryFn: () => companyId ? api.getCustomerGroups(companyId) : Promise.resolve([]),
+    enabled: !!companyId,
+  });
   const programQ = useQuery({ queryKey: ["r-loyalty-program"], queryFn: () => api.rLoyaltyProgram() });
   const [draft, setDraft] = useState<RLoyaltyProgram | null>(null);
   useEffect(() => {
@@ -1093,7 +1099,7 @@ function RestaurantLoyaltyTab() {
         <Input aria-label="اسم القاعدة" placeholder="اسم القاعدة" value={rule.name} onChange={e => patchRule(i, { name: e.target.value })} className="bg-background" />
         <select aria-label="قناة الطلب" value={rule.channel} onChange={e => patchRule(i, { channel: e.target.value as RLoyaltyRule["channel"] })} className="h-10 rounded-lg border border-input bg-background px-2 text-sm"><option value="all">كل القنوات</option><option value="dine_in">الصالة</option><option value="takeaway">سفري</option><option value="delivery">توصيل</option></select>
         <Input aria-label="الحد الأدنى للفاتورة" type="number" min="0" value={rule.minInvoiceAmount} onChange={e => patchRule(i, { minInvoiceAmount: Number(e.target.value) })} placeholder="أقل فاتورة" className="bg-background" />
-        <Input aria-label="معرّف مجموعة العملاء" type="number" min="0" value={rule.customerGroupId ?? ""} onChange={e => patchRule(i, { customerGroupId: e.target.value ? Number(e.target.value) : null })} placeholder="مجموعة العملاء (اختياري)" className="bg-background" />
+        <select aria-label="مجموعة العملاء" value={rule.customerGroupId ?? ""} onChange={e => patchRule(i, { customerGroupId: e.target.value ? Number(e.target.value) : null })} className="h-10 rounded-lg border border-input bg-background px-2 text-sm"><option value="">كل العملاء</option>{(groupsQ.data ?? []).map(group => <option key={group.id} value={group.id}>{group.nameAr}</option>)}</select>
         <Input aria-label="مضاعف النقاط" type="number" min="0.1" step="0.1" value={rule.pointsMultiplier} onChange={e => patchRule(i, { pointsMultiplier: Number(e.target.value) })} placeholder="المضاعف" className="bg-background" />
         <div className="flex items-center justify-between gap-2"><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={rule.isActive} onChange={e => patchRule(i, { isActive: e.target.checked })} className="accent-primary" />نشطة</label><Button variant="ghost" size="icon" aria-label="حذف القاعدة" onClick={() => patch("rules", draft.rules.filter((_, n) => n !== i))}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>
       </div>)}

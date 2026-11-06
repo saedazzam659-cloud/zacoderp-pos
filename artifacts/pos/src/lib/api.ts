@@ -466,6 +466,10 @@ export const api = {
   // Customers
   getCustomers: (companyId: number) =>
     req<Customer[]>("GET", `/api/customers?companyId=${companyId}`),
+  getCustomerGroups: (companyId: number) =>
+    req<Array<{ id: number; code: string; nameAr: string; nameEn?: string | null; isActive: boolean }>>(
+      "GET", `/api/customers/customer-groups?companyId=${companyId}`,
+    ),
 
   // POS payment-method → account mappings (per company)
   getPosSettings: (companyId: number) =>
