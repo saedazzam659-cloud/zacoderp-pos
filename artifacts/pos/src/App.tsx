@@ -15,6 +15,7 @@ import RestaurantAI from "@/pages/RestaurantAI";
 import PosEntry from "@/pages/PosEntry";
 import { useEnterAdvances } from "@/hooks/useEnterAdvances";
 import ReturnsPage from "@/pages/Returns";
+import QrOrderPage from "@/pages/QrOrder";
 import { api, getToken, type AuthUser } from "@/lib/api";
 
 const queryClient = new QueryClient();
@@ -134,6 +135,7 @@ function RestaurantAIRoute() {
 function Router() {
   return (
     <Switch>
+      <Route path="/qr-order/:token" component={QrOrderPage} />
       <Route path="/entry" component={PosEntry} />
       <Route path="/" component={LoginPage} />
       <Route path="/login" component={LoginPage} />

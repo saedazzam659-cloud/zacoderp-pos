@@ -534,6 +534,10 @@ export const api = {
 
   rMenuItems: (categoryId?: number) =>
     req<RMenuItem[]>("GET", `/api/pos-restaurant/menu/items${categoryId ? `?categoryId=${categoryId}` : ""}`),
+  publicRTableMenu: (token: string) =>
+    req<PublicRTableMenu>("GET", `/api/pos-restaurant/public/tables/${encodeURIComponent(token)}/menu`),
+  publicRPlaceOrder: (token: string, body: PublicRPlaceOrderBody) =>
+    req<{ orderNumber: string }>("POST", `/api/pos-restaurant/public/tables/${encodeURIComponent(token)}/orders`, body),
   rCreateMenuItem: (b: Partial<RMenuItem> & { categoryId: number; code: string; nameAr: string }) =>
     req<RMenuItem>("POST", "/api/pos-restaurant/menu/items", b),
   rUpdateMenuItem: (id: number, b: Partial<RMenuItem>) =>
@@ -697,6 +701,20 @@ export type RMenuItem = {
   modifiers?: any[];
   modifierGroups?: RestaurantModifierGroup[];
   isActive: boolean;
+};
+
+export type PublicRTableMenu = {
+  table: { nameAr: string; branchId: number };
+  categories: RMenuCategory[];
+  items: RMenuItem[];
+};
+
+export type PublicRPlaceOrderBody = {
+  items: Array<{
+    menuItemId: number;
+    qty: number;
+    modifiers: Array<{ groupId: string; optionIds: string[] }>;
+  }>;
 };
 
 export type RestaurantModifierGroup = {
