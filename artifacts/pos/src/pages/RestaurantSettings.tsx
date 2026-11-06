@@ -7,7 +7,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  api, getToken, getStoredUser,
+  api, getToken, setStoredUser,
+  type AuthUser,
   type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem, type RKitchenStation, type RLoyaltyProgram, type RLoyaltyRule, type RLoyaltyTier,
 } from "@/lib/api";
 import ShiftManagementTab from "@/components/ShiftManagementTab";
@@ -40,7 +41,17 @@ export default function RestaurantSettings() {
 
   useEffect(() => { if (!getToken()) setLocation("/login"); }, [setLocation]);
 
-  const user = getStoredUser();
+  const userQ = useQuery<AuthUser>({
+    queryKey: ["pos-access-user"],
+    queryFn: api.me,
+    enabled: !!getToken(),
+    retry: false,
+    staleTime: 0,
+  });
+  const user = userQ.data;
+  useEffect(() => {
+    if (user) setStoredUser(user);
+  }, [user]);
   const cid = user?.companyId ?? null;
   const canManageShifts = user?.role === "admin" || user?.role === "superadmin";
   const canManageLoyalty = canManageShifts || user?.role === "manager";
@@ -67,27 +78,35 @@ export default function RestaurantSettings() {
         </div>
       </header>
 
-      <nav className="sticky top-16 z-10 flex overflow-x-auto border-b border-border bg-card/95 px-3 backdrop-blur" aria-label="أقسام إعدادات المطعم">
-        {visibleTabs.map(t => {
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              type="button"
-              aria-current={tab === t.id ? "page" : undefined}
-              data-testid={`tab-restaurant-${t.id}`}
-              className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${
-                tab === t.id ? "border-primary text-primary font-black" : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Icon className="h-4 w-4" /> {t.label}
-            </button>
-          );
-        })}
-      </nav>
+      {userQ.isLoading ? (
+        <main className="mx-auto max-w-6xl p-6"><p role="status" className="rounded-xl border bg-card p-5 text-center text-sm">جارٍ تحميل بيانات الشركة والصلاحيات...</p></main>
+      ) : userQ.isError ? (
+        <main className="mx-auto max-w-6xl p-6"><p role="alert" className="rounded-xl border border-destructive/30 bg-card p-5 text-center text-sm text-destructive">تعذّر التحقق من حسابك. أعد تحميل الصفحة أو سجّل الدخول مجددًا.</p></main>
+      ) : !cid ? (
+        <main className="mx-auto max-w-3xl p-6"><section role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-center text-sm leading-7 text-amber-950">هذا الحساب غير مرتبط بشركة في جلسة نقاط البيع الحالية، لذلك لا يمكن تحميل إعدادات الولاء أو الورديات. سجّل الخروج ثم الدخول بحساب الشركة، أو اطلب من مسؤول النظام ربط المستخدم بالشركة.</section></main>
+      ) : (
+        <>
+          <nav className="sticky top-16 z-10 flex overflow-x-auto border-b border-border bg-card/95 px-3 backdrop-blur" aria-label="أقسام إعدادات المطعم">
+            {visibleTabs.map(t => {
+              const Icon = t.icon;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setTab(t.id)}
+                  type="button"
+                  aria-current={tab === t.id ? "page" : undefined}
+                  data-testid={`tab-restaurant-${t.id}`}
+                  className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${
+                    tab === t.id ? "border-primary text-primary font-black" : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" /> {t.label}
+                </button>
+              );
+            })}
+          </nav>
 
-      <main className="mx-auto max-w-6xl p-4 sm:p-6">
+          <main className="mx-auto max-w-6xl p-4 sm:p-6">
         <section aria-labelledby="restaurant-role-heading" className="mb-5 rounded-2xl border border-primary/20 bg-primary/[0.04] p-4 sm:p-5">
           <h1 id="restaurant-role-heading" className="font-black">ما وظيفة نظام المطعم؟</h1>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
@@ -115,9 +134,13 @@ export default function RestaurantSettings() {
         {tab === "items"  && <ItemsTab companyId={cid} />}
         {tab === "stations" && <KitchenStationsTab />}
         {tab === "reservations" && <RestaurantReservationsTab branches={branchesQ.data ?? []} />}
-        {tab === "shifts" && canManageShifts && cid && <ShiftManagementTab companyId={cid} />}
-        {tab === "loyalty" && canManageLoyalty && <RestaurantLoyaltyTab />}
-      </main>
+            {tab === "shifts" && canManageShifts && <ShiftManagementTab companyId={cid} />}
+            {tab === "shifts" && !canManageShifts && <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-center text-sm text-amber-950">إعدادات الورديات متاحة لمسؤول الشركة فقط.</p>}
+            {tab === "loyalty" && canManageLoyalty && <RestaurantLoyaltyTab companyId={cid} />}
+            {tab === "loyalty" && !canManageLoyalty && <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-center text-sm text-amber-950">إعدادات الولاء متاحة لمسؤول الشركة أو مدير المطعم المخوّل.</p>}
+          </main>
+        </>
+      )}
     </div>
   );
 }
@@ -1106,13 +1129,12 @@ function ErpItemPicker({
   );
 }
 
-function RestaurantLoyaltyTab() {
+function RestaurantLoyaltyTab({ companyId }: { companyId: number }) {
   const qc = useQueryClient();
-  const companyId = getStoredUser()?.companyId ?? null;
   const groupsQ = useQuery({
     queryKey: ["customer-groups", companyId],
     queryFn: () => companyId ? api.getCustomerGroups(companyId) : Promise.resolve([]),
-    enabled: !!companyId,
+    enabled: companyId > 0,
   });
   const programQ = useQuery({ queryKey: ["r-loyalty-program"], queryFn: () => api.rLoyaltyProgram() });
   const [draft, setDraft] = useState<RLoyaltyProgram | null>(null);

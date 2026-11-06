@@ -51,6 +51,7 @@ import { Button } from "@/components/ui/button";
 import {
   api,
   getStoredUser,
+  setStoredUser,
   getToken,
   getPosDeviceId,
   clearAuth,
@@ -344,15 +345,11 @@ export default function CashierPage() {
     document.addEventListener("visibilitychange", refreshWhenVisible);
     (async () => {
       try {
-        if (!user) {
-          const me = await api.me();
-          if (!alive) return;
-          setUser(me);
-        }
-        const cid = (user?.companyId ?? getStoredUser()?.companyId) as
-          | number
-          | null
-          | undefined;
+        const me = await api.me();
+        if (!alive) return;
+        setUser(me);
+        setStoredUser(me);
+        const cid = me.companyId;
         if (!cid) {
           setLoadError("لا توجد شركة مرتبطة بحسابك. تواصل مع المدير.");
           setLoading(false);
