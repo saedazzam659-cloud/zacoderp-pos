@@ -200,27 +200,44 @@ async function availableLoyaltyLots(companyId: number, customerId: number, execu
     eq(posRestaurantLoyaltyLedgerTable.customerId, customerId),
   ));
   const now = Date.now();
-  const earns = rows.filter((row: any) => row.type === "earn" && (!row.expiresAt || new Date(row.expiresAt).getTime() > now));
-  const redeemed = new Map<number, number>();
-  for (const row of rows.filter((entry: any) => entry.type === "redeem")) {
-    if (row.sourceEarnId != null) redeemed.set(row.sourceEarnId, (redeemed.get(row.sourceEarnId) ?? 0) + Math.abs(Number(row.points)));
+  const adjustments = new Map<number, number>();
+  const adjustmentTypes = new Set(["redeem", "return_earn", "return_earn_void", "return_redeem", "return_redeem_void"]);
+  for (const row of rows) {
+    if (row.sourceEarnId != null && adjustmentTypes.has(row.type)) {
+      adjustments.set(row.sourceEarnId, (adjustments.get(row.sourceEarnId) ?? 0) + Number(row.points));
+    }
   }
-  const lots = earns.map((earn: any) => ({
+  const lots = rows.filter((row: any) => row.type === "earn").map((earn: any) => ({
     id: earn.id,
-    points: Math.max(0, Number(earn.points) - (redeemed.get(earn.id) ?? 0)),
+    points: Number(earn.points) + (adjustments.get(earn.id) ?? 0),
     expiresAt: earn.expiresAt,
     spendAmount: Number(earn.spendAmount ?? 0),
-  })).filter((lot: any) => lot.points > 0)
-    .sort((a: any, b: any) => (a.expiresAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER) - (b.expiresAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER));
-  let debt = rows.filter((entry: any) => entry.type === "debt").reduce((sum: number, entry: any) => sum + Math.abs(Number(entry.points)), 0);
+  })).sort((a: any, b: any) => (a.expiresAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER) - (b.expiresAt?.getTime?.() ?? Number.MAX_SAFE_INTEGER));
+  let debt = rows.filter((entry: any) => entry.type === "debt").reduce((sum: number, entry: any) => {
+    const restored = rows.filter((adjustment: any) =>
+      adjustment.sourceLedgerId === entry.id && ["return_redeem", "return_redeem_void"].includes(adjustment.type),
+    ).reduce((part: number, adjustment: any) => part + Number(adjustment.points), 0);
+    return sum + Math.max(0, Math.abs(Number(entry.points)) - restored);
+  }, 0);
+  const activeLots = [];
   for (const lot of lots) {
+    const expired = lot.expiresAt && new Date(lot.expiresAt).getTime() <= now;
+    if (expired) {
+      if (lot.points < 0) debt += Math.abs(lot.points);
+      continue;
+    }
+    if (lot.points < 0) debt += Math.abs(lot.points);
+    else if (lot.points > 0) activeLots.push(lot);
+  }
+  for (const lot of activeLots) {
     const used = Math.min(debt, lot.points);
     lot.points -= used;
     debt -= used;
     if (debt <= 0) break;
   }
-  const available = lots.filter((lot: any) => lot.points > 0);
-  (available as any).lifetimeSpend = rows.filter((entry: any) => entry.type === "earn")
+  const available = activeLots.filter((lot: any) => lot.points > 0);
+  (available as any).lifetimeSpend = rows
+    .filter((entry: any) => ["earn", "return_earn", "return_earn_void"].includes(entry.type))
     .reduce((sum: number, entry: any) => sum + Number(entry.spendAmount ?? 0), 0);
   return available;
 }

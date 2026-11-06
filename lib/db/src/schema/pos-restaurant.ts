@@ -193,10 +193,13 @@ export const posRestaurantLoyaltyLedgerTable = pgTable("pos_restaurant_loyalty_l
   points: integer("points").notNull(),
   spendAmount: numeric("spend_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   sourceEarnId: integer("source_earn_id"),
+  sourceLedgerId: integer("source_ledger_id"),
+  returnId: integer("return_id"),
   expiresAt: timestamp("expires_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => ({
   byCustomer: index("pos_restaurant_loyalty_ledger_customer_idx").on(t.companyId, t.customerId, t.createdAt),
+  bySourceLedger: index("pos_restaurant_loyalty_ledger_source_idx").on(t.companyId, t.sourceLedgerId),
   earnOnce: uniqueIndex("pos_restaurant_loyalty_ledger_earn_once")
     .on(t.companyId, t.invoiceId).where(sql`${t.type} = 'earn'`),
   redeemOncePerLot: uniqueIndex("pos_restaurant_loyalty_ledger_redeem_once_per_lot")

@@ -447,11 +447,17 @@ async function ensureRestaurantLoyaltySchema(): Promise<void> {
       points INTEGER NOT NULL,
       spend_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
       source_earn_id INTEGER,
+      source_ledger_id INTEGER,
+      return_id INTEGER,
       expires_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
+    `ALTER TABLE pos_restaurant_loyalty_ledger ADD COLUMN IF NOT EXISTS source_ledger_id INTEGER`,
+    `ALTER TABLE pos_restaurant_loyalty_ledger ADD COLUMN IF NOT EXISTS return_id INTEGER`,
     `CREATE INDEX IF NOT EXISTS pos_restaurant_loyalty_ledger_customer_idx
       ON pos_restaurant_loyalty_ledger(company_id, customer_id, created_at)`,
+    `CREATE INDEX IF NOT EXISTS pos_restaurant_loyalty_ledger_source_idx
+      ON pos_restaurant_loyalty_ledger(company_id, source_ledger_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS pos_restaurant_loyalty_ledger_earn_once
       ON pos_restaurant_loyalty_ledger(company_id, invoice_id) WHERE type = 'earn'`,
     `CREATE UNIQUE INDEX IF NOT EXISTS pos_restaurant_loyalty_ledger_redeem_once_per_lot

@@ -19,6 +19,7 @@ import { userCanUseCashBox } from "../lib/cashBoxAccess.js";
 import {
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable, salesReturnLinesTable,
+  posRestaurantLoyaltyLedgerTable,
   salesQuotationsTable, salesQuotationLinesTable,
   salesOrdersTable, salesOrderLinesTable,
   customerSettlementsTable, stockBalanceTable, stockLedgerTable,
@@ -1388,6 +1389,102 @@ export async function reverseSalesReturnStockForUnpost(input: {
 }
 
 const router = Router();
+
+async function adjustRestaurantLoyaltyForReturn(tx: any, companyId: number, ret: any, action: "post" | "unpost") {
+  if (!ret.invoiceId) return;
+  const [invoice] = await tx.select({
+    id: salesInvoicesTable.id,
+    customerId: salesInvoicesTable.customerId,
+    totalAmount: salesInvoicesTable.totalAmount,
+  }).from(salesInvoicesTable).where(and(
+    eq(salesInvoicesTable.id, ret.invoiceId),
+    eq(salesInvoicesTable.companyId, companyId),
+  ));
+  const customerId = Number(invoice?.customerId ?? ret.customerId);
+  if (!invoice || !Number.isSafeInteger(customerId) || customerId <= 0) return;
+  const sourceRows = await tx.select().from(posRestaurantLoyaltyLedgerTable).where(and(
+    eq(posRestaurantLoyaltyLedgerTable.companyId, companyId),
+    eq(posRestaurantLoyaltyLedgerTable.customerId, customerId),
+    eq(posRestaurantLoyaltyLedgerTable.invoiceId, ret.invoiceId),
+    inArray(posRestaurantLoyaltyLedgerTable.type, ["earn", "redeem", "debt"]),
+  ));
+  if (!sourceRows.length) return;
+
+  if (action === "post") {
+    const previousReturns = await tx.select({ totalAmount: salesReturnsTable.totalAmount })
+      .from(salesReturnsTable).where(and(
+        eq(salesReturnsTable.companyId, companyId),
+        eq(salesReturnsTable.invoiceId, ret.invoiceId),
+        eq(salesReturnsTable.status, "posted"),
+        ne(salesReturnsTable.id, ret.id),
+      ));
+    const invoiceTotal = Number(invoice.totalAmount);
+    if (!(invoiceTotal > 0)) return;
+    const cumulativeReturned = previousReturns.reduce((sum: number, row: any) => sum + Number(row.totalAmount || 0), Number(ret.totalAmount || 0));
+    const ratio = Math.min(1, Math.max(0, cumulativeReturned / invoiceTotal));
+    const history = await tx.select().from(posRestaurantLoyaltyLedgerTable).where(and(
+      eq(posRestaurantLoyaltyLedgerTable.companyId, companyId),
+      eq(posRestaurantLoyaltyLedgerTable.customerId, customerId),
+      eq(posRestaurantLoyaltyLedgerTable.invoiceId, ret.invoiceId),
+    ));
+    for (const source of sourceRows) {
+      const earning = source.type === "earn";
+      const redemption = source.type === "redeem" || source.type === "debt";
+      if (!earning && !redemption) continue;
+      const eventType = earning ? "return_earn" : "return_redeem";
+      const voidType = earning ? "return_earn_void" : "return_redeem_void";
+      const current = history.filter((row: any) =>
+        row.sourceLedgerId === source.id && [eventType, voidType].includes(row.type),
+      );
+      const currentPoints = current.reduce((sum: number, row: any) => sum + Number(row.points), 0);
+      const targetPoints = earning
+        ? -Math.round(Number(source.points) * ratio)
+        : Math.round(Math.abs(Number(source.points)) * ratio);
+      const points = targetPoints - currentPoints;
+      const currentSpend = current.reduce((sum: number, row: any) => sum + Number(row.spendAmount || 0), 0);
+      const targetSpend = earning
+        ? -Math.round(Number(source.spendAmount || 0) * ratio * 100) / 100
+        : 0;
+      const spendAmount = Math.round((targetSpend - currentSpend) * 100) / 100;
+      if (!points && !spendAmount) continue;
+      await tx.insert(posRestaurantLoyaltyLedgerTable).values({
+        companyId, customerId, invoiceId: ret.invoiceId,
+        type: eventType, points, spendAmount: spendAmount.toFixed(2),
+        sourceEarnId: earning ? source.id : source.sourceEarnId,
+        sourceLedgerId: source.id, returnId: ret.id,
+      });
+    }
+    return;
+  }
+
+  const events = await tx.select().from(posRestaurantLoyaltyLedgerTable).where(and(
+    eq(posRestaurantLoyaltyLedgerTable.companyId, companyId),
+    eq(posRestaurantLoyaltyLedgerTable.customerId, customerId),
+    eq(posRestaurantLoyaltyLedgerTable.invoiceId, ret.invoiceId),
+    eq(posRestaurantLoyaltyLedgerTable.returnId, ret.id),
+    inArray(posRestaurantLoyaltyLedgerTable.type, ["return_earn", "return_earn_void", "return_redeem", "return_redeem_void"]),
+  ));
+  const groups = new Map<string, { source: any; earning: boolean; points: number; spendAmount: number }>();
+  for (const row of events) {
+    if (row.sourceLedgerId == null) continue;
+    const earning = row.type.startsWith("return_earn");
+    const key = `${earning ? "earn" : "redeem"}:${row.sourceLedgerId}`;
+    const group = groups.get(key) ?? { source: row, earning, points: 0, spendAmount: 0 };
+    group.points += Number(row.points);
+    group.spendAmount += Number(row.spendAmount || 0);
+    groups.set(key, group);
+  }
+  for (const group of groups.values()) {
+    if (!group.points && !group.spendAmount) continue;
+    await tx.insert(posRestaurantLoyaltyLedgerTable).values({
+      companyId, customerId, invoiceId: ret.invoiceId,
+      type: group.earning ? "return_earn_void" : "return_redeem_void",
+      points: -group.points, spendAmount: (-group.spendAmount).toFixed(2),
+      sourceEarnId: group.source.sourceEarnId,
+      sourceLedgerId: group.source.sourceLedgerId, returnId: ret.id,
+    });
+  }
+}
 
 function salesInvoiceZatcaBuyerIssues(customer: any, requireStandard = false): string[] {
   if (!customer) {
@@ -6832,6 +6929,7 @@ router.patch(
       ],
     });
 
+    await adjustRestaurantLoyaltyForReturn(tx, cid, ret, "post");
     const [updated] = await tx.update(salesReturnsTable)
       .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
       .where(and(
@@ -7015,6 +7113,7 @@ router.patch("/sales-returns/:id/unpost", requireUnpostRight("sales"), async (re
         }
       }
 
+      await adjustRestaurantLoyaltyForReturn(tx, cid, ret, "unpost");
       const [draft] = await tx.update(salesReturnsTable)
         .set({
           status: "draft",
