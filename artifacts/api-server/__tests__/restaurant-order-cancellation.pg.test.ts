@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import http from "node:http";
 import { after, before, test } from "node:test";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   branchesTable,
   companiesTable,
@@ -206,4 +206,39 @@ test("billing and cancellation cannot both finalize the same restaurant order", 
     assert.equal(finalOrder.billedInvoiceId, null);
     assert.equal(bill.status, 409);
   }
+});
+
+test("a restaurant order cannot be cancelled while its invoice is awaiting linkage", async () => {
+  const [order] = await db.insert(posOrdersTable).values({
+    companyId,
+    branchId,
+    orderNumber: `${TEST_TAG}-INVOICE-LINK`,
+    channel: "takeaway",
+    status: "open",
+  }).returning({ id: posOrdersTable.id });
+  const [invoice] = await db.insert(salesInvoicesTable).values({
+    companyId,
+    branchId,
+    docNumber: `${TEST_TAG}-INVOICE-LINK`,
+    invoiceDate: new Date().toISOString().slice(0, 10),
+    paymentType: "cash",
+    currencyCode: "SAR",
+    status: "posted",
+  }).returning({ id: salesInvoicesTable.id });
+  await db.execute(sql`
+    INSERT INTO invoice_create_idempotency
+      (company_id, invoice_kind, client_request_id, sales_invoice_id)
+    VALUES (${companyId}, 'sales_invoice', ${`restaurant-order-${order.id}`}, ${invoice.id})
+  `);
+
+  const cancelBeforeLink = await api(`/api/pos-restaurant/orders/${order.id}/cancel`, "POST", {});
+  assert.equal(cancelBeforeLink.status, 409, JSON.stringify(cancelBeforeLink.body));
+  const [stillOpen] = await db.select().from(posOrdersTable).where(eq(posOrdersTable.id, order.id));
+  assert.equal(stillOpen.status, "open");
+
+  const linked = await api(`/api/pos-restaurant/orders/${order.id}/bill`, "POST", { salesInvoiceId: invoice.id });
+  assert.equal(linked.status, 200, JSON.stringify(linked.body));
+  const [billed] = await db.select().from(posOrdersTable).where(eq(posOrdersTable.id, order.id));
+  assert.equal(billed.status, "billed");
+  assert.equal(billed.billedInvoiceId, invoice.id);
 });

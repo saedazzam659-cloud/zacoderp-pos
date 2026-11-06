@@ -1557,6 +1557,27 @@ router.post("/orders/:id/cancel", async (req, res) => {
       if (order.status === "billed") {
         throw Object.assign(new Error("لا يمكن إلغاء طلب مفوتر؛ استخدم مسار المرتجع"), { statusCode: 409 });
       }
+      const invoiceReplayResult: any = await tx.execute(sql`
+        SELECT replay.sales_invoice_id AS "invoiceId", invoice.status AS "invoiceStatus"
+          FROM invoice_create_idempotency replay
+          LEFT JOIN sales_invoices invoice
+            ON invoice.id = replay.sales_invoice_id
+           AND invoice.company_id = replay.company_id
+         WHERE replay.company_id = ${cid}
+           AND replay.invoice_kind = 'sales_invoice'
+           AND replay.client_request_id = ${`restaurant-order-${id}`}
+         LIMIT 1
+      `);
+      const invoiceReplayRows = Array.isArray(invoiceReplayResult)
+        ? invoiceReplayResult
+        : invoiceReplayResult?.rows ?? [];
+      const invoiceReplay = invoiceReplayRows[0];
+      if (invoiceReplay && (invoiceReplay.invoiceId == null || invoiceReplay.invoiceStatus !== "cancelled")) {
+        throw Object.assign(
+          new Error("يوجد طلب فاتورة لهذا الطلب؛ أكمل ربطه أو ألغِ الفاتورة قبل إلغاء طلب المطعم"),
+          { statusCode: 409 },
+        );
+      }
       const now = new Date();
       const cancelledLines = await tx.update(posOrderItemsTable)
         .set({ status: "cancelled", updatedAt: now })

@@ -606,7 +606,11 @@ export default function WaiterApp() {
               </Button>
             </div>
             {(sendOrder.isError || addItem.isError || updateItemModifiers.isError || removeItem.isError || cancelOrder.isError) && (
-              <p className="px-4 pb-3 text-xs text-destructive" role="alert">{text("تعذّر تنفيذ الإجراء. حاول مرة أخرى.", "Could not complete the action. Try again.")}</p>
+              <p className="px-4 pb-3 text-xs text-destructive" role="alert">
+                {cancelOrder.isError && cancelOrder.error instanceof Error
+                  ? cancelOrder.error.message
+                  : text("تعذّر تنفيذ الإجراء. حاول مرة أخرى.", "Could not complete the action. Try again.")}
+              </p>
             )}
           </aside>
         </main>

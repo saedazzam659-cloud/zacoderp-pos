@@ -35,6 +35,7 @@ import {
   itemsTable,
   itemUnitPricesTable,
   posSessionsTable,
+  posOrdersTable,
   itemBrandsTable,
   brandsTable,
   accountsTable,
@@ -105,6 +106,41 @@ import {
   returnCostAdjustmentPerUnit,
   untrackedNegativeStockEstimate,
 } from "../lib/negativeStockCost.js";
+
+function restaurantOrderIdFromInvoiceRequestId(clientRequestId: string | null): number | null {
+  const match = clientRequestId?.match(/^restaurant-order-(\d+)$/);
+  if (!match) return null;
+  const orderId = Number(match[1]);
+  return Number.isSafeInteger(orderId) && orderId > 0 ? orderId : null;
+}
+
+async function assertRestaurantOrderInvoiceAllowed(
+  executor: any,
+  companyId: number,
+  clientRequestId: string | null,
+  options: { lock?: boolean; allowBilledReplay?: boolean } = {},
+): Promise<void> {
+  const orderId = restaurantOrderIdFromInvoiceRequestId(clientRequestId);
+  if (!orderId) return;
+
+  const query = executor.select({
+    id: posOrdersTable.id,
+    status: posOrdersTable.status,
+  }).from(posOrdersTable).where(and(
+    eq(posOrdersTable.id, orderId),
+    eq(posOrdersTable.companyId, companyId),
+  ));
+  const [order] = options.lock ? await query.for("update") : await query;
+  if (!order) {
+    throw Object.assign(new Error("طلب المطعم المرتبط بالفاتورة غير موجود"), { status: 404 });
+  }
+  if (order.status === "cancelled") {
+    throw Object.assign(new Error("لا يمكن إنشاء أو ترحيل فاتورة لطلب مطعم ملغى"), { status: 409 });
+  }
+  if (order.status === "billed" && !options.allowBilledReplay) {
+    throw Object.assign(new Error("طلب المطعم مفوتر بالفعل"), { status: 409 });
+  }
+}
 
 function hasSalesZatcaArtifacts(invoice: any): boolean {
   const zatcaStatus = String(invoice?.zatcaStatus ?? "").trim().toLowerCase();
@@ -3092,6 +3128,7 @@ router.post("/sales-invoices", async (req, res) => {
     if (clientRequestId) {
       const replayId = await findInvoiceCreateReplay(db, cid, "sales_invoice", clientRequestId);
       if (replayId) {
+        await assertRestaurantOrderInvoiceAllowed(db, cid, clientRequestId, { allowBilledReplay: true });
         const [replay] = await db.select().from(salesInvoicesTable).where(and(
           eq(salesInvoicesTable.id, replayId),
           eq(salesInvoicesTable.companyId, cid),
@@ -3559,6 +3596,7 @@ router.post("/sales-invoices", async (req, res) => {
         invoiceKind: "sales_invoice",
         clientRequestId,
         create: async (tx) => {
+          await assertRestaurantOrderInvoiceAllowed(tx, cid, clientRequestId, { lock: true });
           const invoice = await createInvoice(tx);
           await finalizeIdempotentCreate(tx, invoice);
           return invoice;
