@@ -398,6 +398,7 @@ export const payrollRunsTable = pgTable("payroll_runs", {
   manufacturingEligible: boolean("manufacturing_eligible").notNull().default(false),
   manufacturingAllocationMethod: text("manufacturing_allocation_method").notNull().default("none"),
   approvedManufacturingHours: decimal("approved_manufacturing_hours", { precision: 14, scale: 4 }),
+  provisionSnapshotsCaptured: boolean("provision_snapshots_captured").notNull().default(false),
   notes:          text("notes"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
@@ -424,6 +425,9 @@ export const payrollLinesTable = pgTable("payroll_lines", {
   otherDeduction: decimal("other_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
   totalDeductions:decimal("total_deductions", { precision: 12, scale: 2 }).notNull().default("0"),
   netSalary:      decimal("net_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  leaveProvisionAmount: decimal("leave_provision_amount", { precision: 12, scale: 2 }),
+  travelTicketProvisionAmount: decimal("travel_ticket_provision_amount", { precision: 12, scale: 2 }),
+  eosProvisionAmount: decimal("eos_provision_amount", { precision: 12, scale: 2 }),
   workedDays:     integer("worked_days").notNull().default(30),
   absentDays:     integer("absent_days").notNull().default(0),
   notes:          text("notes"),
@@ -658,6 +662,27 @@ export const employeeLeavesTable = pgTable("employee_leaves", {
   approvedAt:   timestamp("approved_at"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Settlement rows consume immutable leave/ticket provision amounts captured
+// on posted payroll lines; reversals preserve the original audit trail.
+export const employeeProvisionSettlementsTable = pgTable("employee_provision_settlements", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").references(() => companiesTable.id, { onDelete: "cascade" }).notNull(),
+  employeeId: integer("employee_id").references(() => employeesTable.id, { onDelete: "restrict" }).notNull(),
+  provisionType: text("provision_type").notNull(),
+  provisionPeriod: text("provision_period").notNull(),
+  sourceType: text("source_type").notNull(),
+  sourceRecordId: integer("source_record_id").notNull(),
+  settlementDate: date("settlement_date").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  journalEntryId: integer("journal_entry_id"),
+  reversalJournalEntryId: integer("reversal_journal_entry_id"),
+  status: text("status").notNull().default("posted"),
+  notes: text("notes"),
+  createdById: integer("created_by_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

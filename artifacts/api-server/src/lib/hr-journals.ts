@@ -277,7 +277,9 @@ export async function buildPayrollJournal(
   }
   const periodStartDate = String(run.periodStart).slice(0, 10);
   const periodEndDate = String(run.periodEnd).slice(0, 10);
-  const provisionRows = provisionsEnabled ? lines.map((line) => {
+  const captureProvisionSnapshots = !run.provisionSnapshotsCaptured && !run.postedJournalId;
+  const provisionRows = provisionsEnabled || run.provisionSnapshotsCaptured || captureProvisionSnapshots
+    ? lines.map((line) => {
     const employee = employeesById.get(line.employeeId);
     const currentContract = (contractsByEmployee.get(line.employeeId) ?? [])
       .filter((contract) =>
@@ -289,12 +291,26 @@ export async function buildPayrollJournal(
     const monthlyWage = num(line.basicSalary) + num(line.housingAllow) + num(line.transportAllow);
     const eosCurrent = eosLiabilityAt(employee?.hireDate ?? null, periodEndDate, monthlyWage);
     const eosPrior = eosLiabilityAt(employee?.hireDate ?? null, priorDay(periodStartDate), monthlyWage);
-    const eosChange = roundMoney(eosCurrent - eosPrior);
+    const computedEos = provisionsEnabled ? roundMoney(eosCurrent - eosPrior) : 0;
     const annualLeaveDays = Math.max(0, num(currentContract?.vacationDays ?? 21));
-    const leaveAmount = roundMoney(monthlyWage * annualLeaveDays / 360);
-    const ticketAmount = roundMoney(num(employee?.annualTravelTicketAmount) / 12);
+    const computedLeave = provisionsEnabled ? roundMoney(monthlyWage * annualLeaveDays / 360) : 0;
+    const computedTicket = provisionsEnabled ? roundMoney(num(employee?.annualTravelTicketAmount) / 12) : 0;
+    const eosChange = run.provisionSnapshotsCaptured ? num(line.eosProvisionAmount) : computedEos;
+    const leaveAmount = run.provisionSnapshotsCaptured ? num(line.leaveProvisionAmount) : computedLeave;
+    const ticketAmount = run.provisionSnapshotsCaptured ? num(line.travelTicketProvisionAmount) : computedTicket;
     return { line, eosChange, leaveAmount, ticketAmount };
   }) : [];
+  if (captureProvisionSnapshots) {
+    for (const row of provisionRows) {
+      await dx.update(payrollLinesTable).set({
+        eosProvisionAmount: fix(row.eosChange),
+        leaveProvisionAmount: fix(row.leaveAmount),
+        travelTicketProvisionAmount: fix(row.ticketAmount),
+      }).where(eq(payrollLinesTable.id, row.line.id));
+    }
+    await dx.update(payrollRunsTable).set({ provisionSnapshotsCaptured: true })
+      .where(and(eq(payrollRunsTable.id, runId), eq(payrollRunsTable.companyId, cid)));
+  }
   const leaveProvisionTotal = roundMoney(provisionRows.reduce((sum, row) => sum + row.leaveAmount, 0));
   const ticketProvisionTotal = roundMoney(provisionRows.reduce((sum, row) => sum + row.ticketAmount, 0));
   const eosProvisionTotal = roundMoney(provisionRows.reduce((sum, row) => sum + row.eosChange, 0));
