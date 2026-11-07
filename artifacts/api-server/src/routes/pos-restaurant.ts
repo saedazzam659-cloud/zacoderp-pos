@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { db } from "@workspace/db";
 import {
   posTablesTable,
@@ -22,6 +22,8 @@ import {
   posRestaurantLoyaltyProgramsTable,
   posRestaurantLoyaltyLedgerTable,
   posRestaurantDeliveryIntegrationsTable,
+  posRestaurantExternalOrdersTable,
+  posRestaurantDeliveryItemMappingsTable,
 } from "@workspace/db";
 import { and, eq, sql, desc, asc, isNull, isNotNull, gte, lte, inArray, ne } from "drizzle-orm";
 import { branchScopeSpread, extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -95,6 +97,7 @@ router.get("/delivery-integrations", async (req, res): Promise<void> => {
     vendorId: posRestaurantDeliveryIntegrationsTable.vendorId,
     clientId: posRestaurantDeliveryIntegrationsTable.clientId,
     isEnabled: posRestaurantDeliveryIntegrationsTable.isEnabled,
+    webhookConfigured: isNotNull(posRestaurantDeliveryIntegrationsTable.webhookTokenHash),
     updatedAt: posRestaurantDeliveryIntegrationsTable.updatedAt,
   }).from(posRestaurantDeliveryIntegrationsTable)
     .where(eq(posRestaurantDeliveryIntegrationsTable.companyId, cid));
@@ -107,6 +110,9 @@ router.put("/delivery-integrations", async (req, res): Promise<void> => {
   const branchId = Number(req.body?.branchId);
   const { environment, chainId, vendorId, clientId } = req.body ?? {};
   const clientSecret = typeof req.body?.clientSecret === "string" ? req.body.clientSecret.trim() : "";
+  const webhookAuthorization = typeof req.body?.webhookAuthorization === "string"
+    ? req.body.webhookAuthorization.trim()
+    : "";
   // Order reception and status sync are gated until the provider webhook
   // handler and order lifecycle are deployed and verified against Sandbox.
   const isEnabled = false;
@@ -115,7 +121,8 @@ router.put("/delivery-integrations", async (req, res): Promise<void> => {
       typeof chainId !== "string" || !chainId.trim() || chainId.length > 200 ||
       typeof vendorId !== "string" || !vendorId.trim() || vendorId.length > 200 ||
       typeof clientId !== "string" || !clientId.trim() || clientId.length > 200 ||
-      clientSecret.length > 2000) {
+      clientSecret.length > 2000 ||
+      (webhookAuthorization && (!webhookAuthorization.startsWith("Basic ") || webhookAuthorization.length > 1000))) {
     res.status(400).json({ error: "بيانات ربط HungerStation غير مكتملة أو غير صالحة" }); return;
   }
   const [branch] = await db.select({ id: branchesTable.id }).from(branchesTable)
@@ -130,9 +137,12 @@ router.put("/delivery-integrations", async (req, res): Promise<void> => {
   const credentialsEnc = clientSecret
     ? encryptSecret(JSON.stringify({ clientSecret }))
     : existing!.credentialsEnc;
+  const webhookTokenHash = webhookAuthorization
+    ? createHash("sha256").update(webhookAuthorization).digest("hex")
+    : existing?.webhookTokenHash ?? null;
   const values = {
     environment, chainId: chainId.trim(), vendorId: vendorId.trim(),
-    clientId: clientId.trim(), credentialsEnc, isEnabled,
+    clientId: clientId.trim(), credentialsEnc, webhookTokenHash, isEnabled,
     updatedByUserId: req.authUser?.id ?? null, updatedAt: new Date(),
   };
   const [saved] = existing
@@ -145,7 +155,7 @@ router.put("/delivery-integrations", async (req, res): Promise<void> => {
     id: saved.id, branchId: saved.branchId, provider: saved.provider,
     environment: saved.environment, chainId: saved.chainId, vendorId: saved.vendorId,
     clientId: saved.clientId, isEnabled: saved.isEnabled, updatedAt: saved.updatedAt,
-    credentialsConfigured: true,
+    credentialsConfigured: true, webhookConfigured: Boolean(saved.webhookTokenHash),
   });
 });
 
@@ -197,10 +207,82 @@ router.post("/delivery-integrations/:id/test", async (req, res): Promise<void> =
   }
 });
 
-async function nextOrderNumber(cid: number): Promise<string> {
+router.get("/delivery-integrations/:id/orders", async (req, res): Promise<void> => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "طلبات المنصة متاحة لمسؤول الشركة فقط" }); return; }
+  const integrationId = Number(req.params.id);
+  if (!Number.isSafeInteger(integrationId) || integrationId <= 0) { res.status(400).json({ error: "معرّف الربط غير صالح" }); return; }
+  const [integration] = await db.select({ id: posRestaurantDeliveryIntegrationsTable.id })
+    .from(posRestaurantDeliveryIntegrationsTable).where(and(
+      eq(posRestaurantDeliveryIntegrationsTable.id, integrationId),
+      eq(posRestaurantDeliveryIntegrationsTable.companyId, cid),
+    )).limit(1);
+  if (!integration) { res.status(404).json({ error: "إعداد الربط غير موجود" }); return; }
+  const rows = await db.select().from(posRestaurantExternalOrdersTable).where(and(
+    eq(posRestaurantExternalOrdersTable.integrationId, integrationId),
+    eq(posRestaurantExternalOrdersTable.companyId, cid),
+  )).orderBy(desc(posRestaurantExternalOrdersTable.receivedAt)).limit(100);
+  res.json(rows);
+});
+
+router.get("/delivery-integrations/:id/mappings", async (req, res): Promise<void> => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "مطابقة الأصناف متاحة لمسؤول الشركة فقط" }); return; }
+  const integrationId = Number(req.params.id);
+  if (!Number.isSafeInteger(integrationId) || integrationId <= 0) { res.status(400).json({ error: "معرّف الربط غير صالح" }); return; }
+  const [integration] = await db.select({ id: posRestaurantDeliveryIntegrationsTable.id })
+    .from(posRestaurantDeliveryIntegrationsTable).where(and(
+      eq(posRestaurantDeliveryIntegrationsTable.id, integrationId),
+      eq(posRestaurantDeliveryIntegrationsTable.companyId, cid),
+    )).limit(1);
+  if (!integration) { res.status(404).json({ error: "إعداد الربط غير موجود" }); return; }
+  const rows = await db.select({
+    id: posRestaurantDeliveryItemMappingsTable.id,
+    externalSku: posRestaurantDeliveryItemMappingsTable.externalSku,
+    menuItemId: posRestaurantDeliveryItemMappingsTable.menuItemId,
+    menuItemName: posMenuItemsTable.nameAr,
+  }).from(posRestaurantDeliveryItemMappingsTable)
+    .innerJoin(posMenuItemsTable, and(
+      eq(posMenuItemsTable.id, posRestaurantDeliveryItemMappingsTable.menuItemId),
+      eq(posMenuItemsTable.companyId, cid),
+    )).where(eq(posRestaurantDeliveryItemMappingsTable.integrationId, integrationId));
+  res.json(rows);
+});
+
+router.put("/delivery-integrations/:id/mappings", async (req, res): Promise<void> => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "مطابقة الأصناف متاحة لمسؤول الشركة فقط" }); return; }
+  const integrationId = Number(req.params.id);
+  const externalSku = typeof req.body?.externalSku === "string" ? req.body.externalSku.trim() : "";
+  const menuItemId = Number(req.body?.menuItemId);
+  if (!Number.isSafeInteger(integrationId) || integrationId <= 0 || !externalSku || externalSku.length > 200 ||
+      !Number.isSafeInteger(menuItemId) || menuItemId <= 0) {
+    res.status(400).json({ error: "رمز SKU أو صنف المطعم غير صالح" }); return;
+  }
+  const [integration] = await db.select({ id: posRestaurantDeliveryIntegrationsTable.id })
+    .from(posRestaurantDeliveryIntegrationsTable).where(and(
+      eq(posRestaurantDeliveryIntegrationsTable.id, integrationId),
+      eq(posRestaurantDeliveryIntegrationsTable.companyId, cid),
+    )).limit(1);
+  if (!integration) { res.status(404).json({ error: "إعداد الربط غير موجود" }); return; }
+  const [menuItem] = await db.select({ id: posMenuItemsTable.id }).from(posMenuItemsTable).where(and(
+    eq(posMenuItemsTable.id, menuItemId), eq(posMenuItemsTable.companyId, cid),
+    eq(posMenuItemsTable.isActive, true),
+  )).limit(1);
+  if (!menuItem) { res.status(404).json({ error: "صنف قائمة المطعم غير موجود أو غير نشط" }); return; }
+  const [mapping] = await db.insert(posRestaurantDeliveryItemMappingsTable).values({
+    integrationId, externalSku, menuItemId, updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: [posRestaurantDeliveryItemMappingsTable.integrationId, posRestaurantDeliveryItemMappingsTable.externalSku],
+    set: { menuItemId, updatedAt: new Date() },
+  }).returning();
+  res.json(mapping);
+});
+
+async function nextOrderNumber(cid: number, executor: any = db): Promise<string> {
   const today = new Date();
   const ym = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}`;
-  const [{ c }] = await db.select({ c: sql<number>`COUNT(*)::int` })
+  const [{ c }] = await executor.select({ c: sql<number>`COUNT(*)::int` })
     .from(posOrdersTable)
     .where(and(
       eq(posOrdersTable.companyId, cid),
@@ -234,6 +316,144 @@ async function recalculateOrderTotals(companyId: number, orderId: number, execut
     .where(and(eq(posOrdersTable.id, orderId), eq(posOrdersTable.companyId, companyId)));
   return totals;
 }
+
+router.post("/delivery-integrations/:integrationId/orders/:orderId/accept", async (req, res): Promise<void> => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "قبول طلبات المنصة متاح لمسؤول الشركة فقط" }); return; }
+  const integrationId = Number(req.params.integrationId);
+  const rowId = Number(req.params.orderId);
+  if (!Number.isSafeInteger(integrationId) || integrationId <= 0 || !Number.isSafeInteger(rowId) || rowId <= 0) {
+    res.status(400).json({ error: "معرّف الطلب غير صالح" }); return;
+  }
+  try {
+    const result = await db.transaction(async tx => {
+      const [incoming] = await tx.select().from(posRestaurantExternalOrdersTable).where(and(
+        eq(posRestaurantExternalOrdersTable.id, rowId),
+        eq(posRestaurantExternalOrdersTable.integrationId, integrationId),
+        eq(posRestaurantExternalOrdersTable.companyId, cid),
+      )).for("update");
+      if (!incoming) throw Object.assign(new Error("طلب المنصة غير موجود"), { statusCode: 404 });
+      if (incoming.posOrderId) return { posOrderId: incoming.posOrderId, alreadyAccepted: true };
+      if (incoming.providerStatus !== "RECEIVED") {
+        throw Object.assign(new Error("لا يمكن قبول الطلب بعد تغير حالته على المنصة"), { statusCode: 409 });
+      }
+      const [integration] = await tx.select().from(posRestaurantDeliveryIntegrationsTable).where(and(
+        eq(posRestaurantDeliveryIntegrationsTable.id, integrationId),
+        eq(posRestaurantDeliveryIntegrationsTable.companyId, cid),
+      )).for("update");
+      if (!integration || (integration.environment !== "sandbox" && !integration.isEnabled)) {
+        throw Object.assign(new Error("استقبال طلبات الإنتاج غير مفعّل بعد"), { statusCode: 409 });
+      }
+      const [existing] = await tx.select({ id: posOrdersTable.id }).from(posOrdersTable).where(and(
+        eq(posOrdersTable.companyId, cid), eq(posOrdersTable.sourcePlatform, "hungerstation"),
+        eq(posOrdersTable.externalOrderId, incoming.externalOrderId),
+      )).limit(1);
+      if (existing) {
+        await tx.update(posRestaurantExternalOrdersTable).set({ posOrderId: existing.id, updatedAt: new Date() })
+          .where(eq(posRestaurantExternalOrdersTable.id, incoming.id));
+        return { posOrderId: existing.id, alreadyAccepted: true };
+      }
+      const payload = incoming.orderPayload as any;
+      const rawLines = Array.isArray(payload.items) ? payload.items : [];
+      if (!rawLines.length || rawLines.length > 100) throw Object.assign(new Error("الطلب بلا أصناف صالحة"), { statusCode: 409 });
+      const skus = rawLines.map((line: any) => String(line?.sku ?? "").trim());
+      if (skus.some((sku: string) => !sku)) {
+        throw Object.assign(new Error("SKU مفقود داخل الطلب"), { statusCode: 409 });
+      }
+      const mappings = await tx.select({
+        sku: posRestaurantDeliveryItemMappingsTable.externalSku,
+        menuItemId: posRestaurantDeliveryItemMappingsTable.menuItemId,
+      }).from(posRestaurantDeliveryItemMappingsTable).where(and(
+        eq(posRestaurantDeliveryItemMappingsTable.integrationId, integrationId),
+        inArray(posRestaurantDeliveryItemMappingsTable.externalSku, skus),
+      ));
+      const map = new Map(mappings.map(item => [item.sku, item.menuItemId]));
+      const lines: Array<{ item: typeof posMenuItemsTable.$inferSelect; qty: number; vatRate: string | number | null; note: string | null }> = [];
+      for (const raw of rawLines) {
+        const sku = String(raw.sku).trim();
+        const menuItemId = map.get(sku);
+        if (!menuItemId) throw Object.assign(new Error(`يجب ربط SKU أولاً: ${sku}`), { statusCode: 409 });
+        const qty = Number(raw.pricing?.quantity);
+        if (!Number.isFinite(qty) || qty <= 0 || qty > 100) {
+          throw Object.assign(new Error(`كمية غير صالحة للصنف ${sku}`), { statusCode: 409 });
+        }
+        if (["modifiers", "options", "choices", "sub_items"].some(key => Array.isArray(raw[key]) && raw[key].length)) {
+          throw Object.assign(new Error(`الصنف ${sku} يحتوي إضافات لم تُربط بعد`), { statusCode: 409 });
+        }
+        const [menu] = await tx.select({
+          item: posMenuItemsTable, vatRate: itemsTable.vatRate, itemStatus: itemsTable.status,
+        }).from(posMenuItemsTable).leftJoin(itemsTable, and(
+          eq(itemsTable.id, posMenuItemsTable.itemId), eq(itemsTable.companyId, cid),
+        )).where(and(
+          eq(posMenuItemsTable.id, menuItemId), eq(posMenuItemsTable.companyId, cid),
+          eq(posMenuItemsTable.isActive, true),
+        )).limit(1);
+        if (!menu || (menu.item.itemId && menu.itemStatus !== "active")) {
+          throw Object.assign(new Error(`الصنف المرتبط بـ ${sku} غير نشط`), { statusCode: 409 });
+        }
+        const platformUnitPrice = Number(raw.pricing?.unit_price);
+        const platformLineTotal = Number(raw.pricing?.total_price);
+        if (!Number.isFinite(platformUnitPrice) || !Number.isFinite(platformLineTotal) ||
+            Math.abs(platformUnitPrice - Number(menu.item.price)) > 0.02 ||
+            Math.abs(platformLineTotal - platformUnitPrice * qty) > 0.02) {
+          throw Object.assign(new Error(`سعر HungerStation للصنف ${sku} لا يطابق سعر ERP؛ راجع التسعير قبل القبول`), { statusCode: 409 });
+        }
+        lines.push({ item: menu.item, qty, vatRate: menu.vatRate, note: typeof raw.instructions === "string" ? raw.instructions.slice(0, 500) : null });
+      }
+      const totals = calculateRestaurantOrderTotals(lines.map(line => ({
+        menuItemId: line.item.id, erpItemId: line.item.itemId, qty: line.qty,
+        price: line.item.price, vatIncluded: line.item.vatIncluded, vatRate: line.vatRate, modifiers: [],
+      })));
+      const payment = payload.payment ?? {};
+      const equalsMoney = (value: unknown, expected: string) =>
+        Number.isFinite(Number(value)) && Math.abs(Number(value) - Number(expected)) <= 0.02;
+      const unexpectedCharges = ["discount", "delivery_fee", "container_charge", "service_fee"]
+        .some(key => Math.abs(Number(payment[key] ?? 0)) > 0.01);
+      if (unexpectedCharges || !equalsMoney(payment.sub_total, totals.subtotal) ||
+          !equalsMoney(payment.total_taxes, totals.vatAmount) || !equalsMoney(payment.order_total, totals.total)) {
+        throw Object.assign(new Error("قيمة الأصناف أو الضريبة أو الرسوم لا تطابق ERP؛ راجع هذا الطلب يدويًا قبل القبول"), { statusCode: 409 });
+      }
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('restaurant-order-number:' || ${cid}::text, 0))`);
+      const orderNumber = await nextOrderNumber(cid, tx);
+      const now = new Date();
+      const customer = payload.customer ?? {};
+      const address = customer.delivery_address ?? {};
+      const addressText = [address.formattedAddress, address.street, address.suburb, address.city, address.building]
+        .filter((part: unknown) => typeof part === "string" && part).join("، ").slice(0, 500);
+      const [order] = await tx.insert(posOrdersTable).values({
+        companyId: cid, branchId: incoming.branchId, orderNumber,
+        channel: payload.order_type === "PICKUP" ? "takeaway" : "delivery",
+        customerName: [customer.first_name, customer.last_name].filter(Boolean).join(" ").slice(0, 200) || null,
+        customerPhone: typeof customer.phone_number === "string" ? customer.phone_number.slice(0, 80) : null,
+        deliveryAddress: payload.order_type === "PICKUP" ? null : addressText || null,
+        status: "sent", guestCount: 1,
+        notes: [`HungerStation ${incoming.orderCode ?? incoming.externalOrderId}`, payload.comment].filter(Boolean).join(" · "),
+        sourcePlatform: "hungerstation", externalOrderId: incoming.externalOrderId,
+        openedAt: now, sentAt: now,
+      }).returning({ id: posOrdersTable.id });
+      for (const line of lines) {
+        const lineTotal = calculateRestaurantOrderTotals([{
+          menuItemId: line.item.id, erpItemId: line.item.itemId, qty: line.qty,
+          price: line.item.price, vatIncluded: line.item.vatIncluded, vatRate: line.vatRate, modifiers: [],
+        }]).total;
+        await tx.insert(posOrderItemsTable).values({
+          orderId: order.id, menuItemId: line.item.id, nameSnapshot: line.item.nameAr,
+          qty: String(line.qty), price: line.item.price, total: lineTotal,
+          kitchenStation: line.item.kitchenStation, notes: line.note, sentAt: now,
+        });
+      }
+      await recalculateOrderTotals(cid, order.id, tx);
+      await tx.update(posRestaurantExternalOrdersTable).set({ posOrderId: order.id, updatedAt: now })
+        .where(eq(posRestaurantExternalOrdersTable.id, incoming.id));
+      return { posOrderId: order.id, alreadyAccepted: false };
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    const statusCode = Number((error as { statusCode?: number })?.statusCode) || 500;
+    if (statusCode >= 500) req.log.error({ err: error, integrationId, rowId }, "HungerStation order acceptance failed");
+    res.status(statusCode).json({ error: error instanceof Error ? error.message : "تعذر قبول طلب HungerStation" });
+  }
+});
 
 async function validateRestaurantErpItemLink(companyId: number, value: unknown): Promise<number | null> {
   if (value == null || String(value).trim() === "") return null;

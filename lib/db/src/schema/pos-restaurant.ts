@@ -117,6 +117,37 @@ export const posRestaurantDeliveryIntegrationsTable = pgTable("pos_restaurant_de
   byCompany: index("pos_rest_delivery_company_idx").on(t.companyId, t.provider),
 }));
 
+export const posRestaurantExternalOrdersTable = pgTable("pos_restaurant_external_orders", {
+  id: serial("id").primaryKey(),
+  integrationId: integer("integration_id").notNull()
+    .references(() => posRestaurantDeliveryIntegrationsTable.id, { onDelete: "cascade" }),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId: integer("branch_id").notNull().references(() => branchesTable.id, { onDelete: "cascade" }),
+  externalOrderId: text("external_order_id").notNull(),
+  orderCode: text("order_code"),
+  providerStatus: text("provider_status").notNull(),
+  orderPayload: jsonb("order_payload").$type<Record<string, unknown>>().notNull(),
+  posOrderId: integer("pos_order_id").references(() => posOrdersTable.id, { onDelete: "set null" }),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  integrationOrderUnique: uniqueIndex("pos_rest_external_order_integration_uidx").on(t.integrationId, t.externalOrderId),
+  companyStatusIndex: index("pos_rest_external_order_company_status_idx").on(t.companyId, t.providerStatus, t.receivedAt),
+}));
+
+export const posRestaurantDeliveryItemMappingsTable = pgTable("pos_restaurant_delivery_item_mappings", {
+  id: serial("id").primaryKey(),
+  integrationId: integer("integration_id").notNull()
+    .references(() => posRestaurantDeliveryIntegrationsTable.id, { onDelete: "cascade" }),
+  externalSku: text("external_sku").notNull(),
+  menuItemId: integer("menu_item_id").notNull().references(() => posMenuItemsTable.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  integrationSkuUnique: uniqueIndex("pos_rest_delivery_mapping_integration_sku_uidx").on(t.integrationId, t.externalSku),
+  byMenuItem: index("pos_rest_delivery_mapping_menu_item_idx").on(t.menuItemId),
+}));
+
 // kitchenStation stores a stable catalog key so each restaurant can define
 // its own stations while order-line snapshots keep their routing identity.
 export const posMenuItemsTable = pgTable("pos_menu_items", {
@@ -171,6 +202,8 @@ export const posOrdersTable = pgTable("pos_orders", {
   // Cashier completes the order → emits a salesInvoice, links it back here.
   billedInvoiceId: integer("billed_invoice_id"),
   notes:           text("notes"),
+  sourcePlatform:  text("source_platform"),
+  externalOrderId: text("external_order_id"),
   openedAt:        timestamp("opened_at").defaultNow().notNull(),
   sentAt:          timestamp("sent_at"),
   readyAt:         timestamp("ready_at"),
@@ -183,6 +216,9 @@ export const posOrdersTable = pgTable("pos_orders", {
   uniqNumber: uniqueIndex("pos_orders_company_number_uniq").on(t.companyId, t.orderNumber),
   byBranch:   index("pos_orders_branch_status_idx").on(t.branchId, t.status),
   byTable:    index("pos_orders_table_idx").on(t.tableId),
+  externalOrderUnique: uniqueIndex("pos_orders_external_source_uq")
+    .on(t.companyId, t.sourcePlatform, t.externalOrderId)
+    .where(sql`${t.externalOrderId} IS NOT NULL`),
 }));
 
 export const POS_LINE_STATUSES = [

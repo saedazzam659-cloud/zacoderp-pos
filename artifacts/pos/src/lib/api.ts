@@ -650,10 +650,19 @@ export const api = {
     req<RestaurantDeliveryIntegration[]>("GET", "/api/pos-restaurant/delivery-integrations"),
   rSaveDeliveryIntegration: (body: {
     branchId: number; environment: "sandbox" | "production"; chainId: string;
-    vendorId: string; clientId: string; clientSecret?: string; isEnabled: boolean;
+    vendorId: string; clientId: string; clientSecret?: string; webhookAuthorization?: string; isEnabled: boolean;
   }) => req<RestaurantDeliveryIntegration>("PUT", "/api/pos-restaurant/delivery-integrations", body),
   rTestDeliveryIntegration: (id: number) =>
     req<{ ok: true; expiresInSeconds: number | null }>("POST", `/api/pos-restaurant/delivery-integrations/${id}/test`),
+  rDeliveryOrders: (id: number) =>
+    req<RestaurantExternalOrder[]>("GET", `/api/pos-restaurant/delivery-integrations/${id}/orders`),
+  rDeliveryMappings: (id: number) =>
+    req<RestaurantDeliveryItemMapping[]>("GET", `/api/pos-restaurant/delivery-integrations/${id}/mappings`),
+  rSaveDeliveryMapping: (id: number, body: { externalSku: string; menuItemId: number }) =>
+    req<RestaurantDeliveryItemMapping>("PUT", `/api/pos-restaurant/delivery-integrations/${id}/mappings`, body),
+  rAcceptDeliveryOrder: (integrationId: number, rowId: number) =>
+    req<{ ok: true; posOrderId: number; alreadyAccepted: boolean }>(
+      "POST", `/api/pos-restaurant/delivery-integrations/${integrationId}/orders/${rowId}/accept`, {}),
   rLoyaltyPreview: (orderId: number, customerId: number, pointsRequested: number) =>
     req<RLoyaltyPreview>("GET", `/api/pos-restaurant/orders/${orderId}/loyalty-preview?customerId=${customerId}&pointsRequested=${pointsRequested}`),
   rBillOrder: (id: number, b: { salesInvoiceId?: number; customerId?: number; pointsRedeemed?: number } = {}) =>
@@ -774,6 +783,25 @@ export type RestaurantDeliveryIntegration = {
   isEnabled: boolean;
   updatedAt: string;
   credentialsConfigured?: boolean;
+  webhookConfigured?: boolean;
+};
+
+export type RestaurantExternalOrder = {
+  id: number;
+  integrationId: number;
+  externalOrderId: string;
+  orderCode: string | null;
+  providerStatus: string;
+  orderPayload: Record<string, any>;
+  posOrderId: number | null;
+  receivedAt: string;
+};
+
+export type RestaurantDeliveryItemMapping = {
+  id: number;
+  externalSku: string;
+  menuItemId: number;
+  menuItemName: string;
 };
 
 export type RMenuCategory = {

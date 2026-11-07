@@ -557,6 +557,40 @@ async function ensureRestaurantDeliveryIntegrationsSchema(): Promise<void> {
       ON pos_restaurant_delivery_integrations(company_id, branch_id, provider)`,
     `CREATE INDEX IF NOT EXISTS pos_rest_delivery_company_idx
       ON pos_restaurant_delivery_integrations(company_id, provider)`,
+    `ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS source_platform TEXT`,
+    `ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS external_order_id TEXT`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_orders_external_source_uq
+      ON pos_orders(company_id, source_platform, external_order_id)
+      WHERE external_order_id IS NOT NULL`,
+    `CREATE TABLE IF NOT EXISTS pos_restaurant_external_orders (
+      id SERIAL PRIMARY KEY,
+      integration_id INTEGER NOT NULL REFERENCES pos_restaurant_delivery_integrations(id) ON DELETE CASCADE,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+      external_order_id TEXT NOT NULL,
+      order_code TEXT,
+      provider_status TEXT NOT NULL,
+      order_payload JSONB NOT NULL,
+      pos_order_id INTEGER REFERENCES pos_orders(id) ON DELETE SET NULL,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_rest_external_order_integration_uidx
+      ON pos_restaurant_external_orders(integration_id, external_order_id)`,
+    `CREATE INDEX IF NOT EXISTS pos_rest_external_order_company_status_idx
+      ON pos_restaurant_external_orders(company_id, provider_status, received_at)`,
+    `CREATE TABLE IF NOT EXISTS pos_restaurant_delivery_item_mappings (
+      id SERIAL PRIMARY KEY,
+      integration_id INTEGER NOT NULL REFERENCES pos_restaurant_delivery_integrations(id) ON DELETE CASCADE,
+      external_sku TEXT NOT NULL,
+      menu_item_id INTEGER NOT NULL REFERENCES pos_menu_items(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_rest_delivery_mapping_integration_sku_uidx
+      ON pos_restaurant_delivery_item_mappings(integration_id, external_sku)`,
+    `CREATE INDEX IF NOT EXISTS pos_rest_delivery_mapping_menu_item_idx
+      ON pos_restaurant_delivery_item_mappings(menu_item_id)`,
   ];
   for (const statement of statements) {
     try {
@@ -5092,6 +5126,9 @@ async function runHeal(options: {
   const { tables, enums } = collectSchemaEntities();
   await ensureInternalControlSchema();
   await ensureDocumentExpenseSchema();
+  // Keep the delivery integration schema ahead of unrelated legacy identity
+  // healing so a timeout there cannot leave webhook routes without their tables.
+  await ensureRestaurantDeliveryIntegrationsSchema();
   await ensurePartyIdentitySchema();
   await ensureNegativeStockCostSchema();
   await ensureTaxIntegrationSchema();
@@ -5106,7 +5143,6 @@ async function runHeal(options: {
   await ensureRestaurantLoyaltySchema();
   await ensureRestaurantReservationsSchema();
   await ensureRestaurantKitchenStationsSchema();
-  await ensureRestaurantDeliveryIntegrationsSchema();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must

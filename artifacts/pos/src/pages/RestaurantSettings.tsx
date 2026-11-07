@@ -1219,7 +1219,7 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
   const [branchId, setBranchId] = useState("");
   const [draft, setDraft] = useState({
     environment: "sandbox" as "sandbox" | "production",
-    chainId: "", vendorId: "", clientId: "", clientSecret: "",
+    chainId: "", vendorId: "", clientId: "", clientSecret: "", webhookAuthorization: "",
   });
   const [feedback, setFeedback] = useState("");
   const integrationsQ = useQuery({
@@ -1238,8 +1238,8 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
     setDraft(current ? {
       environment: current.environment, chainId: current.chainId,
       vendorId: current.vendorId, clientId: current.clientId,
-      clientSecret: "",
-    } : { environment: "sandbox", chainId: "", vendorId: "", clientId: "", clientSecret: "" });
+      clientSecret: "", webhookAuthorization: "",
+    } : { environment: "sandbox", chainId: "", vendorId: "", clientId: "", clientSecret: "", webhookAuthorization: "" });
     setFeedback("");
   }, [branchId, current?.updatedAt]);
 
@@ -1247,6 +1247,7 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
     mutationFn: () => api.rSaveDeliveryIntegration({
       branchId: Number(branchId), ...draft,
       clientSecret: draft.clientSecret || undefined,
+      webhookAuthorization: draft.webhookAuthorization || undefined,
       isEnabled: false,
     }),
     onSuccess: async () => {
@@ -1259,6 +1260,43 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
     mutationFn: () => current ? api.rTestDeliveryIntegration(current.id) : Promise.reject(new Error("احفظ إعدادات الاتصال أولاً")),
     onSuccess: result => setFeedback(`نجح الاتصال بـ HungerStation. صلاحية رمز الدخول: ${result.expiresInSeconds ?? "غير محددة"} ثانية.`),
     onError: error => setFeedback(error instanceof Error ? error.message : "فشل اختبار الاتصال"),
+  });
+  const ordersQ = useQuery({
+    queryKey: ["r-delivery-orders", current?.id],
+    queryFn: () => current ? api.rDeliveryOrders(current.id) : Promise.resolve([]),
+    enabled: !!current?.id,
+    refetchInterval: current?.environment === "sandbox" ? 20_000 : false,
+  });
+  const mappingsQ = useQuery({
+    queryKey: ["r-delivery-mappings", current?.id],
+    queryFn: () => current ? api.rDeliveryMappings(current.id) : Promise.resolve([]),
+    enabled: !!current?.id,
+  });
+  const menuQ = useQuery({
+    queryKey: ["r-menu-items-delivery-mapping"],
+    queryFn: () => api.rMenuItems(),
+    enabled: !!current?.id,
+  });
+  const [mappingDraft, setMappingDraft] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!mappingsQ.data) return;
+    setMappingDraft(Object.fromEntries(mappingsQ.data.map(mapping => [mapping.externalSku, String(mapping.menuItemId)])));
+  }, [mappingsQ.data]);
+  const saveMapping = useMutation({
+    mutationFn: ({ sku, menuItemId }: { sku: string; menuItemId: number }) =>
+      current ? api.rSaveDeliveryMapping(current.id, { externalSku: sku, menuItemId }) : Promise.reject(new Error("لا يوجد إعداد ربط")),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["r-delivery-mappings", current?.id] }),
+  });
+  const acceptOrder = useMutation({
+    mutationFn: (rowId: number) => current ? api.rAcceptDeliveryOrder(current.id, rowId) : Promise.reject(new Error("لا يوجد إعداد ربط")),
+    onSuccess: async result => {
+      setFeedback(`تم إنشاء طلب POS رقم ${result.posOrderId} وإرساله للمطبخ. الفاتورة تُصدر لاحقًا من دورة الكاشير المعتادة.`);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["r-delivery-orders", current?.id] }),
+        qc.invalidateQueries({ queryKey: ["r-orders"] }),
+        qc.invalidateQueries({ queryKey: ["r-active-order-count"] }),
+      ]);
+    },
   });
 
   if (integrationsQ.isLoading || branchesLoading) return <div role="status" className="rounded-2xl border bg-card p-8 text-center text-sm">جارٍ تحميل إعدادات الربط والفروع...</div>;
@@ -1320,7 +1358,18 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
           <label className="space-y-1 text-xs font-bold text-muted-foreground">Client Secret {current && <span className="font-normal">اتركه فارغًا للاحتفاظ بالمحفوظ</span>}
             <Input type="password" value={draft.clientSecret} onChange={event => setDraft({ ...draft, clientSecret: event.target.value })} data-testid="input-delivery-client-secret" autoComplete="new-password" />
           </label>
+          <label className="space-y-1 text-xs font-bold text-muted-foreground">Authorization السرّي للـ Webhook {current?.webhookConfigured && <span className="font-normal">محفوظ؛ اتركه فارغًا للإبقاء عليه</span>}
+            <Input type="password" value={draft.webhookAuthorization} onChange={event => setDraft({ ...draft, webhookAuthorization: event.target.value })} placeholder="Basic ..." data-testid="input-delivery-webhook-authorization" autoComplete="new-password" />
+            <span className="block font-normal">أدخل قيمة Authorization Basic التي يطلبها إعداد Webhook في Partner Portal. تُحفظ بصمتها فقط ولا يمكن استرجاعها.</span>
+          </label>
         </div>
+        {current && <div className="mt-4 rounded-xl border border-border bg-muted/20 p-3 text-xs leading-5">
+          <p className="font-bold">عنوان Webhook لهذا الفرع</p>
+          <code dir="ltr" className="mt-1 block overflow-x-auto rounded bg-background p-2 text-left" data-testid="text-delivery-webhook-url">
+            {`${window.location.origin}/api/pos-restaurant/webhooks/hungerstation/${current.id}`}
+          </code>
+          <p className="mt-2 text-muted-foreground">استخدم العنوان الظاهر على نطاق النشر في HungerStation Partner Portal، وأدخل قيمة Basic Authorization المطابقة في الحقل أعلاه.</p>
+        </div>}
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Button type="button" disabled={!branchId || save.isPending || !draft.chainId.trim() || !draft.vendorId.trim() || !draft.clientId.trim() || (!current && !draft.clientSecret.trim())}
             data-testid="button-save-delivery-integration" onClick={() => save.mutate()}>
@@ -1336,6 +1385,60 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
           الإعدادات تُحفظ مشفّرة ويمكن اختبار OAuth. لا يتم تفعيل استقبال Webhook أو الطلبات أو مزامنة الحالات في هذه المرحلة؛ لن يؤثر هذا الإعداد على دورة POS الحالية حتى استكمالها واختبارها على Sandbox.
         </p>
       </section>
+
+      {current && <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6" data-testid="delivery-orders-inbox">
+        <div className="flex items-center justify-between gap-3">
+          <div><h3 className="font-black">طلبات HungerStation الواردة</h3><p className="text-xs text-muted-foreground">إشعارات Sandbox المحفوظة بأمان. لم تُنشأ منها فواتير أو حركات مخزون.</p></div>
+          <Button type="button" variant="outline" size="sm" onClick={() => void ordersQ.refetch()} data-testid="button-refresh-delivery-orders">تحديث</Button>
+        </div>
+        {ordersQ.isLoading ? <p role="status" className="p-6 text-center text-sm">جارٍ تحميل الطلبات...</p>
+          : ordersQ.isError ? <p role="alert" className="p-4 text-sm text-destructive">تعذّر تحميل الطلبات الواردة.</p>
+          : !(ordersQ.data?.length) ? <p className="mt-4 rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">لا توجد إشعارات واردة لهذا الربط بعد.</p>
+          : <div className="mt-4 space-y-2">
+            {ordersQ.data.map(order => {
+              const customer = order.orderPayload.customer as { first_name?: string | null; last_name?: string | null } | undefined;
+              const itemCount = Array.isArray(order.orderPayload.items) ? order.orderPayload.items.length : 0;
+              return <article key={order.id} data-testid={`delivery-order-${order.id}`} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3">
+                <div className="min-w-0">
+                  <p className="truncate font-bold" dir="ltr">{order.orderCode || order.externalOrderId}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{[customer?.first_name, customer?.last_name].filter(Boolean).join(" ") || "عميل المنصة"} · {itemCount} صنف · {order.orderPayload.order_type === "PICKUP" ? "استلام" : "توصيل"}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="rounded-full bg-muted px-2 py-1 font-bold">{order.providerStatus}</span>
+                  {order.posOrderId
+                    ? <span className="font-bold text-primary">طلب POS #{order.posOrderId}</span>
+                    : order.providerStatus === "RECEIVED" && <Button type="button" size="sm" disabled={acceptOrder.isPending || mappingsQ.isLoading || menuQ.isLoading} data-testid={`button-accept-delivery-${order.id}`} onClick={() => acceptOrder.mutate(order.id)}>قبول وإرسال للمطبخ</Button>}
+                  <span className="text-muted-foreground">{new Date(order.receivedAt).toLocaleString("ar-SA")}</span>
+                </div>
+              </article>;
+            })}
+          </div>}
+        {acceptOrder.isError && <p role="alert" className="mt-3 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{acceptOrder.error.message}</p>}
+        {acceptOrder.isSuccess && <p role="status" className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm" data-testid="status-delivery-order-accepted">{feedback}</p>}
+      </section>}
+      {current && ordersQ.data?.length ? <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6" data-testid="delivery-item-mappings">
+        <div><h3 className="font-black">مطابقة أصناف HungerStation</h3><p className="mt-1 text-xs text-muted-foreground">اربط كل SKU بصنف قائمة موجود. لا تُنشأ أصناف جديدة تلقائيًا.</p></div>
+        {mappingsQ.isError || menuQ.isError ? <p role="alert" className="mt-3 text-sm text-destructive">تعذّر تحميل قائمة المطابقة.</p>
+          : <div className="mt-4 space-y-2">
+            {[...new Set((ordersQ.data ?? []).flatMap(order => Array.isArray(order.orderPayload.items)
+              ? order.orderPayload.items.map((item: any) => String(item?.sku ?? "").trim()).filter(Boolean)
+              : []))].map(sku => {
+                const mapped = mappingsQ.data?.find(mapping => mapping.externalSku === sku);
+                return <div key={sku} className="grid gap-2 rounded-xl border border-border p-3 sm:grid-cols-[1fr_2fr_auto] sm:items-center">
+                  <code dir="ltr" className="text-sm font-bold">{sku}</code>
+                  <select value={mappingDraft[sku] ?? ""} onChange={event => setMappingDraft(previous => ({ ...previous, [sku]: event.target.value }))} aria-label={`صنف النظام لـ ${sku}`} data-testid={`select-map-sku-${sku}`} className="h-10 rounded-lg border border-input bg-background px-3 text-sm">
+                    <option value="">اختر صنف قائمة المطعم</option>
+                    {(menuQ.data ?? []).map(item => <option key={item.id} value={item.id}>{item.nameAr} · {item.code}</option>)}
+                  </select>
+                  <Button type="button" size="sm" variant="outline" disabled={!mappingDraft[sku] || saveMapping.isPending || String(mapped?.menuItemId ?? "") === mappingDraft[sku]} data-testid={`button-save-map-sku-${sku}`}
+                    onClick={() => saveMapping.mutate({ sku, menuItemId: Number(mappingDraft[sku]) })}>
+                    {mapped ? "تحديث الربط" : "حفظ الربط"}
+                  </Button>
+                </div>;
+              })}
+          </div>}
+        {saveMapping.isError && <p role="alert" className="mt-3 text-sm text-destructive">{saveMapping.error.message}</p>}
+      </section> : null}
     </div>
   );
 }

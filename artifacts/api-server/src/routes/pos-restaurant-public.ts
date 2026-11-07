@@ -1,9 +1,11 @@
 import { Router } from "express";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   itemsTable, posMenuCategoriesTable, posMenuItemsTable, posOrderItemsTable,
   posOrdersTable, posTablesTable,
+  posRestaurantDeliveryIntegrationsTable, posRestaurantExternalOrdersTable,
 } from "@workspace/db";
 import { calculateRestaurantOrderTotals } from "../lib/restaurant-order-pricing.js";
 import { validateRestaurantModifierSelection } from "../lib/restaurant-modifier-selection.js";
@@ -33,6 +35,95 @@ function configuredModifierGroups(attributes: unknown): any[] {
   const groups = (attributes as Record<string, unknown>)._restaurantModifierGroups;
   return Array.isArray(groups) ? groups : [];
 }
+
+router.post("/webhooks/hungerstation/:integrationId", async (req, res): Promise<void> => {
+  const integrationId = Number(req.params.integrationId);
+  if (!Number.isSafeInteger(integrationId) || integrationId <= 0) {
+    res.status(404).json({ error: "Webhook غير معروف" }); return;
+  }
+  const [integration] = await db.select({
+    id: posRestaurantDeliveryIntegrationsTable.id,
+    companyId: posRestaurantDeliveryIntegrationsTable.companyId,
+    branchId: posRestaurantDeliveryIntegrationsTable.branchId,
+    provider: posRestaurantDeliveryIntegrationsTable.provider,
+    environment: posRestaurantDeliveryIntegrationsTable.environment,
+    isEnabled: posRestaurantDeliveryIntegrationsTable.isEnabled,
+    webhookTokenHash: posRestaurantDeliveryIntegrationsTable.webhookTokenHash,
+  }).from(posRestaurantDeliveryIntegrationsTable)
+    .where(eq(posRestaurantDeliveryIntegrationsTable.id, integrationId)).limit(1);
+  if (!integration || integration.provider !== "hungerstation" || !integration.webhookTokenHash) {
+    res.status(404).json({ error: "Webhook غير مهيأ" }); return;
+  }
+  if (integration.environment !== "sandbox" && !integration.isEnabled) {
+    res.status(503).json({ error: "استقبال الإنتاج غير مفعّل بعد" }); return;
+  }
+  const authorization = req.get("authorization") ?? "";
+  const expected = Buffer.from(integration.webhookTokenHash, "hex");
+  const received = createHash("sha256").update(authorization).digest();
+  if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+    res.status(401).json({ error: "مصادقة Webhook غير صالحة" }); return;
+  }
+
+  const body = req.body;
+  const externalOrderId = typeof body?.external_order_id === "string" && body.external_order_id.trim()
+    ? body.external_order_id.trim()
+    : typeof body?.order_id === "string" && body.order_id.trim() ? body.order_id.trim() : "";
+  const providerStatus = typeof body?.status === "string" ? body.status : "";
+  const allowedStatuses = new Set(["RECEIVED", "READY_FOR_PICKUP", "DISPATCHED", "CANCELLED", "CANCELED", "DELIVERED"]);
+  if (!externalOrderId || externalOrderId.length > 200 || !allowedStatuses.has(providerStatus) ||
+      !Array.isArray(body?.items) || body.items.length > 300) {
+    res.status(400).json({ error: "بيانات إشعار الطلب غير صالحة" }); return;
+  }
+  const customer = body.customer && typeof body.customer === "object" ? body.customer : {};
+  const address = customer.delivery_address && typeof customer.delivery_address === "object"
+    ? customer.delivery_address
+    : {};
+  const normalizedPayload = {
+    order_id: typeof body.order_id === "string" ? body.order_id : null,
+    external_order_id: externalOrderId,
+    order_code: typeof body.order_code === "string" ? body.order_code.slice(0, 80) : null,
+    status: providerStatus,
+    order_type: typeof body.order_type === "string" ? body.order_type : null,
+    transport_type: typeof body.transport_type === "string" ? body.transport_type : null,
+    comment: typeof body.comment === "string" ? body.comment.slice(0, 1000) : null,
+    accepted_for: typeof body.accepted_for === "string" ? body.accepted_for : null,
+    promised_for: typeof body.promised_for === "string" ? body.promised_for : null,
+    customer: {
+      first_name: typeof customer.first_name === "string" ? customer.first_name.slice(0, 100) : null,
+      last_name: typeof customer.last_name === "string" ? customer.last_name.slice(0, 100) : null,
+      phone_number: typeof customer.phone_number === "string" ? customer.phone_number.slice(0, 80) : null,
+      delivery_address: {
+        formattedAddress: typeof address.formattedAddress === "string" ? address.formattedAddress.slice(0, 600) : null,
+        street: typeof address.street === "string" ? address.street.slice(0, 200) : null,
+        suburb: typeof address.suburb === "string" ? address.suburb.slice(0, 120) : null,
+        city: typeof address.city === "string" ? address.city.slice(0, 120) : null,
+        building: typeof address.building === "string" ? address.building.slice(0, 100) : null,
+        instructions: typeof address.instructions === "string" ? address.instructions.slice(0, 500) : null,
+      },
+    },
+    items: body.items,
+    payment: body.payment && typeof body.payment === "object" ? body.payment : null,
+  };
+  const [saved] = await db.insert(posRestaurantExternalOrdersTable).values({
+    integrationId: integration.id,
+    companyId: integration.companyId,
+    branchId: integration.branchId,
+    externalOrderId,
+    orderCode: normalizedPayload.order_code,
+    providerStatus,
+    orderPayload: normalizedPayload,
+  }).onConflictDoUpdate({
+    target: [posRestaurantExternalOrdersTable.integrationId, posRestaurantExternalOrdersTable.externalOrderId],
+    set: {
+      orderCode: normalizedPayload.order_code,
+      providerStatus,
+      orderPayload: normalizedPayload,
+      updatedAt: new Date(),
+    },
+  }).returning({ id: posRestaurantExternalOrdersTable.id });
+  req.log?.info?.({ integrationId, eventId: saved?.id, providerStatus }, "HungerStation webhook accepted");
+  res.status(200).json({ ok: true });
+});
 
 async function resolveSelectedModifiers(companyId: number, baseItem: any, selections: unknown, vatIncluded: boolean) {
   const chosen = validateRestaurantModifierSelection(configuredModifierGroups(baseItem?.variantAttributes), selections);
