@@ -41,6 +41,19 @@ export function serializeDocumentLine(line: any): any {
 }
 
 /**
+ * A persisted line id is valid only while the line still refers to its original
+ * item. Selecting a different item turns the row into a replacement line.
+ */
+export function persistedLineIdForSelectedItem(line: any, selectedItemId: unknown): number | undefined {
+  if (line?.id == null || line?.itemId == null || selectedItemId == null) return undefined;
+  if (!String(line.itemId) || !String(selectedItemId) || String(line.itemId) !== String(selectedItemId)) {
+    return undefined;
+  }
+  const id = Number(line.id);
+  return Number.isInteger(id) && id > 0 ? id : undefined;
+}
+
+/**
  * Return/conversion payloads identify their source by the real source-line id.
  * Existing return rows do not persist that relationship, so match the source
  * row by the stable item/unit snapshot and consume each candidate once.

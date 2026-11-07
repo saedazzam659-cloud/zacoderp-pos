@@ -55,6 +55,7 @@ import {
   catalogUnitsWithHistoricalSelection,
   isActiveItemUnit,
   itemUnitsWithHistoricalSelection,
+  persistedLineIdForSelectedItem,
   serializeDocumentLine,
 } from "@/lib/documentLineUnits";
 import { DocumentQuantityWarnings } from "@/components/DocumentQuantityWarnings";
@@ -852,6 +853,7 @@ function PurchaseInvoiceFormContent() {
       const isService = item.itemType === "service" || item.itemType === "prepaid_expense";
       const updated: InvoiceLine = {
         ...l,
+        id: persistedLineIdForSelectedItem(l, item.id),
         itemId:    String(item.id),
         itemName:  itemNameOf(item),
         itemCode:  item.code   ?? "",
