@@ -18,3 +18,9 @@ Settlement decisions: paid-leave provision is settled with a separate entry when
 **Why:** The user confirmed these settlement sources on 2026-11-08 and required the activation gate to remain off until the related workflows are complete.
 
 **How to apply:** Link each settlement to its source employee and provision period, reduce the liability without charging the same cost twice, and preserve posted snapshots.
+
+Freeze employee provision amounts on first payroll posting, including explicit zeros when accrual is disabled. Reposting must reuse the original period basis, not current entitlements.
+
+**Why:** Later activation or contract changes must not retroactively recognize costs absent from the original payroll period.
+
+**How to apply:** Treat uncaptured historical amounts as unknown rather than reconstructing liabilities from today's contract.

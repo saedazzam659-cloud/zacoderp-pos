@@ -205,7 +205,7 @@ export default function Payroll() {
         <TabsList>
           <TabsTrigger value="runs" data-testid="tab-runs"><FileSpreadsheet className="size-4 me-1" />{tr("tabRuns")}</TabsTrigger>
           <TabsTrigger value="preview" data-testid="tab-preview"><Calculator className="size-4 me-1" />{tr("tabPreview")}</TabsTrigger>
-          <TabsTrigger value="settlements" data-testid="tab-provision-settlements"><Undo2 className="size-4 me-1" />تسوية المخصصات</TabsTrigger>
+          <TabsTrigger value="settlements" data-testid="tab-provision-settlements"><Undo2 className="size-4 me-1" />{isRtl ? "تسوية المخصصات" : "Provision settlements"}</TabsTrigger>
           {viewing && <TabsTrigger value="detail" data-testid="tab-detail"><Eye className="size-4 me-1" />{tr("tabDetail")}</TabsTrigger>}
         </TabsList>
 

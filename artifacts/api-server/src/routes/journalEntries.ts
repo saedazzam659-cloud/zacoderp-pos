@@ -1783,6 +1783,7 @@ const LOCKED_ENTRY_TYPES = [
   "supplier_settlement", "customer_settlement",
   FISCAL_ADVANCE_JE_TYPE,
   "payroll_run", "payroll_payment", "employee_loan", "eos_payment",
+  "employee_provision_settlement", "employee_provision_settlement_reversal",
 ];
 
 function isModuleManagedJournalEntryType(entryType: string | null | undefined): boolean {

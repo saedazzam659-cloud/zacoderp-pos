@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { EMPLOYEE_PROVISION_SETTLEMENTS_READY } from "../lib/hrProvisionReadiness.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
-import { documentMutationLock } from "../lib/document-mutation-lock.js";
+import { documentMutationLock, withDocumentMutationLock } from "../lib/document-mutation-lock.js";
+import { availableTicketExpense, assertProvisionSourceReversible, type TicketProvisionSource } from "../lib/employeeProvisionSources.js";
 import { db } from "@workspace/db";
 import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, payrollAllocationSnapshotsTable, employeeProjectAssignmentsTable, branchesTable, accountsTable, companiesTable, costCentersTable, contractingProjectsTable, employeeViolationsTable, employeeTravelsTable, employeeMedicalInsurancePoliciesTable, employeeProvisionSettlementsTable, paymentVouchersTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull, inArray } from "drizzle-orm";
@@ -1005,11 +1006,12 @@ router.post("/:id/leaves", async (req, res) => {
   } catch (e: any) { respondHrError(req, res, e); }
 });
 
-router.put("/:id/leaves/:leaveId", async (req, res) => {
+router.put("/:id/leaves/:leaveId", documentMutationLock("employee_leave", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const lid = Number(req.params.leaveId);
     const b = req.body || {};
+    await assertProvisionSourceReversible(db, cid, "employee_leave", lid);
     const updates: any = { updatedAt: new Date() };
     if (b.status === "approved") { updates.status = "approved"; updates.approvedAt = new Date(); updates.approvedBy = req.authUser?.username || "—"; }
     else if (b.status === "rejected") { updates.status = "rejected"; updates.approvedAt = new Date(); updates.approvedBy = req.authUser?.username || "—"; }
@@ -1018,18 +1020,19 @@ router.put("/:id/leaves/:leaveId", async (req, res) => {
       .where(and(eq(employeeLeavesTable.id, lid), eq(employeeLeavesTable.companyId, cid)))
       .returning();
     res.json(row);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
-});
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+}, "leaveId"));
 
-router.delete("/:id/leaves/:leaveId", async (req, res) => {
+router.delete("/:id/leaves/:leaveId", documentMutationLock("employee_leave", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const lid = Number(req.params.leaveId);
+    await assertProvisionSourceReversible(db, cid, "employee_leave", lid);
     await db.delete(employeeLeavesTable)
       .where(and(eq(employeeLeavesTable.id, lid), eq(employeeLeavesTable.companyId, cid)));
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
-});
+  } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
+}, "leaveId"));
 
 // ─── ALL CONTRACTS (across employees) ────────────────────────
 router.get("/contracts/all", async (req, res) => {
@@ -2432,10 +2435,13 @@ router.post("/payroll/provision-settlements", requirePostRight("payroll"), async
       res.status(400).json({ error: "بيانات التسوية غير مكتملة أو غير صحيحة" }); return;
     }
     if ((provisionType === "annual_leave" && sourceType !== "employee_leave") ||
-        (provisionType === "travel_ticket" && sourceType !== "payment_voucher")) {
-      res.status(400).json({ error: "اربط الإجازة بإجازة موظف معتمدة، وتذكرة السفر بسند مصروف مرحّل" }); return;
+        (provisionType === "travel_ticket" && !["payment_voucher", "purchase_invoice"].includes(sourceType))) {
+      res.status(400).json({ error: "اربط الإجازة بإجازة موظف معتمدة، والتذكرة بسند مصروف أو فاتورة شراء مرحّلة" }); return;
     }
-    const result = await db.transaction(async (tx) => {
+    if (settlementDate.slice(0, 7) < period) {
+      res.status(400).json({ error: "لا يمكن تسوية مخصص فترة مستقبلية بتاريخ سابق لها" }); return;
+    }
+    const settle = () => db.transaction(async (tx) => {
       const lockKey = `employee_provision:${employeeId}:${provisionType}:${period}`;
       await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${lockKey}))`);
       const [employee] = await tx.select({ id: employeesTable.id }).from(employeesTable).where(and(
@@ -2474,35 +2480,11 @@ router.post("/payroll/provision-settlements", requirePostRight("payroll"), async
         ));
         if (!leave) throw Object.assign(new Error("اختر إجازة سنوية مدفوعة ومعتمدة لهذا الموظف"), { status: 400 });
       } else {
-        await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${`employee_provision_source:payment_voucher:${sourceRecordId}`}))`);
-        const [voucher] = await tx.select({
-          id: paymentVouchersTable.id,
-          journalEntryId: paymentVouchersTable.journalEntryId,
-        }).from(paymentVouchersTable).innerJoin(journalEntriesTable, and(
-          eq(journalEntriesTable.id, paymentVouchersTable.journalEntryId),
-          eq(journalEntriesTable.companyId, cid), eq(journalEntriesTable.status, "posted"),
-        )).where(and(eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.id, sourceRecordId),
-          eq(paymentVouchersTable.status, "posted")));
-        if (!voucher?.journalEntryId) throw Object.assign(new Error("سند مصروف التذكرة غير مرحّل"), { status: 400 });
         const hrAccounts = await resolveHrAccounts(cid, true, tx);
         if (!hrAccounts.travelTicketExpense) throw Object.assign(new Error("اربط حساب مصروف تذاكر السفر أولاً"), { status: 400 });
-        const [sourceDebit] = await tx.select({
-          amount: sql<string>`coalesce(sum(${journalEntryLinesTable.debit}), 0)`,
-        }).from(journalEntryLinesTable).where(and(
-          eq(journalEntryLinesTable.entryId, voucher.journalEntryId),
-          eq(journalEntryLinesTable.accountId, hrAccounts.travelTicketExpense),
-          sql`${journalEntryLinesTable.debit} > 0`,
-        ));
-        const [alreadySettled] = await tx.select({
-          amount: sql<string>`coalesce(sum(${employeeProvisionSettlementsTable.amount}), 0)`,
-        }).from(employeeProvisionSettlementsTable).where(and(
-          eq(employeeProvisionSettlementsTable.companyId, cid),
-          eq(employeeProvisionSettlementsTable.provisionType, "travel_ticket"),
-          eq(employeeProvisionSettlementsTable.sourceType, "payment_voucher"),
-          eq(employeeProvisionSettlementsTable.sourceRecordId, sourceRecordId),
-          eq(employeeProvisionSettlementsTable.status, "posted"),
-        ));
-        if (amount > Number(sourceDebit?.amount ?? 0) - Number(alreadySettled?.amount ?? 0) + 0.005)
+        const sourceAvailable = await availableTicketExpense(tx, cid, sourceType as TicketProvisionSource,
+          sourceRecordId, hrAccounts.travelTicketExpense, settlementDate);
+        if (amount > sourceAvailable + 0.005)
           throw Object.assign(new Error("المبلغ يتجاوز مصروف التذكرة الفعلي غير المستخدم في تسويات سابقة"), { status: 409 });
       }
       const [created] = await tx.insert(employeeProvisionSettlementsTable).values({
@@ -2519,6 +2501,7 @@ router.post("/payroll/provision-settlements", requirePostRight("payroll"), async
       }).where(eq(employeeProvisionSettlementsTable.id, created.id)).returning();
       return posted;
     });
+    const result = await withDocumentMutationLock(sourceType, cid, sourceRecordId, settle);
     res.status(201).json(result);
   } catch (e: any) { res.status(e?.status ?? (e?.code === "23505" ? 409 : 400)).json({ error: e?.message ?? "تعذّرت تسوية المخصص" }); }
 });
@@ -2532,6 +2515,7 @@ router.get("/payroll/provision-settlements", async (req, res) => {
       employeeId: employeeProvisionSettlementsTable.employeeId,
       employeeName: employeesTable.nameAr,
       provisionType: employeeProvisionSettlementsTable.provisionType,
+      nameEn: employeesTable.nameEn,
       provisionPeriod: employeeProvisionSettlementsTable.provisionPeriod,
       sourceType: employeeProvisionSettlementsTable.sourceType,
       sourceRecordId: employeeProvisionSettlementsTable.sourceRecordId,
@@ -2552,14 +2536,18 @@ router.post("/payroll/provision-settlements/:id/reverse", requirePostRight("payr
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "رقم التسوية غير صالح" }); return; }
-    const row = await db.transaction(async (tx) => {
+    const [identity] = await db.select().from(employeeProvisionSettlementsTable).where(and(
+      eq(employeeProvisionSettlementsTable.id, id), eq(employeeProvisionSettlementsTable.companyId, cid),
+    ));
+    if (!identity) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
+    const reverse = () => db.transaction(async (tx) => {
+      const lockKey = `employee_provision:${identity.employeeId}:${identity.provisionType}:${identity.provisionPeriod}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${lockKey}))`);
       const [settlement] = await tx.select().from(employeeProvisionSettlementsTable).where(and(
         eq(employeeProvisionSettlementsTable.id, id), eq(employeeProvisionSettlementsTable.companyId, cid),
       )).for("update");
       if (!settlement) throw Object.assign(new Error("التسوية غير موجودة"), { status: 404 });
       if (settlement.status !== "posted") throw Object.assign(new Error("لا يمكن عكس إلا تسوية مرحّلة"), { status: 409 });
-      const lockKey = `employee_provision:${settlement.employeeId}:${settlement.provisionType}:${settlement.provisionPeriod}`;
-      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${lockKey}))`);
       const reversalJournalEntryId = await buildEmployeeProvisionSettlementJournal(cid, id, {
         provisionType: settlement.provisionType as "annual_leave" | "travel_ticket",
         employeeId: settlement.employeeId,
@@ -2575,6 +2563,7 @@ router.post("/payroll/provision-settlements/:id/reverse", requirePostRight("payr
       if (!updated) throw Object.assign(new Error("تغيرت حالة التسوية؛ أعد تحميل البيانات"), { status: 409 });
       return updated;
     });
+    const row = await withDocumentMutationLock(identity.sourceType, cid, identity.sourceRecordId, reverse);
     res.json(row);
   } catch (e: any) { res.status(e?.status ?? 400).json({ error: e?.message ?? "تعذّر عكس التسوية" }); }
 });

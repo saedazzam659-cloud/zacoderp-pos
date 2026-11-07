@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { assertProvisionSourceReversible, provisionPurchaseReturnLock } from "../lib/employeeProvisionSources.js";
 import { GetPurchaseItemPartyHistoryQueryParams, GetPurchaseItemPartyHistoryResponse } from "@workspace/api-zod";
 import { approvalGate, enforceDraftSaveMode, nextDraftDocumentNumber } from "./documentApprovals.js";
 import { normalizeManualPrintPartyName } from "../lib/manualPrintPartyName.js";
@@ -3311,7 +3312,7 @@ router.patch("/purchase-invoices/:id/post", requirePostRight("purchase"), approv
 // ─── UNPOST purchase invoice (فك الترحيل) ───────────────────────────────────
 // Reverses stock movements and returns the invoice to draft. Protected linked
 // JEs are retained as drafts; legacy JEs keep the reservation/delete workflow.
-router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), async (req, res) => {
+router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), documentMutationLock("purchase_invoice", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -3320,6 +3321,7 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
       .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
+    await assertProvisionSourceReversible(db, cid, "purchase_invoice", id);
     if (inv.isSequenceProtected && !inv.journalEntryId) {
       throw Object.assign(new Error("تعذر فك الترحيل لأن القيد المرتبط بالفاتورة المحمية غير موجود."), { status: 409 });
     }
@@ -3661,7 +3663,7 @@ router.patch("/purchase-invoices/:id/unpost", requireUnpostRight("purchase"), as
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
-});
+}));
 
 router.delete("/purchase-invoices/:id", async (req, res) => {
   try {
@@ -4896,7 +4898,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
 });
 
-router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approvalGate("purchase_return"), documentMutationLock("purchase_return", async (req, res) => {
+router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approvalGate("purchase_return"), documentMutationLock("purchase_return", provisionPurchaseReturnLock(async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -5676,7 +5678,7 @@ router.patch("/purchase-returns/:id/post", requirePostRight("purchase"), approva
 
     res.json(updated);
   } catch (e: any) { res.status(e?.status ?? 500).json({ error: e.message }); }
-}));
+})));
 
 // ─── UNPOST purchase return (فك الترحيل) ────────────────────────────────────
 router.patch("/purchase-returns/:id/unpost", requireUnpostRight("purchase"), documentMutationLock("purchase_return", async (req, res) => {

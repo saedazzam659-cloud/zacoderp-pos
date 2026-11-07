@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { Readable } from "node:stream";
@@ -803,7 +804,7 @@ router.post("/:id/post", async (req: any, res) => {
   }
 });
 
-router.post("/:id/cancel", async (req: any, res) => {
+router.post("/:id/cancel", documentMutationLock("payment_voucher", async (req: any, res) => {
   const scope = await requestScope(req);
   if (!scope) { res.status(401).json({ error: "غير مصرح" }); return; }
   if (!hasRight(scope, "cash_expenses_cancel")) { res.status(403).json({ error: "لا تملك صلاحية إلغاء المصروف" }); return; }
@@ -868,6 +869,6 @@ router.post("/:id/cancel", async (req: any, res) => {
     (req as any).log?.error({ err: error }, "Cash expense cancellation failed");
     res.status(error?.status ?? 409).json({ error: error?.message ?? "تعذّر إلغاء المصروف" });
   }
-});
+}));
 
 export default router;

@@ -2984,6 +2984,7 @@ export type EmployeeProvisionSettlementSourceType = typeof EmployeeProvisionSett
 export const EmployeeProvisionSettlementSourceType = {
   employee_leave: 'employee_leave',
   payment_voucher: 'payment_voucher',
+  purchase_invoice: 'purchase_invoice',
 } as const;
 
 export type EmployeeProvisionSettlementStatus = typeof EmployeeProvisionSettlementStatus[keyof typeof EmployeeProvisionSettlementStatus];
@@ -3026,6 +3027,7 @@ export type EmployeeProvisionSettlementInputSourceType = typeof EmployeeProvisio
 export const EmployeeProvisionSettlementInputSourceType = {
   employee_leave: 'employee_leave',
   payment_voucher: 'payment_voucher',
+  purchase_invoice: 'purchase_invoice',
 } as const;
 
 export interface EmployeeProvisionSettlementInput {

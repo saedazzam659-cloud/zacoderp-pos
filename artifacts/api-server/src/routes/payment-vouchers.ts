@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { manufacturingCashExpenseFields, assertManufacturingCashExpenseReversible } from "../lib/manufacturingCashExpense.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
@@ -1918,7 +1919,7 @@ router.post("/:id/post", requirePostRight("payment"), async (req, res) => {
   }
 });
 
-router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
+router.post("/:id/unpost", requireUnpostRight("payment"), documentMutationLock("payment_voucher", async (req, res) => {
   const id = parseInt(req.params.id as string);
   // Multi-tenant guard — admins from one tenant must not unpost another
   // tenant's voucher even if they happen to know the ID.
@@ -2177,7 +2178,7 @@ router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
       .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
   }
   res.json(row);
-});
+}));
 
 router.delete("/:id", async (req, res) => {
   const id = parseInt(req.params.id);

@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/pages/hr/ProvisionSettlements.tsx",
+    "src/pages/hr/Payroll.tsx",
+    "src/**/*.d.ts"
+  ]
+}

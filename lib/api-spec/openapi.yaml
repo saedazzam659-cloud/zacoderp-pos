@@ -6736,7 +6736,7 @@ components:
         employeeId: { type: integer, minimum: 1 }
         provisionType: { type: string, enum: [annual_leave, travel_ticket] }
         provisionPeriod: { type: string, pattern: "^\\d{4}-\\d{2}$" }
-        sourceType: { type: string, enum: [employee_leave, payment_voucher] }
+        sourceType: { type: string, enum: [employee_leave, payment_voucher, purchase_invoice] }
         sourceRecordId: { type: integer, minimum: 1 }
         settlementDate: { type: string, format: date }
         amount: { type: number, exclusiveMinimum: 0 }
@@ -6750,7 +6750,7 @@ components:
         employeeId: { type: integer }
         provisionType: { type: string, enum: [annual_leave, travel_ticket] }
         provisionPeriod: { type: string }
-        sourceType: { type: string, enum: [employee_leave, payment_voucher] }
+        sourceType: { type: string, enum: [employee_leave, payment_voucher, purchase_invoice] }
         sourceRecordId: { type: integer }
         settlementDate: { type: string, format: date }
         amount: { type: string }
