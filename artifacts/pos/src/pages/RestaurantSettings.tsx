@@ -1298,6 +1298,21 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
       ]);
     },
   });
+  const updateProviderStatus = useMutation({
+    mutationFn: ({ rowId, status, cancellationReason }: {
+      rowId: number;
+      status: "READY_FOR_PICKUP" | "DISPATCHED" | "CANCELLED";
+      cancellationReason?: string;
+    }) => current
+      ? api.rUpdateDeliveryProviderStatus(current.id, rowId, status, cancellationReason)
+      : Promise.reject(new Error("لا يوجد إعداد ربط")),
+    onSuccess: async result => {
+      setFeedback(result.alreadyUpdated ? "حالة الطلب محدثة مسبقًا في HungerStation."
+        : result.status === "CANCELLED" ? "تم إلغاء الطلب في HungerStation لعدم توفر الصنف."
+          : `تم إرسال الحالة ${result.status} إلى HungerStation.`);
+      await qc.invalidateQueries({ queryKey: ["r-delivery-orders", current?.id] });
+    },
+  });
 
   if (integrationsQ.isLoading || branchesLoading) return <div role="status" className="rounded-2xl border bg-card p-8 text-center text-sm">جارٍ تحميل إعدادات الربط والفروع...</div>;
   if (integrationsQ.isError) return <div role="alert" className="rounded-2xl border border-destructive/20 bg-card p-5 text-sm text-destructive">تعذّر تحميل إعدادات الربط. <button type="button" className="font-bold underline" onClick={() => integrationsQ.refetch()}>إعادة المحاولة</button></div>;
@@ -1382,7 +1397,7 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
         {save.isError && <p role="alert" className="mt-3 text-sm text-destructive">{save.error.message}</p>}
         {(feedback || save.isSuccess) && <p role={test.isError || save.isError ? "alert" : "status"} className="mt-3 rounded-lg border border-border bg-background p-3 text-sm" data-testid="status-delivery-integration-feedback">{feedback}</p>}
         <p className="mt-4 rounded-lg border border-border bg-background p-3 text-xs leading-5 text-muted-foreground" data-testid="text-delivery-integration-prerequisite">
-          الإعدادات تُحفظ مشفّرة ويمكن اختبار OAuth. لا يتم تفعيل استقبال Webhook أو الطلبات أو مزامنة الحالات في هذه المرحلة؛ لن يؤثر هذا الإعداد على دورة POS الحالية حتى استكمالها واختبارها على Sandbox.
+          Sandbox يستقبل Webhook ويتيح إنشاء طلب POS بعد مطابقة SKU والتحقق من الأسعار والضريبة. النشر الإنتاجي يظل مغلقًا حتى إتمام اختبار Sandbox واعتماد الإعداد.
         </p>
       </section>
 
@@ -1406,8 +1421,33 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="rounded-full bg-muted px-2 py-1 font-bold">{order.providerStatus}</span>
                   {order.posOrderId
-                    ? <span className="font-bold text-primary">طلب POS #{order.posOrderId}</span>
-                    : order.providerStatus === "RECEIVED" && <Button type="button" size="sm" disabled={acceptOrder.isPending || mappingsQ.isLoading || menuQ.isLoading} data-testid={`button-accept-delivery-${order.id}`} onClick={() => acceptOrder.mutate(order.id)}>قبول وإرسال للمطبخ</Button>}
+                    ? <>
+                        <span className="font-bold text-primary">طلب POS #{order.posOrderId}</span>
+                        {order.posOrderStatus !== "ready" && <span className="text-muted-foreground">حالة POS: {order.posOrderStatus ?? "غير متاح"}</span>}
+                        {order.orderPayload.transport_type === "LOGISTICS_DELIVERY" && order.providerStatus === "RECEIVED" &&
+                          <Button type="button" size="sm" variant="outline" disabled={updateProviderStatus.isPending || order.posOrderStatus !== "ready"}
+                            data-testid={`button-provider-ready-${order.id}`}
+                            onClick={() => updateProviderStatus.mutate({ rowId: order.id, status: "READY_FOR_PICKUP" })}>
+                            إبلاغ HungerStation بالجاهزية
+                          </Button>}
+                        {order.orderPayload.transport_type === "VENDOR_DELIVERY" && order.providerStatus === "RECEIVED" &&
+                          <Button type="button" size="sm" variant="outline" disabled={updateProviderStatus.isPending || order.posOrderStatus !== "ready"}
+                            data-testid={`button-provider-dispatched-${order.id}`}
+                            onClick={() => updateProviderStatus.mutate({ rowId: order.id, status: "DISPATCHED" })}>
+                            تأكيد تسليم الطلب للناقل
+                          </Button>}
+                      </>
+                    : order.providerStatus === "RECEIVED" && <>
+                        <Button type="button" size="sm" disabled={acceptOrder.isPending || mappingsQ.isLoading || menuQ.isLoading} data-testid={`button-accept-delivery-${order.id}`} onClick={() => acceptOrder.mutate(order.id)}>قبول وإرسال للمطبخ</Button>
+                        <Button type="button" size="sm" variant="outline" disabled={updateProviderStatus.isPending} data-testid={`button-reject-delivery-${order.id}`}
+                          onClick={() => {
+                            if (window.confirm("سيتم إلغاء الطلب في HungerStation بسبب عدم توفر الصنف. هل تريد المتابعة؟")) {
+                              updateProviderStatus.mutate({ rowId: order.id, status: "CANCELLED", cancellationReason: "ITEM_UNAVAILABLE" });
+                            }
+                          }}>
+                          رفض: صنف غير متاح
+                        </Button>
+                      </>}
                   <span className="text-muted-foreground">{new Date(order.receivedAt).toLocaleString("ar-SA")}</span>
                 </div>
               </article>;
@@ -1415,6 +1455,8 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
           </div>}
         {acceptOrder.isError && <p role="alert" className="mt-3 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{acceptOrder.error.message}</p>}
         {acceptOrder.isSuccess && <p role="status" className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm" data-testid="status-delivery-order-accepted">{feedback}</p>}
+        {updateProviderStatus.isError && <p role="alert" className="mt-3 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{updateProviderStatus.error.message}</p>}
+        {updateProviderStatus.isSuccess && <p role="status" className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm" data-testid="status-delivery-provider-updated">{feedback}</p>}
       </section>}
       {current && ordersQ.data?.length ? <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6" data-testid="delivery-item-mappings">
         <div><h3 className="font-black">مطابقة أصناف HungerStation</h3><p className="mt-1 text-xs text-muted-foreground">اربط كل SKU بصنف قائمة موجود. لا تُنشأ أصناف جديدة تلقائيًا.</p></div>

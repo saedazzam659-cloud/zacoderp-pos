@@ -34,6 +34,40 @@ import { validateRestaurantModifierSelection } from "../lib/restaurant-modifier-
 import { encryptSecret, decryptSecret } from "../lib/encryption.js";
 
 const router = Router();
+const hungerStationTokenCache = new Map<number, { token: string; expiresAt: number }>();
+
+async function getHungerStationAccessToken(integration: typeof posRestaurantDeliveryIntegrationsTable.$inferSelect): Promise<string> {
+  const cached = hungerStationTokenCache.get(integration.id);
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+  let clientSecret = "";
+  try {
+    const credentials = JSON.parse(decryptSecret(integration.credentialsEnc) ?? "{}") as { clientSecret?: string };
+    clientSecret = String(credentials.clientSecret ?? "");
+  } catch {
+    throw new Error("تعذّر فك تشفير بيانات ربط HungerStation");
+  }
+  if (!clientSecret) throw new Error("Client Secret غير محفوظ");
+  const host = integration.environment === "sandbox"
+    ? "https://sandbox.partner.deliveryhero.io"
+    : "https://hungerstation.partner.deliveryhero.io";
+  const response = await fetch(`${host}/v2/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: integration.clientId,
+      client_secret: clientSecret,
+    }),
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw Object.assign(new Error("تعذرت مصادقة HungerStation"), { providerStatus: response.status });
+  const result = await response.json() as { access_token?: string; expires_in?: number };
+  if (!result.access_token) throw new Error("استجابة المصادقة من HungerStation غير مكتملة");
+  const expiresIn = Math.max(60, Number(result.expires_in) || 3600);
+  hungerStationTokenCache.set(integration.id, { token: result.access_token, expiresAt: Date.now() + expiresIn * 1000 });
+  return result.access_token;
+}
+
 router.use(extractAuth);
 router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرّح" }); return; }
@@ -151,6 +185,7 @@ router.put("/delivery-integrations", async (req, res): Promise<void> => {
     : await db.insert(posRestaurantDeliveryIntegrationsTable).values({
       companyId: cid, branchId, provider: "hungerstation", ...values,
     }).returning();
+  hungerStationTokenCache.delete(saved.id);
   res.json({
     id: saved.id, branchId: saved.branchId, provider: saved.provider,
     environment: saved.environment, chainId: saved.chainId, vendorId: saved.vendorId,
@@ -218,11 +253,17 @@ router.get("/delivery-integrations/:id/orders", async (req, res): Promise<void> 
       eq(posRestaurantDeliveryIntegrationsTable.companyId, cid),
     )).limit(1);
   if (!integration) { res.status(404).json({ error: "إعداد الربط غير موجود" }); return; }
-  const rows = await db.select().from(posRestaurantExternalOrdersTable).where(and(
+  const rows = await db.select({
+    incoming: posRestaurantExternalOrdersTable,
+    posOrderStatus: posOrdersTable.status,
+  }).from(posRestaurantExternalOrdersTable).leftJoin(posOrdersTable, and(
+    eq(posOrdersTable.id, posRestaurantExternalOrdersTable.posOrderId),
+    eq(posOrdersTable.companyId, cid),
+  )).where(and(
     eq(posRestaurantExternalOrdersTable.integrationId, integrationId),
     eq(posRestaurantExternalOrdersTable.companyId, cid),
   )).orderBy(desc(posRestaurantExternalOrdersTable.receivedAt)).limit(100);
-  res.json(rows);
+  res.json(rows.map(row => ({ ...row.incoming, posOrderStatus: row.posOrderStatus })));
 });
 
 router.get("/delivery-integrations/:id/mappings", async (req, res): Promise<void> => {
@@ -452,6 +493,120 @@ router.post("/delivery-integrations/:integrationId/orders/:orderId/accept", asyn
     const statusCode = Number((error as { statusCode?: number })?.statusCode) || 500;
     if (statusCode >= 500) req.log.error({ err: error, integrationId, rowId }, "HungerStation order acceptance failed");
     res.status(statusCode).json({ error: error instanceof Error ? error.message : "تعذر قبول طلب HungerStation" });
+  }
+});
+
+router.post("/delivery-integrations/:integrationId/orders/:orderId/provider-status", async (req, res): Promise<void> => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "تحديث حالة المنصة متاح لمسؤول الشركة فقط" }); return; }
+  const integrationId = Number(req.params.integrationId);
+  const rowId = Number(req.params.orderId);
+  const status = req.body?.status;
+  const cancellationReason = typeof req.body?.cancellationReason === "string" ? req.body.cancellationReason.trim() : "";
+  if (!Number.isSafeInteger(integrationId) || integrationId <= 0 ||
+      !Number.isSafeInteger(rowId) || rowId <= 0 ||
+      !["READY_FOR_PICKUP", "DISPATCHED", "CANCELLED"].includes(status)) {
+    res.status(400).json({ error: "بيانات تحديث حالة HungerStation غير صالحة" }); return;
+  }
+  try {
+    const [incoming] = await db.select().from(posRestaurantExternalOrdersTable).where(and(
+      eq(posRestaurantExternalOrdersTable.id, rowId),
+      eq(posRestaurantExternalOrdersTable.integrationId, integrationId),
+      eq(posRestaurantExternalOrdersTable.companyId, cid),
+    )).limit(1);
+    if (!incoming) { res.status(404).json({ error: "طلب المنصة غير موجود" }); return; }
+    if (status === "CANCELLED") {
+      if (cancellationReason !== "ITEM_UNAVAILABLE") {
+        res.status(400).json({ error: "سبب الإلغاء غير صالح" }); return;
+      }
+      if (incoming.posOrderId) {
+        res.status(409).json({ error: "تم إنشاء طلب POS بالفعل؛ استخدم دورة إلغاء المطعم قبل إبلاغ المنصة" }); return;
+      }
+      if (incoming.providerStatus === "CANCELLED") { res.json({ ok: true, status, alreadyUpdated: true }); return; }
+      if (incoming.providerStatus !== "RECEIVED") {
+        res.status(409).json({ error: "حالة الطلب الحالية لا تسمح بإلغائه" }); return;
+      }
+    } else if (!incoming.posOrderId) {
+      res.status(409).json({ error: "اقبل الطلب وأنشئ طلب POS أولاً" }); return;
+    }
+    const [integration] = await db.select().from(posRestaurantDeliveryIntegrationsTable).where(and(
+      eq(posRestaurantDeliveryIntegrationsTable.id, integrationId),
+      eq(posRestaurantDeliveryIntegrationsTable.companyId, cid),
+    )).limit(1);
+    if (!integration || (integration.environment !== "sandbox" && !integration.isEnabled)) {
+      res.status(409).json({ error: "تحديث طلبات الإنتاج غير مفعّل بعد" }); return;
+    }
+    const payload = incoming.orderPayload as any;
+    const requiredStatus = payload.transport_type === "VENDOR_DELIVERY" ? "DISPATCHED"
+      : payload.transport_type === "LOGISTICS_DELIVERY" ? "READY_FOR_PICKUP" : null;
+    if (status !== "CANCELLED" && status !== requiredStatus) {
+      res.status(409).json({ error: "حالة الإرسال لا تتوافق مع وسيلة التوصيل في HungerStation" }); return;
+    }
+    const providerAlreadyTerminal = ["CANCELLED", "CANCELED", "DELIVERED", "DISPATCHED"].includes(incoming.providerStatus);
+    const readyAlreadyReported = status === "READY_FOR_PICKUP" && incoming.providerStatus === "READY_FOR_PICKUP";
+    if (status !== "CANCELLED" && (providerAlreadyTerminal || readyAlreadyReported)) {
+      if (incoming.providerStatus === status) { res.json({ ok: true, alreadyUpdated: true }); return; }
+      res.status(409).json({ error: "حالة الطلب الحالية لا تسمح بهذا التحديث" }); return;
+    }
+    if (status !== "CANCELLED") {
+      const [posOrder] = await db.select({ id: posOrdersTable.id, status: posOrdersTable.status }).from(posOrdersTable).where(and(
+        eq(posOrdersTable.id, incoming.posOrderId!), eq(posOrdersTable.companyId, cid),
+      )).limit(1);
+      if (!posOrder || posOrder.status !== "ready") {
+        res.status(409).json({ error: "يجب أن تصبح جميع أصناف الطلب جاهزة في المطبخ أولاً" }); return;
+      }
+    }
+    const providerOrderId = typeof payload.order_id === "string" ? payload.order_id.trim() : "";
+    const rawItems = Array.isArray(payload.items) ? payload.items : [];
+    if (!providerOrderId || !rawItems.length ||
+        rawItems.some((item: any) => !item?.sku || !item?.pricing || typeof item.pricing !== "object")) {
+      res.status(409).json({ error: "بيانات HungerStation الأصلية غير مكتملة للإرسال" }); return;
+    }
+    const host = integration.environment === "sandbox"
+      ? "https://sandbox.partner.deliveryhero.io"
+      : "https://hungerstation.partner.deliveryhero.io";
+    const token = await getHungerStationAccessToken(integration);
+    const response = await fetch(
+      `${host}/v2/chains/${encodeURIComponent(integration.chainId)}/orders/${encodeURIComponent(providerOrderId)}`,
+      {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          order_id: providerOrderId,
+          status,
+          ...(status === "CANCELLED" ? { cancellation: { reason: cancellationReason } } : {}),
+          items: rawItems.map((item: any) => ({
+            ...(typeof item._id === "string" ? { _id: item._id } : {}),
+            ...(typeof item.replaced_id === "string" ? { replaced_id: item.replaced_id } : {}),
+            sku: String(item.sku),
+            pricing: item.pricing,
+            status: "IN_CART",
+          })),
+        }),
+        signal: AbortSignal.timeout(12_000),
+      },
+    );
+    if (!response.ok) {
+      req.log.warn({ integrationId, externalOrderRowId: rowId, providerStatus: response.status }, "HungerStation status update rejected");
+      res.status(502).json({ error: `رفضت HungerStation تحديث الحالة (HTTP ${response.status})` }); return;
+    }
+    await db.update(posRestaurantExternalOrdersTable).set({
+      providerStatus: status,
+      orderPayload: { ...payload, status },
+      updatedAt: new Date(),
+    }).where(and(
+      eq(posRestaurantExternalOrdersTable.id, incoming.id),
+      eq(posRestaurantExternalOrdersTable.companyId, cid),
+    ));
+    res.json({ ok: true, status });
+  } catch (error) {
+    const upstreamStatus = Number((error as { providerStatus?: number })?.providerStatus);
+    if (upstreamStatus) {
+      req.log.warn({ integrationId, externalOrderRowId: rowId, providerStatus: upstreamStatus }, "HungerStation token request failed");
+      res.status(502).json({ error: `تعذرت مصادقة HungerStation (HTTP ${upstreamStatus})` }); return;
+    }
+    req.log.error({ err: error, integrationId, externalOrderRowId: rowId }, "HungerStation status update failed");
+    res.status(502).json({ error: "تعذر إرسال تحديث الحالة إلى HungerStation" });
   }
 });
 

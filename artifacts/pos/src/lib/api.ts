@@ -663,6 +663,14 @@ export const api = {
   rAcceptDeliveryOrder: (integrationId: number, rowId: number) =>
     req<{ ok: true; posOrderId: number; alreadyAccepted: boolean }>(
       "POST", `/api/pos-restaurant/delivery-integrations/${integrationId}/orders/${rowId}/accept`, {}),
+  rUpdateDeliveryProviderStatus: (
+    integrationId: number,
+    rowId: number,
+    status: "READY_FOR_PICKUP" | "DISPATCHED" | "CANCELLED",
+    cancellationReason?: string,
+  ) =>
+    req<{ ok: true; status: string; alreadyUpdated?: boolean }>(
+      "POST", `/api/pos-restaurant/delivery-integrations/${integrationId}/orders/${rowId}/provider-status`, { status, cancellationReason }),
   rLoyaltyPreview: (orderId: number, customerId: number, pointsRequested: number) =>
     req<RLoyaltyPreview>("GET", `/api/pos-restaurant/orders/${orderId}/loyalty-preview?customerId=${customerId}&pointsRequested=${pointsRequested}`),
   rBillOrder: (id: number, b: { salesInvoiceId?: number; customerId?: number; pointsRedeemed?: number } = {}) =>
@@ -794,6 +802,7 @@ export type RestaurantExternalOrder = {
   providerStatus: string;
   orderPayload: Record<string, any>;
   posOrderId: number | null;
+  posOrderStatus: string | null;
   receivedAt: string;
 };
 
