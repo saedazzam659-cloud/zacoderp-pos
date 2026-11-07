@@ -58,6 +58,9 @@ import type {
   Customer,
   CustomerUpdate,
   DashboardSummary,
+  EmployeeProvisionBalanceList,
+  EmployeeProvisionSettlement,
+  EmployeeProvisionSettlementInput,
   ErrorResponse,
   GetAdditionalAccountingReportParams,
   GetAdditionalPurchaseReportParams,
@@ -13336,6 +13339,154 @@ export function useGetMobileTrackingManagerReport<TData = Awaited<ReturnType<typ
 
 
 
+
+export const getGetEmployeeProvisionBalancesUrl = () => {
+
+
+
+
+  return `/api/employees/payroll/provision-balances`
+}
+
+/**
+ * @summary List posted employee leave and travel-ticket provision balances
+ */
+export const getEmployeeProvisionBalances = async ( options?: RequestInit): Promise<EmployeeProvisionBalanceList> => {
+
+  return customFetch<EmployeeProvisionBalanceList>(getGetEmployeeProvisionBalancesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetEmployeeProvisionBalancesQueryKey = () => {
+    return [
+    `/api/employees/payroll/provision-balances`
+    ] as const;
+    }
+
+
+export const getGetEmployeeProvisionBalancesQueryOptions = <TData = Awaited<ReturnType<typeof getEmployeeProvisionBalances>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEmployeeProvisionBalances>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEmployeeProvisionBalancesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEmployeeProvisionBalances>>> = ({ signal }) => getEmployeeProvisionBalances({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEmployeeProvisionBalances>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetEmployeeProvisionBalancesQueryResult = NonNullable<Awaited<ReturnType<typeof getEmployeeProvisionBalances>>>
+export type GetEmployeeProvisionBalancesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List posted employee leave and travel-ticket provision balances
+ */
+
+export function useGetEmployeeProvisionBalances<TData = Awaited<ReturnType<typeof getEmployeeProvisionBalances>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEmployeeProvisionBalances>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetEmployeeProvisionBalancesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateEmployeeProvisionSettlementUrl = () => {
+
+
+
+
+  return `/api/employees/payroll/provision-settlements`
+}
+
+/**
+ * @summary Settle an employee provision against approved leave or a posted expense voucher
+ */
+export const createEmployeeProvisionSettlement = async (employeeProvisionSettlementInput: EmployeeProvisionSettlementInput, options?: RequestInit): Promise<EmployeeProvisionSettlement> => {
+
+  return customFetch<EmployeeProvisionSettlement>(getCreateEmployeeProvisionSettlementUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(employeeProvisionSettlementInput)
+  }
+);}
+
+
+
+
+
+export const getCreateEmployeeProvisionSettlementMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEmployeeProvisionSettlement>>, TError,{data: BodyType<EmployeeProvisionSettlementInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createEmployeeProvisionSettlement>>, TError,{data: BodyType<EmployeeProvisionSettlementInput>}, TContext> => {
+
+const mutationKey = ['createEmployeeProvisionSettlement'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createEmployeeProvisionSettlement>>, {data: BodyType<EmployeeProvisionSettlementInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createEmployeeProvisionSettlement(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateEmployeeProvisionSettlementMutationResult = NonNullable<Awaited<ReturnType<typeof createEmployeeProvisionSettlement>>>
+    export type CreateEmployeeProvisionSettlementMutationBody = BodyType<EmployeeProvisionSettlementInput>
+    export type CreateEmployeeProvisionSettlementMutationError = ErrorType<void>
+
+    /**
+ * @summary Settle an employee provision against approved leave or a posted expense voucher
+ */
+export const useCreateEmployeeProvisionSettlement = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEmployeeProvisionSettlement>>, TError,{data: BodyType<EmployeeProvisionSettlementInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createEmployeeProvisionSettlement>>,
+        TError,
+        {data: BodyType<EmployeeProvisionSettlementInput>},
+        TContext
+      > => {
+      return useMutation(getCreateEmployeeProvisionSettlementMutationOptions(options));
+    }
 
 export const getGetAgentDatabaseSchemaDiagnosticsUrl = (id: number,) => {
 

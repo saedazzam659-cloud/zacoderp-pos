@@ -2,12 +2,12 @@ import { Router } from "express";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { db } from "@workspace/db";
-import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, payrollAllocationSnapshotsTable, employeeProjectAssignmentsTable, branchesTable, accountsTable, companiesTable, costCentersTable, contractingProjectsTable, employeeViolationsTable, employeeTravelsTable, employeeMedicalInsurancePoliciesTable } from "@workspace/db";
+import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, payrollAllocationSnapshotsTable, employeeProjectAssignmentsTable, branchesTable, accountsTable, companiesTable, costCentersTable, contractingProjectsTable, employeeViolationsTable, employeeTravelsTable, employeeMedicalInsurancePoliciesTable, employeeProvisionSettlementsTable, paymentVouchersTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { nextSequenceOrFallback, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { requireAdminRole, requirePermission } from "../middleware/permissions.js";
-import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal, buildPayrollPaymentJournal, resolveHrAccounts } from "../lib/hr-journals.js";
+import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal, buildPayrollPaymentJournal, buildEmployeeProvisionSettlementJournal, resolveHrAccounts } from "../lib/hr-journals.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import {
   HrValidationError, dateOrNull, requireDate, assertDateOrder, moneyOrZero, requirePositiveMoney,
@@ -2359,6 +2359,144 @@ router.post("/calc/overtime", async (req, res) => {
       legalRef: "المادة 107 — أجر الساعة الإضافية = أجر الساعة العادية + 50% منه",
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/payroll/provision-balances", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const accrued = await db.select({
+      employeeId: payrollLinesTable.employeeId,
+      employeeName: employeesTable.nameAr,
+      nameEn: employeesTable.nameEn,
+      year: payrollRunsTable.year,
+      month: payrollRunsTable.month,
+      leaveAmount: sql<string>`coalesce(sum(${payrollLinesTable.leaveProvisionAmount}), 0)`,
+      ticketAmount: sql<string>`coalesce(sum(${payrollLinesTable.travelTicketProvisionAmount}), 0)`,
+    }).from(payrollRunsTable)
+      .innerJoin(payrollLinesTable, eq(payrollLinesTable.payrollRunId, payrollRunsTable.id))
+      .innerJoin(employeesTable, eq(employeesTable.id, payrollLinesTable.employeeId))
+      .where(and(eq(payrollRunsTable.companyId, cid), inArray(payrollRunsTable.status, ["posted", "paid"])))
+      .groupBy(payrollLinesTable.employeeId, employeesTable.nameAr, employeesTable.nameEn, payrollRunsTable.year, payrollRunsTable.month);
+    const settlements = await db.select().from(employeeProvisionSettlementsTable)
+      .where(and(eq(employeeProvisionSettlementsTable.companyId, cid), eq(employeeProvisionSettlementsTable.status, "posted")));
+    const byKey = new Map<string, number>();
+    for (const settlement of settlements) {
+      const key = `${settlement.employeeId}:${settlement.provisionType}:${settlement.provisionPeriod}`;
+      byKey.set(key, (byKey.get(key) ?? 0) + Number(settlement.amount));
+    }
+    const rows = accrued.flatMap((row) => {
+      const period = `${row.year}-${String(row.month).padStart(2, "0")}`;
+      return ([
+        { provisionType: "annual_leave", accrued: Number(row.leaveAmount), employeeId: row.employeeId, employeeName: row.employeeName, nameEn: row.nameEn, period },
+        { provisionType: "travel_ticket", accrued: Number(row.ticketAmount), employeeId: row.employeeId, employeeName: row.employeeName, nameEn: row.nameEn, period },
+      ] as const).map((item) => ({
+        ...item,
+        settled: byKey.get(`${row.employeeId}:${item.provisionType}:${period}`) ?? 0,
+        balance: Math.max(0, Number((item.accrued - (byKey.get(`${row.employeeId}:${item.provisionType}:${period}`) ?? 0)).toFixed(2))),
+      }));
+    }).filter((row) => row.accrued > 0 || row.settled > 0);
+    res.json(rows.sort((a, b) => b.period.localeCompare(a.period) || String(a.employeeName).localeCompare(String(b.employeeName))));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/payroll/provision-settlements", requirePostRight("payroll"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const b = req.body ?? {};
+    const employeeId = Number(b.employeeId);
+    const sourceRecordId = Number(b.sourceRecordId);
+    const amount = Number(b.amount);
+    const provisionType = b.provisionType;
+    const period = String(b.provisionPeriod ?? "");
+    const sourceType = String(b.sourceType ?? "");
+    const settlementDate = requireDate(b.settlementDate, "تاريخ التسوية");
+    if (!Number.isInteger(employeeId) || employeeId <= 0 ||
+        !Number.isInteger(sourceRecordId) || sourceRecordId <= 0 ||
+        !["annual_leave", "travel_ticket"].includes(provisionType) ||
+        !/^(?:19|20|21)\d{2}-(?:0[1-9]|1[0-2])$/.test(period) ||
+        !Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) {
+      res.status(400).json({ error: "بيانات التسوية غير مكتملة أو غير صحيحة" }); return;
+    }
+    if ((provisionType === "annual_leave" && sourceType !== "employee_leave") ||
+        (provisionType === "travel_ticket" && sourceType !== "payment_voucher")) {
+      res.status(400).json({ error: "اربط الإجازة بإجازة موظف معتمدة، وتذكرة السفر بسند مصروف مرحّل" }); return;
+    }
+    const result = await db.transaction(async (tx) => {
+      const lockKey = `employee_provision:${employeeId}:${provisionType}:${period}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${lockKey}))`);
+      const [employee] = await tx.select({ id: employeesTable.id }).from(employeesTable).where(and(
+        eq(employeesTable.id, employeeId), eq(employeesTable.companyId, cid),
+      ));
+      if (!employee) throw Object.assign(new Error("الموظف غير موجود في الشركة الحالية"), { status: 404 });
+      const [runAmounts] = await tx.select({
+        accrued: sql<string>`coalesce(sum(${provisionType === "annual_leave" ? payrollLinesTable.leaveProvisionAmount : payrollLinesTable.travelTicketProvisionAmount}), 0)`,
+      }).from(payrollRunsTable).innerJoin(payrollLinesTable, eq(payrollLinesTable.payrollRunId, payrollRunsTable.id))
+        .where(and(eq(payrollRunsTable.companyId, cid), eq(payrollLinesTable.employeeId, employeeId),
+          eq(payrollRunsTable.year, Number(period.slice(0, 4))), eq(payrollRunsTable.month, Number(period.slice(5, 7))),
+          inArray(payrollRunsTable.status, ["posted", "paid"])));
+      const [settled] = await tx.select({
+        amount: sql<string>`coalesce(sum(${employeeProvisionSettlementsTable.amount}), 0)`,
+      }).from(employeeProvisionSettlementsTable).where(and(
+        eq(employeeProvisionSettlementsTable.companyId, cid), eq(employeeProvisionSettlementsTable.employeeId, employeeId),
+        eq(employeeProvisionSettlementsTable.provisionType, provisionType), eq(employeeProvisionSettlementsTable.provisionPeriod, period),
+        eq(employeeProvisionSettlementsTable.status, "posted"),
+      ));
+      const available = Number(runAmounts?.accrued ?? 0) - Number(settled?.amount ?? 0);
+      if (amount > available + 0.005) throw Object.assign(new Error("مبلغ التسوية يتجاوز رصيد المخصص المتاح لهذا الموظف والفترة"), { status: 409 });
+      if (provisionType === "annual_leave") {
+        const [leave] = await tx.select({ id: employeeLeavesTable.id }).from(employeeLeavesTable).where(and(
+          eq(employeeLeavesTable.id, sourceRecordId), eq(employeeLeavesTable.companyId, cid),
+          eq(employeeLeavesTable.employeeId, employeeId), eq(employeeLeavesTable.status, "approved"),
+          eq(employeeLeavesTable.paid, true), eq(employeeLeavesTable.leaveType, "annual"),
+        ));
+        if (!leave) throw Object.assign(new Error("اختر إجازة سنوية مدفوعة ومعتمدة لهذا الموظف"), { status: 400 });
+      } else {
+        const [voucher] = await tx.select({
+          id: paymentVouchersTable.id,
+          journalEntryId: paymentVouchersTable.journalEntryId,
+        }).from(paymentVouchersTable).innerJoin(journalEntriesTable, and(
+          eq(journalEntriesTable.id, paymentVouchersTable.journalEntryId),
+          eq(journalEntriesTable.companyId, cid), eq(journalEntriesTable.status, "posted"),
+        )).where(and(eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.id, sourceRecordId),
+          eq(paymentVouchersTable.status, "posted")));
+        if (!voucher?.journalEntryId) throw Object.assign(new Error("سند مصروف التذكرة غير مرحّل"), { status: 400 });
+        const hrAccounts = await resolveHrAccounts(cid, true, tx);
+        if (!hrAccounts.travelTicketExpense) throw Object.assign(new Error("اربط حساب مصروف تذاكر السفر أولاً"), { status: 400 });
+        const [sourceDebit] = await tx.select({
+          amount: sql<string>`coalesce(sum(${journalEntryLinesTable.debit}), 0)`,
+        }).from(journalEntryLinesTable).where(and(
+          eq(journalEntryLinesTable.entryId, voucher.journalEntryId),
+          eq(journalEntryLinesTable.accountId, hrAccounts.travelTicketExpense),
+          sql`${journalEntryLinesTable.debit} > 0`,
+        ));
+        const [alreadySettled] = await tx.select({
+          amount: sql<string>`coalesce(sum(${employeeProvisionSettlementsTable.amount}), 0)`,
+        }).from(employeeProvisionSettlementsTable).where(and(
+          eq(employeeProvisionSettlementsTable.companyId, cid),
+          eq(employeeProvisionSettlementsTable.provisionType, "travel_ticket"),
+          eq(employeeProvisionSettlementsTable.sourceType, "payment_voucher"),
+          eq(employeeProvisionSettlementsTable.sourceRecordId, sourceRecordId),
+          eq(employeeProvisionSettlementsTable.status, "posted"),
+        ));
+        if (amount > Number(sourceDebit?.amount ?? 0) - Number(alreadySettled?.amount ?? 0) + 0.005)
+          throw Object.assign(new Error("المبلغ يتجاوز مصروف التذكرة الفعلي غير المستخدم في تسويات سابقة"), { status: 409 });
+      }
+      const [created] = await tx.insert(employeeProvisionSettlementsTable).values({
+        companyId: cid, employeeId, provisionType, provisionPeriod: period, sourceType, sourceRecordId,
+        settlementDate, amount: amount.toFixed(2), status: "draft",
+        notes: typeof b.notes === "string" ? b.notes.trim().slice(0, 500) || null : null,
+        createdById: Number(req.authUser?.id) || null,
+      }).returning();
+      const journalEntryId = await buildEmployeeProvisionSettlementJournal(cid, created.id, {
+        provisionType, employeeId, amount, settlementDate, provisionPeriod: period,
+      }, tx);
+      const [posted] = await tx.update(employeeProvisionSettlementsTable).set({
+        journalEntryId, status: "posted", updatedAt: new Date(),
+      }).where(eq(employeeProvisionSettlementsTable.id, created.id)).returning();
+      return posted;
+    });
+    res.status(201).json(result);
+  } catch (e: any) { res.status(e?.status ?? 400).json({ error: e?.message ?? "تعذّرت تسوية المخصص" }); }
 });
 
 // GOSI (full breakdown)

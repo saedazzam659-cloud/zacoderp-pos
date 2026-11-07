@@ -6106,6 +6106,63 @@ export const GetMobileTrackingManagerReportResponse = zod.object({
 
 
 /**
+ * @summary List posted employee leave and travel-ticket provision balances
+ */
+export const getEmployeeProvisionBalancesResponsePeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+
+export const GetEmployeeProvisionBalancesResponseItem = zod.object({
+  "employeeId": zod.number(),
+  "employeeName": zod.string(),
+  "nameEn": zod.string().nullish(),
+  "provisionType": zod.enum(['annual_leave', 'travel_ticket']),
+  "period": zod.string().regex(getEmployeeProvisionBalancesResponsePeriodRegExp),
+  "accrued": zod.number(),
+  "settled": zod.number(),
+  "balance": zod.number()
+})
+export const GetEmployeeProvisionBalancesResponse = zod.array(GetEmployeeProvisionBalancesResponseItem)
+
+
+/**
+ * @summary Settle an employee provision against approved leave or a posted expense voucher
+ */
+
+export const createEmployeeProvisionSettlementBodyProvisionPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+export const createEmployeeProvisionSettlementBodyAmountExclusiveMin = 0;
+
+export const createEmployeeProvisionSettlementBodyNotesMax = 500;
+
+
+
+export const CreateEmployeeProvisionSettlementBody = zod.object({
+  "employeeId": zod.number().min(1),
+  "provisionType": zod.enum(['annual_leave', 'travel_ticket']),
+  "provisionPeriod": zod.string().regex(createEmployeeProvisionSettlementBodyProvisionPeriodRegExp),
+  "sourceType": zod.enum(['employee_leave', 'payment_voucher']),
+  "sourceRecordId": zod.number().min(1),
+  "settlementDate": zod.coerce.date(),
+  "amount": zod.number().gt(createEmployeeProvisionSettlementBodyAmountExclusiveMin),
+  "notes": zod.string().max(createEmployeeProvisionSettlementBodyNotesMax).optional()
+})
+
+export const CreateEmployeeProvisionSettlementResponse = zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "employeeId": zod.number(),
+  "provisionType": zod.enum(['annual_leave', 'travel_ticket']),
+  "provisionPeriod": zod.string(),
+  "sourceType": zod.enum(['employee_leave', 'payment_voucher']),
+  "sourceRecordId": zod.number(),
+  "settlementDate": zod.coerce.date(),
+  "amount": zod.string(),
+  "journalEntryId": zod.number().nullable(),
+  "status": zod.enum(['draft', 'posted', 'reversed'])
+})
+
+
+/**
  * @summary Read-only diagnostics for the designated external agent database
  */
 

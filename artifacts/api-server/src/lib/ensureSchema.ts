@@ -1943,6 +1943,34 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
             ADD COLUMN IF NOT EXISTS manufacturing_allocation_method TEXT NOT NULL DEFAULT 'none',
             ADD COLUMN IF NOT EXISTS approved_production_quantity NUMERIC(14,4),
             ADD COLUMN IF NOT EXISTS approved_manufacturing_hours NUMERIC(14,4);` },
+  { label: "employee provision snapshots and settlements",
+    sql: `ALTER TABLE payroll_runs
+            ADD COLUMN IF NOT EXISTS provision_snapshots_captured BOOLEAN NOT NULL DEFAULT FALSE;
+          ALTER TABLE payroll_lines
+            ADD COLUMN IF NOT EXISTS eos_provision_amount NUMERIC(12,2),
+            ADD COLUMN IF NOT EXISTS leave_provision_amount NUMERIC(12,2),
+            ADD COLUMN IF NOT EXISTS travel_ticket_provision_amount NUMERIC(12,2);
+          CREATE TABLE IF NOT EXISTS employee_provision_settlements (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+            provision_type TEXT NOT NULL,
+            provision_period TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_record_id INTEGER NOT NULL,
+            settlement_date DATE NOT NULL,
+            amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+            journal_entry_id INTEGER,
+            reversal_journal_entry_id INTEGER,
+            status TEXT NOT NULL DEFAULT 'posted',
+            notes TEXT,
+            created_by_id INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE (company_id, provision_type, employee_id, provision_period, source_type, source_record_id)
+          );
+          CREATE INDEX IF NOT EXISTS employee_provision_settlements_balance_idx
+            ON employee_provision_settlements(company_id, employee_id, provision_type, provision_period, status);` },
 ];
 
 async function ensurePayrollAllocationSchema(options: { strict?: boolean } = {}): Promise<string[]> {

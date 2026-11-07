@@ -504,6 +504,47 @@ export async function buildPayrollJournal(
 // ─── PAYROLL PAYMENT JOURNAL (صرف الرواتب) ──────────────────────────────────
 // DR salaries payable (21051) / CR cash|bank — the actual salary disbursement
 // after the payroll run has been posted (which credited 21051).
+export async function buildEmployeeProvisionSettlementJournal(
+  cid: number,
+  settlementId: number,
+  settlement: { provisionType: "annual_leave" | "travel_ticket"; employeeId: number; amount: unknown; settlementDate: string; provisionPeriod: string },
+  dx: DbOrTx = db,
+): Promise<number> {
+  const accounts = await resolveHrAccounts(cid, true, dx);
+  const leave = settlement.provisionType === "annual_leave";
+  const liability = leave ? accounts.leaveProvisionLiability : accounts.travelTicketLiability;
+  const expense = leave ? accounts.salariesExpense : accounts.travelTicketExpense;
+  if (!liability || !expense) throw new Error("حسابات تسوية المخصص غير مربوطة");
+  const amount = roundMoney(num(settlement.amount));
+  if (!(amount > 0)) throw new Error("مبلغ التسوية يجب أن يكون موجباً");
+  const writable = await assertWritableForDate(cid, settlement.settlementDate);
+  if (!writable.ok) throw new Error(writable.reason);
+  const period = settlement.provisionPeriod;
+  const description = leave
+    ? `تسوية مخصص إجازة الموظف ${settlement.employeeId} عن ${period}`
+    : `تسوية مخصص تذكرة الموظف ${settlement.employeeId} عن ${period}`;
+  const [entry] = await dx.insert(journalEntriesTable).values({
+    companyId: cid,
+    branchId: null,
+    docNumber: (await resolveJeNumber({
+      companyId: cid, sourceType: "employee_provision_settlement", sourceId: settlementId,
+      subType: "hr_payroll", branchId: null, docDate: settlement.settlementDate,
+      userId: null, dx: dx as any,
+    })) ?? `HRS-${settlementId}`,
+    entryDate: settlement.settlementDate,
+    currency: "SAR",
+    exchangeRate: "1",
+    description,
+    entryType: "employee_provision_settlement",
+    status: await resolvePostingStatus(cid, "payroll"),
+  }).returning({ id: journalEntriesTable.id });
+  await dx.insert(journalEntryLinesTable).values([
+    { entryId: entry.id, accountId: liability, debit: fix(amount), credit: "0.00", description: `تخفيض مخصص ${period}`, sortOrder: 0 },
+    { entryId: entry.id, accountId: expense, debit: "0.00", credit: fix(amount), description, sortOrder: 1 },
+  ]);
+  return entry.id;
+}
+
 export async function buildPayrollPaymentJournal(
   cid: number,
   runId: number,

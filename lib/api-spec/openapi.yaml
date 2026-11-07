@@ -3850,6 +3850,35 @@ paths:
         "401": { description: Unauthorized }
         "403": { description: Mobile tracking management is not enabled }
 
+  /employees/payroll/provision-balances:
+    get:
+      operationId: getEmployeeProvisionBalances
+      tags: [employees]
+      summary: List posted employee leave and travel-ticket provision balances
+      responses:
+        "200":
+          description: Employee provision balances grouped by payroll period
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmployeeProvisionBalanceList" }
+  /employees/payroll/provision-settlements:
+    post:
+      operationId: createEmployeeProvisionSettlement
+      tags: [employees]
+      summary: Settle an employee provision against approved leave or a posted expense voucher
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmployeeProvisionSettlementInput" }
+      responses:
+        "201":
+          description: Settlement journal posted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmployeeProvisionSettlement" }
+        "409":
+          description: Available employee provision or source expense is insufficient
   /admin/agent-instances/{id}/db-schema-diagnostics:
     get:
       operationId: getAgentDatabaseSchemaDiagnostics
@@ -6654,6 +6683,48 @@ components:
     CashExpenseList:
       type: array
       items: { $ref: "#/components/schemas/CashExpense" }
+    EmployeeProvisionBalance:
+      type: object
+      required: [employeeId, employeeName, provisionType, period, accrued, settled, balance]
+      properties:
+        employeeId: { type: integer }
+        employeeName: { type: string }
+        nameEn: { type: ["string", "null"] }
+        provisionType: { type: string, enum: [annual_leave, travel_ticket] }
+        period: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+        accrued: { type: number, format: double }
+        settled: { type: number, format: double }
+        balance: { type: number, format: double }
+    EmployeeProvisionBalanceList:
+      type: array
+      items: { $ref: "#/components/schemas/EmployeeProvisionBalance" }
+    EmployeeProvisionSettlementInput:
+      type: object
+      required: [employeeId, provisionType, provisionPeriod, sourceType, sourceRecordId, settlementDate, amount]
+      properties:
+        employeeId: { type: integer, minimum: 1 }
+        provisionType: { type: string, enum: [annual_leave, travel_ticket] }
+        provisionPeriod: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+        sourceType: { type: string, enum: [employee_leave, payment_voucher] }
+        sourceRecordId: { type: integer, minimum: 1 }
+        settlementDate: { type: string, format: date }
+        amount: { type: number, exclusiveMinimum: 0 }
+        notes: { type: string, maxLength: 500 }
+    EmployeeProvisionSettlement:
+      type: object
+      required: [id, companyId, employeeId, provisionType, provisionPeriod, sourceType, sourceRecordId, settlementDate, amount, journalEntryId, status]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        employeeId: { type: integer }
+        provisionType: { type: string, enum: [annual_leave, travel_ticket] }
+        provisionPeriod: { type: string }
+        sourceType: { type: string, enum: [employee_leave, payment_voucher] }
+        sourceRecordId: { type: integer }
+        settlementDate: { type: string, format: date }
+        amount: { type: string }
+        journalEntryId: { type: ["integer", "null"] }
+        status: { type: string, enum: [draft, posted, reversed] }
     CashExpenseInput:
       type: object
       required: [date, cashBoxId, expenseAccountId, amount, description]
