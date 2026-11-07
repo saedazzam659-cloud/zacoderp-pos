@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { manufacturingCashExpenseFields, assertManufacturingCashExpenseReversible } from "../lib/manufacturingCashExpense.js";
+import { manufacturingCashExpenseFields, assertManufacturingCashExpenseReversible } from "../lib/manufacturingCashExpense.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import {
