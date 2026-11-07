@@ -15,7 +15,7 @@ node .\server.mjs
 
 Keep the token private. It is shown once in restaurant settings and stored hashed on the server. The helper binds to `127.0.0.1` and does not expose a listener to the branch network.
 
-The helper exposes printer discovery, test printing, and an outbound poller for branch kitchen tickets. It tries the primary printer first, then the backup, and reports the result to the API. The service only polls when `POS_API_URL` is set.
+The helper exposes printer discovery, test printing, and an outbound poller for branch kitchen tickets. It tries the primary printer first, then the backup, and reports the result to the API. Newly sent lines, sent-line modifier changes, and cancellations produce station-specific slips. The service only polls when `POS_API_URL` is set.
 
 ## Endpoints
 

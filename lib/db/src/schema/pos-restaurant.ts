@@ -132,6 +132,7 @@ export const posRestaurantKitchenPrintJobsTable = pgTable("pos_restaurant_kitche
   stationKey: text("station_key").notNull(),
   idempotencyKey: text("idempotency_key").notNull(),
   payload: jsonb("payload").$type<{
+    operation: "new" | "update" | "cancel";
     orderNumber: string; channel: string; tableName: string | null; stationName: string;
     primaryPrinterName: string; backupPrinterName: string | null;
     items: Array<{ name: string; qty: string; notes: string | null; modifiers: Array<{ option: string }> }>;

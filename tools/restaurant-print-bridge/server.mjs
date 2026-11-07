@@ -47,8 +47,11 @@ function send(res, status, body) {
 }
 
 async function printTicket(printerName, payload) {
+  const title = payload.operation === "cancel" ? "إلغاء من المطبخ"
+    : payload.operation === "update" ? "تعديل طلب المطبخ"
+      : "طلب المطبخ";
   const lines = [
-    `طلب المطبخ: ${payload.orderNumber}`,
+    `${title}: ${payload.orderNumber}`,
     `المحطة: ${payload.stationName}`,
     payload.tableName ? `الطاولة: ${payload.tableName}` : "",
     "------------------------------",
@@ -179,6 +182,7 @@ const server = createServer(async (req, res) => {
       const printerName = String(input.printerName ?? "").trim();
       if (!printerName || printerName.length > 200) return send(res, 400, { error: "Invalid printer name" });
       await printTicket(printerName, {
+        operation: "new",
         orderNumber: "اختبار",
         stationName: "طباعة مطبخ المطعم",
         tableName: new Date().toLocaleString(),

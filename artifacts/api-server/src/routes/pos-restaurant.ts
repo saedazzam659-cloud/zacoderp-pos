@@ -54,6 +54,57 @@ async function authenticatePrintBridge(req: any): Promise<typeof posRestaurantPr
   return bridge ?? null;
 }
 
+async function enqueueKitchenPrintJob(
+  tx: any,
+  order: typeof posOrdersTable.$inferSelect,
+  stationKey: string,
+  lines: Array<{
+    id: number; nameSnapshot: string; qty: string; notes: string | null;
+    modifiers: Array<{ option: string }> | null;
+  }>,
+  operation: "new" | "update" | "cancel",
+  idempotencyKey: string,
+) {
+  const [route] = await tx.select().from(posRestaurantKitchenPrinterRoutesTable).where(and(
+    eq(posRestaurantKitchenPrinterRoutesTable.companyId, order.companyId),
+    eq(posRestaurantKitchenPrinterRoutesTable.branchId, order.branchId),
+    eq(posRestaurantKitchenPrinterRoutesTable.stationKey, stationKey),
+    eq(posRestaurantKitchenPrinterRoutesTable.isActive, true),
+  ));
+  if (!route?.primaryPrinterName || !lines.length) return;
+  const [station] = await tx.select({ nameAr: posRestaurantKitchenStationsTable.nameAr })
+    .from(posRestaurantKitchenStationsTable).where(and(
+      eq(posRestaurantKitchenStationsTable.companyId, order.companyId),
+      eq(posRestaurantKitchenStationsTable.stationKey, stationKey),
+    ));
+  const [table] = order.tableId ? await tx.select({ nameAr: posTablesTable.nameAr, code: posTablesTable.code })
+    .from(posTablesTable).where(and(
+      eq(posTablesTable.id, order.tableId), eq(posTablesTable.companyId, order.companyId),
+    )) : [];
+  await tx.insert(posRestaurantKitchenPrintJobsTable).values({
+    companyId: order.companyId,
+    branchId: order.branchId,
+    orderId: order.id,
+    stationKey,
+    idempotencyKey,
+    payload: {
+      operation,
+      orderNumber: order.orderNumber,
+      channel: order.channel,
+      tableName: table ? `${table.nameAr}${table.code ? ` (${table.code})` : ""}` : null,
+      stationName: station?.nameAr ?? stationKey,
+      primaryPrinterName: route.primaryPrinterName,
+      backupPrinterName: route.backupPrinterName,
+      items: lines.map(line => ({
+        name: line.nameSnapshot,
+        qty: line.qty,
+        notes: line.notes,
+        modifiers: (line.modifiers ?? []).map(modifier => ({ option: modifier.option })),
+      })),
+    },
+  }).onConflictDoNothing();
+}
+
 // Branch-scoped bridge endpoints authenticate with a rotated, hashed token,
 // not a cashier session or the general POS Desktop device credential.
 router.get("/print-bridge/jobs/next", async (req, res) => {
@@ -2017,8 +2068,20 @@ router.put("/orders/:id/items/:itemId", async (req, res) => {
     menuItemId: line.menuItemId, erpItemId: menuItem?.itemId, qty: line.qty, price: line.price,
     vatIncluded: menuItem?.vatIncluded ?? true, vatRate: baseItem?.vatRate, modifiers: resolvedModifiers,
   }]).total;
-  await db.update(posOrderItemsTable).set({ modifiers: resolvedModifiers, total, updatedAt: new Date() })
-    .where(eq(posOrderItemsTable.id, lineId));
+  const previousModifierJson = JSON.stringify(line.modifiers ?? []);
+  const nextModifierJson = JSON.stringify(resolvedModifiers ?? []);
+  await db.transaction(async tx => {
+    const updatedAt = new Date();
+    await tx.update(posOrderItemsTable).set({ modifiers: resolvedModifiers, total, updatedAt })
+      .where(eq(posOrderItemsTable.id, lineId));
+    if (line.sentAt && previousModifierJson !== nextModifierJson) {
+      const version = line.updatedAt?.toISOString() ?? line.sentAt.toISOString();
+      const contentHash = createHash("sha256").update(nextModifierJson).digest("hex").slice(0, 16);
+      await enqueueKitchenPrintJob(tx, order, line.kitchenStation, [{
+        id: line.id, nameSnapshot: line.nameSnapshot, qty: line.qty, notes: line.notes, modifiers: resolvedModifiers,
+      }], "update", `update:line:${line.id}:from:${version}:${contentHash}`);
+    }
+  });
   const totals = await recalculateOrderTotals(cid, orderId);
   res.json({ ok: true, ...totals });
 });
@@ -2030,8 +2093,21 @@ router.delete("/orders/:id/items/:itemId", async (req, res) => {
   const [order] = await db.select().from(posOrdersTable)
     .where(and(eq(posOrdersTable.id, id), eq(posOrdersTable.companyId, cid)));
   if (!order) { res.status(404).json({ error: "not found" }); return; }
-  await db.delete(posOrderItemsTable)
-    .where(and(eq(posOrderItemsTable.id, itemId), eq(posOrderItemsTable.orderId, id)));
+  const [line] = await db.select().from(posOrderItemsTable).where(and(
+    eq(posOrderItemsTable.id, itemId), eq(posOrderItemsTable.orderId, id),
+  ));
+  if (line) {
+    await db.transaction(async tx => {
+      if (line.sentAt) {
+        await enqueueKitchenPrintJob(tx, order, line.kitchenStation, [{
+          id: line.id, nameSnapshot: line.nameSnapshot, qty: line.qty, notes: line.notes, modifiers: line.modifiers,
+        }], "cancel", `cancel:line:${line.id}:sent:${line.sentAt.toISOString()}`);
+      }
+      await tx.delete(posOrderItemsTable).where(and(
+        eq(posOrderItemsTable.id, itemId), eq(posOrderItemsTable.orderId, id),
+      ));
+    });
+  }
   const totals = await recalculateOrderTotals(cid, id);
   res.json({ ok: true, ...totals });
 });
@@ -2092,6 +2168,7 @@ router.post("/orders/:id/send", async (req, res) => {
           stationKey,
           idempotencyKey,
           payload: {
+            operation: "new",
             orderNumber: order.orderNumber,
             channel: order.channel,
             tableName: table ? `${table.nameAr}${table.code ? ` (${table.code})` : ""}` : null,
@@ -2291,6 +2368,28 @@ router.post("/orders/:id/cancel", async (req, res) => {
         );
       }
       const now = new Date();
+      const sentLinesToCancel = await tx.select({
+        id: posOrderItemsTable.id,
+        nameSnapshot: posOrderItemsTable.nameSnapshot,
+        qty: posOrderItemsTable.qty,
+        notes: posOrderItemsTable.notes,
+        modifiers: posOrderItemsTable.modifiers,
+        kitchenStation: posOrderItemsTable.kitchenStation,
+        sentAt: posOrderItemsTable.sentAt,
+      }).from(posOrderItemsTable).where(and(
+        eq(posOrderItemsTable.orderId, id),
+        inArray(posOrderItemsTable.status, ["pending", "preparing", "ready"] as any),
+        isNotNull(posOrderItemsTable.sentAt),
+      ));
+      const cancelGroups = new Map<string, typeof sentLinesToCancel>();
+      for (const line of sentLinesToCancel) {
+        cancelGroups.set(line.kitchenStation, [...(cancelGroups.get(line.kitchenStation) ?? []), line]);
+      }
+      for (const [stationKey, lines] of cancelGroups) {
+        const lineIds = lines.map(line => line.id).sort((a, b) => a - b);
+        await enqueueKitchenPrintJob(tx, order, stationKey, lines, "cancel",
+          `cancel:order:${order.id}:station:${stationKey}:lines:${lineIds.join(",")}`);
+      }
       const cancelledLines = await tx.update(posOrderItemsTable)
         .set({ status: "cancelled", updatedAt: now })
         .where(and(
