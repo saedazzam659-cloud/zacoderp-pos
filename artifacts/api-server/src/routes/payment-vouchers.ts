@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { manufacturingCashExpenseFields, assertManufacturingCashExpenseReversible } from "../lib/manufacturingCashExpense.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import {
@@ -1213,6 +1214,9 @@ router.post("/", async (req, res) => {
   const d = req.body;
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+  let manufacturingFields;
+  try { manufacturingFields = await manufacturingCashExpenseFields(db, cid, d); }
+  catch (error: any) { res.status(error.status ?? 400).json({ error: error.message }); return; }
 
   const entityId = d.entityId ? parseInt(d.entityId) : null;
   // Multi-allocation lines (optional). When present they drive the header
@@ -1333,6 +1337,7 @@ router.post("/", async (req, res) => {
       );
     }
     const inserted = await tx.insert(paymentVouchersTable).values({
+    ...manufacturingFields,
     companyId:     cid,
     createdById:   Number(req.authUser?.id) || null,
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
@@ -1417,6 +1422,9 @@ router.put("/:id", async (req, res) => {
     .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن تعديل سند مرحّل" }); return; }
+  let manufacturingFields;
+  try { manufacturingFields = await manufacturingCashExpenseFields(db, cid, { ...existing, ...d }); }
+  catch (error: any) { res.status(error.status ?? 400).json({ error: error.message }); return; }
 
   const entityId = d.entityId ? parseInt(d.entityId) : null;
   let lines: RawPvLine[] | null;
@@ -1555,6 +1563,7 @@ router.put("/:id", async (req, res) => {
       ));
     }
     const updated = await tx.update(paymentVouchersTable).set({
+    ...manufacturingFields,
     branchId:      d.branchId      ? parseInt(d.branchId)      : null,
     date:          d.date,
     paymentType:   d.paymentType,
@@ -1918,6 +1927,37 @@ router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
     .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (existing.status !== "posted") { res.status(400).json({ error: "السند ليس مرحّلاً" }); return; }
+  if (existing.manufacturingEligible) {
+    try {
+      const row = await db.transaction(async (tx) => {
+        await assertManufacturingCashExpenseReversible(tx, cid, id);
+        const [voucher] = await tx.select().from(paymentVouchersTable).where(and(
+          eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid),
+        )).for("update");
+        if (!voucher || voucher.status !== "posted")
+          throw Object.assign(new Error("السند ليس مرحّلاً"), { status: 409 });
+        const linked = voucher.journalEntryId
+          ? await getLinkedSourceJournalEntry(tx, cid, voucher.journalEntryId, "payment") : null;
+        const retain = !!voucher.isSequenceProtected || !!linked?.isSequenceProtected;
+        if (voucher.journalEntryId) {
+          if (retain) await draftLinkedSourceJournalEntry(tx, cid, voucher.journalEntryId, "payment");
+          else {
+            await reserveJeNumberFromEntry(cid, "payment_voucher", id, voucher.journalEntryId, tx as any);
+            await tx.delete(journalEntriesTable).where(and(
+              eq(journalEntriesTable.id, voucher.journalEntryId), eq(journalEntriesTable.companyId, cid),
+            ));
+          }
+        }
+        const [draft] = await tx.update(paymentVouchersTable)
+          .set({ status: "draft", ...(retain ? {} : { journalEntryId: null }) })
+          .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid))).returning();
+        return draft;
+      });
+      res.json(row); return;
+    } catch (error: any) {
+      res.status(error.status ?? 409).json({ error: error.message }); return;
+    }
+  }
   await ensureContractingAccountingTables();
   const settlement = await db.execute(sql`SELECT id FROM contracting_accounting_settlements
     WHERE company_id = ${cid} AND source_voucher_type = 'payment' AND source_voucher_id = ${id}

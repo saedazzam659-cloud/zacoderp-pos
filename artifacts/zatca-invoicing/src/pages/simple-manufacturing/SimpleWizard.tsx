@@ -103,6 +103,7 @@ export function SimpleWizard({
       payroll: saved.payroll?.mode ?? DEFAULT_SIMPLE_MANUFACTURING_COST_MODES.payroll,
       fixed_asset_depreciation: saved.fixed_asset_depreciation?.mode ?? DEFAULT_SIMPLE_MANUFACTURING_COST_MODES.fixed_asset_depreciation,
       prepaid_amortization: saved.prepaid_amortization?.mode ?? DEFAULT_SIMPLE_MANUFACTURING_COST_MODES.prepaid_amortization,
+      cash_expense: saved.cash_expense?.mode ?? "none",
     };
   });
   const [costSourcesState, setCostSourcesState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
@@ -132,6 +133,7 @@ export function SimpleWizard({
       payroll: entry("payroll"),
       fixed_asset_depreciation: entry("fixed_asset_depreciation"),
       prepaid_amortization: entry("prepaid_amortization"),
+      cash_expense: entry("cash_expense"),
     };
   });
   const [accountSettings, setAccountSettings] = useState({
@@ -718,7 +720,7 @@ export function SimpleWizard({
       ? conf.costConfiguration as Partial<ManufacturingCostConfiguration> : {};
     const templateModes = {} as Record<ManufacturingCostCategory, ManufacturingCostMode>;
     const templateManuals = {} as ManufacturingCostConfiguration;
-    (["payroll", "fixed_asset_depreciation", "prepaid_amortization"] as ManufacturingCostCategory[]).forEach(category => {
+    (["payroll", "fixed_asset_depreciation", "prepaid_amortization", "cash_expense"] as ManufacturingCostCategory[]).forEach(category => {
       const entry = templateCosts[category];
       const mode = entry?.mode === "linked" || entry?.mode === "manual" ? entry.mode : "none";
       templateModes[category] = mode;
@@ -749,7 +751,7 @@ export function SimpleWizard({
   };
 
   const costCategories: ManufacturingCostCategory[] = [
-    "payroll", "fixed_asset_depreciation", "prepaid_amortization",
+    "payroll", "fixed_asset_depreciation", "prepaid_amortization", "cash_expense",
   ];
 
   const submit = async (mode: "draft" | "execute") => {
@@ -966,9 +968,11 @@ export function SimpleWizard({
             ? plannedHours
             : 0;
       amount = numerator > 0 && denominator > 0 ? sourceAmount * numerator / denominator : 0;
-    } else if (source.sourceType === "prepaid_amortization") {
-      const denominator = Number(source.meta?.approvedProductionQuantity);
-      amount = denominator > 0 ? sourceAmount * plannedQty / denominator : 0;
+    } else if (source.sourceType === "prepaid_amortization" || source.sourceType === "cash_expense") {
+      const denominator = Number(method === "labor_hours"
+        ? source.meta?.approvedManufacturingHours : source.meta?.approvedProductionQuantity);
+      const numerator = method === "labor_hours" ? plannedLaborPersonHours : plannedQty;
+      amount = denominator > 0 ? sourceAmount * numerator / denominator : 0;
     } else if (source.sourceType === "payroll") {
       const denominator = Number(
         source.meta?.approvedManufacturingHours ?? source.meta?.approvedOperatingHours,
@@ -1832,11 +1836,14 @@ export function SimpleWizard({
                 {costCategories.map(category => {
                   const title = category === "payroll" ? "الرواتب والأجور الصناعية"
                     : category === "fixed_asset_depreciation" ? "الإهلاك"
+                    : category === "cash_expense" ? "مصروفات المصنع النقدية"
                     : "المصروفات المقدمة / الإيجار";
                   const hint = category === "payroll"
                     ? "المسير المجمع الموزع بساعات التصنيع يُعامل كمصروف صناعي غير مباشر. يصبح الأجر مباشراً عندما تُسجل ساعات الموظف على أمر أو مرحلة بعينها."
                     : category === "fixed_asset_depreciation"
                       ? "مصادر إهلاك الأصول المؤهلة للتصنيع"
+                      : category === "cash_expense"
+                        ? "سندات المصروف النقدي المرحّلة والمؤهلة صراحةً للتصنيع"
                       : "أقساط الإيجار والمصروفات المقدمة المرحّلة";
                   const rows = costSources.filter(source => source.sourceType === category);
                   const manual = manualCosts[category];

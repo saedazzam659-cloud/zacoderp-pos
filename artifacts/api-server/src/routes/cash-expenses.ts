@@ -30,6 +30,7 @@ import { cashExpenseBoxAllowed, cashExpenseRecordVisible, summarizeCashExpenseCu
 import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage.js";
 import { extractAuth } from "../middleware/auth.js";
 import { buildPaymentJournal } from "./payment-vouchers.js";
+import { assertManufacturingCashExpenseReversible } from "../lib/manufacturingCashExpense.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -810,6 +811,7 @@ router.post("/:id/cancel", async (req: any, res) => {
   if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف المصروف غير صالح" }); return; }
   try {
     await db.transaction(async (tx) => {
+      await assertManufacturingCashExpenseReversible(tx, scope.companyId, id);
       const [voucher] = await tx.select().from(paymentVouchersTable).where(and(
         eq(paymentVouchersTable.id, id),
         eq(paymentVouchersTable.companyId, scope.companyId),

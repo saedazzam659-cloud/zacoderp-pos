@@ -2,6 +2,7 @@ export const MANUFACTURING_COST_CATEGORIES = [
   "payroll",
   "fixed_asset_depreciation",
   "prepaid_amortization",
+  "cash_expense",
 ] as const;
 
 export type ManufacturingCostCategory = typeof MANUFACTURING_COST_CATEGORIES[number];

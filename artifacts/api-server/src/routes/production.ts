@@ -1553,7 +1553,9 @@ async function loadPostedCostSources(
     ))
     .where(and(
       eq(paymentVouchersTable.companyId, cid),
-      eq(paymentVouchersTable.sourceType, "cash_expense"),
+      or(eq(paymentVouchersTable.sourceType, "cash_expense"), isNull(paymentVouchersTable.sourceType)),
+      isNull(paymentVouchersTable.entityId),
+      isNull(paymentVouchersTable.purchaseInvoiceId),
       eq(paymentVouchersTable.status, "posted"),
       eq(paymentVouchersTable.manufacturingEligible, true),
       gte(paymentVouchersTable.date, start),
@@ -6554,6 +6556,16 @@ export async function productionWizardHandler(req: any, res: any) {
           throw Object.assign(new Error(`قيد المصدر لا يحتوي حساب مصروف مدين صالح لإعادة التصنيف: ${source.label}`), { status: 409 });
         }
         await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${key}))`);
+        if (source.sourceType === "cash_expense") {
+          const [live] = await tx.select({ id: paymentVouchersTable.id })
+            .from(paymentVouchersTable).innerJoin(journalEntriesTable, and(
+              eq(paymentVouchersTable.journalEntryId, journalEntriesTable.id),
+              eq(journalEntriesTable.companyId, cid), eq(journalEntriesTable.status, "posted"),
+            )).where(and(eq(paymentVouchersTable.companyId, cid),
+              eq(paymentVouchersTable.id, source.sourceRecordId),
+              eq(paymentVouchersTable.status, "posted"), eq(paymentVouchersTable.manufacturingEligible, true)));
+          if (!live) throw Object.assign(new Error("سند مصروف التصنيع لم يعد مرحّلاً أو مؤهلاً؛ حدّث المصادر"), { status: 409 });
+        }
         await assertSourceNotFrozenByOverheadClosure(
           tx, cid, source.sourceType, source.sourceRecordId,
         );

@@ -15,6 +15,7 @@ export const SIMPLE_MANUFACTURING_COST_CATEGORIES: readonly ManufacturingCostCat
   "payroll",
   "fixed_asset_depreciation",
   "prepaid_amortization",
+  "cash_expense",
 ];
 
 export type SimpleManufacturingCostModes = Record<
@@ -26,6 +27,7 @@ export const DEFAULT_SIMPLE_MANUFACTURING_COST_MODES: SimpleManufacturingCostMod
   payroll: "linked",
   fixed_asset_depreciation: "linked",
   prepaid_amortization: "linked",
+  cash_expense: "none",
 };
 
 const isCostMode = (value: unknown): value is ManufacturingCostMode =>

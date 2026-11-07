@@ -33,6 +33,7 @@ import {
 import { DateField } from "@/components/ui/date-field";
 import { printCashVoucher } from "@/lib/cashVoucherPrint";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { ManufacturingCashExpenseFields } from "@/components/cash/ManufacturingCashExpenseFields";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -55,6 +56,10 @@ interface FormState {
   description: string;
   notes: string;
   costCenter: string;
+  manufacturingEligible: boolean;
+  manufacturingAllocationMethod: "labor_hours" | "production_quantity";
+  approvedManufacturingHours: string;
+  approvedProductionQuantity: string;
   // نوع العملية (وضع الحساب العام فقط): "direct" عادي أو "prepaid" مصروف مقدم.
   // Prepaid submits as a ONE-line multi voucher (same backend engine); the
   // voucher becomes a multi voucher on later edits — accepted behavior.
@@ -83,6 +88,10 @@ const EMPTY: FormState = {
   description: "",
   notes: "",
   costCenter: "",
+  manufacturingEligible: false,
+  manufacturingAllocationMethod: "labor_hours",
+  approvedManufacturingHours: "",
+  approvedProductionQuantity: "",
   opType: "direct",
   deferredExpenseAccountId: "",
   deferredStartDate: "",
@@ -386,6 +395,10 @@ export default function PaymentVoucherForm() {
       refType: existing.refType ?? "",
       refNumber: existing.refNumber ?? "",
       description: existing.description ?? "",
+      manufacturingEligible: existing.manufacturingEligible === true,
+      manufacturingAllocationMethod: existing.manufacturingAllocationMethod ?? "labor_hours",
+      approvedManufacturingHours: existing.approvedManufacturingHours ?? "",
+      approvedProductionQuantity: existing.approvedProductionQuantity ?? "",
       notes: existing.notes ?? "",
       costCenter: existing.costCenter ?? "",
       opType: "direct",
@@ -617,6 +630,7 @@ export default function PaymentVoucherForm() {
         : undefined;
       const body = {
         ...form,
+        manufacturingEligible: isAccountMode && !isPrepaid && form.manufacturingEligible,
         amount: amtNum.toFixed(2),
         companyId: cid,
         // Server force-overrides to "supplier" but we send it for clarity.
@@ -1407,6 +1421,9 @@ export default function PaymentVoucherForm() {
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">{t(`${NS}.description`)}</Label>
                   <Input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder={t(`${NS}.descriptionPh`)} className="h-9 text-sm" />
+                  {entityMode === "account" && form.opType === "direct" && <ManufacturingCashExpenseFields
+                    value={form} onChange={patch => setForm(p => ({ ...p, ...patch }))}
+                    disabled={existing?.status === "posted" && !isNew} isRtl={isRtl} />}
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">مركز التكلفة</Label>

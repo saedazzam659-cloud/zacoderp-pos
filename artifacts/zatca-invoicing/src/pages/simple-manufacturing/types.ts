@@ -150,7 +150,8 @@ export type WizardState = {
 export type ManufacturingCostCategory =
   | "payroll"
   | "fixed_asset_depreciation"
-  | "prepaid_amortization";
+  | "prepaid_amortization"
+  | "cash_expense";
 
 export type ManufacturingCostMode = "none" | "linked" | "manual";
 

@@ -83,6 +83,7 @@ const costCategories = [
   { id: "payroll", label: "الرواتب والأجور" },
   { id: "fixed_asset_depreciation", label: "الإهلاك" },
   { id: "prepaid_amortization", label: "المصروفات المقدمة / الإيجار" },
+  { id: "cash_expense", label: "مصروفات المصنع النقدية" },
 ] as const;
 
 const costModeLabels: Record<string, string> = {
