@@ -6065,3 +6065,35 @@ export const GetMobileTrackingManagerReportResponse = zod.object({
 })
 
 
+/**
+ * @summary Read-only diagnostics for the designated external agent database
+ */
+
+
+
+export const GetAgentDatabaseSchemaDiagnosticsParams = zod.object({
+  "id": zod.coerce.number().min(1)
+})
+
+export const getAgentDatabaseSchemaDiagnosticsResponseWaitingSessionsMin = 0;
+
+
+export const getAgentDatabaseSchemaDiagnosticsResponseBlockingSessionsItemTransactionAgeSecondsMin = 0;
+
+
+
+export const GetAgentDatabaseSchemaDiagnosticsResponse = zod.object({
+  "checkedAt": zod.coerce.date(),
+  "companyTableExists": zod.boolean(),
+  "companyColumnExists": zod.boolean(),
+  "waitingSessions": zod.number().min(getAgentDatabaseSchemaDiagnosticsResponseWaitingSessionsMin),
+  "blockingSessions": zod.array(zod.object({
+  "pid": zod.number().min(1),
+  "state": zod.string().nullable(),
+  "waitEvent": zod.string().nullable(),
+  "transactionAgeSeconds": zod.number().min(getAgentDatabaseSchemaDiagnosticsResponseBlockingSessionsItemTransactionAgeSecondsMin).nullable()
+})),
+  "fingerprintStatus": zod.enum(['matching', 'missing', 'mismatch'])
+})
+
+

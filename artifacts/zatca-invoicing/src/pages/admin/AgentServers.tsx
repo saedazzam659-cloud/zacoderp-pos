@@ -105,6 +105,20 @@ type Agent = {
   invoiceAccelerationUpdatedAt?: string | null;
 };
 
+type AgentDbSchemaDiagnostics = {
+  checkedAt: string;
+  companyTableExists: boolean;
+  companyColumnExists: boolean;
+  waitingSessions: number;
+  blockingSessions: {
+    pid: number;
+    state: string | null;
+    waitEvent: string | null;
+    transactionAgeSeconds: number | null;
+  }[];
+  fingerprintStatus: "matching" | "missing" | "mismatch";
+};
+
 type AutoDomainPreviewResp = {
   ok: boolean;
   confirmationToken: string | null;
@@ -472,6 +486,7 @@ export default function AgentServers() {
     from: "",
   });
   const [busy, setBusy] = useState<string | null>(null); // "<action>-<id>"
+  const [dbSchemaDiagnostics, setDbSchemaDiagnostics] = useState<Record<number, AgentDbSchemaDiagnostics>>({});
   const [logView, setLogView] = useState<{ title: string; text: string } | null>(null);
   const [showLogoDialog, setShowLogoDialog] = useState(false);
   const [logoDrag, setLogoDrag] = useState(false);
@@ -674,6 +689,20 @@ export default function AgentServers() {
     } catch (e: any) {
       toast({ title: `${label}: فشل`, description: String(e.message ?? e), variant: "destructive" });
     } finally { setBusy(null); }
+  }
+
+  async function inspectAgentDbSchema(a: Agent) {
+    setBusy(`db-diagnostics-${a.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/db-schema-diagnostics`, { headers });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? "تعذّر فحص قاعدة البيانات");
+      setDbSchemaDiagnostics(prev => ({ ...prev, [a.id]: j as AgentDbSchemaDiagnostics }));
+    } catch (e: any) {
+      toast({ title: "فحص قاعدة البيانات: فشل", description: String(e.message ?? e), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function saveSshCredentials() {
@@ -1330,12 +1359,32 @@ export default function AgentServers() {
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.dbUrlSet || busy === `test-db-${a.id}`} onClick={() => action(a.id, "test-db", "فحص الاتصال")}>
                       {busy === `test-db-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3 ms-1" />}اختبار
                     </Button>
+                    {a.id === 2 && (
+                      <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.dbUrlSet || busy === `db-diagnostics-${a.id}`} onClick={() => void inspectAgentDbSchema(a)} data-testid={`button-db-schema-diagnostics-${a.id}`}>
+                        {busy === `db-diagnostics-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Activity className="h-3 w-3 ms-1" />}فحص القفل
+                      </Button>
+                    )}
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.dbUrlSet || busy === `init-db-${a.id}` || a.deployStatus === "deploying"} onClick={() => {
                       if (confirm("سيتم فحص/استكمال السكيما، وزرع بصمة قاعدة البيانات ومزامنتها مع config.json، ثم إرسال نبضة تحقق. لن يعاد تثبيت البرنامج أو حذف بيانات الشركات، لكن قد تتأثر خدمة Caddy إذا رفضت النبضة. هل تريد المتابعة؟")) action(a.id, "init-db", "التهيئة");
                     }}>
                       {busy === `init-db-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3 ms-1" />}تهيئة + بصمة
                     </Button>
                   </div>
+                  {dbSchemaDiagnostics[a.id] && (
+                    <div className="text-[10px] leading-4 text-muted-foreground" data-testid={`db-schema-diagnostics-result-${a.id}`}>
+                      {dbSchemaDiagnostics[a.id].companyTableExists ? "جدول الشركات موجود" : "جدول الشركات غير موجود"}
+                      {" · "}
+                      {dbSchemaDiagnostics[a.id].companyColumnExists ? "العمود المطلوب موجود" : "العمود المطلوب ناقص"}
+                      {" · "}
+                      {dbSchemaDiagnostics[a.id].waitingSessions > 0
+                        ? `تنتظر القفل: ${dbSchemaDiagnostics[a.id].waitingSessions} · الحاجبة: ${dbSchemaDiagnostics[a.id].blockingSessions.map(session => `PID ${session.pid} (${session.state ?? "غير معروف"}${session.transactionAgeSeconds == null ? "" : `، ${session.transactionAgeSeconds}ث`})`).join("، ") || "غير ظاهرة"}`
+                        : "لا توجد جلسات تنتظر قفل companies الآن"}
+                      {" · "}
+                      {dbSchemaDiagnostics[a.id].fingerprintStatus === "matching" ? "البصمة مطابقة"
+                        : dbSchemaDiagnostics[a.id].fingerprintStatus === "missing" ? "البصمة غير موجودة"
+                        : "البصمة غير مطابقة"}
+                    </div>
+                  )}
                 </div>
 
                 <div className="border rounded-lg p-3 space-y-1.5">

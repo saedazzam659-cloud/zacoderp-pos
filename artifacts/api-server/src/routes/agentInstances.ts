@@ -1820,6 +1820,176 @@ router.post("/:id/test-db", async (req, res) => {
   }
 });
 
+// Read-only diagnostics for the single explicitly designated legacy agent.
+// This does not update registry status, run DDL, or modify the agent database.
+router.get("/:id/db-schema-diagnostics", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "معرّف الوكيل غير صالح" });
+    return;
+  }
+  if (!getAgentRequestSchemaHealOptions(id).allowMissingTables) {
+    res.status(404).json({ error: "الفحص غير متاح لهذا الوكيل" });
+    return;
+  }
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) {
+    res.status(404).json({ error: "الوكيل غير موجود" });
+    return;
+  }
+  if (!inst.dbUrlEnc) {
+    res.status(400).json({ error: "لم يتم إدخال رابط قاعدة البيانات بعد" });
+    return;
+  }
+
+  try {
+    const diagnostics = await withAgentPool(inst.dbUrlEnc, async (pool) => {
+      const client = await pool.connect();
+      let transactionOpen = false;
+      try {
+        await client.query("BEGIN READ ONLY");
+        transactionOpen = true;
+        await client.query("SET LOCAL statement_timeout = '3000ms'");
+
+        const companySchema = await client.query<{
+          table_exists: boolean;
+          column_exists: boolean;
+        }>(
+          `SELECT
+             EXISTS (
+               SELECT 1 FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_name = 'companies'
+             ) AS table_exists,
+             EXISTS (
+               SELECT 1 FROM information_schema.columns
+               WHERE table_schema = 'public'
+                 AND table_name = 'companies'
+                 AND column_name = $1
+             ) AS column_exists`,
+          ["purchase_direct_expenses_custody_enabled"],
+        );
+        const companyTableExists = companySchema.rows[0]?.table_exists === true;
+        const companyColumnExists = companySchema.rows[0]?.column_exists === true;
+
+        const waitingResult = await client.query<{ waiting_pid: string | number }>(
+          `SELECT DISTINCT locks.pid AS waiting_pid
+           FROM pg_locks AS locks
+           JOIN pg_class AS relations ON relations.oid = locks.relation
+           JOIN pg_namespace AS namespaces ON namespaces.oid = relations.relnamespace
+           WHERE locks.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+             AND namespaces.nspname = 'public'
+             AND relations.relname = 'companies'
+             AND NOT locks.granted`,
+        );
+        const blockerResult = await client.query<{
+          pid: string | number;
+          state: string | null;
+          wait_event_type: string | null;
+          wait_event: string | null;
+          transaction_age_seconds: string | number | null;
+        }>(
+          `WITH company_waiters AS (
+             SELECT DISTINCT locks.pid
+             FROM pg_locks AS locks
+             JOIN pg_class AS relations ON relations.oid = locks.relation
+             JOIN pg_namespace AS namespaces ON namespaces.oid = relations.relnamespace
+             WHERE locks.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+               AND namespaces.nspname = 'public'
+               AND relations.relname = 'companies'
+               AND NOT locks.granted
+           ),
+           blockers AS (
+             SELECT DISTINCT unnest(pg_blocking_pids(company_waiters.pid)) AS pid
+             FROM company_waiters
+           )
+           SELECT
+             activity.pid,
+             activity.state,
+             activity.wait_event_type,
+             activity.wait_event,
+             CASE WHEN activity.xact_start IS NULL THEN NULL
+               ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM clock_timestamp() - activity.xact_start)))::int
+             END AS transaction_age_seconds
+           FROM blockers
+           JOIN pg_stat_activity AS activity ON activity.pid = blockers.pid
+           ORDER BY activity.xact_start ASC NULLS LAST
+           LIMIT 10`,
+        );
+
+        const fingerprintSchema = await client.query<{
+          table_exists: boolean;
+          installation_id_exists: boolean;
+          fingerprint_exists: boolean;
+        }>(
+          `SELECT
+             EXISTS (
+               SELECT 1 FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_name = 'zacod_installation'
+             ) AS table_exists,
+             EXISTS (
+               SELECT 1 FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'zacod_installation'
+                 AND column_name = 'installation_id'
+             ) AS installation_id_exists,
+             EXISTS (
+               SELECT 1 FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'zacod_installation'
+                 AND column_name = 'fingerprint'
+             ) AS fingerprint_exists`,
+        );
+        const fpSchema = fingerprintSchema.rows[0];
+        let fingerprintStatus: "matching" | "missing" | "mismatch" = "missing";
+        if (fpSchema?.table_exists && fpSchema.installation_id_exists && fpSchema.fingerprint_exists) {
+          const fingerprintResult = await client.query<{
+            installation_id: string;
+            fingerprint: string;
+          }>("SELECT installation_id, fingerprint FROM zacod_installation WHERE id = 1");
+          const observed = fingerprintResult.rows[0];
+          if (observed) {
+            fingerprintStatus =
+              observed.installation_id === inst.installationId &&
+              observed.fingerprint === expectedFingerprint(inst.installationId, inst.domain)
+                ? "matching"
+                : "mismatch";
+          }
+        }
+
+        await client.query("COMMIT");
+        transactionOpen = false;
+        return {
+          checkedAt: new Date().toISOString(),
+          companyTableExists,
+          companyColumnExists,
+          waitingSessions: waitingResult.rowCount ?? waitingResult.rows.length,
+          blockingSessions: blockerResult.rows.map((row) => ({
+            pid: Number(row.pid),
+            state: row.state,
+            waitEvent: row.wait_event_type && row.wait_event
+              ? `${row.wait_event_type}/${row.wait_event}`
+              : row.wait_event ?? row.wait_event_type,
+            transactionAgeSeconds: row.transaction_age_seconds == null
+              ? null
+              : Number(row.transaction_age_seconds),
+          })),
+          fingerprintStatus,
+        };
+      } catch (error) {
+        if (transactionOpen) await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    });
+    res.json(diagnostics);
+  } catch (error: any) {
+    logger.warn(
+      { agentId: id, code: error?.code ?? null },
+      "Read-only agent database schema diagnostics failed",
+    );
+    res.status(502).json({ error: "تعذّر فحص قاعدة الوكيل قراءة فقط" });
+  }
+});
+
 /** Core of init-db: full schema copy + heal + fingerprint planting on the
  *  agent DB. Shared by the init-db route and the one-click provision pipeline.
  *  On success updates dbStatus=initialized; throws on failure (caller must

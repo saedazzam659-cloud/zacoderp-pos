@@ -4180,3 +4180,36 @@ to: string;
 userId?: number;
 };
 
+export type GetAgentDatabaseSchemaDiagnostics200BlockingSessionsItem = {
+  /** @minimum 1 */
+  pid: number;
+  /** @nullable */
+  state: string | null;
+  /** @nullable */
+  waitEvent: string | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  transactionAgeSeconds: number | null;
+};
+
+export type GetAgentDatabaseSchemaDiagnostics200FingerprintStatus = typeof GetAgentDatabaseSchemaDiagnostics200FingerprintStatus[keyof typeof GetAgentDatabaseSchemaDiagnostics200FingerprintStatus];
+
+
+export const GetAgentDatabaseSchemaDiagnostics200FingerprintStatus = {
+  matching: 'matching',
+  missing: 'missing',
+  mismatch: 'mismatch',
+} as const;
+
+export type GetAgentDatabaseSchemaDiagnostics200 = {
+  checkedAt: string;
+  companyTableExists: boolean;
+  companyColumnExists: boolean;
+  /** @minimum 0 */
+  waitingSessions: number;
+  blockingSessions: GetAgentDatabaseSchemaDiagnostics200BlockingSessionsItem[];
+  fingerprintStatus: GetAgentDatabaseSchemaDiagnostics200FingerprintStatus;
+};
+

@@ -3850,6 +3850,48 @@ paths:
         "401": { description: Unauthorized }
         "403": { description: Mobile tracking management is not enabled }
 
+  /admin/agent-instances/{id}/db-schema-diagnostics:
+    get:
+      operationId: getAgentDatabaseSchemaDiagnostics
+      tags: [security]
+      summary: Read-only diagnostics for the designated external agent database
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Current table, column, lock, and fingerprint status without modifying the database
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [checkedAt, companyTableExists, companyColumnExists, waitingSessions, blockingSessions, fingerprintStatus]
+                properties:
+                  checkedAt: { type: string, format: date-time }
+                  companyTableExists: { type: boolean }
+                  companyColumnExists: { type: boolean }
+                  waitingSessions: { type: integer, minimum: 0 }
+                  blockingSessions:
+                    type: array
+                    items:
+                      type: object
+                      required: [pid, state, waitEvent, transactionAgeSeconds]
+                      properties:
+                        pid: { type: integer, minimum: 1 }
+                        state: { type: [string, "null"] }
+                        waitEvent: { type: [string, "null"] }
+                        transactionAgeSeconds: { type: [integer, "null"], minimum: 0 }
+                  fingerprintStatus: { type: string, enum: [matching, missing, mismatch] }
+        "400":
+          description: Invalid agent or missing database connection
+        "403":
+          description: Diagnostics are restricted to the designated agent
+        "404":
+          description: Agent not found or diagnostics not available
+        "502":
+          description: Agent database could not be inspected
 components:
   schemas:
     PartyIdentitySettings:

@@ -64,6 +64,7 @@ import type {
   GetAdditionalSalesReportParams,
   GetAdminModuleShowcaseUploadUrl200,
   GetAdminModuleShowcaseUploadUrlBody,
+  GetAgentDatabaseSchemaDiagnostics200,
   GetCashExpenseReportParams,
   GetCashExpensesParams,
   GetCashTransfersParams,
@@ -13324,6 +13325,83 @@ export function useGetMobileTrackingManagerReport<TData = Awaited<ReturnType<typ
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetMobileTrackingManagerReportQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAgentDatabaseSchemaDiagnosticsUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/agent-instances/${id}/db-schema-diagnostics`
+}
+
+/**
+ * @summary Read-only diagnostics for the designated external agent database
+ */
+export const getAgentDatabaseSchemaDiagnostics = async (id: number, options?: RequestInit): Promise<GetAgentDatabaseSchemaDiagnostics200> => {
+
+  return customFetch<GetAgentDatabaseSchemaDiagnostics200>(getGetAgentDatabaseSchemaDiagnosticsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentDatabaseSchemaDiagnosticsQueryKey = (id: number,) => {
+    return [
+    `/api/admin/agent-instances/${id}/db-schema-diagnostics`
+    ] as const;
+    }
+
+
+export const getGetAgentDatabaseSchemaDiagnosticsQueryOptions = <TData = Awaited<ReturnType<typeof getAgentDatabaseSchemaDiagnostics>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentDatabaseSchemaDiagnostics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentDatabaseSchemaDiagnosticsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentDatabaseSchemaDiagnostics>>> = ({ signal }) => getAgentDatabaseSchemaDiagnostics(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentDatabaseSchemaDiagnostics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAgentDatabaseSchemaDiagnosticsQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentDatabaseSchemaDiagnostics>>>
+export type GetAgentDatabaseSchemaDiagnosticsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Read-only diagnostics for the designated external agent database
+ */
+
+export function useGetAgentDatabaseSchemaDiagnostics<TData = Awaited<ReturnType<typeof getAgentDatabaseSchemaDiagnostics>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAgentDatabaseSchemaDiagnostics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAgentDatabaseSchemaDiagnosticsQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
