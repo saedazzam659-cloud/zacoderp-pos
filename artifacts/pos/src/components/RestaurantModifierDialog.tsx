@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, Info, Loader2, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { Info, Loader2, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -73,7 +73,6 @@ export default function RestaurantModifierDialog({
   const direction = isArabic ? "rtl" : "ltr";
   const [selectedByGroup, setSelectedByGroup] = useState<Record<string, string[]>>({});
   const [search, setSearch] = useState("");
-  const [optionsOpen, setOptionsOpen] = useState(false);
   const text = (ar: string, en: string) => isArabic ? ar : en;
   const itemName = isArabic ? item.nameAr : item.nameEn || item.nameAr;
 
@@ -81,7 +80,6 @@ export default function RestaurantModifierDialog({
     if (open) {
       setSelectedByGroup(Object.fromEntries((initialSelection ?? []).map(selection => [selection.groupId, selection.optionIds])));
       setSearch("");
-      setOptionsOpen(false);
     }
   }, [open, item.id, initialSelection]);
 
@@ -211,15 +209,7 @@ export default function RestaurantModifierDialog({
           </div>
 
           {hasAnyOptions && (
-            <Button
-              type="button"
-              variant="outline"
-              aria-expanded={optionsOpen}
-              aria-controls="modifier-options-list"
-              onClick={() => setOptionsOpen(value => !value)}
-              data-testid="button-toggle-modifier-options"
-              className={`mt-4 flex h-auto w-full items-center justify-between gap-3 rounded-2xl border-primary/20 bg-[linear-gradient(110deg,hsl(var(--primary)/0.10),hsl(var(--primary)/0.025)_58%,transparent)] px-4 py-3 text-start shadow-sm transition-all hover:border-primary/40 hover:bg-primary/[0.08] ${optionsOpen ? "ring-2 ring-primary/15" : ""}`}
-            >
+            <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-primary/20 bg-[linear-gradient(110deg,hsl(var(--primary)/0.10),hsl(var(--primary)/0.025)_58%,transparent)] px-4 py-3 text-start shadow-sm">
               <span className="flex min-w-0 items-center gap-3">
                 <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm">
                   <Sparkles className="size-4" aria-hidden="true" />
@@ -238,14 +228,13 @@ export default function RestaurantModifierDialog({
               </span>
               <span className="flex shrink-0 items-center gap-2">
                 <span className="rounded-full bg-background/90 px-2.5 py-1 text-[11px] font-extrabold text-primary shadow-sm">
-                  {optionsOpen ? text("إخفاء", "Hide") : text("عرض الكل", "Show all")}
+                  {text("اختر مباشرة", "Choose directly")}
                 </span>
-                <ChevronDown className={`size-4 text-primary transition-transform duration-200 ${optionsOpen ? "rotate-180" : ""}`} aria-hidden="true" />
               </span>
-            </Button>
+            </div>
           )}
 
-          {hasAnyOptions && optionsOpen && (
+          {hasAnyOptions && (
             <div className="relative mt-4">
               <Search
                 aria-hidden="true"
@@ -281,16 +270,6 @@ export default function RestaurantModifierDialog({
                   "يمكنك متابعة إضافة الصنف إلى الطلب كما هو.",
                   "You can continue and add this item as it is.",
                 )}
-              </p>
-            </div>
-          ) : !optionsOpen ? (
-            <div className="flex min-h-44 flex-col items-center justify-center rounded-2xl border border-dashed border-primary/20 bg-[linear-gradient(135deg,hsl(var(--primary)/0.045),transparent_75%)] px-5 py-7 text-center">
-              <span className="mb-3 grid size-12 place-items-center rounded-2xl bg-primary/10 text-primary">
-                <SlidersHorizontal className="size-5" aria-hidden="true" />
-              </span>
-              <h3 className="font-black">{text("قائمة الإضافات جاهزة", "Add-on list is ready")}</h3>
-              <p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">
-                {text("اضغط على «خيارات وإضافات الصنف» لعرض كل الخيارات في قائمة رأسية.", "Press “Item options and add-ons” to open all choices in a vertical list.")}
               </p>
             </div>
           ) : noSearchResults ? (
@@ -363,7 +342,7 @@ export default function RestaurantModifierDialog({
                       <div
                         role={group.selectionMode === "single" ? "radiogroup" : "group"}
                         aria-labelledby={`modifier-group-title-${group.id}`}
-                        className="grid gap-2 p-3"
+                        className="grid grid-cols-2 gap-2 p-3 md:grid-cols-4"
                       >
                         {group.visibleOptions.map((option) => {
                           const checked = selected.includes(option.id);
@@ -375,36 +354,37 @@ export default function RestaurantModifierDialog({
                               key={option.id}
                               htmlFor={inputId}
                               data-testid={`option-card-${group.id}-${option.id}`}
-                              className={`group flex min-h-[68px] cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-1 ${
+                              className={`group flex min-h-[104px] cursor-pointer flex-col justify-between gap-2 rounded-xl border px-2.5 py-2.5 transition-all focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-1 ${
                                 checked
-                                  ? "border-primary/55 bg-primary/[0.07]"
-                                  : "border-border/75 bg-card hover:border-primary/35 hover:bg-primary/[0.025]"
+                                  ? "border-primary bg-primary/[0.08] shadow-sm ring-1 ring-primary/15"
+                                  : "border-border/75 bg-card hover:-translate-y-0.5 hover:border-primary/50 hover:bg-primary/[0.035] hover:shadow-sm"
                               } ${atLimit || submitting ? "cursor-not-allowed opacity-55" : ""}`}
                             >
-                              <input
-                                id={inputId}
-                                type={group.selectionMode === "single" ? "radio" : "checkbox"}
-                                name={`modifier-group-${group.id}`}
-                                checked={checked}
-                                disabled={submitting || atLimit}
-                                onChange={() => toggleOption(group, option.id)}
-                                aria-label={`${optionName}, ${formatPrice(Number(option.extraPrice) || 0)}`}
-                                data-testid={`input-modifier-option-${option.id}`}
-                                className="size-[18px] shrink-0 accent-[hsl(var(--primary))] focus-visible:outline-none"
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-bold leading-5">{optionName}</span>
-                                <span className="mt-0.5 block font-mono text-[10px] tracking-wide text-muted-foreground">
+                              <span className="flex w-full items-start justify-between gap-2">
+                                <span className="line-clamp-2 min-h-10 min-w-0 text-start text-[13px] font-extrabold leading-5">
+                                  {optionName}
+                                </span>
+                                <input
+                                  id={inputId}
+                                  type={group.selectionMode === "single" ? "radio" : "checkbox"}
+                                  name={`modifier-group-${group.id}`}
+                                  checked={checked}
+                                  disabled={submitting || atLimit}
+                                  onChange={() => toggleOption(group, option.id)}
+                                  aria-label={`${optionName}, ${formatPrice(Number(option.extraPrice) || 0)}`}
+                                  data-testid={`input-modifier-option-${option.id}`}
+                                  className="mt-0.5 size-4 shrink-0 accent-[hsl(var(--primary))] focus-visible:outline-none"
+                                />
+                              </span>
+                              <span className="flex w-full items-center justify-between gap-1 border-t border-border/60 pt-2">
+                                <span className="min-w-0 truncate font-mono text-[9px] tracking-wide text-muted-foreground">
                                   {option.code}
                                 </span>
-                              </span>
-                              <span className="shrink-0 text-end">
-                                <span className={`block text-sm font-black ${Number(option.extraPrice) > 0 ? "text-primary" : "text-muted-foreground"}`}>
+                                <span className={`shrink-0 text-end text-xs font-black ${Number(option.extraPrice) > 0 ? "text-primary" : "text-muted-foreground"}`}>
                                   {Number(option.extraPrice) > 0
                                     ? `+ ${formatPrice(Number(option.extraPrice))}`
                                     : formatPrice(Number(option.extraPrice) || 0)}
                                 </span>
-                                {checked && <Check className="ms-auto mt-1 size-3.5 text-primary" aria-hidden="true" />}
                               </span>
                             </label>
                           );
