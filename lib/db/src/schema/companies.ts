@@ -274,6 +274,11 @@ export const companiesTable = pgTable("companies", {
   hrEmployeeLoansAccountId:      integer("hr_employee_loans_account_id"),
   hrEmployeeCustodyAccountId:    integer("hr_employee_custody_account_id"),
   hrEosProvisionAccountId:       integer("hr_eos_provision_account_id"),
+  hrLeaveProvisionExpenseAccountId: integer("hr_leave_provision_expense_account_id"),
+  hrLeaveProvisionLiabilityAccountId: integer("hr_leave_provision_liability_account_id"),
+  hrTravelTicketExpenseAccountId: integer("hr_travel_ticket_expense_account_id"),
+  hrTravelTicketLiabilityAccountId: integer("hr_travel_ticket_liability_account_id"),
+  hrMonthlyProvisionsEnabled: boolean("hr_monthly_provisions_enabled").notNull().default(false),
   hrDefaultPayCashBoxId:         integer("hr_default_pay_cashbox_id"),
   hrDefaultPayBankAccountId:     integer("hr_default_pay_bank_account_id"),
   // Per-type HR expiry-alert lead times (days). Absent key ⇒ default 90.

@@ -10,6 +10,7 @@ import {
   payrollLinesTable,
   payrollAllocationSnapshotsTable,
   employeesTable,
+  employeeContractsTable,
   employeeLoansTable,
   employeeCustodiesTable,
   employeeCustodySettlementsTable,
@@ -36,6 +37,10 @@ const HR_ACCOUNT_CODES = {
   employeeLoans:      "11081",
   employeeCustody:    "11082",
   eosProvision:       "22021",
+  leaveProvisionExpense: "5217",
+  leaveProvisionLiability: "22022",
+  travelTicketExpense: "5218",
+  travelTicketLiability: "22023",
 } as const;
 
 export type HrAccountKey = keyof typeof HR_ACCOUNT_CODES;
@@ -50,6 +55,10 @@ const HR_ACCOUNT_COLUMNS: Record<HrAccountKey, string> = {
   employeeLoans: "hrEmployeeLoansAccountId",
   employeeCustody: "hrEmployeeCustodyAccountId",
   eosProvision: "hrEosProvisionAccountId",
+  leaveProvisionExpense: "hrLeaveProvisionExpenseAccountId",
+  leaveProvisionLiability: "hrLeaveProvisionLiabilityAccountId",
+  travelTicketExpense: "hrTravelTicketExpenseAccountId",
+  travelTicketLiability: "hrTravelTicketLiabilityAccountId",
 };
 
 export interface HrAccountMap {
@@ -63,6 +72,10 @@ export interface HrAccountMap {
   employeeLoans:     number | null;
   employeeCustody:   number | null;
   eosProvision:      number | null;
+  leaveProvisionExpense: number | null;
+  leaveProvisionLiability: number | null;
+  travelTicketExpense: number | null;
+  travelTicketLiability: number | null;
   defaultPayCashBoxId:     number | null;
   defaultPayBankAccountId: number | null;
 }
@@ -108,6 +121,10 @@ export async function resolveHrAccounts(cid: number, persist = true, dx: DbOrTx 
     employeeLoans:     c.hrEmployeeLoansAccountId     ?? null,
     employeeCustody:   c.hrEmployeeCustodyAccountId   ?? null,
     eosProvision:      c.hrEosProvisionAccountId      ?? null,
+    leaveProvisionExpense: c.hrLeaveProvisionExpenseAccountId ?? null,
+    leaveProvisionLiability: c.hrLeaveProvisionLiabilityAccountId ?? null,
+    travelTicketExpense: c.hrTravelTicketExpenseAccountId ?? null,
+    travelTicketLiability: c.hrTravelTicketLiabilityAccountId ?? null,
     defaultPayCashBoxId:     c.hrDefaultPayCashBoxId     ?? null,
     defaultPayBankAccountId: c.hrDefaultPayBankAccountId ?? null,
   };
@@ -117,6 +134,7 @@ export async function resolveHrAccounts(cid: number, persist = true, dx: DbOrTx 
   const keys: HrAccountKey[] = [
     "salariesExpense","allowancesExpense","gosiExpense","eosExpense",
     "salariesPayable","gosiPayable","otherDeductions","employeeLoans","employeeCustody","eosProvision",
+    "leaveProvisionExpense","leaveProvisionLiability","travelTicketExpense","travelTicketLiability",
   ];
   // Restores can leave company mapping columns pointing at account IDs from a
   // different tenant. Treat those mappings as missing so code discovery below
@@ -156,6 +174,21 @@ export async function resolveHrAccounts(cid: number, persist = true, dx: DbOrTx 
 
 function num(v: any): number { return Number(v ?? 0) || 0; }
 function fix(v: number): string { return v.toFixed(2); }
+function roundMoney(v: number): number { return Math.round((v + Number.EPSILON) * 100) / 100; }
+function priorDay(isoDate: string): string {
+  const d = new Date(`${isoDate.slice(0, 10)}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+function eosLiabilityAt(hireDate: string | null, asOfDate: string, monthlyWage: number): number {
+  if (!hireDate || asOfDate < hireDate) return 0;
+  const hire = new Date(`${hireDate.slice(0, 10)}T00:00:00.000Z`).getTime();
+  const asOf = new Date(`${asOfDate.slice(0, 10)}T00:00:00.000Z`).getTime();
+  const years = Math.max(0, (asOf - hire) / (365.25 * 86_400_000));
+  const gross = (Math.min(years, 5) * monthlyWage / 2) + (Math.max(0, years - 5) * monthlyWage);
+  const resignationFactor = years < 2 ? 0 : years < 5 ? 1 / 3 : years < 10 ? 2 / 3 : 1;
+  return roundMoney(gross * resignationFactor);
+}
 
 /** Resolves the cash/bank ledger and its owning branch from a payment source. */
 export async function resolveCashAccount(
@@ -221,6 +254,51 @@ export async function buildPayrollJournal(
   }
 
   const accounts = await resolveHrAccounts(cid, true, dx);
+  const [companyProvisions] = await dx.select({ enabled: companiesTable.hrMonthlyProvisionsEnabled })
+    .from(companiesTable).where(eq(companiesTable.id, cid));
+  const provisionsEnabled = companyProvisions?.enabled === true;
+  const employeeIds = [...new Set(lines.map((line) => line.employeeId))];
+  const [employeeRows, contracts] = await Promise.all([
+    dx.select().from(employeesTable).where(and(
+      eq(employeesTable.companyId, cid),
+      inArray(employeesTable.id, employeeIds),
+    )),
+    dx.select().from(employeeContractsTable).where(and(
+      eq(employeeContractsTable.companyId, cid),
+      inArray(employeeContractsTable.employeeId, employeeIds),
+    )),
+  ]);
+  const employeesById = new Map(employeeRows.map((employee) => [employee.id, employee]));
+  const contractsByEmployee = new Map<number, typeof contracts>();
+  for (const contract of contracts) {
+    const list = contractsByEmployee.get(contract.employeeId) ?? [];
+    list.push(contract);
+    contractsByEmployee.set(contract.employeeId, list);
+  }
+  const periodStartDate = String(run.periodStart).slice(0, 10);
+  const periodEndDate = String(run.periodEnd).slice(0, 10);
+  const provisionRows = provisionsEnabled ? lines.map((line) => {
+    const employee = employeesById.get(line.employeeId);
+    const currentContract = (contractsByEmployee.get(line.employeeId) ?? [])
+      .filter((contract) =>
+        contract.status === "active" &&
+        contract.startDate <= periodEndDate &&
+        (!contract.endDate || contract.endDate >= periodStartDate),
+      )
+      .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
+    const monthlyWage = num(line.basicSalary) + num(line.housingAllow) + num(line.transportAllow);
+    const eosCurrent = eosLiabilityAt(employee?.hireDate ?? null, periodEndDate, monthlyWage);
+    const eosPrior = eosLiabilityAt(employee?.hireDate ?? null, priorDay(periodStartDate), monthlyWage);
+    const eosChange = roundMoney(eosCurrent - eosPrior);
+    const annualLeaveDays = Math.max(0, num(currentContract?.vacationDays ?? 21));
+    const leaveAmount = roundMoney(monthlyWage * annualLeaveDays / 360);
+    const ticketAmount = roundMoney(num(employee?.annualTravelTicketAmount) / 12);
+    return { line, eosChange, leaveAmount, ticketAmount };
+  }) : [];
+  const leaveProvisionTotal = roundMoney(provisionRows.reduce((sum, row) => sum + row.leaveAmount, 0));
+  const ticketProvisionTotal = roundMoney(provisionRows.reduce((sum, row) => sum + row.ticketAmount, 0));
+  const eosProvisionTotal = roundMoney(provisionRows.reduce((sum, row) => sum + row.eosChange, 0));
+  const hasEosProvision = provisionRows.some((row) => row.eosChange !== 0);
   const missing: string[] = [];
   if (salariesEarned > 0  && !accounts.salariesExpense)   missing.push("مصروف الرواتب (5201)");
   if (allowances > 0      && !accounts.allowancesExpense) missing.push("مصروف البدلات (5202)");
@@ -228,6 +306,12 @@ export async function buildPayrollJournal(
   if (gosiEmployee > 0    && !accounts.gosiPayable)       missing.push("التأمينات المستحقة (21052)");
   if (loanDeduction > 0   && !accounts.employeeLoans)     missing.push("سلف الموظفين (11081)");
   if (otherDeduction > 0  && !accounts.otherDeductions)   missing.push("استقطاعات أخرى (21053)");
+  if (hasEosProvision && (!accounts.eosExpense || !accounts.eosProvision))
+    missing.push("مصروف/مخصص نهاية الخدمة");
+  if (leaveProvisionTotal > 0 && (!accounts.leaveProvisionExpense || !accounts.leaveProvisionLiability))
+    missing.push("مصروف/مخصص الإجازات");
+  if (ticketProvisionTotal > 0 && (!accounts.travelTicketExpense || !accounts.travelTicketLiability))
+    missing.push("مصروف/مخصص تذاكر السفر");
   if (missing.length) throw new Error("الحسابات التالية غير مربوطة في إعدادات الموارد البشرية: " + missing.join("، "));
 
   const totalDr = +(salariesEarned + allowances).toFixed(2);
@@ -237,7 +321,7 @@ export async function buildPayrollJournal(
   }
 
   const period = `${String(run.month).padStart(2, "0")}/${run.year}`;
-  const desc = `قيد مسير الرواتب ${run.code} عن الفترة ${period}`;
+  const desc = `قيد الرواتب والمخصصات الشهرية ${run.code} عن الفترة ${period}`;
 
   const payrollDate = run.payDate || run.periodEnd;
   const prW = await assertWritableForDate(cid, payrollDate);
@@ -298,6 +382,61 @@ export async function buildPayrollJournal(
     for (const part of allocateComponentBySnapshots(allowanceAmount, lineSnapshots))
       addDebit(accounts.allowancesExpense!, part.costCenterId, part.amount, `بدلات وحوافز الفترة ${period}`);
   }
+  const provisionDebitLines: any[] = [];
+  const provisionCreditLines: any[] = [];
+  const addProvision = (
+    expenseAccountId: number,
+    liabilityAccountId: number,
+    amount: number,
+    lineSnapshots: typeof snapshots,
+    expenseDescription: string,
+    liabilityDescription: string,
+  ) => {
+    const value = roundMoney(amount);
+    if (!value) return;
+    if (value > 0) {
+      const allocations = lineSnapshots.length
+        ? allocateComponentBySnapshots(value, lineSnapshots)
+        : [{ costCenterId: null, amount: value }];
+      for (const part of allocations) {
+        addDebit(expenseAccountId, part.costCenterId, part.amount, expenseDescription);
+      }
+      provisionCreditLines.push({
+        entryId: 0, accountId: liabilityAccountId, debit: "0.00", credit: fix(value),
+        description: liabilityDescription, sortOrder: 0,
+      });
+    } else {
+      const absValue = Math.abs(value);
+      provisionDebitLines.push({
+        entryId: 0, accountId: liabilityAccountId, debit: fix(absValue), credit: "0.00",
+        description: `تخفيض ${liabilityDescription}`, sortOrder: 0,
+      });
+      const allocations = lineSnapshots.length
+        ? allocateComponentBySnapshots(absValue, lineSnapshots)
+        : [{ costCenterId: null, amount: absValue }];
+      for (const part of allocations) {
+        provisionCreditLines.push({
+          entryId: 0, accountId: expenseAccountId, costCenter: part.costCenterId == null ? null : String(part.costCenterId),
+          debit: "0.00", credit: fix(part.amount), description: `عكس ${expenseDescription}`, sortOrder: 0,
+        });
+      }
+    }
+  };
+  for (const row of provisionRows) {
+    const lineSnapshots = snapshotsByLine.get(row.line.id) ?? [];
+    if (row.eosChange) {
+      addProvision(accounts.eosExpense!, accounts.eosProvision!, row.eosChange, lineSnapshots,
+        `مصروف استحقاق نهاية الخدمة ${period}`, `مخصص نهاية الخدمة ${period}`);
+    }
+    if (row.leaveAmount > 0) {
+      addProvision(accounts.leaveProvisionExpense!, accounts.leaveProvisionLiability!, row.leaveAmount, lineSnapshots,
+        `مصروف مخصص الإجازات ${period}`, `مخصص الإجازات ${period}`);
+    }
+    if (row.ticketAmount > 0) {
+      addProvision(accounts.travelTicketExpense!, accounts.travelTicketLiability!, row.ticketAmount, lineSnapshots,
+        `مصروف تذاكر السفر ${period}`, `مخصص تذاكر السفر ${period}`);
+    }
+  }
   let debitOrder = 0;
   for (const bucket of debitBuckets.values()) {
     if (bucket.amount > 0) drLines.push({ entryId: entry.id, accountId: bucket.accountId, costCenter: bucket.costCenter,
@@ -318,7 +457,20 @@ export async function buildPayrollJournal(
     crLines.push({ entryId: entry.id, accountId: accounts.otherDeductions, debit: "0.00", credit: fix(otherDeduction),
        description: `استقطاعات أخرى ${period}`, sortOrder: debitOrder++ });
 
-  const journalLines = [...drLines, ...crLines];
+  for (const line of provisionDebitLines) {
+    line.entryId = entry.id;
+    line.sortOrder = debitOrder++;
+  }
+  for (const line of provisionCreditLines) {
+    line.entryId = entry.id;
+    line.sortOrder = debitOrder++;
+  }
+  const journalLines = [...drLines, ...provisionDebitLines, ...crLines, ...provisionCreditLines];
+  const journalDebit = roundMoney(journalLines.reduce((sum, line) => sum + num(line.debit), 0));
+  const journalCredit = roundMoney(journalLines.reduce((sum, line) => sum + num(line.credit), 0));
+  if (Math.abs(journalDebit - journalCredit) > 0.05) {
+    throw new Error(`القيد غير متوازن بعد احتساب المخصصات: مدين ${fix(journalDebit)} ≠ دائن ${fix(journalCredit)}`);
+  }
   if (retainedEntry) {
     return replaceLinkedSourceJournalEntry(dx, {
       companyId: cid,

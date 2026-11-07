@@ -36,6 +36,7 @@
 - [Restaurant loyalty boundary](restaurant-loyalty-boundary.md) — company-configured points apply only to customer-linked restaurant invoices; earn on posting and redeem within the invoice.
 - [Accounting and ZATCA index](accounting-zatca-index.md) — accounting, numbering, settlement, reports, documents, imports, and ZATCA implementation notes.
 - [Cash expense boundary](cash-expense-boundary.md) — explicit mobile grants, per-cashbox assignment, private receipts, and currency-safe reporting.
+- [HR monthly provision policy](hr-monthly-provision-policy.md) — leave accrues by contract days, EOS by liability change, and travel tickets by annual employee entitlement.
 - [Cash-transfer posting boundary](cash-transfer-posting-boundary.md) — deposits reuse the existing transfer lifecycle; preserve balance checks and exactly-once journal posting.
 - [Retail variant module boundary](clothing-module-boundary.md) — keep retail variants opt-in, reusable from item tabs, and backed by existing stock-item variants.
 - [Item sales price options](item-sales-price-options.md) — per-item selectable price options change the invoice line price but keep stock on the same item.

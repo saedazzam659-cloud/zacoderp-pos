@@ -118,6 +118,7 @@ export const employeesApi = {
   payrollPreview: (year: number, month: number) => req<any>("POST", "/employees/payroll/preview", { year, month }),
   createPayroll:  (data: any) => req<any>("POST", "/employees/payroll/runs", data),
   postPayroll:    (id: number) => req<any>("POST", `/employees/payroll/runs/${id}/post`, {}),
+  postMonthlyPayrollJournal: (id: number) => req<any>("POST", `/employees/payroll/monthly-journals/${id}/post`, {}),
   unpostPayroll:  (id: number) => req<any>("POST", `/employees/payroll/runs/${id}/unpost`, {}),
   payPayroll:     (id: number, data: { cashBoxId?: number | null; bankAccountId?: number | null; payDate?: string }) =>
     req<any>("POST", `/employees/payroll/runs/${id}/pay`, data),
@@ -195,7 +196,11 @@ export const employeesApi = {
 
   // HR Settings (account mapping)
   hrSettings:        () => req<any>("GET", "/hr/settings"),
-  updateHrSettings:  (mapping: any, alertThresholds?: any) => req<any>("PUT", "/hr/settings", { mapping, ...(alertThresholds !== undefined ? { alertThresholds } : {}) }),
+  updateHrSettings:  (mapping: any, alertThresholds?: any, monthlyProvisionsEnabled?: boolean) => req<any>("PUT", "/hr/settings", {
+    mapping,
+    ...(alertThresholds !== undefined ? { alertThresholds } : {}),
+    ...(monthlyProvisionsEnabled !== undefined ? { monthlyProvisionsEnabled } : {}),
+  }),
 
   // AI — explain HR journal entry
   aiExplainHrJournal: (entryType: string, entry: any, lines: any[], context?: any) =>

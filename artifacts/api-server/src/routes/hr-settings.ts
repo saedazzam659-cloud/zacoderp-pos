@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { companiesTable, accountsTable, cashBoxesTable, bankAccountsTable } from "@workspace/db";
-import { and, eq, asc } from "drizzle-orm";
+import { and, eq, asc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { resolveHrAccounts } from "../lib/hr-journals.js";
 
@@ -64,6 +64,10 @@ router.get("/", async (req, res) => {
         employeeLoans:          company?.hrEmployeeLoansAccountId     ?? accounts.employeeLoans,
         employeeCustody:        company?.hrEmployeeCustodyAccountId   ?? accounts.employeeCustody,
         eosProvision:           company?.hrEosProvisionAccountId      ?? accounts.eosProvision,
+        leaveProvisionExpense:  company?.hrLeaveProvisionExpenseAccountId ?? accounts.leaveProvisionExpense,
+        leaveProvisionLiability: company?.hrLeaveProvisionLiabilityAccountId ?? accounts.leaveProvisionLiability,
+        travelTicketExpense:    company?.hrTravelTicketExpenseAccountId ?? accounts.travelTicketExpense,
+        travelTicketLiability:  company?.hrTravelTicketLiabilityAccountId ?? accounts.travelTicketLiability,
         defaultPayCashBoxId:    company?.hrDefaultPayCashBoxId        ?? null,
         defaultPayBankAccountId:company?.hrDefaultPayBankAccountId    ?? null,
       },
@@ -75,6 +79,7 @@ router.get("/", async (req, res) => {
         medicalInsurance: (company?.hrAlertThresholds as any)?.medicalInsurance ?? 90,
         vehicleInsurance: (company?.hrAlertThresholds as any)?.vehicleInsurance ?? 60,
       },
+      monthlyProvisionsEnabled: company?.hrMonthlyProvisionsEnabled === true,
       accounts: allAccounts,
       cashBoxes,
       bankAccounts: banks,
@@ -93,6 +98,32 @@ router.put("/", async (req, res) => {
     const hasMapping = m && typeof m === "object" && Object.keys(m).length > 0;
     const toInt = (v: any) => (v == null || v === "" ? null : Number(v));
     const set: Record<string, any> = { updatedAt: new Date() };
+    if (req.body?.monthlyProvisionsEnabled === true) {
+      const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, cid));
+      const accountId = (key: string, column: keyof typeof company) =>
+        hasMapping && key in m ? toInt(m[key]) : Number(company?.[column] ?? 0) || null;
+      const required = [
+        { key: "eosExpense", column: "hrEosExpenseAccountId", type: "expense" },
+        { key: "eosProvision", column: "hrEosProvisionAccountId", type: "liability" },
+        { key: "leaveProvisionExpense", column: "hrLeaveProvisionExpenseAccountId", type: "expense" },
+        { key: "leaveProvisionLiability", column: "hrLeaveProvisionLiabilityAccountId", type: "liability" },
+        { key: "travelTicketExpense", column: "hrTravelTicketExpenseAccountId", type: "expense" },
+        { key: "travelTicketLiability", column: "hrTravelTicketLiabilityAccountId", type: "liability" },
+      ] as const;
+      const ids = required.map((item) => accountId(item.key, item.column));
+      if (ids.some((id) => !id)) {
+        res.status(400).json({ error: "اربط حسابات مصروف ومخصص الإجازات ونهاية الخدمة وتذاكر السفر أولاً" });
+        return;
+      }
+      const owned = await db.select({ id: accountsTable.id, accountType: accountsTable.accountType, isPosting: accountsTable.isPosting })
+        .from(accountsTable).where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, ids as number[])));
+      if (owned.length !== new Set(ids).size || required.some((item) =>
+        !owned.some((account) => account.id === accountId(item.key, item.column) &&
+          account.accountType === item.type && account.isPosting))) {
+        res.status(400).json({ error: "تحقق من نوع حسابات المخصصات وأنها حسابات ترحيل للشركة الحالية" });
+        return;
+      }
+    }
     if (hasMapping) {
       Object.assign(set, {
         hrSalariesExpenseAccountId:   toInt(m.salariesExpense),
@@ -105,6 +136,10 @@ router.put("/", async (req, res) => {
         hrEmployeeLoansAccountId:     toInt(m.employeeLoans),
         hrEmployeeCustodyAccountId:   toInt(m.employeeCustody),
         hrEosProvisionAccountId:      toInt(m.eosProvision),
+        hrLeaveProvisionExpenseAccountId: toInt(m.leaveProvisionExpense),
+        hrLeaveProvisionLiabilityAccountId: toInt(m.leaveProvisionLiability),
+        hrTravelTicketExpenseAccountId: toInt(m.travelTicketExpense),
+        hrTravelTicketLiabilityAccountId: toInt(m.travelTicketLiability),
         hrDefaultPayCashBoxId:        toInt(m.defaultPayCashBoxId),
         hrDefaultPayBankAccountId:    toInt(m.defaultPayBankAccountId),
       });
@@ -113,6 +148,9 @@ router.put("/", async (req, res) => {
       const [company] = await db.select({ thresholds: companiesTable.hrAlertThresholds })
         .from(companiesTable).where(eq(companiesTable.id, cid));
       set.hrAlertThresholds = sanitizeAlertThresholds(req.body.alertThresholds, company?.thresholds);
+    }
+    if (typeof req.body?.monthlyProvisionsEnabled === "boolean") {
+      set.hrMonthlyProvisionsEnabled = req.body.monthlyProvisionsEnabled;
     }
     await db.update(companiesTable).set(set).where(eq(companiesTable.id, cid));
     res.json({ ok: true });

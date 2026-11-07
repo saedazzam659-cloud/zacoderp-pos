@@ -62,6 +62,7 @@ function sanitizeEmployeeBody(b: any): Record<string, any> {
     ["housingAllow", "بدل السكن"],
     ["transportAllow", "بدل النقل"],
     ["otherAllow", "بدلات أخرى"],
+    ["annualTravelTicketAmount", "استحقاق تذكرة السفر السنوي"],
   ];
   for (const [f, label] of moneyFields) if (f in b) out[f] = moneyOrZero(b[f], label);
   if ("email" in b) out.email = emailOrNull(b.email);
@@ -652,6 +653,7 @@ router.post("/", async (req, res) => {
       housingAllow: clean.housingAllow ?? "0",
       transportAllow: clean.transportAllow ?? "0",
       otherAllow: clean.otherAllow ?? "0",
+      annualTravelTicketAmount: clean.annualTravelTicketAmount ?? "0",
       bankAccountIban: N(b.bankAccountIban),
       bankName: N(b.bankName),
       payableAccountId: N(b.payableAccountId) ? Number(b.payableAccountId) : null,
@@ -1992,7 +1994,7 @@ router.patch("/payroll/runs/:id/manufacturing-config", async (req, res) => {
   } catch (e: any) { respondHrError(req, res, e); }
 });
 
-router.post("/payroll/runs/:id/post", requirePostRight("payroll"), documentMutationLock("payroll_run", async (req, res) => {
+const postMonthlyPayrollJournal = async (req: any, res: any) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -2039,7 +2041,11 @@ router.post("/payroll/runs/:id/post", requirePostRight("payroll"), documentMutat
   } catch (e: any) {
     res.status(e?.status || 400).json({ error: e.message });
   }
-}));
+};
+const protectedMonthlyPayrollJournalPost = documentMutationLock("payroll_run", postMonthlyPayrollJournal);
+router.post("/payroll/monthly-journals/:id/post", requirePostRight("payroll"), protectedMonthlyPayrollJournalPost);
+// Backward-compatible route for existing clients; both paths share one posting flow.
+router.post("/payroll/runs/:id/post", requirePostRight("payroll"), protectedMonthlyPayrollJournalPost);
 
 // Get the JE attached to a payroll run (if posted)
 router.get("/payroll/runs/:id/journal", async (req, res) => {

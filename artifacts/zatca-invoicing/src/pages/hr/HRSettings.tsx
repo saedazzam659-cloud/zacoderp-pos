@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { Switch } from "@/components/ui/switch";
 import { Settings2, Save, Loader2, Sparkles, Info } from "lucide-react";
 
 const FIELD_KEYS: Array<{
@@ -26,6 +27,10 @@ const FIELD_KEYS: Array<{
   { key: "otherDeductions",   labelKey: "fldOtherDeductions",   hintKey: "fldOtherDeductionsHint",   filter: "liability" },
   { key: "employeeLoans",     labelKey: "fldEmployeeLoans",     hintKey: "fldEmployeeLoansHint",     filter: "asset"     },
   { key: "eosProvision",      labelKey: "fldEosProvision",      hintKey: "fldEosProvisionHint",      filter: "liability" },
+  { key: "leaveProvisionExpense", labelKey: "fldLeaveProvisionExpense", hintKey: "fldLeaveProvisionExpenseHint", filter: "expense" },
+  { key: "leaveProvisionLiability", labelKey: "fldLeaveProvisionLiability", hintKey: "fldLeaveProvisionLiabilityHint", filter: "liability" },
+  { key: "travelTicketExpense", labelKey: "fldTravelTicketExpense", hintKey: "fldTravelTicketExpenseHint", filter: "expense" },
+  { key: "travelTicketLiability", labelKey: "fldTravelTicketLiability", hintKey: "fldTravelTicketLiabilityHint", filter: "liability" },
 ];
 
 export default function HRSettings() {
@@ -39,14 +44,16 @@ export default function HRSettings() {
   const { data, isLoading } = useQuery<any>({ queryKey: ["hr-settings"], queryFn: () => employeesApi.hrSettings() });
   const [mapping, setMapping] = useState<any>({});
   const [alertThresholds, setAlertThresholds] = useState<any>({});
+  const [monthlyProvisionsEnabled, setMonthlyProvisionsEnabled] = useState(false);
 
   useEffect(() => {
     if (data?.mapping) setMapping(data.mapping);
     if (data?.alertThresholds) setAlertThresholds(data.alertThresholds);
+    setMonthlyProvisionsEnabled(data?.monthlyProvisionsEnabled === true);
   }, [data]);
 
   const save = useMutation({
-    mutationFn: () => employeesApi.updateHrSettings(mapping, alertThresholds),
+    mutationFn: () => employeesApi.updateHrSettings(mapping, alertThresholds, monthlyProvisionsEnabled),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["hr-settings"] });
       toast({ title: tr("toastSavedTitle"), description: tr("toastSavedDesc") });
@@ -59,6 +66,8 @@ export default function HRSettings() {
       salariesExpense: "5201", allowancesExpense: "5202", gosiExpense: "5203", eosExpense: "5215",
       salariesPayable: "21051", gosiPayable: "21052", otherDeductions: "21053",
       employeeLoans: "11081", eosProvision: "22021",
+      leaveProvisionExpense: "5217", leaveProvisionLiability: "22022",
+      travelTicketExpense: "5218", travelTicketLiability: "22023",
     };
     const next: any = { ...mapping };
     for (const [k, code] of Object.entries(codeMap)) {
@@ -108,6 +117,19 @@ export default function HRSettings() {
         <div>
           {tr("infoNote")}
         </div>
+      </div>
+
+      <div className="rounded-lg border bg-card p-3 flex items-center justify-between gap-4">
+        <div>
+          <div className="text-sm font-semibold">{tr("monthlyProvisionsTitle")}</div>
+          <div className="text-xs text-muted-foreground">{tr("monthlyProvisionsHint")}</div>
+        </div>
+        <Switch
+          checked={monthlyProvisionsEnabled}
+          onCheckedChange={setMonthlyProvisionsEnabled}
+          aria-label={tr("monthlyProvisionsTitle")}
+          data-testid="switch-hr-monthly-provisions"
+        />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -33,6 +33,7 @@ export const employeesTable = pgTable("employees", {
   housingAllow:   decimal("housing_allow", { precision: 12, scale: 2 }).default("0"),
   transportAllow: decimal("transport_allow", { precision: 12, scale: 2 }).default("0"),
   otherAllow:     decimal("other_allow", { precision: 12, scale: 2 }).default("0"),
+  annualTravelTicketAmount: decimal("annual_travel_ticket_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   bankAccountIban:text("bank_account_iban"),
   bankName:       text("bank_name"),
   // ─── Saudi Mudad / WPS payroll eligibility (kafala / sponsorship) ─────

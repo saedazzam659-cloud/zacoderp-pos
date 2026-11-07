@@ -1016,6 +1016,28 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultCoaRow[] = [
     "reportDirection": "income_statement"
   },
   {
+    "code": "5217",
+    "nameAr": "مخصص مصروف الإجازات",
+    "nameEn": "Leave Provision Expense",
+    "accountType": "expense",
+    "parentCode": "52",
+    "level": 3,
+    "isPosting": true,
+    "isActive": true,
+    "reportDirection": "income_statement"
+  },
+  {
+    "code": "5218",
+    "nameAr": "مصروف تذاكر سفر الموظفين",
+    "nameEn": "Employee Travel Ticket Expense",
+    "accountType": "expense",
+    "parentCode": "52",
+    "level": 3,
+    "isPosting": true,
+    "isActive": true,
+    "reportDirection": "income_statement"
+  },
+  {
     "code": "21051",
     "nameAr": "صافي الرواتب المستحقة الدفع",
     "nameEn": "Net Salaries Payable",
@@ -1074,6 +1096,28 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultCoaRow[] = [
     "code": "22021",
     "nameAr": "مخصص مكافأة نهاية الخدمة",
     "nameEn": "EOS Provision",
+    "accountType": "liability",
+    "parentCode": "2202",
+    "level": 4,
+    "isPosting": true,
+    "isActive": true,
+    "reportDirection": "balance_sheet"
+  },
+  {
+    "code": "22022",
+    "nameAr": "مخصص الإجازات المستحقة",
+    "nameEn": "Accrued Leave Provision",
+    "accountType": "liability",
+    "parentCode": "2202",
+    "level": 4,
+    "isPosting": true,
+    "isActive": true,
+    "reportDirection": "balance_sheet"
+  },
+  {
+    "code": "22023",
+    "nameAr": "مخصص تذاكر سفر الموظفين",
+    "nameEn": "Employee Travel Ticket Provision",
     "accountType": "liability",
     "parentCode": "2202",
     "level": 4,

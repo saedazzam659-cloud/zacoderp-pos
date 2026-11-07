@@ -39,13 +39,6 @@ export default function Payroll() {
     tr("monthsSep"), tr("monthsOct"), tr("monthsNov"), tr("monthsDec"),
   ];
 
-  // Per-doc-type auto-posting flag with global fallback. See
-  // SalesDocumentForm for the full rationale on the legacy fallback.
-  const _co = (user as any)?.company;
-  const _gl = _co?.autoPostingEnabled !== false;
-  const autoPostingEnabled = _co?.autoPostPayroll === undefined || _co?.autoPostPayroll === null
-    ? _gl
-    : _co.autoPostPayroll !== false;
   const now = new Date();
   const [tab, setTab] = useState("runs");
   const [year, setYear] = useState(now.getFullYear());
@@ -78,35 +71,18 @@ export default function Payroll() {
   });
 
   const createMut = useMutation({
-    mutationFn: async (data: any) => {
-      const created = await employeesApi.createPayroll(data);
-      if (autoPostingEnabled && created?.id && (created.status ?? "draft") === "draft") {
-        try {
-          await employeesApi.postPayroll(created.id);
-          return { ...created, _posted: true };
-        } catch (e: any) {
-          return { ...created, _posted: false, _postError: parseError(e) };
-        }
-      }
-      return { ...created, _posted: false };
-    },
+    mutationFn: (data: any) => employeesApi.createPayroll(data),
     onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ["payroll-runs"] });
       qc.invalidateQueries({ queryKey: ["loans"] });
       setPreview(null); setTab("runs");
-      if (data?._posted) {
-        toast({ title: tr("toastRunCreatedAndPostedTitle"), description: tr("toastRunCreatedAndPostedDesc") });
-      } else if (data?._postError) {
-        toast({ variant: "destructive", title: tr("toastRunCreatedPostFailedTitle"), description: data._postError });
-      } else {
-        toast({ title: tr("toastRunCreatedTitle"), description: tr("toastRunCreatedDesc") });
-      }
+      toast({ title: tr("toastRunCreatedTitle"), description: tr("toastRunCreatedDesc") });
     },
     onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
 
   const postMut = useMutation({
-    mutationFn: (id: number) => employeesApi.postPayroll(id),
+    mutationFn: (id: number) => employeesApi.postMonthlyPayrollJournal(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["payroll-runs"] });
       qc.invalidateQueries({ queryKey: ["payroll-run", viewing] });

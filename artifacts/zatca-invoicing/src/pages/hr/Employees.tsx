@@ -32,7 +32,7 @@ const EMPTY: any = {
   nationality: "", gender: "male", birthDate: "", mobile: "", email: "",
   hireDate: "", endDate: "", department: "", jobTitle: "",
   sponsor: "", profession: "", status: "active",
-  basicSalary: 0, housingAllow: 0, transportAllow: 0, otherAllow: 0,
+  basicSalary: 0, housingAllow: 0, transportAllow: 0, otherAllow: 0, annualTravelTicketAmount: 0,
   bankAccountIban: "", bankName: "", notes: "",
   // Mudad / kafala eligibility
   borderNumber: "", saudiType: "non_saudi", employmentType: "regular",
@@ -358,6 +358,7 @@ export default function Employees() {
                     <Field label={tr("fHousingAllow")}><Input dir="ltr" type="number" min="0" value={editing.housingAllow} onChange={e => setF("housingAllow", e.target.value)} /></Field>
                     <Field label={tr("fTransportAllow")}><Input dir="ltr" type="number" min="0" value={editing.transportAllow} onChange={e => setF("transportAllow", e.target.value)} /></Field>
                     <Field label={tr("fOtherAllow")}><Input dir="ltr" type="number" min="0" value={editing.otherAllow} onChange={e => setF("otherAllow", e.target.value)} /></Field>
+                    <Field label={tr("fAnnualTravelTicket")}><Input dir="ltr" type="number" min="0" value={editing.annualTravelTicketAmount} onChange={e => setF("annualTravelTicketAmount", e.target.value)} /></Field>
                     <Field label={tr("fBankName")}><Input value={editing.bankName} onChange={e => setF("bankName", e.target.value)} /></Field>
                     <Field label={tr("fIban")}><Input value={editing.bankAccountIban} onChange={e => setF("bankAccountIban", e.target.value)} dir="ltr" /></Field>
                   </FormGrid>
