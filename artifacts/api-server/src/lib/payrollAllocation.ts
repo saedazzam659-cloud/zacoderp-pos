@@ -8,33 +8,36 @@ export function addPayrollDays(d: string, n: number) {
 
 /** Allocate by calendar days in integer cents; the final bucket receives the remainder. */
 export function allocationBuckets(assignments: any[], periodStart: string, periodEnd: string, amount: number) {
-  const days: Array<{ date: string; projectId: number | null; costCenterId: number | null; salaryAllocationPct: number; provisionAllocationPct: number }> = [];
+  const buckets: any[] = [];
+  const latest = new Map<string, any>();
   for (let date = periodStart; date <= periodEnd; date = addPayrollDays(date, 1)) {
     const active = assignments.filter((x) => isoPayrollDate(x.effectiveFrom) <= date && (!x.effectiveTo || isoPayrollDate(x.effectiveTo) >= date));
-    if (!active.length) {
-      days.push({ date, projectId: null, costCenterId: null, salaryAllocationPct: 100, provisionAllocationPct: 100 });
-      continue;
-    }
-    const salaryTotal = active.reduce((sum, x) => sum + Number(x.salaryAllocationPct ?? 100), 0);
-    const provisionTotal = active.reduce((sum, x) => sum + Number(x.provisionAllocationPct ?? x.salaryAllocationPct ?? 100), 0);
+    const shares = new Map<string, { projectId: number | null; costCenterId: number | null; salaryAllocationPct: number; provisionAllocationPct: number }>();
+    const rows = active.length ? active : [{ projectId: null, costCenterId: null, salaryAllocationPct: 100, provisionAllocationPct: 100 }];
+    const salaryTotal = rows.reduce((sum, x) => sum + Number(x.salaryAllocationPct ?? 100), 0);
+    const provisionTotal = rows.reduce((sum, x) => sum + Number(x.provisionAllocationPct ?? x.salaryAllocationPct ?? 100), 0);
     if (Math.abs(salaryTotal - 100) > 0.001 || Math.abs(provisionTotal - 100) > 0.001) {
       throw new Error(`نسب توزيع الموظف لا تساوي 100% في ${date}`);
     }
-    for (const a of active) days.push({
-      date, projectId: a.projectId ?? null, costCenterId: a.costCenterId ?? null,
-      salaryAllocationPct: Number(a.salaryAllocationPct ?? 100),
-      provisionAllocationPct: Number(a.provisionAllocationPct ?? a.salaryAllocationPct ?? 100),
-    });
-  }
-  const buckets: any[] = [];
-  for (const day of days) {
-    const last = buckets[buckets.length - 1];
-    if (last && last.projectId === day.projectId && last.costCenterId === day.costCenterId
-      && last.salaryAllocationPct === day.salaryAllocationPct
-      && last.provisionAllocationPct === day.provisionAllocationPct
-      && last.periodEnd < day.date) {
-      last.days++; last.periodEnd = day.date;
-    } else buckets.push({ ...day, periodStart: day.date, periodEnd: day.date, days: 1 });
+    for (const a of rows) {
+      const projectId = a.projectId ?? null, costCenterId = a.costCenterId ?? null;
+      const key = `${projectId ?? ""}:${costCenterId ?? ""}`;
+      const share = shares.get(key) ?? { projectId, costCenterId, salaryAllocationPct: 0, provisionAllocationPct: 0 };
+      share.salaryAllocationPct += Number(a.salaryAllocationPct ?? 100);
+      share.provisionAllocationPct += Number(a.provisionAllocationPct ?? a.salaryAllocationPct ?? 100);
+      shares.set(key, share);
+    }
+    for (const share of shares.values()) {
+      const key = `${share.projectId ?? ""}:${share.costCenterId ?? ""}:${share.salaryAllocationPct}:${share.provisionAllocationPct}`;
+      let bucket = latest.get(key);
+      if (!bucket || addPayrollDays(bucket.periodEnd, 1) !== date) {
+        bucket = { ...share, periodStart: date, periodEnd: date, days: 0 };
+        buckets.push(bucket);
+        latest.set(key, bucket);
+      }
+      bucket.days++;
+      bucket.periodEnd = date;
+    }
   }
   const totalCents = Math.round(amount * 100);
   const weights = buckets.map((b) => b.days * b.salaryAllocationPct);

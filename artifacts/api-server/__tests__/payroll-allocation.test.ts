@@ -33,7 +33,8 @@ test("handles first-day, last-day, multiple transfers, and no assignment", () =>
   ], "2026-02-01", "2026-02-28", 100);
   assert.equal(transfers.reduce((n, r) => n + Number(r.allocatedAmount), 0).toFixed(2), "100.00");
   assert.deepEqual(allocationBuckets([], "2026-02-01", "2026-02-28", 100), [{
-    date: "2026-02-01", projectId: null, costCenterId: null, periodStart: "2026-02-01", periodEnd: "2026-02-28", days: 28, allocatedAmount: "100.00",
+    projectId: null, costCenterId: null, salaryAllocationPct: 100, provisionAllocationPct: 100,
+    periodStart: "2026-02-01", periodEnd: "2026-02-28", days: 28, allocatedAmount: "100.00",
   }]);
 });
 
@@ -59,6 +60,34 @@ test("splits salary and allowance components independently without cent drift", 
   assert.equal(salary.reduce((n, row) => n + row.amount, 0).toFixed(2), "100.01");
   assert.equal(allowances.reduce((n, row) => n + row.amount, 0).toFixed(2), "10.03");
   assert.equal(salary[1].costCenterId, null, "unassigned allocation stays without a cost center");
+});
+
+test("supports separate salary and provision ratios across multiple cost centers", () => {
+  const snapshots = allocationBuckets([
+    { projectId: null, costCenterId: 10, effectiveFrom: "2026-02-01", effectiveTo: "2026-02-28", salaryAllocationPct: 60, provisionAllocationPct: 20 },
+    { projectId: null, costCenterId: 20, effectiveFrom: "2026-02-01", effectiveTo: "2026-02-28", salaryAllocationPct: 40, provisionAllocationPct: 80 },
+  ], "2026-02-01", "2026-02-28", 1000);
+  assert.equal(snapshots.length, 2, "daily allocations coalesce to two immutable period snapshots");
+  assert.equal(snapshots.reduce((n, row) => n + Number(row.allocatedAmount), 0).toFixed(2), "1000.00");
+  const salaryByCenter = new Map<number | null, number>();
+  for (const row of allocateComponentBySnapshots(1000, snapshots)) {
+    salaryByCenter.set(row.costCenterId, (salaryByCenter.get(row.costCenterId) ?? 0) + row.amount);
+  }
+  const provisionByCenter = new Map<number | null, number>();
+  for (const row of allocateComponentBySnapshots(500, snapshots, "provision")) {
+    provisionByCenter.set(row.costCenterId, (provisionByCenter.get(row.costCenterId) ?? 0) + row.amount);
+  }
+  assert.equal(salaryByCenter.get(10), 600);
+  assert.equal(salaryByCenter.get(20), 400);
+  assert.equal(provisionByCenter.get(10), 100);
+  assert.equal(provisionByCenter.get(20), 400);
+});
+
+test("rejects incomplete overlapping allocation percentages", () => {
+  assert.throws(() => allocationBuckets([
+    { projectId: null, costCenterId: 10, effectiveFrom: "2026-02-01", effectiveTo: "2026-02-28", salaryAllocationPct: 60, provisionAllocationPct: 20 },
+    { projectId: null, costCenterId: 20, effectiveFrom: "2026-02-01", effectiveTo: "2026-02-28", salaryAllocationPct: 40, provisionAllocationPct: 70 },
+  ], "2026-02-01", "2026-02-28", 1000), /100%/);
 });
 
 test("allows a future assignment after frozen payroll, but not inside a frozen period", () => {
