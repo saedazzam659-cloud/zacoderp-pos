@@ -579,6 +579,11 @@ export const api = {
     req<RKitchenStation[]>("GET", "/api/pos-restaurant/menu/kitchen-stations"),
   rKitchenDisplayStations: () =>
     req<RKitchenStation[]>("GET", "/api/pos-restaurant/kitchen/stations"),
+  rKitchenPrinterRoutes: (branchId: number) =>
+    req<RKitchenPrinterRoute[]>("GET", `/api/pos-restaurant/kitchen/printer-routes?branchId=${branchId}`),
+  rSaveKitchenPrinterRoute: (body: {
+    branchId: number; stationKey: string; primaryPrinterName: string; backupPrinterName: string;
+  }) => req<RKitchenPrinterRoute>("PUT", "/api/pos-restaurant/kitchen/printer-routes", body),
   rCreateKitchenStation: (body: { nameAr: string; nameEn?: string }) =>
     req<RKitchenStation>("POST", "/api/pos-restaurant/menu/kitchen-stations", body),
   rUpdateKitchenStation: (id: number, body: Partial<Pick<RKitchenStation, "nameAr" | "nameEn" | "sortOrder" | "isActive">>) =>
@@ -854,6 +859,17 @@ export type RKitchenStation = {
   nameEn?: string | null;
   sortOrder: number;
   isActive: boolean;
+};
+
+export type RKitchenPrinterRoute = {
+  id: number;
+  companyId: number;
+  branchId: number;
+  stationKey: string;
+  primaryPrinterName: string;
+  backupPrinterName: string | null;
+  isActive: boolean;
+  updatedAt: string;
 };
 
 export type PublicRTableMenu = {

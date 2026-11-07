@@ -94,6 +94,23 @@ export const posRestaurantKitchenStationsTable = pgTable("pos_restaurant_kitchen
   byCompanyOrder: index("pos_restaurant_kitchen_stations_company_order_idx").on(t.companyId, t.sortOrder, t.id),
 }));
 
+export const posRestaurantKitchenPrinterRoutesTable = pgTable("pos_restaurant_kitchen_printer_routes", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId: integer("branch_id").notNull().references(() => branchesTable.id, { onDelete: "cascade" }),
+  stationKey: text("station_key").notNull(),
+  primaryPrinterName: text("primary_printer_name").notNull(),
+  backupPrinterName: text("backup_printer_name"),
+  isActive: boolean("is_active").notNull().default(true),
+  updatedByUserId: integer("updated_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  companyBranchStationUnique: uniqueIndex("pos_rest_kitchen_printer_route_scope_uniq")
+    .on(t.companyId, t.branchId, t.stationKey),
+  byCompanyBranch: index("pos_rest_kitchen_printer_route_branch_idx").on(t.companyId, t.branchId),
+}));
+
 // Company/branch-scoped credentials for official restaurant delivery APIs.
 // Secrets are encrypted by the API server before being persisted.
 export const posRestaurantDeliveryIntegrationsTable = pgTable("pos_restaurant_delivery_integrations", {

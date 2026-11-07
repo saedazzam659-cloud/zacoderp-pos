@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode, Award, CalendarClock, ChefHat, Truck, ExternalLink } from "lucide-react";
+import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode, Award, CalendarClock, ChefHat, Truck, ExternalLink, Printer } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import {
   api, getToken, setStoredUser,
   type AuthUser,
-  type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem, type RKitchenStation, type RLoyaltyProgram, type RLoyaltyRule, type RLoyaltyTier, type RestaurantDeliveryIntegration,
+  type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem, type RKitchenStation, type RKitchenPrinterRoute, type RLoyaltyProgram, type RLoyaltyRule, type RLoyaltyTier, type RestaurantDeliveryIntegration,
 } from "@/lib/api";
 import ShiftManagementTab from "@/components/ShiftManagementTab";
 import RestaurantReservationsTab from "@/components/RestaurantReservationsTab";
@@ -19,6 +19,7 @@ const TABS = [
   { id: "cats",    label: "فئات القائمة",     icon: Tags },
   { id: "items",   label: "أصناف القائمة",   icon: Utensils },
   { id: "stations", label: "محطات المطبخ", icon: ChefHat },
+  { id: "printers", label: "طابعات المطبخ", icon: Printer },
   { id: "reservations", label: "الحجوزات", icon: CalendarClock },
   { id: "delivery", label: "منصات التوصيل", icon: Truck },
   { id: "shifts",  label: "الورديات", icon: Clock3 },
@@ -59,7 +60,8 @@ export default function RestaurantSettings() {
   const canManageDelivery = canManageShifts;
   const visibleTabs = TABS.filter(item => item.id !== "shifts" || canManageShifts)
     .filter(item => item.id !== "loyalty" || canManageLoyalty)
-    .filter(item => item.id !== "delivery" || canManageDelivery);
+    .filter(item => item.id !== "delivery" || canManageDelivery)
+    .filter(item => item.id !== "printers" || canManageShifts);
 
   const branchesQ = useQuery({
     queryKey: ["branches", cid],
@@ -137,6 +139,7 @@ export default function RestaurantSettings() {
         {tab === "cats"   && <CategoriesTab />}
         {tab === "items"  && <ItemsTab companyId={cid} />}
         {tab === "stations" && <KitchenStationsTab />}
+        {tab === "printers" && canManageShifts && <KitchenPrinterRoutingTab branches={branchesQ.data ?? []} />}
         {tab === "reservations" && <RestaurantReservationsTab branches={branchesQ.data ?? []} />}
         {tab === "delivery" && canManageDelivery && <RestaurantDeliveryIntegrationsTab branches={branchesQ.data ?? []} branchesLoading={branchesQ.isLoading} />}
             {tab === "shifts" && canManageShifts && <ShiftManagementTab companyId={cid} />}
@@ -680,6 +683,126 @@ function KitchenStationsTab() {
             {(stationsQ.data ?? []).length === 0 && <div className="p-6 text-center text-sm text-muted-foreground">لا توجد محطات بعد.</div>}
           </div>}
       </div>
+    </div>
+  );
+}
+
+function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
+  const qc = useQueryClient();
+  const [branchId, setBranchId] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, { primary: string; backup: string }>>({});
+  const [savedMessage, setSavedMessage] = useState("");
+
+  useEffect(() => {
+    if (!branches.length || branchId) return;
+    const preferred = Number(localStorage.getItem("pos_branch_id") || 0);
+    const branch = branches.find(item => item.id === preferred)
+      ?? branches.find(item => (item as Branch & { isMain?: boolean }).isMain)
+      ?? branches[0];
+    setBranchId(String(branch.id));
+  }, [branches, branchId]);
+
+  const stationsQ = useQuery({
+    queryKey: ["r-kitchen-stations"],
+    queryFn: () => api.rKitchenStations(),
+  });
+  const routesQ = useQuery({
+    queryKey: ["r-kitchen-printer-routes", branchId],
+    queryFn: () => api.rKitchenPrinterRoutes(Number(branchId)),
+    enabled: !!branchId,
+  });
+
+  useEffect(() => {
+    if (!routesQ.data) return;
+    const next: Record<string, { primary: string; backup: string }> = {};
+    for (const route of routesQ.data) {
+      next[route.stationKey] = {
+        primary: route.primaryPrinterName,
+        backup: route.backupPrinterName ?? "",
+      };
+    }
+    setDrafts(next);
+  }, [routesQ.data]);
+
+  const save = useMutation({
+    mutationFn: ({ stationKey, values }: {
+      stationKey: string; values: { primary: string; backup: string };
+    }) => api.rSaveKitchenPrinterRoute({
+      branchId: Number(branchId),
+      stationKey,
+      primaryPrinterName: values.primary.trim(),
+      backupPrinterName: values.backup.trim(),
+    }),
+    onSuccess: () => {
+      setSavedMessage("تم حفظ توجيه الطابعة للمحطة.");
+      void qc.invalidateQueries({ queryKey: ["r-kitchen-printer-routes", branchId] });
+    },
+    onError: (error: Error) => setSavedMessage(error.message || "تعذر حفظ إعداد الطابعة."),
+  });
+
+  const stations = (stationsQ.data ?? []).filter(station => station.isActive);
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
+        <h2 className="flex items-center gap-2 font-black"><Printer className="h-5 w-5 text-primary" />توجيه طابعات محطات التحضير</h2>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          اختر الطابعة الأساسية والاحتياطية لكل محطة في الفرع. عند تعذر الطباعة على الأساسية، يحاول وسيط الطباعة المحلي استخدام الاحتياطية. اكتب اسم الطابعة كما يظهر في إعداد وسيط الفرع.
+        </p>
+        <label className="mt-4 block max-w-sm space-y-1 text-xs font-semibold text-muted-foreground">
+          الفرع
+          <select value={branchId} onChange={event => { setBranchId(event.target.value); setSavedMessage(""); }}
+            className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground"
+            aria-label="فرع إعدادات طابعات المطبخ">
+            <option value="">اختر الفرع</option>
+            {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.nameAr}</option>)}
+          </select>
+        </label>
+      </section>
+
+      {stationsQ.isLoading || routesQ.isLoading ? (
+        <div role="status" className="rounded-xl border bg-card p-8 text-center"><Loader2 className="mx-auto animate-spin" /></div>
+      ) : stationsQ.isError || routesQ.isError ? (
+        <div role="alert" className="rounded-xl border border-destructive/30 bg-card p-5 text-sm text-destructive">
+          تعذر تحميل إعدادات المحطات والطابعات.
+          <button className="mr-2 underline" onClick={() => { void stationsQ.refetch(); void routesQ.refetch(); }}>إعادة المحاولة</button>
+        </div>
+      ) : stations.length === 0 ? (
+        <div className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground">أضف محطة تحضير أولاً من تبويب محطات المطبخ.</div>
+      ) : (
+        <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+          <div className="divide-y divide-border">
+            {stations.map(station => {
+              const values = drafts[station.stationKey] ?? { primary: "", backup: "" };
+              return (
+                <div key={station.stationKey} className="grid gap-3 p-4 md:grid-cols-[minmax(120px,0.8fr)_1fr_1fr_auto] md:items-end">
+                  <div className="font-bold">{station.nameAr}</div>
+                  <label className="space-y-1 text-xs font-semibold text-muted-foreground">
+                    الطابعة الأساسية
+                    <Input value={values.primary} maxLength={200} placeholder="اسم الطابعة الأساسية"
+                      aria-label={`الطابعة الأساسية لمحطة ${station.nameAr}`}
+                      onChange={event => setDrafts(current => ({ ...current, [station.stationKey]: { ...values, primary: event.target.value } }))} />
+                  </label>
+                  <label className="space-y-1 text-xs font-semibold text-muted-foreground">
+                    الطابعة الاحتياطية
+                    <Input value={values.backup} maxLength={200} placeholder="اختيارية"
+                      aria-label={`الطابعة الاحتياطية لمحطة ${station.nameAr}`}
+                      onChange={event => setDrafts(current => ({ ...current, [station.stationKey]: { ...values, backup: event.target.value } }))} />
+                  </label>
+                  <Button disabled={!branchId || !values.primary.trim() || save.isPending}
+                    onClick={() => { setSavedMessage(""); save.mutate({ stationKey: station.stationKey, values }); }}>
+                    {save.isPending ? <Loader2 className="ml-1 h-4 w-4 animate-spin" /> : <Save className="ml-1 h-4 w-4" />}حفظ
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {savedMessage && <p role={save.isError ? "alert" : "status"} className={`rounded-lg border p-3 text-sm ${save.isError ? "border-destructive/30 text-destructive" : "border-emerald-200 text-emerald-700"}`}>{savedMessage}</p>}
+      <p className="text-xs leading-5 text-muted-foreground">
+        هذه الإعدادات تحفظ أسماء الطابعات لكل محطة وفرع. توصيل الطابعة واختبارها والطباعة الفعلية يحتاجان تشغيل وسيط الطباعة المحلي على شبكة الفرع.
+      </p>
     </div>
   );
 }

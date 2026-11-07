@@ -535,6 +535,35 @@ async function ensureRestaurantKitchenStationsSchema(): Promise<void> {
   }
 }
 
+async function ensureRestaurantKitchenPrinterRoutesSchema(): Promise<void> {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS pos_restaurant_kitchen_printer_routes (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+      station_key TEXT NOT NULL,
+      primary_printer_name TEXT NOT NULL,
+      backup_printer_name TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      updated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_rest_kitchen_printer_route_scope_uniq
+      ON pos_restaurant_kitchen_printer_routes(company_id, branch_id, station_key)`,
+    `CREATE INDEX IF NOT EXISTS pos_rest_kitchen_printer_route_branch_idx
+      ON pos_restaurant_kitchen_printer_routes(company_id, branch_id)`,
+  ];
+  for (const statement of statements) {
+    try {
+      await execDDL(statement);
+    } catch (err) {
+      logger.error({ err, statement }, "ensureSchema: restaurant kitchen printer routes schema reconciliation failed");
+      throw err;
+    }
+  }
+}
+
 async function ensureRestaurantDeliveryIntegrationsSchema(): Promise<void> {
   const statements = [
     `CREATE TABLE IF NOT EXISTS pos_restaurant_delivery_integrations (
@@ -4923,6 +4952,7 @@ async function runHeal(options: {
   await ensureRestaurantLoyaltySchema();
   await ensureRestaurantReservationsSchema();
   await ensureRestaurantKitchenStationsSchema();
+  await ensureRestaurantKitchenPrinterRoutesSchema();
   await ensureRestaurantDeliveryIntegrationsSchema();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
@@ -5143,6 +5173,7 @@ async function runHeal(options: {
   await ensureRestaurantLoyaltySchema();
   await ensureRestaurantReservationsSchema();
   await ensureRestaurantKitchenStationsSchema();
+  await ensureRestaurantKitchenPrinterRoutesSchema();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must

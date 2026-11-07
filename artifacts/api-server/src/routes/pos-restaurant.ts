@@ -5,6 +5,7 @@ import {
   posTablesTable,
   posRestaurantReservationsTable,
   posRestaurantKitchenStationsTable,
+  posRestaurantKitchenPrinterRoutesTable,
   posMenuCategoriesTable,
   posMenuItemsTable,
   posOrdersTable,
@@ -1116,6 +1117,56 @@ router.get("/menu/kitchen-stations", async (req, res) => {
 router.get("/kitchen/stations", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   res.json((await listRestaurantKitchenStations(cid)).filter(station => station.isActive));
+});
+
+router.get("/kitchen/printer-routes", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "إعدادات طابعات المطبخ متاحة لمسؤول الشركة فقط" }); return; }
+  const branchId = Number(req.query.branchId);
+  if (!Number.isSafeInteger(branchId) || branchId <= 0) { res.status(400).json({ error: "اختر فرعاً صالحاً" }); return; }
+  const [branch] = await db.select({ id: branchesTable.id }).from(branchesTable)
+    .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)));
+  if (!branch) { res.status(404).json({ error: "الفرع غير موجود" }); return; }
+  res.json(await db.select().from(posRestaurantKitchenPrinterRoutesTable).where(and(
+    eq(posRestaurantKitchenPrinterRoutesTable.companyId, cid),
+    eq(posRestaurantKitchenPrinterRoutesTable.branchId, branchId),
+  )));
+});
+
+router.put("/kitchen/printer-routes", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "إعدادات طابعات المطبخ متاحة لمسؤول الشركة فقط" }); return; }
+  const branchId = Number(req.body?.branchId);
+  const stationKey = typeof req.body?.stationKey === "string" ? req.body.stationKey.trim() : "";
+  const primaryPrinterName = typeof req.body?.primaryPrinterName === "string" ? req.body.primaryPrinterName.trim() : "";
+  const backupPrinterName = typeof req.body?.backupPrinterName === "string" ? req.body.backupPrinterName.trim() : "";
+  if (!Number.isSafeInteger(branchId) || branchId <= 0 || !stationKey || stationKey.length > 100 ||
+      !primaryPrinterName || primaryPrinterName.length > 200 || backupPrinterName.length > 200 ||
+      (backupPrinterName && backupPrinterName.toLocaleLowerCase() === primaryPrinterName.toLocaleLowerCase())) {
+    res.status(400).json({ error: "بيانات الفرع أو الطابعات غير صالحة، ويجب أن تختلف الطابعة الاحتياطية عن الأساسية" }); return;
+  }
+  const [branch] = await db.select({ id: branchesTable.id }).from(branchesTable)
+    .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)));
+  if (!branch) { res.status(404).json({ error: "الفرع غير موجود" }); return; }
+  const [station] = await db.select({ stationKey: posRestaurantKitchenStationsTable.stationKey })
+    .from(posRestaurantKitchenStationsTable).where(and(
+      eq(posRestaurantKitchenStationsTable.companyId, cid),
+      eq(posRestaurantKitchenStationsTable.stationKey, stationKey),
+      eq(posRestaurantKitchenStationsTable.isActive, true),
+    ));
+  if (!station) { res.status(400).json({ error: "محطة التحضير غير موجودة أو غير نشطة" }); return; }
+  const [saved] = await db.insert(posRestaurantKitchenPrinterRoutesTable).values({
+    companyId: cid, branchId, stationKey, primaryPrinterName,
+    backupPrinterName: backupPrinterName || null, updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: [
+      posRestaurantKitchenPrinterRoutesTable.companyId,
+      posRestaurantKitchenPrinterRoutesTable.branchId,
+      posRestaurantKitchenPrinterRoutesTable.stationKey,
+    ],
+    set: { primaryPrinterName, backupPrinterName: backupPrinterName || null, isActive: true, updatedAt: new Date() },
+  }).returning();
+  res.json(saved);
 });
 
 router.post("/menu/kitchen-stations", async (req, res) => {
