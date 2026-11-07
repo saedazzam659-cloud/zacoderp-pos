@@ -1412,7 +1412,15 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
           : <div className="mt-4 space-y-2">
             {ordersQ.data.map(order => {
               const customer = order.orderPayload.customer as { first_name?: string | null; last_name?: string | null } | undefined;
-              const itemCount = Array.isArray(order.orderPayload.items) ? order.orderPayload.items.length : 0;
+              const orderItems = Array.isArray(order.orderPayload.items) ? order.orderPayload.items : [];
+              const itemCount = orderItems.length;
+              const payment = order.orderPayload.payment && typeof order.orderPayload.payment === "object"
+                ? order.orderPayload.payment as Record<string, any>
+                : {};
+              const formatAmount = (value: unknown) => {
+                const amount = Number(value);
+                return Number.isFinite(amount) ? amount.toFixed(2) : "—";
+              };
               return <article key={order.id} data-testid={`delivery-order-${order.id}`} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3">
                 <div className="min-w-0">
                   <p className="truncate font-bold" dir="ltr">{order.orderCode || order.externalOrderId}</p>
@@ -1450,6 +1458,35 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
                       </>}
                   <span className="text-muted-foreground">{new Date(order.receivedAt).toLocaleString("ar-SA")}</span>
                 </div>
+                <details className="w-full rounded-lg border border-border bg-muted/20 p-3" data-testid={`delivery-order-details-${order.id}`}>
+                  <summary className="cursor-pointer text-sm font-bold" data-testid={`button-toggle-delivery-details-${order.id}`}>تفاصيل الأصناف والمبالغ</summary>
+                  <div className="mt-3 space-y-2">
+                    {orderItems.map((item: any, index: number) => (
+                      <div key={`${String(item?.sku ?? item?._id ?? "item")}-${index}`} data-testid={`delivery-order-line-${order.id}-${index}`}
+                        className="grid gap-1 rounded-lg border border-border bg-background p-2 text-xs sm:grid-cols-[1fr_auto_auto_auto] sm:items-center sm:gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-bold">{item?.name || "صنف من المنصة"}</p>
+                          <code dir="ltr" className="text-muted-foreground">{String(item?.sku ?? "بدون SKU")}</code>
+                          {typeof item?.instructions === "string" && item.instructions && <p className="mt-1 text-muted-foreground">{item.instructions}</p>}
+                        </div>
+                        <span>الكمية: {formatAmount(item?.pricing?.quantity)}</span>
+                        <span>سعر الوحدة: {formatAmount(item?.pricing?.unit_price)}</span>
+                        <span className="font-bold">الإجمالي: {formatAmount(item?.pricing?.total_price)}</span>
+                      </div>
+                    ))}
+                    <div className="grid gap-2 border-t border-border pt-3 text-xs sm:grid-cols-3">
+                      <span>قبل الضريبة: {formatAmount(payment.sub_total)}</span>
+                      <span>الضريبة: {formatAmount(payment.total_taxes)}</span>
+                      <span>الخصم: {formatAmount(payment.discount)}</span>
+                      <span>رسوم التوصيل: {formatAmount(payment.delivery_fee)}</span>
+                      <span>رسوم العبوة: {formatAmount(payment.container_charge)}</span>
+                      <span>رسوم الخدمة: {formatAmount(payment.service_fee)}</span>
+                      <span className="font-black sm:col-span-3" data-testid={`text-delivery-payment-total-${order.id}`}>
+                        إجمالي المنصة: {formatAmount(payment.order_total)}
+                      </span>
+                    </div>
+                  </div>
+                </details>
               </article>;
             })}
           </div>}
