@@ -989,7 +989,8 @@ router.get("/execution-catalog", async (req, res) => {
         type: productionResourcesTable.type, branchId: productionResourcesTable.branchId })
         .from(productionResourcesTable).where(machineWhere).orderBy(asc(productionResourcesTable.name)),
       db.select({ id: employeesTable.id, nameAr: employeesTable.nameAr, nameEn: employeesTable.nameEn,
-        code: employeesTable.code, branchId: employeesTable.branchId })
+        code: employeesTable.code, branchId: employeesTable.branchId,
+        manufacturingLaborType: employeesTable.manufacturingLaborType })
         .from(employeesTable).where(employeeWhere)
         .orderBy(asc(employeesTable.nameAr), asc(employeesTable.nameEn), asc(employeesTable.code)),
     ]);
@@ -10707,6 +10708,7 @@ async function freezeStageResourceCosts(
       id: payrollAllocationSnapshotsTable.id,
       employeeId: payrollAllocationSnapshotsTable.employeeId,
       amount: payrollAllocationSnapshotsTable.allocatedAmount,
+      laborType: payrollAllocationSnapshotsTable.manufacturingLaborType,
     }).from(payrollAllocationSnapshotsTable).where(and(
       eq(payrollAllocationSnapshotsTable.companyId, cid),
       eq(payrollAllocationSnapshotsTable.payrollRunId, payrollRunId),
@@ -10714,6 +10716,7 @@ async function freezeStageResourceCosts(
     ));
     const snapshotIdsByEmployee = new Map<number, number[]>();
     const amountByEmployee = new Map<number, number>();
+    const laborTypeByEmployee = new Map<number, string>();
     for (const snapshot of snapshots) {
       snapshotIdsByEmployee.set(snapshot.employeeId, [
         ...(snapshotIdsByEmployee.get(snapshot.employeeId) ?? []), snapshot.id,
@@ -10722,6 +10725,9 @@ async function freezeStageResourceCosts(
         snapshot.employeeId,
         (amountByEmployee.get(snapshot.employeeId) ?? 0) + num(snapshot.amount),
       );
+      if (!laborTypeByEmployee.has(snapshot.employeeId)) {
+        laborTypeByEmployee.set(snapshot.employeeId, snapshot.laborType ?? "unclassified");
+      }
     }
     const hasAllSnapshots = employeeIds.every((id) => (amountByEmployee.get(id) ?? 0) > 0);
     const weights = employeeIds.map((id) =>
@@ -10737,6 +10743,7 @@ async function freezeStageResourceCosts(
       allocatedCents += cents;
       return {
         employeeId,
+        laborType: laborTypeByEmployee.get(employeeId) ?? "unclassified",
         amount: cents / 100,
         payrollSnapshotIds: snapshotIdsByEmployee.get(employeeId) ?? [],
         allocationBasis: hasAllSnapshots ? "payroll_snapshot_amount" : "equal_employee_hours",

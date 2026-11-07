@@ -43,13 +43,15 @@ export default function EmployeeCostReport() {
     if (!(await gate("export"))) return;
     exportCsv(
       `employee_cost_${new Date().toISOString().slice(0, 10)}.csv`,
-      ["الكود", "الاسم", "القسم", "المسمى", "أساسي", "بدل سكن", "بدل نقل", "بدلات أخرى", "إجمالي شهري", "GOSI صاحب العمل", "مخصص إجازة شهري", "مخصص تذكرة شهري", "تكلفة شهرية بالمخصصات", "تكلفة مراحل التصنيع المسجلة", "تكلفة سنوية بالمخصصات"],
+      ["الكود", "الاسم", "القسم", "المسمى", "فئة تكلفة التصنيع", "أساسي", "بدل سكن", "بدل نقل", "بدلات أخرى", "إجمالي شهري", "GOSI صاحب العمل", "مخصص إجازة شهري", "مخصص تذكرة شهري", "تكلفة شهرية بالمخصصات", "تكلفة مراحل التصنيع المباشرة", "تكلفة مراحل التصنيع غير المباشرة", "تكلفة مراحل غير مصنفة", "إجمالي تكلفة مراحل التصنيع", "تكلفة سنوية بالمخصصات"],
       rows.map((r: any) => [
-        r.code, r.nameAr, r.department || "", r.jobTitle || "",
+        r.code, r.nameAr, r.department || "", r.jobTitle || "", r.manufacturingLaborType || "unclassified",
         r.basic.toFixed(2), r.housing.toFixed(2), r.transport.toFixed(2), r.other.toFixed(2),
         r.gross.toFixed(2), r.gosiEmployer.toFixed(2),
         r.leaveProvisionMonthly.toFixed(2), r.ticketProvisionMonthly.toFixed(2),
-        r.monthlyCostWithProvisions.toFixed(2), r.manufacturingStageCost.toFixed(2),
+        r.monthlyCostWithProvisions.toFixed(2),
+        r.manufacturingDirectStageCost.toFixed(2), r.manufacturingIndirectStageCost.toFixed(2),
+        r.manufacturingUnclassifiedStageCost.toFixed(2), r.manufacturingStageCost.toFixed(2),
         r.annualCost.toFixed(2),
       ])
     );
@@ -112,6 +114,7 @@ export default function EmployeeCostReport() {
                 <th className="px-3 py-2.5 font-semibold text-start">الكود</th>
                 <th className="px-3 py-2.5 font-semibold text-start">الاسم</th>
                 <th className="px-3 py-2.5 font-semibold text-start">القسم</th>
+                <th className="px-3 py-2.5 font-semibold text-start">فئة تكلفة التصنيع</th>
                 <th className="px-3 py-2.5 font-semibold text-end">أساسي</th>
                 <th className="px-3 py-2.5 font-semibold text-end">سكن</th>
                 <th className="px-3 py-2.5 font-semibold text-end">نقل</th>
@@ -120,6 +123,9 @@ export default function EmployeeCostReport() {
                 <th className="px-3 py-2.5 font-semibold text-end">مخصص إجازة</th>
                 <th className="px-3 py-2.5 font-semibold text-end">مخصص تذكرة</th>
                 <th className="px-3 py-2.5 font-semibold text-end">تكلفة مراحل مسجلة</th>
+                <th className="px-3 py-2.5 font-semibold text-end">عمالة مباشرة</th>
+                <th className="px-3 py-2.5 font-semibold text-end">عمالة غير مباشرة</th>
+                <th className="px-3 py-2.5 font-semibold text-end">غير مصنف</th>
                 <th className="px-3 py-2.5 font-semibold text-end">تكلفة شهرية بالمخصصات</th>
                 <th className="px-3 py-2.5 font-semibold text-end">تكلفة سنوية بالمخصصات</th>
               </tr>
@@ -127,15 +133,21 @@ export default function EmployeeCostReport() {
             <tbody>
               {isLoading ? (
                   Array.from({ length: 6 }).map((_, i) => (
-                  <tr key={i} className="border-b"><td colSpan={13} className="px-3 py-2"><Skeleton className="h-6 w-full" /></td></tr>
+                  <tr key={i} className="border-b"><td colSpan={17} className="px-3 py-2"><Skeleton className="h-6 w-full" /></td></tr>
                 ))
               ) : rows.length === 0 ? (
-                <tr><td colSpan={13} className="px-3 py-10 text-center text-muted-foreground">لا توجد بيانات</td></tr>
+                <tr><td colSpan={17} className="px-3 py-10 text-center text-muted-foreground">لا توجد بيانات</td></tr>
               ) : rows.map((r: any) => (
                 <tr key={r.id} className="border-b hover:bg-slate-50">
                   <td className="px-3 py-2 font-mono text-xs" dir="ltr">{r.code}</td>
                   <td className="px-3 py-2 font-medium">{r.nameAr}</td>
                   <td className="px-3 py-2 text-xs">{r.department || "—"}</td>
+                  <td className="px-3 py-2 text-xs">{({
+                    direct: "عمالة مباشرة",
+                    indirect: "عمالة غير مباشرة",
+                    supervisor: "مشرف إنتاج",
+                    unclassified: "غير مصنف",
+                  } as Record<string, string>)[r.manufacturingLaborType] || "غير مصنف"}</td>
                   <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.basic)}</td>
                   <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.housing)}</td>
                   <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.transport)}</td>
@@ -144,6 +156,9 @@ export default function EmployeeCostReport() {
                   <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.leaveProvisionMonthly)}</td>
                   <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.ticketProvisionMonthly)}</td>
                   <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.manufacturingStageCost)}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.manufacturingDirectStageCost)}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.manufacturingIndirectStageCost)}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.manufacturingUnclassifiedStageCost)}</td>
                   <td className="px-3 py-2 text-end font-mono font-semibold text-rose-700" dir="ltr">{fmt.fmt(r.monthlyCostWithProvisions)}</td>
                   <td className="px-3 py-2 text-end font-mono font-bold text-emerald-700" dir="ltr">{fmt.fmt(r.annualCost)}</td>
                 </tr>

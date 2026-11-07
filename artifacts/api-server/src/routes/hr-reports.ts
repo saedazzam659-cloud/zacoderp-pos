@@ -603,6 +603,7 @@ router.get("/employee-cost", async (req, res) => {
       eq(productionStageResourceCostsTable.component, "labor"),
     ));
     const stageCostByEmployee = new Map<number, number>();
+    const stageCostTypeByEmployee = new Map<number, { direct: number; indirect: number; unclassified: number }>();
     for (const cost of stageCosts) {
       if (cost.sourceType !== "payroll") continue;
       const snapshot = cost.snapshot && typeof cost.snapshot === "object"
@@ -614,6 +615,15 @@ router.get("/employee-cost", async (req, res) => {
         const amount = num(part?.amount);
         if (Number.isInteger(employeeId) && employeeId > 0) {
           stageCostByEmployee.set(employeeId, (stageCostByEmployee.get(employeeId) ?? 0) + amount);
+          const laborType = String(part?.laborType ?? "unclassified");
+          const category = laborType === "direct"
+            ? "direct"
+            : laborType === "indirect" || laborType === "supervisor"
+              ? "indirect"
+              : "unclassified";
+          const bucket = stageCostTypeByEmployee.get(employeeId) ?? { direct: 0, indirect: 0, unclassified: 0 };
+          bucket[category] += amount;
+          stageCostTypeByEmployee.set(employeeId, bucket);
         }
       }
     }
@@ -636,9 +646,13 @@ router.get("/employee-cost", async (req, res) => {
       return {
         id: e.id, code: e.code, nameAr: e.nameAr, nameEn: e.nameEn,
         department: e.department, jobTitle: e.jobTitle, nationality: e.nationality,
+        manufacturingLaborType: e.manufacturingLaborType ?? "unclassified",
         basic, housing, transport, other, gross,
         gosiEmployer, leaveProvisionMonthly, ticketProvisionMonthly,
         manufacturingStageCost: stageCostByEmployee.get(e.id) ?? 0,
+        manufacturingDirectStageCost: stageCostTypeByEmployee.get(e.id)?.direct ?? 0,
+        manufacturingIndirectStageCost: stageCostTypeByEmployee.get(e.id)?.indirect ?? 0,
+        manufacturingUnclassifiedStageCost: stageCostTypeByEmployee.get(e.id)?.unclassified ?? 0,
         monthlyCost, monthlyCostWithProvisions, annualCost,
       };
     });

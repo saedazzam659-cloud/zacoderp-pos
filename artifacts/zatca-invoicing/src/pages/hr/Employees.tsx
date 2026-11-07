@@ -31,6 +31,7 @@ const EMPTY: any = {
   iqamaExpiry: "", passportNumber: "", passportExpiry: "",
   nationality: "", gender: "male", birthDate: "", mobile: "", email: "",
   hireDate: "", endDate: "", department: "", jobTitle: "",
+  manufacturingLaborType: "unclassified",
   sponsor: "", profession: "", status: "active",
   basicSalary: 0, housingAllow: 0, transportAllow: 0, otherAllow: 0, annualTravelTicketAmount: 0,
   bankAccountIban: "", bankName: "", notes: "",
@@ -350,6 +351,20 @@ export default function Employees() {
                   <FormGrid cols={4}>
                     <Field label={tr("fDepartment")}><Input value={editing.department} onChange={e => setF("department", e.target.value)} /></Field>
                     <Field label={tr("fJobTitle")}><Input value={editing.jobTitle} onChange={e => setF("jobTitle", e.target.value)} /></Field>
+                    <Field label={tr("fManufacturingLaborType")}>
+                      <SearchCombobox
+                        items={[
+                          { value: "direct", label: tr("laborTypeDirect") },
+                          { value: "indirect", label: tr("laborTypeIndirect") },
+                          { value: "supervisor", label: tr("laborTypeSupervisor") },
+                          { value: "unclassified", label: tr("laborTypeUnclassified") },
+                        ]}
+                        value={editing.manufacturingLaborType || "unclassified"}
+                        onValueChange={value => setF("manufacturingLaborType", value)}
+                        placeholder={tr("laborTypeUnclassified")}
+                        className="w-full"
+                      />
+                    </Field>
                     <Field label={tr("fProfession")}><Input value={editing.profession} onChange={e => setF("profession", e.target.value)} /></Field>
                     <Field label={tr("fSponsor")}><Input value={editing.sponsor} onChange={e => setF("sponsor", e.target.value)} /></Field>
                     <Field label={tr("fHireDate")}><DateField value={editing.hireDate || ""} onChange={e => setF("hireDate", e.target.value)} /></Field>

@@ -938,7 +938,7 @@ export function SimpleSetup({
                            <EmployeeMultiSelect
                              employees={(catalog.employees ?? []).map(employee => ({
                                value: String(employee.id),
-                               label: `${employee.nameAr || employee.nameEn || `موظف #${employee.id}`}${employee.code ? ` (${employee.code})` : ""}`,
+                                label: `${employee.nameAr || employee.nameEn || `موظف #${employee.id}`}${employee.code ? ` (${employee.code})` : ""} — ${employee.manufacturingLaborType === "direct" ? "مباشرة" : employee.manufacturingLaborType === "indirect" ? "غير مباشرة" : employee.manufacturingLaborType === "supervisor" ? "مشرف" : "غير مصنف"}`,
                              }))}
                              value={stage.workerEmployeeIds ?? []}
                              onChange={workerEmployeeIds => setRoutingStages(stages => stages.map((s, i) => i === index

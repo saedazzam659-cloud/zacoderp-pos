@@ -10,7 +10,7 @@ import { requireAdminRole, requirePermission } from "../middleware/permissions.j
 import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal, buildPayrollPaymentJournal, resolveHrAccounts } from "../lib/hr-journals.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import {
-  dateOrNull, requireDate, assertDateOrder, moneyOrZero, requirePositiveMoney,
+  HrValidationError, dateOrNull, requireDate, assertDateOrder, moneyOrZero, requirePositiveMoney,
   intOrDefault, emailOrNull, mobileOrNull, idNumberOrNull, timeOrNull, respondHrError,
 } from "../lib/hrValidate.js";
 import { assertDayOpen, assertPeriodNotTransferred } from "../lib/attendanceLocks.js";
@@ -46,6 +46,13 @@ const businessToday = () => new Intl.DateTimeFormat("en-CA", {
 // previously crashed the INSERT and leaked a raw "Failed query" to the user.
 function sanitizeEmployeeBody(b: any): Record<string, any> {
   const out: Record<string, any> = {};
+  if ("manufacturingLaborType" in b) {
+    const laborType = String(b.manufacturingLaborType ?? "unclassified");
+    if (!["direct", "indirect", "supervisor", "unclassified"].includes(laborType)) {
+      throw new HrValidationError("تصنيف تكلفة التصنيع غير صحيح");
+    }
+    out.manufacturingLaborType = laborType;
+  }
   const dateFields: [string, string][] = [
     ["iqamaExpiry", "تاريخ انتهاء الإقامة"],
     ["passportExpiry", "تاريخ انتهاء الجواز"],
@@ -646,6 +653,7 @@ router.post("/", async (req, res) => {
       endDate: clean.endDate ?? null,
       department: N(b.department),
       jobTitle: N(b.jobTitle),
+      manufacturingLaborType: clean.manufacturingLaborType ?? "unclassified",
       sponsor: N(b.sponsor),
       profession: N(b.profession),
       status: b.status || "active",
@@ -1923,6 +1931,12 @@ router.post("/payroll/runs", async (req, res) => {
         // Uses the same employee-scoped lock as assignment create/update/delete,
         // so snapshotting and period changes cannot pass each other in-flight.
         await tx.execute(sql`SELECT pg_advisory_xact_lock(${cid}, ${Number(l.employeeId)})`);
+        const [employeeCostRole] = await tx.select({
+          manufacturingLaborType: employeesTable.manufacturingLaborType,
+        }).from(employeesTable).where(and(
+          eq(employeesTable.id, Number(l.employeeId)),
+          eq(employeesTable.companyId, cid),
+        ));
         const [payrollLine] = await tx.insert(payrollLinesTable).values({
           payrollRunId: run.id,
           employeeId: Number(l.employeeId),
@@ -1959,6 +1973,7 @@ router.post("/payroll/runs", async (req, res) => {
         for (const s of snapshots) {
           await tx.insert(payrollAllocationSnapshotsTable).values({
             companyId: cid, payrollRunId: run.id, payrollLineId: payrollLine.id, employeeId: Number(l.employeeId),
+            manufacturingLaborType: employeeCostRole?.manufacturingLaborType ?? "unclassified",
             projectId: s.projectId, costCenterId: s.costCenterId, periodStart: s.periodStart, periodEnd: s.periodEnd,
             days: s.days, costBasis, basisAmount: String(basisAmount.toFixed(2)), allocatedAmount: s.allocatedAmount,
             salaryAllocationPct: String(s.salaryAllocationPct), provisionAllocationPct: String(s.provisionAllocationPct),
