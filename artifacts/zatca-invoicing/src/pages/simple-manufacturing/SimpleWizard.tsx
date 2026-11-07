@@ -1830,11 +1830,11 @@ export function SimpleWizard({
               )}
               <div className="grid gap-5 lg:grid-cols-3">
                 {costCategories.map(category => {
-                  const title = category === "payroll" ? "الرواتب والأجور"
+                  const title = category === "payroll" ? "الرواتب والأجور الصناعية"
                     : category === "fixed_asset_depreciation" ? "الإهلاك"
                     : "المصروفات المقدمة / الإيجار";
                   const hint = category === "payroll"
-                    ? "مصادر مسيرات الرواتب المؤهلة للتصنيع"
+                    ? "المسير المجمع الموزع بساعات التصنيع يُعامل كمصروف صناعي غير مباشر. يصبح الأجر مباشراً عندما تُسجل ساعات الموظف على أمر أو مرحلة بعينها."
                     : category === "fixed_asset_depreciation"
                       ? "مصادر إهلاك الأصول المؤهلة للتصنيع"
                       : "أقساط الإيجار والمصروفات المقدمة المرحّلة";
@@ -1973,9 +1973,9 @@ export function SimpleWizard({
                 })}
                 <Card className="border-2 border-indigo-200 bg-indigo-50/20">
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-base text-slate-800">المصادر الصناعية العامة</CardTitle>
+                    <CardTitle className="text-base text-slate-800">مياه المصنع والمصادر الصناعية العامة</CardTitle>
                     <CardDescription className="text-xs">
-                      فاتورة صناعية مرحّلة هي المصدر الفعلي للكهرباء العامة والمياه والصيانة والمواد غير المباشرة. لا ينشئ اختيارها مصروفاً جديداً أو يضيف تقدير تعريفة الآلة مرة ثانية.
+                      اربط فاتورة المياه الصناعية المرحّلة هنا واختر أساس توزيعها على أوامر الإنتاج. المياه تكلفة صناعية غير مباشرة؛ والربط لا ينشئ مصروفاً جديداً أو يكرر قيد الفاتورة.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
@@ -2005,11 +2005,16 @@ export function SimpleWizard({
                             <span className="font-semibold text-slate-800">{source.label}</span>
                           </label>
                           <div className="grid grid-cols-2 gap-2 text-slate-600">
-                            <span>النوع: {costType}</span>
+                            <span>النوع: {costType === "water" ? "مياه المصنع" : costType === "electricity" ? "كهرباء وطاقة" : costType}</span>
                             <span>المحرك: {driver}</span>
                             <span>المتاح: {Number(source.availableAmount ?? 0).toLocaleString()}</span>
                             <span>توزيع هذا الأمر: {allocationDisplayForSource(source)}</span>
                           </div>
+                          {source.sourceType === "fixed_asset_depreciation" && source.meta?.depreciationAmountMismatch && (
+                            <p className="rounded bg-amber-50 p-2 leading-5 text-amber-900">
+                              يوجد اختلاف بين سجل الإهلاك ({Number(source.meta.runDepreciationAmount ?? 0).toLocaleString()}) وقيد الأستاذ ({Number(source.meta.postedJournalDebitAmount ?? 0).toLocaleString()}). المبلغ المتاح للتصنيع محسوب من القيد المرحّل.
+                            </p>
+                          )}
                           {!selectable && (
                             <p className="rounded bg-amber-50 p-2 leading-5 text-amber-900">
                               {source.sourceType === "purchase_return"
@@ -2019,6 +2024,9 @@ export function SimpleWizard({
                           )}
                           {costType === "electricity" && driver === "machine_hours" && (
                             <p className="rounded bg-emerald-50 p-2 leading-5 text-emerald-900">مصدر كهرباء آلة مؤهل: تظل قيمة kWh/التعريفة لقطة استخدام فقط، ويُسوّى المصدر المرحّل مرة واحدة من ساعات الآلات الفعلية عند الإقفال.</p>
+                          )}
+                          {costType === "water" && (
+                            <p className="rounded bg-sky-50 p-2 leading-5 text-sky-900">حمّل تكلفة المياه غير المباشرة من فاتورة صناعية مرحّلة، ووزّعها بساعات العمالة أو كمية الإنتاج حسب الأساس المعتمد.</p>
                           )}
                         </div>
                       );

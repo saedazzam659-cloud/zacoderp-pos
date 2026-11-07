@@ -1616,7 +1616,12 @@ async function loadPostedCostSources(
     sql`${journalEntryLinesTable.debit} > 0`,
   )) : [];
   const accountsByJournal = new Map<number, WeightedAccount[]>();
+  const debitAmountByJournal = new Map<number, number>();
   for (const line of debitLines) {
+    debitAmountByJournal.set(
+      line.journalId,
+      Number(((debitAmountByJournal.get(line.journalId) ?? 0) + num(line.debit)).toFixed(2)),
+    );
     if (!line.accountId) continue;
     const list = accountsByJournal.get(line.journalId) ?? [];
     list.push({ accountId: line.accountId, weight: num(line.debit) });
@@ -1633,11 +1638,25 @@ async function loadPostedCostSources(
       label: `رواتب ${r.code}`, periodStart: start, periodEnd: end, basis: "posted_payroll_allocation",
       sourceAmount: num(r.amount), meta: sourceMeta(r, { payrollRunId: r.id,
         manufacturingEligible: true, allocationMethod: r.method, approvedManufacturingHours: r.hours }) })),
-    ...assets.map((r: any) => ({ sourceType: "fixed_asset_depreciation" as const, sourceRecordId: r.id,
-      label: `إهلاك ${r.code} — ${r.name}`, periodStart: start, periodEnd: end,
-      basis: r.method, sourceAmount: num(r.amount),
-      meta: sourceMeta(r, { assetId: r.assetId, manufacturingEligible: true,
-        allocationMethod: r.method, approvedOperatingHours: r.hours, fixedManufacturingRate: r.rate }) })),
+    ...assets.map((r: any) => {
+      // Manufacturing may consume only the amount actually debited by the
+      // linked, posted depreciation journal. Keep the run value for audit and
+      // surface any difference instead of silently overstating source capacity.
+      const postedJournalDebitAmount = debitAmountByJournal.get(Number(r.journalId)) ?? 0;
+      const runDepreciationAmount = num(r.amount);
+      return {
+        sourceType: "fixed_asset_depreciation" as const, sourceRecordId: r.id,
+        label: `إهلاك ${r.code} — ${r.name}`, periodStart: start, periodEnd: end,
+        basis: r.method, sourceAmount: postedJournalDebitAmount,
+        meta: sourceMeta(r, {
+          assetId: r.assetId, manufacturingEligible: true,
+          allocationMethod: r.method, approvedOperatingHours: r.hours,
+          fixedManufacturingRate: r.rate, runDepreciationAmount,
+          postedJournalDebitAmount,
+          depreciationAmountMismatch: Math.abs(runDepreciationAmount - postedJournalDebitAmount) > 0.01,
+        }),
+      };
+    }),
     ...prepaid.map((r: any) => ({ sourceType: "prepaid_amortization" as const, sourceRecordId: r.id,
       label: `مصروف مقدم — ${r.name}`, periodStart: start, periodEnd: end, basis: "posted_amortization",
       sourceAmount: num(r.amount), meta: sourceMeta(r, { adjustmentId: r.adjustmentId, manufacturingEligible: true,

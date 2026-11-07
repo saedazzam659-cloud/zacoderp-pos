@@ -28,6 +28,7 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
     employee_insurance: "تأمين طبي لصاحب العمل",
     factory_supervision: "خدمات إشراف المصنع",
     electricity: "كهرباء وطاقة",
+    water: "مياه المصنع",
     maintenance: "صيانة",
     industrial_services: "خدمات صناعية",
     indirect_materials: "مواد صناعية غير مباشرة",

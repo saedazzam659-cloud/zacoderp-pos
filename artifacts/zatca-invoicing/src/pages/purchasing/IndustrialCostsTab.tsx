@@ -25,6 +25,7 @@ type SourceLine = {
 
 const COST_TYPES = [
   { value: "electricity", label: "كهرباء وطاقة" },
+  { value: "water", label: "مياه المصنع" },
   { value: "employee_insurance", label: "تأمين طبي على صاحب العمل" },
   { value: "factory_supervision", label: "خدمات إشراف المصنع" },
   { value: "maintenance", label: "صيانة" },
