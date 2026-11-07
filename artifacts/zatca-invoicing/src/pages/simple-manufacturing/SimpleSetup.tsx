@@ -33,6 +33,7 @@ export function SimpleSetup({
   onSaveRouting,
   onLoadRouting,
   onSaveMachine,
+  onSaveWorkCenter,
   onSaveTemplate,
    onSaveWarehouse,
    onSaveAccounting,
@@ -47,6 +48,7 @@ export function SimpleSetup({
   onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null; resourceMode: "labor" | "machine" | "both"; resourceId?: string; workerCount?: number; materialLineIds?: string[] }> }) => Promise<unknown>;
   onLoadRouting: (id: number) => Promise<any>;
   onSaveMachine: (data: { id?: number; name?: string; electricityEnabled: boolean; electricityKw: number | null }) => Promise<any>;
+  onSaveWorkCenter: (data: { nameAr: string }) => Promise<any>;
   onSaveTemplate: (data: { id?: number; name: string; productItemId: string; plannedQty: string; unitCode: string }) => Promise<unknown>;
   onSaveWarehouse: (data: { code: string; nameAr: string; isDefault: boolean }) => Promise<unknown>;
   onSaveAccounting: (data: {
@@ -149,6 +151,8 @@ export function SimpleSetup({
   const [loadingBomId, setLoadingBomId] = useState<number | null>(null);
   const [loadingRoutingId, setLoadingRoutingId] = useState<number | null>(null);
   const [machineDialogStage, setMachineDialogStage] = useState<number | null>(null);
+  const [workCenterDialogStage, setWorkCenterDialogStage] = useState<number | null>(null);
+  const [workCenterName, setWorkCenterName] = useState("");
   const [machineForm, setMachineForm] = useState<{
     id?: number;
     name: string;
@@ -262,6 +266,21 @@ export function SimpleSetup({
       : stage));
     setMachineDialogStage(null);
     setMachineForm({ name: "", electricityEnabled: true, electricityKw: "" });
+  };
+
+  const saveWorkCenter = async () => {
+    const nameAr = workCenterName.trim();
+    if (!nameAr || workCenterDialogStage == null) return;
+    const row = await onSaveWorkCenter({ nameAr });
+    const workCenterId = Number(row?.id);
+    if (!Number.isInteger(workCenterId) || workCenterId <= 0) {
+      throw new Error("لم يتم حفظ مركز العمل بشكل صحيح");
+    }
+    setRoutingStages(stages => stages.map((stage, index) => index === workCenterDialogStage
+      ? { ...stage, workCenterId }
+      : stage));
+    setWorkCenterDialogStage(null);
+    setWorkCenterName("");
   };
 
   const startTemplateCreate = () => {
@@ -808,7 +827,37 @@ export function SimpleSetup({
                           </div>
                           <p className="text-[11px] text-slate-500">تُنسخ هذه المواد إلى أوامر الإنتاج الجديدة فقط، ويمكن تعديل توزيعها قبل الصرف.</p>
                         </div>
-                       <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <label className="text-xs font-medium text-slate-600">مركز العمل</label>
+                              {canCreate && (
+                                <Button type="button" variant="ghost" size="sm" className="h-7 px-2"
+                                  disabled={busy} onClick={() => {
+                                    setWorkCenterName("");
+                                    setWorkCenterDialogStage(index);
+                                  }}>
+                                  <Plus className="h-3 w-3 me-1" /> إضافة مركز
+                                </Button>
+                              )}
+                            </div>
+                            <SearchCombobox
+                              value={stage.workCenterId == null ? "" : String(stage.workCenterId)}
+                              placeholder="بدون مركز عمل"
+                              searchPlaceholder="ابحث عن مركز عمل..."
+                              items={[
+                                { value: "", label: "بدون مركز عمل" },
+                                ...(catalog.workCenters ?? []).map(center => ({
+                                  value: String(center.id),
+                                  code: center.code,
+                                  label: center.nameAr,
+                                })),
+                              ]}
+                              onValueChange={value => setRoutingStages(stages => stages.map((s, i) => i === index
+                                ? { ...s, workCenterId: value ? Number(value) : null }
+                                : s))}
+                            />
+                          </div>
                          <div className="space-y-1">
                            <label className="text-xs font-medium text-slate-600">موارد المرحلة</label>
                            <SearchCombobox
@@ -917,6 +966,36 @@ export function SimpleSetup({
                 )} onClick={async () => { await onSaveRouting({ ...routing, id: editingRoutingId ?? undefined, stages: routingStages }); setOpenRouting(false); resetRouting(); }} className="w-full">
                   {editingRoutingId ? "تحديث المسار" : "حفظ المسار"}
                 </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={workCenterDialogStage !== null} onOpenChange={open => {
+            if (!open && !busy) {
+              setWorkCenterDialogStage(null);
+              setWorkCenterName("");
+            }
+          }}>
+            <DialogContent dir="rtl" className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>إضافة مركز عمل للمرحلة</DialogTitle>
+                <DialogDescription>سيُحفظ المركز في بيانات التصنيع ويُختار تلقائيًا لهذه المرحلة.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">اسم مركز العمل</label>
+                  <Input value={workCenterName}
+                    onChange={event => setWorkCenterName(event.target.value)}
+                    maxLength={200} autoFocus placeholder="مثال: مركز العجن" />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="outline" disabled={busy}
+                    onClick={() => setWorkCenterDialogStage(null)}>إلغاء</Button>
+                  <Button type="button" disabled={busy || !workCenterName.trim()}
+                    onClick={() => void saveWorkCenter().catch(() => {})}>
+                    حفظ واختيار
+                  </Button>
+                </div>
               </div>
             </DialogContent>
           </Dialog>

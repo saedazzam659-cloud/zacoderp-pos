@@ -34,6 +34,13 @@ export type Catalog = {
     electricityEnabled?: boolean;
     electricityKw?: string | number | null;
   }>;
+  workCenters?: Array<{
+    id: number;
+    code: string;
+    nameAr: string;
+    nameEn?: string | null;
+    isActive?: boolean;
+  }>;
   warehouses: Array<{ id: number; code: string; nameAr: string; branchId?: number | null; isDefault?: boolean }>;
   templates: Array<{
     id: number;

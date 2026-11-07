@@ -421,6 +421,12 @@ export default function SimpleManufacturing() {
     }), data.id ? "تم تحديث قدرة الآلة" : "تمت إضافة الآلة وقدرتها");
   };
 
+  const handleSaveWorkCenter = async (data: { nameAr: string }) =>
+    mutate(() => request("/api/simple-manufacturing/setup/work-centers", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }), "تمت إضافة مركز العمل");
+
   const handleLoadBom = async (id: number) => {
     try {
       return await request(`/api/simple-manufacturing/bom-templates/${id}`);
@@ -602,6 +608,7 @@ export default function SimpleManufacturing() {
             onSaveRouting={handleSaveRouting}
              onLoadRouting={handleLoadRouting}
             onSaveMachine={handleSaveMachine}
+            onSaveWorkCenter={handleSaveWorkCenter}
             onSaveTemplate={handleSaveTemplate}
             onSaveWarehouse={handleSaveWarehouse}
             onSaveAccounting={handleSaveAccounting}

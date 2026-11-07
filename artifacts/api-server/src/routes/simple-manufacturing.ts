@@ -54,6 +54,7 @@ import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { requireItemUnit } from "../lib/requiredItemUnit.js";
 import { listInternalDeliveryEvidence } from "../lib/internalManufacturingTransport.js";
 import { backfillProductionMachinesForAssets, getActiveManufacturingAssets } from "../lib/productionAssetResources.js";
+import { nextEntityCode } from "../lib/nextEntityCode.js";
 import {
   productionOrderDetailHandler,
   productionCostDrilldownHandler,
@@ -113,7 +114,7 @@ router.get("/", view, (_req, res) => {
       "/catalog", "/execution-catalog", "/resource-costing-readiness", "/cost-sources", "/bom-templates", "/routings", "/work-centers",
       "/orders", "/templates", "/setup/materials", "/setup/products",
       "/orders/pending-source-settlements",
-      "/setup/warehouses", "/setup/accounting", "/setup/bom", "/setup/bom/:id",
+       "/setup/warehouses", "/setup/accounting", "/setup/work-centers", "/setup/bom", "/setup/bom/:id",
       "/setup/routing", "/setup/routing/:id", "/setup/machines", "/setup/machines/:id",
       "/templates/:id", "/reports",
       "/orders/:id/stages", "/orders/:id/stages/:stageId/start",
@@ -287,6 +288,7 @@ router.get("/catalog", view, async (req, res) => {
         : productNameById.get(routing.productItemId) ?? null,
       stages: stagesByRouting.get(routing.id) ?? [],
     }));
+    const workCenters = await getWorkCenters(db, cid, "", true);
     const itemsWithUnitOptions = includeItems ? await Promise.all(items.map(async (item) => ({
       ...item,
       unitOptions: await loadItemUnitOptions(cid, item.id),
@@ -297,6 +299,7 @@ router.get("/catalog", view, async (req, res) => {
       templates,
       bomTemplates,
       routings: routingCatalog,
+      workCenters,
       units,
       accounting: {
         settings: accountingSettings[0] ?? null,
@@ -510,6 +513,48 @@ router.get("/work-centers", view, async (req, res) => {
     ));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/setup/work-centers", create, async (req, res) => {
+  const cid = companyId(req, res);
+  if (!cid) return;
+  const name = typeof req.body?.nameAr === "string" ? req.body.nameAr.trim() : "";
+  if (!name || name.length > 200) {
+    return void res.status(400).json({ error: "اسم مركز العمل مطلوب وبحد أقصى 200 حرف" });
+  }
+  try {
+    const row = await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        SELECT pg_advisory_xact_lock(
+          hashtext('production-quick-work-center:' || ${cid}::text)
+        )
+      `);
+      const existing = await tx.select({ code: workCentersTable.code })
+        .from(workCentersTable)
+        .where(eq(workCentersTable.companyId, cid));
+      const [created] = await tx.insert(workCentersTable).values({
+        companyId: cid,
+        code: nextEntityCode("WC", existing.map((item) => item.code)),
+        nameAr: name,
+        nameEn: null,
+        laborRatePerHour: "0",
+        overheadRatePerHour: "0",
+        capacityHoursPerDay: "8",
+        isActive: true,
+      }).returning({
+        id: workCentersTable.id,
+        code: workCentersTable.code,
+        nameAr: workCentersTable.nameAr,
+      });
+      return created;
+    });
+    res.status(201).json({ ...row, name: row.nameAr });
+  } catch (e: any) {
+    const code = e?.code ?? e?.cause?.code;
+    res.status(code === "23505" ? 409 : (e?.status ?? 500)).json({
+      error: code === "23505" ? "تعذر توليد كود مركز العمل؛ حاول مرة أخرى" : e.message,
+    });
   }
 });
 

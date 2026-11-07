@@ -97,3 +97,30 @@ test("Smart Manufacturing route setup saves machine power on the selected shared
   const automaticCopy = production.slice(automaticCopyStart, automaticCopyEnd);
   assert.match(automaticCopy, /resourceId:\s*s\.resourceId/);
 });
+
+test("Smart Manufacturing can create and immediately assign a work center in a route stage", async () => {
+  const [facade, setup, controller, types] = await Promise.all([
+    readFile(new URL("../src/routes/simple-manufacturing.ts", import.meta.url), "utf8"),
+    readFile(
+      new URL("../../zatca-invoicing/src/pages/simple-manufacturing/SimpleSetup.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../zatca-invoicing/src/pages/SimpleManufacturing.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../zatca-invoicing/src/pages/simple-manufacturing/types.ts", import.meta.url),
+      "utf8",
+    ),
+  ]);
+
+  assert.match(facade, /router\.post\("\/setup\/work-centers", create,/);
+  assert.match(facade, /nextEntityCode\("WC"/);
+  assert.match(facade, /workCenters,\s*units,/);
+  assert.match(setup, /onSaveWorkCenter/);
+  assert.match(setup, /workCenterId \}\s*:\s*stage/);
+  assert.match(setup, /إضافة مركز عمل للمرحلة/);
+  assert.match(controller, /setup\/work-centers/);
+  assert.match(types, /workCenters\?: Array/);
+});
