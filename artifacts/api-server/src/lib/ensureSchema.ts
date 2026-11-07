@@ -1966,9 +1966,11 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
             notes TEXT,
             created_by_id INTEGER,
             created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            UNIQUE (company_id, provision_type, employee_id, provision_period, source_type, source_record_id)
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
           );
+          CREATE UNIQUE INDEX IF NOT EXISTS employee_provision_settlements_source_uq
+            ON employee_provision_settlements(company_id, provision_type, employee_id, provision_period, source_type, source_record_id)
+            WHERE status IN ('draft', 'posted');
           CREATE INDEX IF NOT EXISTS employee_provision_settlements_balance_idx
             ON employee_provision_settlements(company_id, employee_id, provision_type, provision_period, status);` },
 ];
