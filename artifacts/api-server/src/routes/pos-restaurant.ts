@@ -56,7 +56,7 @@ async function authenticatePrintBridge(req: any): Promise<typeof posRestaurantPr
 
 async function enqueueKitchenPrintJob(
   tx: any,
-  order: typeof posOrdersTable.$inferSelect,
+  order: Pick<typeof posOrdersTable.$inferSelect, "id" | "companyId" | "branchId" | "orderNumber" | "channel" | "tableId">,
   stationKey: string,
   lines: Array<{
     id: number; nameSnapshot: string; qty: string; notes: string | null;
@@ -574,9 +574,10 @@ router.post("/delivery-integrations/:integrationId/orders/:orderId/accept", asyn
       const address = customer.delivery_address ?? {};
       const addressText = [address.formattedAddress, address.street, address.suburb, address.city, address.building]
         .filter((part: unknown) => typeof part === "string" && part).join("، ").slice(0, 500);
+      const channel = payload.order_type === "PICKUP" ? "takeaway" : "delivery";
       const [order] = await tx.insert(posOrdersTable).values({
         companyId: cid, branchId: incoming.branchId, orderNumber,
-        channel: payload.order_type === "PICKUP" ? "takeaway" : "delivery",
+        channel,
         customerName: [customer.first_name, customer.last_name].filter(Boolean).join(" ").slice(0, 200) || null,
         customerPhone: typeof customer.phone_number === "string" ? customer.phone_number.slice(0, 80) : null,
         deliveryAddress: payload.order_type === "PICKUP" ? null : addressText || null,
@@ -584,17 +585,45 @@ router.post("/delivery-integrations/:integrationId/orders/:orderId/accept", asyn
         notes: [`HungerStation ${incoming.orderCode ?? incoming.externalOrderId}`, payload.comment].filter(Boolean).join(" · "),
         sourcePlatform: "hungerstation", externalOrderId: incoming.externalOrderId,
         openedAt: now, sentAt: now,
-      }).returning({ id: posOrdersTable.id });
+      }).returning({
+        id: posOrdersTable.id,
+        companyId: posOrdersTable.companyId,
+        branchId: posOrdersTable.branchId,
+        orderNumber: posOrdersTable.orderNumber,
+        channel: posOrdersTable.channel,
+        tableId: posOrdersTable.tableId,
+      });
+      const createdLines: Array<{
+        id: number; nameSnapshot: string; qty: string; notes: string | null;
+        modifiers: Array<{ option: string }>; kitchenStation: string;
+      }> = [];
       for (const line of lines) {
         const lineTotal = calculateRestaurantOrderTotals([{
           menuItemId: line.item.id, erpItemId: line.item.itemId, qty: line.qty,
           price: line.item.price, vatIncluded: line.item.vatIncluded, vatRate: line.vatRate, modifiers: [],
         }]).total;
-        await tx.insert(posOrderItemsTable).values({
+        const [createdLine] = await tx.insert(posOrderItemsTable).values({
           orderId: order.id, menuItemId: line.item.id, nameSnapshot: line.item.nameAr,
           qty: String(line.qty), price: line.item.price, total: lineTotal,
           kitchenStation: line.item.kitchenStation, notes: line.note, sentAt: now,
+        }).returning({
+          id: posOrderItemsTable.id,
+          nameSnapshot: posOrderItemsTable.nameSnapshot,
+          qty: posOrderItemsTable.qty,
+          notes: posOrderItemsTable.notes,
+          modifiers: posOrderItemsTable.modifiers,
+          kitchenStation: posOrderItemsTable.kitchenStation,
         });
+        createdLines.push(createdLine);
+      }
+      const byStation = new Map<string, typeof createdLines>();
+      for (const line of createdLines) {
+        byStation.set(line.kitchenStation, [...(byStation.get(line.kitchenStation) ?? []), line]);
+      }
+      for (const [stationKey, stationLines] of byStation) {
+        const ids = stationLines.map(line => line.id).sort((a, b) => a - b);
+        await enqueueKitchenPrintJob(tx, order, stationKey, stationLines, "new",
+          `order:${order.id}:station:${stationKey}:lines:${ids.join(",")}`);
       }
       await recalculateOrderTotals(cid, order.id, tx);
       await tx.update(posRestaurantExternalOrdersTable).set({ posOrderId: order.id, updatedAt: now })
