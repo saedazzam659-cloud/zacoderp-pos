@@ -9,6 +9,7 @@ import {
   payrollRunsTable,
   payrollLinesTable,
   payrollAllocationSnapshotsTable,
+  productionStageResourceCostsTable,
   costCentersTable,
   contractingProjectsTable,
 } from "@workspace/db";
@@ -583,22 +584,62 @@ router.get("/employee-cost", async (req, res) => {
       ))
       .orderBy(asc(employeesTable.code));
 
+    const contracts = employees.length ? await db.select().from(employeeContractsTable)
+      .where(and(
+        eq(employeeContractsTable.companyId, cid),
+        inArray(employeeContractsTable.employeeId, employees.map((employee) => employee.id)),
+        eq(employeeContractsTable.status, "active"),
+      )) : [];
+    const contractByEmployee = new Map<number, (typeof contracts)[number]>();
+    for (const contract of contracts.sort((a, b) => b.startDate.localeCompare(a.startDate))) {
+      if (!contractByEmployee.has(contract.employeeId)) contractByEmployee.set(contract.employeeId, contract);
+    }
+    const stageCosts = await db.select({
+      amount: productionStageResourceCostsTable.amount,
+      snapshot: productionStageResourceCostsTable.snapshot,
+      sourceType: productionStageResourceCostsTable.sourceType,
+    }).from(productionStageResourceCostsTable).where(and(
+      eq(productionStageResourceCostsTable.companyId, cid),
+      eq(productionStageResourceCostsTable.component, "labor"),
+    ));
+    const stageCostByEmployee = new Map<number, number>();
+    for (const cost of stageCosts) {
+      if (cost.sourceType !== "payroll") continue;
+      const snapshot = cost.snapshot && typeof cost.snapshot === "object"
+        ? cost.snapshot as Record<string, any> : {};
+      const breakdown = Array.isArray(snapshot.employeeCostBreakdown)
+        ? snapshot.employeeCostBreakdown : [];
+      for (const part of breakdown) {
+        const employeeId = Number(part?.employeeId);
+        const amount = num(part?.amount);
+        if (Number.isInteger(employeeId) && employeeId > 0) {
+          stageCostByEmployee.set(employeeId, (stageCostByEmployee.get(employeeId) ?? 0) + amount);
+        }
+      }
+    }
     const rows = employees.map(e => {
       const basic = num(e.basicSalary);
       const housing = num(e.housingAllow);
       const transport = num(e.transportAllow);
       const other = num(e.otherAllow);
       const gross = basic + housing + transport + other;
+      const eligibleLeaveSalary = basic + housing + transport;
+      const vacationDays = Math.max(0, num(contractByEmployee.get(e.id)?.vacationDays ?? 21));
+      const leaveProvisionMonthly = Math.round((eligibleLeaveSalary * vacationDays / 360) * 100) / 100;
+      const ticketProvisionMonthly = Math.round((num(e.annualTravelTicketAmount) / 12) * 100) / 100;
       // GOSI employer share commonly applies on (basic + housing) capped — simplified estimate
       const gosiBase = basic + housing;
       const gosiEmployer = (gosiBase * gosiPct) / 100;
       const monthlyCost = gross + gosiEmployer;
-      const annualCost = monthlyCost * 12;
+      const monthlyCostWithProvisions = monthlyCost + leaveProvisionMonthly + ticketProvisionMonthly;
+      const annualCost = monthlyCostWithProvisions * 12;
       return {
         id: e.id, code: e.code, nameAr: e.nameAr, nameEn: e.nameEn,
         department: e.department, jobTitle: e.jobTitle, nationality: e.nationality,
         basic, housing, transport, other, gross,
-        gosiEmployer, monthlyCost, annualCost,
+        gosiEmployer, leaveProvisionMonthly, ticketProvisionMonthly,
+        manufacturingStageCost: stageCostByEmployee.get(e.id) ?? 0,
+        monthlyCost, monthlyCostWithProvisions, annualCost,
       };
     });
 
@@ -607,9 +648,13 @@ router.get("/employee-cost", async (req, res) => {
       totalGross: rows.reduce((s, r) => s + r.gross, 0),
       totalGosi: rows.reduce((s, r) => s + r.gosiEmployer, 0),
       totalMonthlyCost: rows.reduce((s, r) => s + r.monthlyCost, 0),
+      totalLeaveProvisionMonthly: rows.reduce((s, r) => s + r.leaveProvisionMonthly, 0),
+      totalTicketProvisionMonthly: rows.reduce((s, r) => s + r.ticketProvisionMonthly, 0),
+      totalManufacturingStageCost: rows.reduce((s, r) => s + r.manufacturingStageCost, 0),
+      totalMonthlyCostWithProvisions: rows.reduce((s, r) => s + r.monthlyCostWithProvisions, 0),
       totalAnnualCost: rows.reduce((s, r) => s + r.annualCost, 0),
       averageMonthlyCost: rows.length
-        ? rows.reduce((s, r) => s + r.monthlyCost, 0) / rows.length
+        ? rows.reduce((s, r) => s + r.monthlyCostWithProvisions, 0) / rows.length
         : 0,
       gosiEmployerPct: gosiPct,
     };

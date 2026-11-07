@@ -10693,6 +10693,56 @@ async function freezeStageResourceCosts(
   }
   const hours = num(stage.actualDurationMinutes) / 60;
   const rows: any[] = [];
+  const stageEmployeeIds = Array.isArray(stage.workerEmployeeIds) && stage.workerEmployeeIds.length
+    ? stage.workerEmployeeIds
+    : stage.operatorEmployeeId != null ? [stage.operatorEmployeeId] : [];
+  const employeeIds = [...new Set(
+    stageEmployeeIds
+      .map((id: unknown) => Number(id))
+      .filter((id: number) => Number.isInteger(id) && id > 0),
+  )].sort((a, b) => a - b);
+  const employeeCostBreakdown = async (amount: number, payrollRunId: number) => {
+    if (!employeeIds.length) return [];
+    const snapshots = await tx.select({
+      id: payrollAllocationSnapshotsTable.id,
+      employeeId: payrollAllocationSnapshotsTable.employeeId,
+      amount: payrollAllocationSnapshotsTable.allocatedAmount,
+    }).from(payrollAllocationSnapshotsTable).where(and(
+      eq(payrollAllocationSnapshotsTable.companyId, cid),
+      eq(payrollAllocationSnapshotsTable.payrollRunId, payrollRunId),
+      inArray(payrollAllocationSnapshotsTable.employeeId, employeeIds),
+    ));
+    const snapshotIdsByEmployee = new Map<number, number[]>();
+    const amountByEmployee = new Map<number, number>();
+    for (const snapshot of snapshots) {
+      snapshotIdsByEmployee.set(snapshot.employeeId, [
+        ...(snapshotIdsByEmployee.get(snapshot.employeeId) ?? []), snapshot.id,
+      ]);
+      amountByEmployee.set(
+        snapshot.employeeId,
+        (amountByEmployee.get(snapshot.employeeId) ?? 0) + num(snapshot.amount),
+      );
+    }
+    const hasAllSnapshots = employeeIds.every((id) => (amountByEmployee.get(id) ?? 0) > 0);
+    const weights = employeeIds.map((id) =>
+      hasAllSnapshots ? amountByEmployee.get(id)! : 1,
+    );
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    const totalCents = Math.round(amount * 100);
+    let allocatedCents = 0;
+    return employeeIds.map((employeeId, index) => {
+      const cents = index === employeeIds.length - 1
+        ? totalCents - allocatedCents
+        : Math.round(totalCents * weights[index] / totalWeight);
+      allocatedCents += cents;
+      return {
+        employeeId,
+        amount: cents / 100,
+        payrollSnapshotIds: snapshotIdsByEmployee.get(employeeId) ?? [],
+        allocationBasis: hasAllSnapshots ? "payroll_snapshot_amount" : "equal_employee_hours",
+      };
+    });
+  };
 
   // Payroll remains owned by HR. In v1 the existing posted payroll source
   // explicitly declares approvedManufacturingHours as person-hours, so stage
@@ -10759,6 +10809,9 @@ async function freezeStageResourceCosts(
         ? `${lastPayroll.year}-${String(lastPayroll.month).padStart(2, "0")}`
         : null;
       const estimatedAmount = Number((personHours * hourlyRate).toFixed(2));
+      const employeeBreakdown = lastPayroll
+        ? await employeeCostBreakdown(estimatedAmount, Number(lastPayroll.id))
+        : [];
       // Operational execution must not wait for month-end payroll posting.
       // This row is explicitly provisional, does not consume the reference
       // payroll source, and is never another salary journal.
@@ -10783,6 +10836,7 @@ async function freezeStageResourceCosts(
           workerCount: Number(stage.workerCount),
           personHours,
           employeeId: stage.operatorEmployeeId ?? null,
+          employeeCostBreakdown: employeeBreakdown,
           driver: "actual_duration_hours_times_worker_count",
         },
         createdBy: actorId,
@@ -10803,6 +10857,11 @@ async function freezeStageResourceCosts(
     }
     const personHours = hours * workers;
     const hourlyRate = num(payroll.sourceAmount) / approvedPersonHours;
+    const laborAmount = Number((personHours * hourlyRate).toFixed(2));
+    const employeeBreakdown = await employeeCostBreakdown(
+      laborAmount,
+      Number(payroll.sourceRecordId),
+    );
     const productionPeriod = String((order.meta as any)?.costPeriod ?? "");
     const payrollSourcePeriod = String(payrollMeta.periodEnd ?? payrollMeta.periodStart ?? "").slice(0, 7);
     const payrollRateIsPriorPeriod = Boolean(
@@ -10811,10 +10870,12 @@ async function freezeStageResourceCosts(
     rows.push({
       companyId: cid, orderId: order.id, stageId: stage.id, component: "labor",
       sourceType: "payroll", sourceRecordId: payroll.sourceRecordId,
-      amount: String(Number((personHours * hourlyRate).toFixed(2))),
+      amount: String(laborAmount),
       snapshot: {
         sourceAllocationId: payroll.id,
         sourceAmount: num(payroll.sourceAmount),
+          productionPeriod: String((order.meta as any)?.costPeriod ?? "") || null,
+          stageEmployeeIds: employeeIds,
         approvedPersonHours,
         stageHours: hours,
         workerCount: workers,
@@ -10822,6 +10883,7 @@ async function freezeStageResourceCosts(
         hourlyRate,
         rateSourcePeriod: payrollSourcePeriod || null,
         rateIsFromPriorPeriod: payrollRateIsPriorPeriod,
+        employeeCostBreakdown: employeeBreakdown,
         costStatus: payrollRateIsPriorPeriod
           ? "provisional_prior_period_rate"
           : "calculated_from_linked_payroll_source",

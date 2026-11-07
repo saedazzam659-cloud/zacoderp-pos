@@ -43,12 +43,14 @@ export default function EmployeeCostReport() {
     if (!(await gate("export"))) return;
     exportCsv(
       `employee_cost_${new Date().toISOString().slice(0, 10)}.csv`,
-      ["الكود", "الاسم", "القسم", "المسمى", "أساسي", "بدل سكن", "بدل نقل", "بدلات أخرى", "إجمالي شهري", "GOSI صاحب العمل", "تكلفة شهرية", "تكلفة سنوية"],
+      ["الكود", "الاسم", "القسم", "المسمى", "أساسي", "بدل سكن", "بدل نقل", "بدلات أخرى", "إجمالي شهري", "GOSI صاحب العمل", "مخصص إجازة شهري", "مخصص تذكرة شهري", "تكلفة شهرية بالمخصصات", "تكلفة مراحل التصنيع المسجلة", "تكلفة سنوية بالمخصصات"],
       rows.map((r: any) => [
         r.code, r.nameAr, r.department || "", r.jobTitle || "",
         r.basic.toFixed(2), r.housing.toFixed(2), r.transport.toFixed(2), r.other.toFixed(2),
         r.gross.toFixed(2), r.gosiEmployer.toFixed(2),
-        r.monthlyCost.toFixed(2), r.annualCost.toFixed(2),
+        r.leaveProvisionMonthly.toFixed(2), r.ticketProvisionMonthly.toFixed(2),
+        r.monthlyCostWithProvisions.toFixed(2), r.manufacturingStageCost.toFixed(2),
+        r.annualCost.toFixed(2),
       ])
     );
   }
@@ -61,7 +63,7 @@ export default function EmployeeCostReport() {
             <Coins className="h-6 w-6 text-teal-600" /> تقرير تكلفة الموظفين
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            التكلفة الشهرية والسنوية لكل موظف شاملة حصة صاحب العمل من التأمينات
+            المخصصات تقديرية شهريًا؛ وتكلفة التصنيع تراكمية من قيود المراحل المرتبطة بلقطات الرواتب.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={handleExport} disabled={!rows.length} className="gap-2">
@@ -93,6 +95,10 @@ export default function EmployeeCostReport() {
           <StatCard label="إجمالي GOSI صاحب العمل" value={fmt.fmt(summary.totalGosi)} color="amber" />
           <StatCard label="متوسط تكلفة شهرية" value={fmt.fmt(summary.averageMonthlyCost)} color="violet" />
           <StatCard label="إجمالي تكلفة شهرية" value={fmt.fmt(summary.totalMonthlyCost)} color="rose" />
+          <StatCard label="مخصص إجازات شهري" value={fmt.fmt(summary.totalLeaveProvisionMonthly)} color="amber" />
+          <StatCard label="مخصص تذاكر شهري" value={fmt.fmt(summary.totalTicketProvisionMonthly)} color="teal" />
+          <StatCard label="تكاليف مراحل مسجلة" value={fmt.fmt(summary.totalManufacturingStageCost)} color="indigo" />
+          <StatCard label="تكلفة شهرية بالمخصصات" value={fmt.fmt(summary.totalMonthlyCostWithProvisions)} color="rose" />
           <StatCard label="إجمالي تكلفة سنوية" value={fmt.fmt(summary.totalAnnualCost)} color="green" cls="sm:col-span-2" />
           <StatCard label="نسبة GOSI المطبقة" value={`${summary.gosiEmployerPct}%`} color="teal" />
         </div>
@@ -111,17 +117,20 @@ export default function EmployeeCostReport() {
                 <th className="px-3 py-2.5 font-semibold text-end">نقل</th>
                 <th className="px-3 py-2.5 font-semibold text-end">إجمالي شهري</th>
                 <th className="px-3 py-2.5 font-semibold text-end">GOSI</th>
-                <th className="px-3 py-2.5 font-semibold text-end">تكلفة شهرية</th>
-                <th className="px-3 py-2.5 font-semibold text-end">تكلفة سنوية</th>
+                <th className="px-3 py-2.5 font-semibold text-end">مخصص إجازة</th>
+                <th className="px-3 py-2.5 font-semibold text-end">مخصص تذكرة</th>
+                <th className="px-3 py-2.5 font-semibold text-end">تكلفة مراحل مسجلة</th>
+                <th className="px-3 py-2.5 font-semibold text-end">تكلفة شهرية بالمخصصات</th>
+                <th className="px-3 py-2.5 font-semibold text-end">تكلفة سنوية بالمخصصات</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <tr key={i} className="border-b"><td colSpan={10} className="px-3 py-2"><Skeleton className="h-6 w-full" /></td></tr>
+                  Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} className="border-b"><td colSpan={13} className="px-3 py-2"><Skeleton className="h-6 w-full" /></td></tr>
                 ))
               ) : rows.length === 0 ? (
-                <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">لا توجد بيانات</td></tr>
+                <tr><td colSpan={13} className="px-3 py-10 text-center text-muted-foreground">لا توجد بيانات</td></tr>
               ) : rows.map((r: any) => (
                 <tr key={r.id} className="border-b hover:bg-slate-50">
                   <td className="px-3 py-2 font-mono text-xs" dir="ltr">{r.code}</td>
@@ -132,7 +141,10 @@ export default function EmployeeCostReport() {
                   <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.transport)}</td>
                   <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.gross)}</td>
                   <td className="px-3 py-2 text-end font-mono text-amber-700" dir="ltr">{fmt.fmt(r.gosiEmployer)}</td>
-                  <td className="px-3 py-2 text-end font-mono font-semibold text-rose-700" dir="ltr">{fmt.fmt(r.monthlyCost)}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.leaveProvisionMonthly)}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.ticketProvisionMonthly)}</td>
+                  <td className="px-3 py-2 text-end font-mono" dir="ltr">{fmt.fmt(r.manufacturingStageCost)}</td>
+                  <td className="px-3 py-2 text-end font-mono font-semibold text-rose-700" dir="ltr">{fmt.fmt(r.monthlyCostWithProvisions)}</td>
                   <td className="px-3 py-2 text-end font-mono font-bold text-emerald-700" dir="ltr">{fmt.fmt(r.annualCost)}</td>
                 </tr>
               ))}
