@@ -120,6 +120,14 @@ function DetailBody({ id, allowed }: { id: number; allowed: boolean }) {
           <DetailRow label="الصندوق النقدي" value={expense.cashBoxName} />
           <DetailRow label="حساب المصروف" value={expense.expenseAccountName} />
           <DetailRow label="العملة" value={expense.currencyCode || 'غير محددة'} />
+          <DetailRow
+            label="تحميل التصنيع"
+            value={expense.manufacturingEligible
+              ? expense.manufacturingAllocationMethod === 'labor_hours'
+                ? `مؤهل · ${expense.approvedManufacturingHours ?? 0} ساعة معتمدة`
+                : `مؤهل · ${expense.approvedProductionQuantity ?? 0} كمية معتمدة`
+              : 'غير مؤهل'}
+          />
           <DetailRow label="الموظف" value={expense.employeeName || '—'} />
           {expense.salesRepName ? <DetailRow label="مندوب المبيعات" value={expense.salesRepName} /> : null}
           <DetailRow label="تاريخ التسجيل" value={String(expense.createdAt).slice(0, 10)} />

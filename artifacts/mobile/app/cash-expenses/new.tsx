@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Image, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Modal, Platform, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -43,6 +43,10 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
   const [date, setDate] = useState('');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
+  const [manufacturingEligible, setManufacturingEligible] = useState(false);
+  const [manufacturingAllocationMethod, setManufacturingAllocationMethod] = useState<'labor_hours' | 'production_quantity'>('labor_hours');
+  const [approvedManufacturingHours, setApprovedManufacturingHours] = useState('');
+  const [approvedProductionQuantity, setApprovedProductionQuantity] = useState('');
   const [receipt, setReceipt] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [removeExistingReceipt, setRemoveExistingReceipt] = useState(false);
   const [picker, setPicker] = useState<'cashbox' | 'account' | null>(null);
@@ -60,6 +64,10 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
     setDate(seed?.date?.slice(0, 10) ?? dateKey(new Date()));
     setAmount(seed ? String(seed.amount) : '');
     setDescription(seed?.description ?? '');
+    setManufacturingEligible(seed?.manufacturingEligible ?? false);
+    setManufacturingAllocationMethod(seed?.manufacturingAllocationMethod ?? 'labor_hours');
+    setApprovedManufacturingHours(seed?.approvedManufacturingHours == null ? '' : String(seed.approvedManufacturingHours));
+    setApprovedProductionQuantity(seed?.approvedProductionQuantity == null ? '' : String(seed.approvedProductionQuantity));
     setCashBoxId(seed?.cashBoxId ?? options.defaultCashBoxId);
     setAccountId(seed?.expenseAccountId ?? null);
     setRemoveExistingReceipt(false);
@@ -89,6 +97,15 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
       notify('راجع البيانات', 'أدخل التاريخ والصندوق والحساب والمبلغ ووصفاً للمصروف.');
       return;
     }
+    const approvedHours = Number(approvedManufacturingHours);
+    const approvedQuantity = Number(approvedProductionQuantity);
+    if (manufacturingEligible &&
+        (manufacturingAllocationMethod === 'labor_hours' ? !(approvedHours > 0) : !(approvedQuantity > 0))) {
+      notify('راجع أساس التوزيع', manufacturingAllocationMethod === 'labor_hours'
+        ? 'أدخل ساعات التصنيع المعتمدة لهذا الشهر.'
+        : 'أدخل كمية الإنتاج المعتمدة لهذا الشهر.');
+      return;
+    }
     setSaving(true);
     let stagedPath: string | null = null;
     try {
@@ -97,7 +114,14 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
         const uploaded = await uploadMutation.mutateAsync({ data: { mimeType, base64: receipt.base64! } });
         stagedPath = uploaded.objectPath;
       }
-      const data = { date, cashBoxId, expenseAccountId: accountId, amount: numericAmount, description: description.trim(), ...(stagedPath ? { receiptPath: stagedPath } : editId && removeExistingReceipt ? { receiptPath: null } : {}) };
+      const data = {
+        date, cashBoxId, expenseAccountId: accountId, amount: numericAmount,
+        description: description.trim(), manufacturingEligible,
+        manufacturingAllocationMethod,
+        approvedManufacturingHours: manufacturingEligible && manufacturingAllocationMethod === 'labor_hours' ? approvedHours : null,
+        approvedProductionQuantity: manufacturingEligible && manufacturingAllocationMethod === 'production_quantity' ? approvedQuantity : null,
+        ...(stagedPath ? { receiptPath: stagedPath } : editId && removeExistingReceipt ? { receiptPath: null } : {}),
+      };
       if (editId) await updateMutation.mutateAsync({ id: editId, data });
       else await createMutation.mutateAsync({ data });
       await Promise.all([
@@ -164,6 +188,31 @@ function EditorBody({ editId, allowed }: { editId: number; allowed: boolean }) {
           <SelectRow label="حساب المصروف" value={account ? `${account.code} · ${account.name}` : 'اختر الحساب'} onPress={() => setPicker('account')} />
           <Field label="المبلغ" value={amount} onChangeText={setAmount} placeholder="0.00" keyboardType="decimal-pad" ltr testID="cash-expense-amount" />
           <Field label="وصف المصروف" value={description} onChangeText={setDescription} placeholder="ما سبب هذا المصروف؟" multiline testID="cash-expense-description" />
+        </Card>
+        <Card style={{ gap: 12 }}>
+          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ color: c.foreground, textAlign: 'right', fontSize: 14, fontFamily: 'Inter_600SemiBold' }}>تحميل على التصنيع</Text>
+            <Switch value={manufacturingEligible} onValueChange={setManufacturingEligible} testID="cash-expense-manufacturing-eligible" />
+          </View>
+          <Text style={{ color: c.mutedForeground, textAlign: 'right', fontSize: 12, lineHeight: 19 }}>
+            فعّله لمصروف المصنع فقط. للإيجار، أدخل هنا الجزء الشهري غير المغطى بالمقدم حتى لا يتكرر تحميله.
+          </Text>
+          {manufacturingEligible ? <>
+            <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+              {([
+                ['labor_hours', 'ساعات العمل'],
+                ['production_quantity', 'كمية الإنتاج'],
+              ] as const).map(([method, label]) => (
+                <Pressable key={method} onPress={() => setManufacturingAllocationMethod(method)}
+                  style={{ flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', borderWidth: 1, borderColor: manufacturingAllocationMethod === method ? c.primary : c.border, backgroundColor: manufacturingAllocationMethod === method ? c.primary + '18' : c.background }}>
+                  <Text style={{ color: manufacturingAllocationMethod === method ? c.primary : c.foreground, fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            {manufacturingAllocationMethod === 'labor_hours'
+              ? <Field label="ساعات التصنيع المعتمدة للشهر" value={approvedManufacturingHours} onChangeText={setApprovedManufacturingHours} placeholder="0" keyboardType="decimal-pad" ltr testID="cash-expense-approved-hours" />
+              : <Field label="كمية الإنتاج المعتمدة للشهر" value={approvedProductionQuantity} onChangeText={setApprovedProductionQuantity} placeholder="0" keyboardType="decimal-pad" ltr testID="cash-expense-approved-quantity" />}
+          </> : null}
         </Card>
         <Card style={{ gap: 12 }}>
           <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}><SectionLabel>اختياري</SectionLabel><Text style={{ color: c.foreground, textAlign: 'right', fontSize: 15, fontFamily: 'Inter_600SemiBold' }}>إيصال المصروف</Text></View>

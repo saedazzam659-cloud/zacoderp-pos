@@ -6520,7 +6520,7 @@ export async function productionWizardHandler(req: any, res: any) {
             throw Object.assign(new Error(`ساعات الأمر ومعدل الساعة مطلوبان لتوزيع ${source.label}`), { status: 400 });
           formulaMethod = "fixed_hourly_rate";
           amount = calculateFormulaAllocation(formulaMethod, source.sourceAmount, plannedHours, denominator);
-        } else if (source.sourceType === "prepaid_amortization") {
+        } else if (source.sourceType === "prepaid_amortization" || source.sourceType === "cash_expense") {
           if (method === "labor_hours") {
             denominator = num(source.meta.approvedManufacturingHours);
             if (!(plannedLaborPersonHours >= 0 && denominator > 0))
@@ -6544,7 +6544,7 @@ export async function productionWizardHandler(req: any, res: any) {
         // its actual driver delta. v0 retains its existing positive baseline.
         const zeroExecutionBaseline = resourceCostingVersion >= 1 && amount === 0 &&
           (source.sourceType === "payroll" || source.sourceType === "fixed_asset_depreciation" ||
-            (source.sourceType === "prepaid_amortization" && method === "labor_hours") ||
+            ((source.sourceType === "prepaid_amortization" || source.sourceType === "cash_expense") && method === "labor_hours") ||
             (source.sourceType === "purchase_invoice" && ["machine_hours", "labor_hours"].includes(method)));
         if (!(amount > 0 && sharePct > 0) && !zeroExecutionBaseline)
           throw Object.assign(new Error(`ناتج توزيع صفري للمصدر: ${source.label}`), { status: 400 });
@@ -6617,10 +6617,10 @@ export async function productionWizardHandler(req: any, res: any) {
           allocatedAmount: String(amount.toFixed(2)), snapshotMeta: { ...source.meta, label: source.label,
             costTreatment: treatment, includeInManufacturing,
             formulaMethod,
-            industrialDriver: source.sourceType === "purchase_invoice" ? method : undefined,
+            industrialDriver: source.sourceType === "purchase_invoice" || source.sourceType === "cash_expense" ? method : undefined,
             ...(source.sourceType === "prepaid_amortization" && method === "labor_hours"
               ? { industrialDriver: "labor_hours" } : {}),
-            formulaNumerator: source.sourceType === "prepaid_amortization"
+            formulaNumerator: source.sourceType === "prepaid_amortization" || source.sourceType === "cash_expense"
               ? method === "labor_hours" ? plannedLaborPersonHours : plannedQty
               : source.sourceType === "payroll"
                 ? plannedLaborPersonHours
