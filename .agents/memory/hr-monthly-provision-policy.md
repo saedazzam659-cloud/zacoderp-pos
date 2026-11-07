@@ -12,3 +12,9 @@ Monthly provision posting is explicitly enabled per company and defaults off. Ex
 **Why:** Enabling new expense/liability entries without reviewed mappings and employee entitlements could change existing ledgers unexpectedly.
 
 **How to apply:** Capture the annual ticket entitlement per employee, preserve period snapshots for each posted month, and connect the resulting employee cost to manufacturing only once. The eligible salary components for leave accrual were not specified beyond the user's approval of the eligible-salary basis.
+
+Settlement decisions: paid-leave provision is settled with a separate entry when the leave is used; travel-ticket provision is settled against the actual ticket invoice or expense. Keep monthly provision activation off until manufacturing allocation, settlement, and consolidated reporting are complete.
+
+**Why:** The user confirmed these settlement sources on 2026-11-08 and required the activation gate to remain off until the related workflows are complete.
+
+**How to apply:** Link each settlement to its source employee and provision period, reduce the liability without charging the same cost twice, and preserve posted snapshots.
