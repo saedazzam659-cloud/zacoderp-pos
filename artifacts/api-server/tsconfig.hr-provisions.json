@@ -5,10 +5,7 @@
     "src/lib/employeeProvisionSources.ts",
     "src/lib/hr-journals.ts",
     "src/routes/employees.ts",
-    "src/routes/payment-vouchers.ts",
-    "src/routes/cash-expenses.ts",
-    "src/routes/purchasing.ts",
-    "src/routes/journalEntries.ts",
+    "src/routes/hr-reports.ts",
     "src/**/*.d.ts"
   ]
 }

@@ -3,6 +3,7 @@
 // Multi-tenant, branch-scoped. Status transitions enforced server-side.
 // Every mutation writes a row into production_events for full auditability.
 import { Router } from "express";
+import { postedProvisionOffsets, netProvisionSourceAmount } from "../lib/employeeProvisionManufacturing.js";
 import { TransactionFailure, transactionFailureResponse } from "../lib/transactionFailure.js";
 import { db } from "@workspace/db";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
@@ -1642,6 +1643,20 @@ async function loadPostedCostSources(
   const journalIds = [...payroll, ...assets, ...prepaid, ...cashExpenses, ...industrialWithJournal]
     .map((r: any) => Number(r.journalId))
     .filter((id) => Number.isInteger(id) && id > 0);
+  const provisionOffsets = await postedProvisionOffsets(q, cid, journalIds);
+  const payrollProvisionOffsets = new Map<number, number>();
+  const purchaseProvisionOffsets = new Map<number, number>();
+  const accountProvisionOffsets = new Map<string, number>();
+  for (const row of provisionOffsets) {
+    const snapshot = row.snapshot;
+    const accountKey = `${snapshot.sourceJournalId}:${snapshot.expenseAccountId}`;
+    accountProvisionOffsets.set(accountKey, (accountProvisionOffsets.get(accountKey) ?? 0) + num(row.amount));
+    if (snapshot.expensePayrollRunId)
+      payrollProvisionOffsets.set(snapshot.expensePayrollRunId,
+        (payrollProvisionOffsets.get(snapshot.expensePayrollRunId) ?? 0) + snapshot.manufacturingOffsetAmount);
+    for (const part of snapshot.purchaseLineOffsets ?? [])
+      purchaseProvisionOffsets.set(part.lineId, (purchaseProvisionOffsets.get(part.lineId) ?? 0) + part.amount);
+  }
   const debitLines = journalIds.length ? await q.select({
     journalId: journalEntryLinesTable.entryId,
     accountId: journalEntryLinesTable.accountId,
@@ -1662,6 +1677,20 @@ async function loadPostedCostSources(
     list.push({ accountId: line.accountId, weight: num(line.debit) });
     accountsByJournal.set(line.journalId, list);
   }
+  for (const [journalId, accounts] of accountsByJournal) {
+    const totals = new Map<number, number>();
+    for (const account of accounts) totals.set(account.accountId, (totals.get(account.accountId) ?? 0) + account.weight);
+    let credit = 0;
+    const netAccounts: WeightedAccount[] = [];
+    for (const [accountId, gross] of totals) {
+      const offset = accountProvisionOffsets.get(`${journalId}:${accountId}`) ?? 0;
+      credit += offset;
+      const weight = netProvisionSourceAmount(gross, offset);
+      if (weight > 0) netAccounts.push({ accountId, weight });
+    }
+    accountsByJournal.set(journalId, netAccounts);
+    debitAmountByJournal.set(journalId, netProvisionSourceAmount(debitAmountByJournal.get(journalId) ?? 0, credit));
+  }
   const sourceMeta = (row: any, extra: Record<string, unknown>) => ({
     ...extra,
     sourceJournalId: row.journalId,
@@ -1671,7 +1700,8 @@ async function loadPostedCostSources(
   return [
     ...payroll.map((r: any) => ({ sourceType: "payroll" as const, sourceRecordId: r.id,
       label: `رواتب ${r.code}`, periodStart: start, periodEnd: end, basis: "posted_payroll_allocation",
-      sourceAmount: num(r.amount), meta: sourceMeta(r, { payrollRunId: r.id,
+      sourceAmount: netProvisionSourceAmount(num(r.amount), payrollProvisionOffsets.get(r.id) ?? 0),
+      meta: sourceMeta(r, { payrollRunId: r.id, provisionSettlementOffset: payrollProvisionOffsets.get(r.id) ?? 0,
         manufacturingEligible: true, allocationMethod: r.method, approvedManufacturingHours: r.hours }) })),
     ...assets.map((r: any) => {
       // Manufacturing may consume only the amount actually debited by the
@@ -1720,7 +1750,8 @@ async function loadPostedCostSources(
       periodStart: start,
       periodEnd: end,
       basis: r.allocationDriver,
-      sourceAmount: num(r.amount),
+      sourceAmount: netProvisionSourceAmount(num(r.amount),
+        r.sourceType === "purchase_invoice" ? purchaseProvisionOffsets.get(r.sourceLineId) ?? 0 : 0),
       meta: {
         ...sourceMeta(r, {
         manufacturingEligible: true,

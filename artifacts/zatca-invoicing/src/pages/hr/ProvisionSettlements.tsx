@@ -26,6 +26,8 @@ export default function ProvisionSettlements() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
+  const [periodFilter, setPeriodFilter] = useState("all");
+  const [employeeFilter, setEmployeeFilter] = useState("all");
   const balances = useQuery<any[]>({
     queryKey: ["employee-provision-balances", user?.companyId, user?.id],
     queryFn: () => employeesApi.provisionBalances(),
@@ -75,6 +77,11 @@ export default function ProvisionSettlements() {
     },
     onError: e => toast({ variant: "destructive", title: text("تعذّر عكس التسوية", "Settlement could not be reversed"), description: parseError(e) }),
   });
+  const rows = (balances.data ?? []).filter(row => (periodFilter === "all" || row.period === periodFilter) &&
+    (employeeFilter === "all" || String(row.employeeId) === employeeFilter));
+  const periods = [...new Set((balances.data ?? []).map(row => String(row.period)))].sort().reverse();
+  const employeeOptions = [...new Map((balances.data ?? []).map(row =>
+    [String(row.employeeId), { value: String(row.employeeId), label: employeeName(row) }])).values()];
 
   return <div className="space-y-4">
     {!ready && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
@@ -82,7 +89,33 @@ export default function ProvisionSettlements() {
     </p>}
     <div className="rounded-md border p-4 text-sm">
       <h3 className="mb-2 font-semibold">{text("تسوية مخصص الإجازات وتذاكر السفر", "Leave and travel-ticket provision settlements")}</h3>
+      <p className="mb-2 text-muted-foreground">{text("أساس الإجازة: الراتب الأساسي فقط دون البدلات. المخصص الشهري = الأساسي × أيام الإجازة السنوية ÷ 360. الفترات المرحّلة تحتفظ بقيمها الأصلية.", "Leave basis: basic salary only, excluding allowances. Monthly accrual = basic salary × annual leave days ÷ 360. Posted periods retain their original snapshots.")}</p>
       <p className="text-muted-foreground">{text("تخفض التسوية الالتزام دون إنشاء دفعة نقدية أو مصروف مكرر. مصدر الإجازة سنوي مدفوع ومعتمد؛ ومصدر التذكرة سند مصروف أو فاتورة شراء بقيد مصروف تذاكر مرحّل بالريال السعودي.", "Settlements reduce the liability without creating another cash payment or duplicate expense. Leave must be approved and paid; tickets require a payment voucher or purchase invoice with posted SAR ticket expense.")}</p>
+    </div>
+    <div className="space-y-3 rounded-md border p-3">
+      <h4 className="font-semibold">{text("تقرير المخصصات الموحّد · ريال سعودي", "Consolidated provision report · SAR")}</h4>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="space-y-1 text-sm">{text("فترة الاستحقاق", "Accrual period")}
+          <SearchCombobox value={periodFilter} onValueChange={value => { setPeriodFilter(value); setSelected(null); }}
+            items={[{ value: "all", label: text("كل الفترات", "All periods") }, ...periods.map(period => ({ value: period, label: period }))]} />
+        </label>
+        <label className="space-y-1 text-sm">{text("الموظف", "Employee")}
+          <SearchCombobox value={employeeFilter} onValueChange={value => { setEmployeeFilter(value); setSelected(null); }}
+            items={[{ value: "all", label: text("كل الموظفين", "All employees") }, ...employeeOptions]} />
+        </label>
+      </div>
+      {!balances.isLoading && !balances.isError && <div className="grid gap-3 sm:grid-cols-2">
+        {["annual_leave", "travel_ticket"].map(type => {
+          const selectedRows = rows.filter(row => row.provisionType === type);
+          return <div key={type} className="rounded-md bg-muted/40 p-3 text-sm">
+            <h5 className="mb-2 font-semibold">{type === "annual_leave" ? text("مخصص الإجازة · الأساسي فقط", "Leave provision · Basic only") : text("مخصص التذاكر", "Ticket provision")}</h5>
+            <div>{text("المستحق", "Accrued")}: {fmt(selectedRows.reduce((sum, row) => sum + Number(row.accrued), 0))}</div>
+            <div>{text("المسوّى", "Settled")}: {fmt(selectedRows.reduce((sum, row) => sum + Number(row.settled), 0))}</div>
+            <div className="font-semibold">{text("المتبقي", "Remaining")}: {fmt(selectedRows.reduce((sum, row) => sum + Number(row.balance), 0))}</div>
+          </div>;
+        })}
+      </div>}
+      <p className="text-xs text-muted-foreground">{text("الأرصدة من لقطات الرواتب المرحّلة وقيود التسوية المرحّلة فقط؛ لا تُستنتج مخصصات قديمة من العقود الحالية.", "Balances use posted payroll snapshots and posted settlements only. Historical liabilities are not reconstructed from current contracts.")}</p>
     </div>
     {balances.isLoading ? <p className="p-4 text-sm">{text("جارٍ تحميل الأرصدة…", "Loading balances…")}</p>
       : balances.isError ? <p className="p-4 text-sm text-destructive">{text("تعذّر تحميل أرصدة المخصصات.", "Could not load provision balances.")}</p>
@@ -90,7 +123,7 @@ export default function ProvisionSettlements() {
         <table className="w-full min-w-[720px] text-sm">
           <thead className="bg-muted/50"><tr>{(ar ? ["الموظف", "الفترة", "المخصص", "المضاف", "المسوّى", "المتاح", ""] : ["Employee", "Period", "Provision", "Accrued", "Settled", "Available", ""]).map(x =>
             <th key={x} className="p-2 text-start font-medium">{x}</th>)}</tr></thead>
-          <tbody>{(balances.data ?? []).map(row => <tr key={`${row.employeeId}:${row.provisionType}:${row.period}`} className="border-t">
+          <tbody>{rows.map(row => <tr key={`${row.employeeId}:${row.provisionType}:${row.period}`} className="border-t">
             <td className="p-2">{employeeName(row)}</td>
             <td className="p-2" dir="ltr">{row.period}</td>
             <td className="p-2">{row.provisionType === "annual_leave" ? text("إجازة سنوية", "Annual leave") : text("تذكرة سفر", "Travel ticket")}</td>
@@ -100,7 +133,7 @@ export default function ProvisionSettlements() {
               onClick={() => { setSelected(row); setLeaveId(""); setVoucherId(""); setAmount(""); setNotes(""); setTicketSource("payment_voucher"); }}>{text("تسوية", "Settle")}</Button></td>
           </tr>)}</tbody>
         </table>
-        {!balances.data?.length && <p className="p-4 text-center text-sm text-muted-foreground">{text("لا توجد مخصصات مرحّلة للتسوية.", "No posted provisions are available.")}</p>}
+        {!rows.length && <p className="p-4 text-center text-sm text-muted-foreground">{text("لا توجد أرصدة مرحّلة مطابقة للتصفية.", "No posted balances match these filters.")}</p>}
       </div>}
     {selected && <div className="space-y-3 rounded-md border p-4">
       <h4 className="font-semibold">{employeeName(selected)} · {selected.period} · {selected.provisionType === "annual_leave" ? text("إجازة سنوية", "Annual leave") : text("تذكرة سفر", "Travel ticket")}</h4>
@@ -136,17 +169,19 @@ export default function ProvisionSettlements() {
       </div>
     </div>}
     <div className="overflow-x-auto rounded-md border">
-      <h4 className="p-3 font-semibold">{text("سجل التسويات", "Settlement history")}</h4>
+      <h4 className="p-3 font-semibold">{text("سجل التسويات · أحدث 100 تسوية للشركة", "Settlement history · Latest 100 company settlements")}</h4>
       <table className="w-full min-w-[680px] text-sm">
         <thead className="bg-muted/50"><tr>{(ar ? ["الموظف", "النوع", "الفترة", "المصدر", "المبلغ", "الحالة", ""] : ["Employee", "Type", "Period", "Source", "Amount", "Status", ""]).map(x =>
           <th key={x} className="p-2 text-start font-medium">{x}</th>)}</tr></thead>
         <tbody>{(history.data ?? []).map(row => <tr key={row.id} className="border-t">
           <td className="p-2">{employeeName(row)}</td>
           <td className="p-2">{row.provisionType === "annual_leave" ? text("إجازة", "Leave") : text("تذكرة", "Ticket")}</td>
-          <td className="p-2" dir="ltr">{row.provisionPeriod}</td>
+          <td className="p-2" dir="ltr">{row.provisionPeriod}<span className="block text-xs text-muted-foreground">{row.settlementDate}</span></td>
           <td className="p-2">{row.sourceType === "employee_leave" ? text("إجازة", "Leave") : row.sourceType === "purchase_invoice" ? text("فاتورة شراء", "Purchase invoice") : text("سند مصروف", "Payment voucher")} #{row.sourceRecordId}</td>
           <td className="p-2">{fmt(Number(row.amount))}</td>
-          <td className="p-2">{row.status === "posted" ? text("مرحّلة", "Posted") : text("معكوسة", "Reversed")}</td>
+          <td className="p-2">{row.status === "posted" ? text("مرحّلة", "Posted") : text("معكوسة", "Reversed")}
+            {row.journalEntryId && <span className="block text-xs text-muted-foreground">{text("قيد", "Journal")} #{row.journalEntryId}</span>}
+          </td>
           <td className="p-2">{row.status === "posted" && <Button size="sm" variant="outline"
             disabled={reverseMutation.isPending} onClick={() => {
               if (window.confirm(text("عكس هذه التسوية بقيد مقابل؟ لا يتم حذف القيد الأصلي.", "Reverse this settlement with a compensating entry? The original entry will be retained.")))

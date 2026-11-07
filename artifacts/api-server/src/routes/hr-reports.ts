@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { monthlyBasicLeaveProvision } from "../lib/hrProvisionMath.js";
 import { db } from "@workspace/db";
 import {
   employeesTable,
@@ -633,9 +634,9 @@ router.get("/employee-cost", async (req, res) => {
       const transport = num(e.transportAllow);
       const other = num(e.otherAllow);
       const gross = basic + housing + transport + other;
-      const eligibleLeaveSalary = basic + housing + transport;
+      const eligibleLeaveSalary = basic;
       const vacationDays = Math.max(0, num(contractByEmployee.get(e.id)?.vacationDays ?? 21));
-      const leaveProvisionMonthly = Math.round((eligibleLeaveSalary * vacationDays / 360) * 100) / 100;
+      const leaveProvisionMonthly = monthlyBasicLeaveProvision(eligibleLeaveSalary, vacationDays);
       const ticketProvisionMonthly = Math.round((num(e.annualTravelTicketAmount) / 12) * 100) / 100;
       // GOSI employer share commonly applies on (basic + housing) capped — simplified estimate
       const gosiBase = basic + housing;

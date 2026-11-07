@@ -21,6 +21,8 @@ import { assertWritableForDate } from "./periodGuard.js";
 import { nextJeSubSequence, resolveJeNumber } from "./sequences.js";
 import { isHrPostingBranchBackfill, resolveHrPostingBranch } from "./hrPostingBranch.js";
 import { allocateComponentBySnapshots } from "./payrollAllocation.js";
+import type { ProvisionExpenseSnapshot } from "./employeeProvisionManufacturing.js";
+import { monthlyBasicLeaveProvision } from "./hrProvisionMath.js";
 import { getLinkedSourceJournalEntry, replaceLinkedSourceJournalEntry } from "./sourceJournalEntryLifecycle.js";
 
 type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -293,7 +295,7 @@ export async function buildPayrollJournal(
     const eosPrior = eosLiabilityAt(employee?.hireDate ?? null, priorDay(periodStartDate), monthlyWage);
     const computedEos = provisionsEnabled ? roundMoney(eosCurrent - eosPrior) : 0;
     const annualLeaveDays = Math.max(0, num(currentContract?.vacationDays ?? 21));
-    const computedLeave = provisionsEnabled ? roundMoney(monthlyWage * annualLeaveDays / 360) : 0;
+    const computedLeave = provisionsEnabled ? monthlyBasicLeaveProvision(num(line.basicSalary), annualLeaveDays) : 0;
     const computedTicket = provisionsEnabled ? roundMoney(num(employee?.annualTravelTicketAmount) / 12) : 0;
     const eosChange = run.provisionSnapshotsCaptured ? num(line.eosProvisionAmount) : computedEos;
     const leaveAmount = run.provisionSnapshotsCaptured ? num(line.leaveProvisionAmount) : computedLeave;
@@ -507,15 +509,19 @@ export async function buildPayrollJournal(
 export async function buildEmployeeProvisionSettlementJournal(
   cid: number,
   settlementId: number,
-  settlement: { provisionType: "annual_leave" | "travel_ticket"; employeeId: number; amount: unknown; settlementDate: string; provisionPeriod: string; originalJournalEntryId?: number | null },
+  settlement: { provisionType: "annual_leave" | "travel_ticket"; employeeId: number; amount: unknown; settlementDate: string; provisionPeriod: string; originalJournalEntryId?: number | null; sourceSnapshot?: ProvisionExpenseSnapshot },
   dx: DbOrTx = db,
   reversal = false,
 ): Promise<number> {
   const accounts = reversal ? null : await resolveHrAccounts(cid, true, dx);
   const leave = settlement.provisionType === "annual_leave";
-  const liability = leave ? accounts?.leaveProvisionLiability : accounts?.travelTicketLiability;
-  const expense = leave ? accounts?.salariesExpense : accounts?.travelTicketExpense;
+  const snapshot = settlement.sourceSnapshot;
+  const liability = snapshot?.liabilityAccountId ?? (leave ? accounts?.leaveProvisionLiability : accounts?.travelTicketLiability);
+  const expense = snapshot?.expenseAccountId ?? (leave ? accounts?.salariesExpense : accounts?.travelTicketExpense);
   if (!reversal && (!liability || !expense)) throw new Error("حسابات تسوية المخصص غير مربوطة");
+  if (!reversal && (!snapshot || snapshot.expenseParts.some(part => !Number.isFinite(part.amount) || part.amount <= 0) ||
+      Math.abs(snapshot.expenseParts.reduce((sum, part) => sum + part.amount, 0) - num(settlement.amount)) > 0.005))
+    throw new Error("لقطة توزيع مصروف التسوية ناقصة أو غير متوازنة");
   const originalLines = reversal && settlement.originalJournalEntryId
     ? await dx.select({
       accountId: journalEntryLinesTable.accountId, debit: journalEntryLinesTable.debit,
@@ -540,10 +546,10 @@ export async function buildEmployeeProvisionSettlementJournal(
   if (postingStatus !== "posted") throw new Error("تسوية المخصص تتطلب قيدًا مرحّلًا؛ راجع سياسة ترحيل الرواتب");
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
-    branchId: null,
+    branchId: snapshot?.branchId ?? null,
     docNumber: (await resolveJeNumber({
       companyId: cid, sourceType: reversal ? "employee_provision_settlement_reversal" : "employee_provision_settlement", sourceId: settlementId,
-      subType: "hr_payroll", branchId: null, docDate: settlement.settlementDate,
+      subType: "hr_payroll", branchId: snapshot?.branchId ?? null, docDate: settlement.settlementDate,
       userId: null, dx: dx as any,
     })) ?? `HRS-${settlementId}`,
     entryDate: settlement.settlementDate,
@@ -560,7 +566,10 @@ export async function buildEmployeeProvisionSettlementJournal(
     }))
     : [
       { entryId: entry.id, accountId: liability!, debit: fix(amount), credit: "0.00", description: `تخفيض مخصص ${period}`, sortOrder: 0 },
-      { entryId: entry.id, accountId: expense!, debit: "0.00", credit: fix(amount), description, sortOrder: 1 },
+      ...snapshot!.expenseParts.map((part, index) => ({
+        entryId: entry.id, accountId: expense!, costCenter: part.costCenter,
+        debit: "0.00", credit: fix(part.amount), description, sortOrder: index + 1,
+      })),
     ]);
   return entry.id;
 }

@@ -2,7 +2,8 @@ import { Router } from "express";
 import { EMPLOYEE_PROVISION_SETTLEMENTS_READY } from "../lib/hrProvisionReadiness.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { documentMutationLock, withDocumentMutationLock } from "../lib/document-mutation-lock.js";
-import { availableTicketExpense, assertProvisionSourceReversible, type TicketProvisionSource } from "../lib/employeeProvisionSources.js";
+import { availableTicketExpense, captureLeaveExpense, captureTicketExpense, assertProvisionSourceReversible, type TicketProvisionSource } from "../lib/employeeProvisionSources.js";
+import { assertProvisionManufacturingWritable, type ProvisionExpenseSnapshot } from "../lib/employeeProvisionManufacturing.js";
 import { db } from "@workspace/db";
 import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, payrollAllocationSnapshotsTable, employeeProjectAssignmentsTable, branchesTable, accountsTable, companiesTable, costCentersTable, contractingProjectsTable, employeeViolationsTable, employeeTravelsTable, employeeMedicalInsurancePoliciesTable, employeeProvisionSettlementsTable, paymentVouchersTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull, inArray } from "drizzle-orm";
@@ -2115,7 +2116,8 @@ router.post("/payroll/runs/:id/unpost", requireUnpostRight("payroll"), documentM
       const [provisionUse] = await tx.select({ id: employeeProvisionSettlementsTable.id })
         .from(employeeProvisionSettlementsTable).where(and(
           eq(employeeProvisionSettlementsTable.companyId, cid),
-          eq(employeeProvisionSettlementsTable.provisionPeriod, provisionPeriod),
+          or(eq(employeeProvisionSettlementsTable.provisionPeriod, provisionPeriod),
+            sql`${employeeProvisionSettlementsTable.sourceSnapshot}->>'expensePayrollRunId' = ${String(run.id)}`),
           eq(employeeProvisionSettlementsTable.status, "posted"),
         )).limit(1);
       if (provisionUse) throw Object.assign(new Error("اعكس تسويات المخصصات المرتبطة بالفترة قبل فك ترحيل مسير الرواتب"), { status: 409 });
@@ -2442,13 +2444,14 @@ router.post("/payroll/provision-settlements", requirePostRight("payroll"), async
       res.status(400).json({ error: "لا يمكن تسوية مخصص فترة مستقبلية بتاريخ سابق لها" }); return;
     }
     const settle = () => db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext('production_overhead_closure_mutation'))`);
       const lockKey = `employee_provision:${employeeId}:${provisionType}:${period}`;
       await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${lockKey}))`);
       const [employee] = await tx.select({ id: employeesTable.id }).from(employeesTable).where(and(
         eq(employeesTable.id, employeeId), eq(employeesTable.companyId, cid),
       ));
       if (!employee) throw Object.assign(new Error("الموظف غير موجود في الشركة الحالية"), { status: 404 });
-      const [accrualRun] = await tx.select({ id: payrollRunsTable.id }).from(payrollRunsTable).where(and(
+      const [accrualRun] = await tx.select({ id: payrollRunsTable.id, journalId: payrollRunsTable.postedJournalId }).from(payrollRunsTable).where(and(
         eq(payrollRunsTable.companyId, cid), eq(payrollRunsTable.year, Number(period.slice(0, 4))),
         eq(payrollRunsTable.month, Number(period.slice(5, 7))),
         inArray(payrollRunsTable.status, ["posted", "paid"]),
@@ -2471,30 +2474,54 @@ router.post("/payroll/provision-settlements", requirePostRight("payroll"), async
       ));
       const available = Number(runAmounts?.accrued ?? 0) - Number(settled?.amount ?? 0);
       if (amount > available + 0.005) throw Object.assign(new Error("مبلغ التسوية يتجاوز رصيد المخصص المتاح لهذا الموظف والفترة"), { status: 409 });
+      const hrAccounts = await resolveHrAccounts(cid, true, tx);
+      const liabilityAccountId = provisionType === "annual_leave" ? hrAccounts.leaveProvisionLiability : hrAccounts.travelTicketLiability;
+      if (!liabilityAccountId || !accrualRun.journalId)
+        throw Object.assign(new Error("حساب التزام المخصص أو قيد استحقاقه غير موجود"), { status: 409 });
+      const [liability] = await tx.select({
+        amount: sql<string>`coalesce(sum(${journalEntryLinesTable.credit} - ${journalEntryLinesTable.debit}), 0)`,
+      }).from(journalEntryLinesTable).where(and(eq(journalEntryLinesTable.entryId, accrualRun.journalId),
+        eq(journalEntryLinesTable.accountId, liabilityAccountId)));
+      const [periodUse] = await tx.select({
+        amount: sql<string>`coalesce(sum(${employeeProvisionSettlementsTable.amount}), 0)`,
+      }).from(employeeProvisionSettlementsTable).where(and(
+        eq(employeeProvisionSettlementsTable.companyId, cid), eq(employeeProvisionSettlementsTable.provisionPeriod, period),
+        eq(employeeProvisionSettlementsTable.provisionType, provisionType), eq(employeeProvisionSettlementsTable.status, "posted")));
+      if (amount > Number(liability?.amount ?? 0) - Number(periodUse?.amount ?? 0) + 0.005)
+        throw Object.assign(new Error("ربط حساب المخصص لا يطابق قيد الفترة الأصلي أو رصيده غير كافٍ"), { status: 409 });
+      let sourceSnapshot: ProvisionExpenseSnapshot;
       if (provisionType === "annual_leave") {
-        const [leave] = await tx.select({ id: employeeLeavesTable.id }).from(employeeLeavesTable).where(and(
+        const [leave] = await tx.select({ id: employeeLeavesTable.id, days: employeeLeavesTable.days }).from(employeeLeavesTable).where(and(
           eq(employeeLeavesTable.id, sourceRecordId), eq(employeeLeavesTable.companyId, cid),
           eq(employeeLeavesTable.employeeId, employeeId), eq(employeeLeavesTable.status, "approved"),
           eq(employeeLeavesTable.paid, true), eq(employeeLeavesTable.leaveType, "annual"),
           lte(employeeLeavesTable.startDate, settlementDate),
         ));
         if (!leave) throw Object.assign(new Error("اختر إجازة سنوية مدفوعة ومعتمدة لهذا الموظف"), { status: 400 });
+        if (!hrAccounts.salariesExpense) throw Object.assign(new Error("حساب مصروف الأساسي غير مربوط"), { status: 409 });
+        sourceSnapshot = await captureLeaveExpense(tx, cid, employeeId, sourceRecordId, Number(leave.days),
+          settlementDate, hrAccounts.salariesExpense, amount);
+        await assertProvisionManufacturingWritable(tx, cid, "payroll", sourceSnapshot.expensePayrollRunId!);
       } else {
-        const hrAccounts = await resolveHrAccounts(cid, true, tx);
         if (!hrAccounts.travelTicketExpense) throw Object.assign(new Error("اربط حساب مصروف تذاكر السفر أولاً"), { status: 400 });
         const sourceAvailable = await availableTicketExpense(tx, cid, sourceType as TicketProvisionSource,
           sourceRecordId, hrAccounts.travelTicketExpense, settlementDate);
         if (amount > sourceAvailable + 0.005)
           throw Object.assign(new Error("المبلغ يتجاوز مصروف التذكرة الفعلي غير المستخدم في تسويات سابقة"), { status: 409 });
+        sourceSnapshot = await captureTicketExpense(tx, cid, sourceType as TicketProvisionSource,
+          sourceRecordId, hrAccounts.travelTicketExpense, amount);
+        await assertProvisionManufacturingWritable(tx, cid, sourceType, sourceRecordId);
       }
+      sourceSnapshot.liabilityAccountId = liabilityAccountId;
       const [created] = await tx.insert(employeeProvisionSettlementsTable).values({
         companyId: cid, employeeId, provisionType, provisionPeriod: period, sourceType, sourceRecordId,
+        sourceSnapshot,
         settlementDate, amount: amount.toFixed(2), status: "draft",
         notes: typeof b.notes === "string" ? b.notes.trim().slice(0, 500) || null : null,
         createdById: Number(req.authUser?.id) || null,
       }).returning();
       const journalEntryId = await buildEmployeeProvisionSettlementJournal(cid, created.id, {
-        provisionType, employeeId, amount, settlementDate, provisionPeriod: period,
+        provisionType, employeeId, amount, settlementDate, provisionPeriod: period, sourceSnapshot,
       }, tx);
       const [posted] = await tx.update(employeeProvisionSettlementsTable).set({
         journalEntryId, status: "posted", updatedAt: new Date(),
@@ -2541,6 +2568,7 @@ router.post("/payroll/provision-settlements/:id/reverse", requirePostRight("payr
     ));
     if (!identity) { res.status(404).json({ error: "التسوية غير موجودة" }); return; }
     const reverse = () => db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext('production_overhead_closure_mutation'))`);
       const lockKey = `employee_provision:${identity.employeeId}:${identity.provisionType}:${identity.provisionPeriod}`;
       await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${lockKey}))`);
       const [settlement] = await tx.select().from(employeeProvisionSettlementsTable).where(and(
@@ -2548,11 +2576,18 @@ router.post("/payroll/provision-settlements/:id/reverse", requirePostRight("payr
       )).for("update");
       if (!settlement) throw Object.assign(new Error("التسوية غير موجودة"), { status: 404 });
       if (settlement.status !== "posted") throw Object.assign(new Error("لا يمكن عكس إلا تسوية مرحّلة"), { status: 409 });
+      const snapshot = settlement.sourceSnapshot as ProvisionExpenseSnapshot | null;
+      if (!snapshot?.sourceJournalId)
+        throw Object.assign(new Error("لقطة المصدر غير مكتملة؛ يتطلب العكس مراجعة محاسبية قبل تغيير تكلفة التصنيع"), { status: 409 });
+      await assertProvisionManufacturingWritable(tx, cid,
+        settlement.sourceType === "employee_leave" ? "payroll" : settlement.sourceType,
+        settlement.sourceType === "employee_leave" ? snapshot.expensePayrollRunId! : settlement.sourceRecordId);
       const reversalJournalEntryId = await buildEmployeeProvisionSettlementJournal(cid, id, {
         provisionType: settlement.provisionType as "annual_leave" | "travel_ticket",
         employeeId: settlement.employeeId,
         amount: settlement.amount,
         originalJournalEntryId: settlement.journalEntryId,
+        sourceSnapshot: snapshot,
         settlementDate: new Date().toISOString().slice(0, 10),
         provisionPeriod: settlement.provisionPeriod,
       }, tx, true);

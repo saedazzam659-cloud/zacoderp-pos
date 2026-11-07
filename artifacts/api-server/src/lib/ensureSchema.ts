@@ -1958,6 +1958,7 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
             provision_period TEXT NOT NULL,
             source_type TEXT NOT NULL,
             source_record_id INTEGER NOT NULL,
+            source_snapshot JSONB,
             settlement_date DATE NOT NULL,
             amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
             journal_entry_id INTEGER,
@@ -1968,6 +1969,7 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
             created_at TIMESTAMP NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMP NOT NULL DEFAULT NOW()
           );
+          ALTER TABLE employee_provision_settlements ADD COLUMN IF NOT EXISTS source_snapshot JSONB;
           CREATE UNIQUE INDEX IF NOT EXISTS employee_provision_settlements_source_uq
             ON employee_provision_settlements(company_id, provision_type, employee_id, provision_period, source_type, source_record_id)
             WHERE status IN ('draft', 'posted');

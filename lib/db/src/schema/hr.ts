@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, date, timestamp, decimal, boolean, unique } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, date, timestamp, decimal, boolean, unique, jsonb } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
 import { accountsTable } from "./accounts";
@@ -674,6 +674,7 @@ export const employeeProvisionSettlementsTable = pgTable("employee_provision_set
   provisionPeriod: text("provision_period").notNull(),
   sourceType: text("source_type").notNull(),
   sourceRecordId: integer("source_record_id").notNull(),
+  sourceSnapshot: jsonb("source_snapshot").$type<Record<string, unknown> | null>(),
   settlementDate: date("settlement_date").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
   journalEntryId: integer("journal_entry_id"),
