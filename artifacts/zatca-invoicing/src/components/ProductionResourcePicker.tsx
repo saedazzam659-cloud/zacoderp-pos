@@ -36,7 +36,9 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
   const [electricityKw, setElectricityKw] = useState("");
   const [saving, setSaving] = useState(false);
   const centers = catalog.workCenters.map(row => ({ value: String(row.id), label: row.nameAr || row.name || String(row.id) }));
-  const machines = catalog.machines.filter(row => !workCenterId || String(row.workCenterId ?? "") === workCenterId);
+  const machines = catalog.machines.filter(row =>
+    !workCenterId || row.workCenterId == null || String(row.workCenterId) === workCenterId,
+  );
   const selectedMachine = catalog.machines.find(row => String(row.id) === machineId);
   const linkedAsset = catalog.assets.find(row => row.id === selectedMachine?.fixedAssetId);
   const open = (type: "work-centers" | "machines") => {
@@ -79,7 +81,13 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
           {canCreate && <Button type="button" variant="ghost" size="sm" className="h-7 px-2" disabled={disabled} onClick={() => open("work-centers")}><Plus className="h-3 w-3 me-1" />إضافة</Button>}
         </div>
         <SearchCombobox value={workCenterId} items={[{ value: "", label: "بدون مركز" }, ...centers]}
-          onValueChange={value => onChange({ workCenterId: value, machineId: selectedMachine && String(selectedMachine.workCenterId ?? "") === value ? machineId : "" })}
+          onValueChange={value => onChange({
+            workCenterId: value,
+            machineId: selectedMachine &&
+              (selectedMachine.workCenterId == null || String(selectedMachine.workCenterId) === value)
+              ? machineId
+              : "",
+          })}
           disabled={disabled} placeholder="اختر مركز العمل" />
       </div>
       <div className="space-y-1.5">
@@ -89,7 +97,10 @@ export function ProductionResourcePicker({ workCenterId, machineId, catalog, dis
         <SearchCombobox value={machineId} items={[{ value: "", label: "بدون آلة" }, ...machines.map(row => ({ value: String(row.id), label: row.name }))]}
           onValueChange={value => {
             const row = catalog.machines.find(machine => String(machine.id) === value);
-            onChange({ machineId: value, workCenterId: row ? String(row.workCenterId ?? "") : workCenterId });
+            onChange({
+              machineId: value,
+              workCenterId: row?.workCenterId != null ? String(row.workCenterId) : workCenterId,
+            });
           }} disabled={disabled} placeholder="اختر الآلة" />
       </div>
     </div>

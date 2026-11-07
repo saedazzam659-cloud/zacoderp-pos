@@ -70,6 +70,7 @@
 - [Smart manufacturing stage permissions](smart-manufacturing-stage-permissions.md) — split route editing from execution entry per user; preserve existing edit access.
 - [Production-order reconfiguration boundary](production-order-reconfiguration-boundary.md) — order snapshots may be rebuilt only before movement, execution, QA, or cost allocation; never edit reusable templates.
 - [Manufacturing assets as route machines](manufacturing-asset-machine-link.md) — only active manufacturing-enabled assets can be linked; use existing machine records to preserve cost attribution and prevent duplicates.
+- [Route machine work-center boundary](manufacturing-route-machine-workcenter.md) — an unassigned route machine can use its stage's work center; reject only explicit conflicting machine-center links.
 - [Manufacturing estimate versus actual](manufacturing-estimate-actual-boundary.md) — show route-based estimates separately; use each employee's payroll rate and never create accounting entries.
 - [Manufacturing cost-source defaults](manufacturing-cost-source-defaults.md) — new orders default source categories to linked; supervision remains in payroll unless allocation can split rather than duplicate it.
 - [Company manufacturing costing policy](company-manufacturing-cost-policy.md) — v1 costs post by stage; unposted monthly sources accrue provisionally and settle without double-counting.

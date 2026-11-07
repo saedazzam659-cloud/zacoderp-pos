@@ -16,10 +16,13 @@ test("stage resource contract keeps work center optional and distinct from machi
 });
 
 test("shared execution router exposes the scoped resource setup contract", async () => {
-  const source = await readFile(
-    new URL("../src/routes/production.ts", import.meta.url),
-    "utf8",
-  );
+  const [source, picker] = await Promise.all([
+    readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
+    readFile(
+      new URL("../../zatca-invoicing/src/components/ProductionResourcePicker.tsx", import.meta.url),
+      "utf8",
+    ),
+  ]);
   assert.match(source, /productionExecutionRouter\.get\("\/orders\/:id\/resource-catalog"/);
   assert.match(source, /productionExecutionRouter\.post\("\/orders\/:id\/setup\/work-centers"/);
   assert.match(source, /productionExecutionRouter\.post\("\/orders\/:id\/setup\/machines"/);
@@ -41,6 +44,20 @@ test("shared execution router exposes the scoped resource setup contract", async
   const machineSetupEnd = source.indexOf('productionExecutionRouter.get("/orders/:id/stages"', machineSetupStart);
   const machineSetup = source.slice(machineSetupStart, machineSetupEnd);
   assert.match(machineSetup, /eq\(fixedAssetsTable\.usedInManufacturing,\s*true\)/);
+
+  const validateStart = source.indexOf("async function validateStageExecutionReferences(");
+  const validateEnd = source.indexOf("\n}\n", validateStart);
+  const stageValidation = source.slice(validateStart, validateEnd);
+  assert.match(
+    stageValidation,
+    /machineWorkCenterId != null &&\s*machineWorkCenterId !== effectiveWorkCenterId/,
+    "an unassigned route machine must work with the route's selected work center",
+  );
+  assert.match(
+    picker,
+    /row\.workCenterId == null \|\| String\(row\.workCenterId\) === workCenterId/,
+    "unassigned machines must remain selectable instead of disappearing",
+  );
 });
 
 test("new production orders copy linked machine and labor assignments from active routes", async () => {

@@ -10555,9 +10555,11 @@ async function validateStageExecutionReferences(
         { status: 400 },
       );
     }
+    const machineWorkCenterId = resourceRelationshipId(machine.meta, "workCenterId");
     if (
       effectiveWorkCenterId != null &&
-      resourceRelationshipId(machine.meta, "workCenterId") !== effectiveWorkCenterId
+      machineWorkCenterId != null &&
+      machineWorkCenterId !== effectiveWorkCenterId
     ) {
       throw Object.assign(
         new Error("الآلة المحددة لا تنتمي إلى مركز العمل المختار"),
