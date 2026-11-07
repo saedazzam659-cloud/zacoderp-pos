@@ -2,30 +2,30 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const inventory = fs.readFileSync(
-  new URL("../src/routes/inventory.ts", import.meta.url),
+const transport = fs.readFileSync(
+  new URL("../src/lib/internalManufacturingTransport.ts", import.meta.url),
   "utf8",
 );
 
 test("internal transport relink checks the locked allocation before late WIP JE", () => {
-  const linkStart = inventory.indexOf("async function linkTransferToProductionOrder");
-  const linkEnd = inventory.indexOf('router.patch("/transfers/:id/production-order"', linkStart);
-  assert.ok(linkStart >= 0 && linkEnd > linkStart);
-  const link = inventory.slice(linkStart, linkEnd);
-  const allocationRead = link.indexOf("const [existingAllocation]");
-  const lateJe = link.indexOf("reclassifyLateInternalTransport");
-  assert.ok(allocationRead >= 0, "link must read the source allocation");
-  assert.ok(lateJe > allocationRead, "late JE must follow the idempotency guard");
+  const allocationRead = transport.indexOf("const allocations = await tx.select().from(productionCostAllocationsTable)");
+  const lockRead = transport.indexOf('.for("update")', allocationRead);
+  const idempotencyGuard = transport.indexOf("if (internalTransportLinkIsIdempotent(", lockRead);
+  const lateJe = transport.indexOf("transportDeltaJournal(", idempotencyGuard);
+  assert.ok(allocationRead >= 0, "link must read source allocations");
+  assert.ok(lockRead > allocationRead, "source allocations must be locked");
+  assert.ok(idempotencyGuard > lockRead, "idempotency guard must follow the locked allocation read");
+  assert.ok(lateJe > idempotencyGuard, "late journal must follow the idempotency guard");
   assert.match(
-    link,
-    /existingAllocation\.orderId === orderId[\s\S]*?return tr;/,
+    transport,
+    /if \(internalTransportLinkIsIdempotent\([\s\S]*?return \{ transfer, allocation: previous, reclassificationJournalEntryId: null, idempotent: true \}/,
     "same-order retry must return without another JE",
   );
 });
 
 test("late transport fallback document number is unique per transfer", () => {
   assert.match(
-    inventory,
-    /\?\? `\$\{order\.orderNumber\}-TRN-\$\{transfer\.id\}`/,
+    transport,
+    /docNumber:\s*`\$\{order\.orderNumber\}-TRN-\$\{transfer\.id\}`/,
   );
 });

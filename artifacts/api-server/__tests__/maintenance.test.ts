@@ -2957,7 +2957,8 @@ test("dispatchCriticalDigest: recoveryRows reach sendMaintenanceCriticalDigest +
     // The invariant under test is "recoveries don't affect signature or
     // severities" — if dispatch silently included them, these expected
     // values would diverge from the recorded ones.
-    const expectedAlerts = await getMaintenanceAlerts(["critical", "warn"], 501);
+    const alertsForDispatch = await getMaintenanceAlerts(["critical", "warn"], 501);
+    const expectedAlerts = alertsForDispatch.slice(0, 500);
     const expectedSignature = computeCriticalSignature(expectedAlerts);
     const expectedSeverities = new Set<AlertSeverity>(
       expectedAlerts.map((a) => a.severity),

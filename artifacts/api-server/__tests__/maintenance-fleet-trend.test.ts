@@ -36,10 +36,8 @@
 //     (DATABASE_URL).
 //   - Seeds 6 active + 1 inactive + 1 "old" company tagged with a per-run
 //     TEST_TAG so they don't collide with anything else in the shared dev DB.
-//   - Each seeded company gets enough distinct critical (toolKey, day) pairs
-//     (64..90) to FAR outrank natural noise in dev — the e2e sibling uses
-//     20 per company, we use 64+ here so the assertions about top-5 ordering
-//     stay robust even on a fairly busy dev DB.
+//   - Each seeded company gets 464..600 distinct critical (toolKey, day) pairs
+//     so synthetic tenants outrank existing test data in the shared dev DB.
 //   - Cleanup is strict-by-PK (no LIKE / wildcards on shared tables), mirroring
 //     the pattern in admin-email-runs-retention.test.ts and the e2e fleet
 //     spec. A crashed run leaves orphan tagged rows that this run cannot
@@ -76,37 +74,32 @@ const insertedCompanyIds:        number[] = [];
 const insertedUserIds:           number[] = [];
 const insertedMaintenanceRunIds: number[] = [];
 
-// Seed sizing — chosen so each seeded company has FAR more distinct critical
-// (toolKey, day) pairs than any real tenant accrues in a 14-day window in
-// dev. The e2e sibling (task #103) uses 20 per company and notes that's
-// "well above what any real tenant accrues in a 14-day window in dev"; we
-// scale up to 64..90 here because, unlike the e2e spec, this file has to
-// reason about the LIMIT 5 cap with six seeded companies competing for the
-// top slots — extra headroom keeps the per-row ordering assertions robust
-// even on a busy dev DB.
+// Shared development databases can contain other test tenants with 80+
+// critical runs. Use 464..600 distinct tool/day pairs so fixtures outrank that
+// noise while adding only a few thousand rows.
 //
 // Profiles encode both the criticalRuns rank AND a tiebreak on criticalCount:
-//   A: 80 distinct toolKeys (today), count=10  → criticalRuns=80, criticalCount=800
-//   B: 76 distinct toolKeys (today), count=10  → criticalRuns=76, criticalCount=760
-//   C: 76 distinct toolKeys (today), count=5   → criticalRuns=76, criticalCount=380
-//   D: 72 distinct toolKeys (today), count=10  → criticalRuns=72, criticalCount=720
-//   E: 68 distinct toolKeys (today), count=10  → criticalRuns=68, criticalCount=680
-//   F: 64 distinct toolKeys (today), count=10  → criticalRuns=64 (excluded by LIMIT 5)
-//   INACTIVE: 80 distinct toolKeys (today), count=10 — would be #1 if active,
+//   A: 512 distinct toolKeys (today), count=10  → criticalRuns=512, criticalCount=5120
+//   B: 500 distinct toolKeys (today), count=10  → criticalRuns=500, criticalCount=5000
+//   C: 500 distinct toolKeys (today), count=5   → criticalRuns=500, criticalCount=2500
+//   D: 488 distinct toolKeys (today), count=10  → criticalRuns=488, criticalCount=4880
+//   E: 476 distinct toolKeys (today), count=10  → criticalRuns=476, criticalCount=4760
+//   F: 464 distinct toolKeys (today), count=10  → criticalRuns=464 (excluded by LIMIT 5)
+//   INACTIVE: 512 distinct toolKeys (today), count=10 — would be #1 if active,
 //             so its absence proves the WHERE c.status='active' filter is alive.
-//   OLD: 90 distinct toolKeys, all runAt = 20 days ago, count=10 — invisible to
+//   OLD: 600 distinct toolKeys, all runAt = 20 days ago, count=10 — invisible to
 //        days=14 (so it must NOT appear) but visible to days=30 (and at
-//        criticalRuns=90 it must be #1 in that response, proving the window
+//        criticalRuns=600 it must be #1 in that response, proving the window
 //        actually moves with the parameter).
 const PROFILES = {
-  A:        { distinct: 80, count: 10, ageDays:  0, status: "active"   as const, label: "A" },
-  B:        { distinct: 76, count: 10, ageDays:  0, status: "active"   as const, label: "B" },
-  C:        { distinct: 76, count: 5,  ageDays:  0, status: "active"   as const, label: "C" },
-  D:        { distinct: 72, count: 10, ageDays:  0, status: "active"   as const, label: "D" },
-  E:        { distinct: 68, count: 10, ageDays:  0, status: "active"   as const, label: "E" },
-  F:        { distinct: 64, count: 10, ageDays:  0, status: "active"   as const, label: "F" },
-  INACTIVE: { distinct: 80, count: 10, ageDays:  0, status: "inactive" as const, label: "INACTIVE" },
-  OLD:      { distinct: 90, count: 10, ageDays: 20, status: "active"   as const, label: "OLD" },
+  A:        { distinct: 512, count: 10, ageDays:  0, status: "active"   as const, label: "A" },
+  B:        { distinct: 500, count: 10, ageDays:  0, status: "active"   as const, label: "B" },
+  C:        { distinct: 500, count: 5,  ageDays:  0, status: "active"   as const, label: "C" },
+  D:        { distinct: 488, count: 10, ageDays:  0, status: "active"   as const, label: "D" },
+  E:        { distinct: 476, count: 10, ageDays:  0, status: "active"   as const, label: "E" },
+  F:        { distinct: 464, count: 10, ageDays:  0, status: "active"   as const, label: "F" },
+  INACTIVE: { distinct: 512, count: 10, ageDays:  0, status: "inactive" as const, label: "INACTIVE" },
+  OLD:      { distinct: 600, count: 10, ageDays: 20, status: "active"   as const, label: "OLD" },
 } as const;
 
 type ProfileKey = keyof typeof PROFILES;
@@ -272,14 +265,18 @@ test("GET /maintenance/trend (fleet): orders by criticalRuns DESC then criticalC
     `LIMIT 5 violated: response has ${r.body.fleet.length} rows`);
 
   // Filter to rows we own. With 6 active seeded companies all carrying
-  // 64..80 distinct critical (toolKey, day) pairs — far above natural dev
+  // 464..512 distinct critical (toolKey, day) pairs — far above existing test
   // noise — and the LIMIT 5 cap, exactly 5 of our seeds must land in the
   // response. If natural noise managed to squeeze a real tenant into the
   // top-5 ahead of one of our seeds, we'd see fewer than 5 here and the
   // assertion would point at the noise rather than silently passing.
   const ours = onlySeeded(r.body.fleet);
   assert.equal(ours.length, 5,
-    `expected exactly 5 seeded companies in top-5, got ${ours.length}: ${ours.map((x) => x.companyName).join(" | ")}`);
+    `expected exactly 5 seeded companies in top-5, got ${ours.length}; returned rows: ${JSON.stringify(
+      r.body.fleet.map(({ companyId, criticalRuns, criticalCount, companyName }) => ({
+        companyId, criticalRuns, criticalCount, isSeeded: companyName.startsWith(TEST_TAG),
+      })),
+    )}`);
 
   // Inactive seeded company (would be #1 by criticalRuns if it weren't
   // filtered) MUST be absent — proves WHERE c.status='active' is alive.
@@ -297,13 +294,13 @@ test("GET /maintenance/trend (fleet): orders by criticalRuns DESC then criticalC
   // what this assertion pins.
   //
   // Expected order:
-  //   A (criticalRuns=80) — top
-  //   B (76, criticalCount=760)
-  //   C (76, criticalCount=380) — same criticalRuns as B, lower
+  //   A (criticalRuns=512) — top
+  //   B (500, criticalCount=5000)
+  //   C (500, criticalCount=2500) — same criticalRuns as B, lower
   //                                criticalCount → tiebreak places it after B
-  //   D (72)
-  //   E (68)
-  // F (64) excluded by LIMIT 5.
+  //   D (488)
+  //   E (476)
+  // F (464) excluded by LIMIT 5.
   const expectedOrder: ProfileKey[] = ["A", "B", "C", "D", "E"];
   assert.deepEqual(
     ours.map((r) => r.companyName),
@@ -330,7 +327,7 @@ test("GET /maintenance/trend (fleet): orders by criticalRuns DESC then criticalC
   assert.equal(rowB.criticalCount, PROFILES.B.distinct * PROFILES.B.count);
   assert.equal(rowC.criticalRuns,  PROFILES.C.distinct);
   assert.equal(rowC.criticalCount, PROFILES.C.distinct * PROFILES.C.count);
-  // F is the LIMIT-5 victim — its 64 critical pairs put it just below E,
+  // F is the LIMIT-5 victim — its 464 critical pairs put it just below E,
   // and only LIMIT can keep it out. If LIMIT was raised, F would surface.
   assert.equal(
     r.body.fleet.find((x) => x.companyId === companyIds.F),
@@ -358,7 +355,7 @@ test("GET /maintenance/trend (fleet): honours the `days` query parameter — 20-
   }
 
   // Wider window (days=30): OLD's 20-day-old rows are now inside the window,
-  // and OLD has 90 distinct critical (toolKey, day) pairs — more than any of
+  // and OLD has 600 distinct critical (toolKey, day) pairs — more than any of
   // A-F. So OLD must surface as the #1 row in the response. Anything less
   // (OLD missing OR OLD demoted) means either the window predicate didn't
   // move with the parameter or the days param is being ignored by the SQL.
@@ -369,12 +366,12 @@ test("GET /maintenance/trend (fleet): honours the `days` query parameter — 20-
     assert.ok(r.body.fleet.length <= 5, `LIMIT 5 still enforced at days=30, got ${r.body.fleet.length}`);
 
     const ours = onlySeeded(r.body.fleet);
-    // OLD must be present somewhere in our subset. With 90 critical pairs vs
-    // A's 80, OLD outranks every other seed and, given LIMIT 5, must land
+    // OLD must be present somewhere in our subset. With 600 critical pairs vs
+    // A's 512, OLD outranks every other seed and, given LIMIT 5, must land
     // at index 0 of the seeded subset.
     assert.ok(ours.length >= 1, "no seeded rows at all in days=30 response — fleet projection broken");
     assert.equal(ours[0].companyId, oldId,
-      `OLD did not rank #1 at days=30 (criticalRuns=90); response order: ${ours.map((x) => x.companyName).join(" | ")}`);
+      `OLD did not rank #1 at days=30 (criticalRuns=600); response order: ${ours.map((x) => x.companyName).join(" | ")}`);
     assert.equal(ours[0].criticalRuns, PROFILES.OLD.distinct,
       "OLD criticalRuns mismatch — window may be aggregating wrong rows");
   }

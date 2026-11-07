@@ -356,7 +356,7 @@ async function transportDeltaJournal(
   const date = new Date().toISOString().slice(0, 10);
   return insertJournal(tx, companyId, req, {
     date,
-    docNumber: order.orderNumber,
+    docNumber: `${order.orderNumber}-TRN-${transfer.id}`,
     branchId: order.branchId ?? null,
     entryType: direction === "to_wip"
       ? "internal_transport_reclassification"

@@ -78,7 +78,7 @@ test("historical import review applies batch defaults and lets users jump to and
   assert.match(ui, /كود العميل\/المورد/);
   assert.match(ui, /اسم العميل\/المورد/);
   assert.match(ui, /اختر طريقة السداد/);
-  assert.match(ui, /rows\.forEach\(\(row\) => \{ row\[field\] = value; \}\)/);
+  assert.match(ui, /rows\[lineIndex\]\[field\] = value;/);
   assert.match(ui, /editableTextLineFields\.has\(field\)/);
   assert.match(ui, /field === "item_code" \? "كود الصنف" : "اسم الصنف"/);
   assert.match(ui, /editableLineFields\.has\(field\)/);

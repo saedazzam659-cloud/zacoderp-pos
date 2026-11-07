@@ -9362,16 +9362,24 @@ router.get("/maintenance/trend", requireSuperAdmin, async (req, res) => {
     // (tool, KSA-day) pairs hit critical so a single huge "broken-refs=500"
     // run doesn't mask a company that is critical on five different tools.
     const exec = await db.execute<any>(sql`
-      WITH window_runs AS (
+      WITH active_companies AS (
+        SELECT id, name_ar
+          FROM companies
+         WHERE status = 'active'
+      ),
+      window_runs AS (
         SELECT m.company_id,
                m.tool_key,
                to_char((m.run_at AT TIME ZONE 'Asia/Riyadh')::date, 'YYYY-MM-DD') AS day_str,
                m.status, m.count, m.run_at
           FROM maintenance_runs m
+          JOIN active_companies c ON c.id = m.company_id
          WHERE m.run_at >= now() - ((${days})::int || ' days')::interval
       ),
       crit AS (
-        SELECT company_id, tool_key, day_str, MAX(count) AS day_count
+        SELECT company_id, tool_key, day_str,
+               MAX(count) AS day_count,
+               MAX(run_at) AS last_run_at
           FROM window_runs
          WHERE status = 'critical'
          GROUP BY company_id, tool_key, day_str
@@ -9381,14 +9389,9 @@ router.get("/maintenance/trend", requireSuperAdmin, async (req, res) => {
              SUM(day_count)::int          AS "criticalCount",
              COUNT(*)::int                AS "criticalRuns",
              COUNT(DISTINCT tool_key)::int AS "toolCount",
-             MAX( (SELECT MAX(run_at) FROM window_runs w
-                    WHERE w.company_id = crit.company_id
-                      AND w.tool_key   = crit.tool_key
-                      AND w.day_str    = crit.day_str
-                      AND w.status     = 'critical') ) AS "lastRunAt"
+              MAX(crit.last_run_at) AS "lastRunAt"
         FROM crit
-        JOIN companies c ON c.id = crit.company_id
-       WHERE c.status = 'active'
+         JOIN active_companies c ON c.id = crit.company_id
        GROUP BY crit.company_id, c.name_ar
        ORDER BY "criticalRuns" DESC, "criticalCount" DESC
        LIMIT 5
