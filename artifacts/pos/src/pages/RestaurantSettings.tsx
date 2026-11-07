@@ -717,6 +717,12 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
     queryFn: () => api.rKitchenPrinterRoutes(Number(branchId)),
     enabled: !!branchId,
   });
+  const jobsQ = useQuery({
+    queryKey: ["r-kitchen-print-jobs", branchId],
+    queryFn: () => api.rKitchenPrintJobs(Number(branchId)),
+    enabled: !!branchId,
+    refetchInterval: 5000,
+  });
 
   useEffect(() => {
     if (!routesQ.data) return;
@@ -744,6 +750,20 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
       void qc.invalidateQueries({ queryKey: ["r-kitchen-printer-routes", branchId] });
     },
     onError: (error: Error) => setSavedMessage(error.message || "تعذر حفظ إعداد الطابعة."),
+  });
+  const pairBridge = useMutation({
+    mutationFn: () => api.rCreatePrintBridgeToken(Number(branchId)),
+    onSuccess: result => {
+      setBridgeToken(result.token);
+      setBridgePrinters([]);
+      setBridgeMessage(result.message);
+    },
+    onError: (error: Error) => setBridgeMessage(error.message || "تعذر إنشاء رمز الوسيط."),
+  });
+  const retryJob = useMutation({
+    mutationFn: (jobId: number) => api.rRetryKitchenPrintJob(jobId),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["r-kitchen-print-jobs", branchId] }),
+    onError: (error: Error) => setSavedMessage(error.message || "تعذرت إعادة محاولة الطباعة."),
   });
 
   const stations = (stationsQ.data ?? []).filter(station => station.isActive);
@@ -797,7 +817,13 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
         </p>
         <label className="mt-4 block max-w-sm space-y-1 text-xs font-semibold text-muted-foreground">
           الفرع
-          <select value={branchId} onChange={event => { setBranchId(event.target.value); setSavedMessage(""); }}
+          <select value={branchId} onChange={event => {
+            setBranchId(event.target.value);
+            setSavedMessage("");
+            setBridgeToken("");
+            setBridgePrinters([]);
+            setBridgeMessage("");
+          }}
             className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground"
             aria-label="فرع إعدادات طابعات المطبخ">
             <option value="">اختر الفرع</option>
@@ -807,15 +833,29 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
         <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
           <label className="space-y-1 text-xs font-semibold text-muted-foreground">
             رمز وسيط الطباعة المحلي
-            <Input type="password" autoComplete="off" value={bridgeToken} maxLength={256}
+            <Input type="text" autoComplete="off" value={bridgeToken} maxLength={256}
               onChange={event => setBridgeToken(event.target.value)}
               placeholder="أدخل الرمز الموجود في إعداد الوسيط" aria-label="رمز وسيط الطباعة المحلي" />
           </label>
-          <Button type="button" variant="outline" className="self-end"
-            disabled={bridgeBusy || bridgeToken.length < 32} onClick={() => void connectBridge()}>
-            {bridgeBusy ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Printer className="ml-2 h-4 w-4" />}
-            اكتشاف الطابعات
-          </Button>
+          <div className="flex flex-wrap gap-2 self-end">
+            <Button type="button" variant="outline"
+              disabled={!branchId || pairBridge.isPending}
+              onClick={() => {
+                if (confirm("إنشاء رمز جديد سيوقف الوسيط الحالي حتى تحديث رمزه. هل تريد المتابعة؟")) pairBridge.mutate();
+              }}>
+              {pairBridge.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : null}توليد رمز الفرع
+            </Button>
+            {bridgeToken && <Button type="button" variant="outline" onClick={() => {
+              void navigator.clipboard.writeText(bridgeToken)
+                .then(() => setBridgeMessage("تم نسخ الرمز. أدخله في وسيط Windows على جهاز الفرع."))
+                .catch(() => setBridgeMessage("تعذر النسخ تلقائياً؛ انسخ الرمز من الحقل يدوياً."));
+            }}>نسخ الرمز</Button>}
+            <Button type="button" variant="outline"
+              disabled={bridgeBusy || bridgeToken.length < 32} onClick={() => void connectBridge()}>
+              {bridgeBusy ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Printer className="ml-2 h-4 w-4" />}
+              اكتشاف الطابعات
+            </Button>
+          </div>
         </div>
         {bridgeMessage && <p role="status" className="mt-2 rounded-lg border bg-background px-3 py-2 text-xs">{bridgeMessage}</p>}
       </section>
@@ -873,8 +913,29 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
         </div>
       )}
       {savedMessage && <p role={save.isError ? "alert" : "status"} className={`rounded-lg border p-3 text-sm ${save.isError ? "border-destructive/30 text-destructive" : "border-emerald-200 text-emerald-700"}`}>{savedMessage}</p>}
+      <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <div className="border-b border-border p-4 font-black">سجل طباعة المطبخ</div>
+        {jobsQ.isLoading ? <p className="p-4 text-sm text-muted-foreground">جارٍ تحميل سجل الطباعة...</p> :
+          jobsQ.isError ? <p role="alert" className="p-4 text-sm text-destructive">تعذر تحميل سجل الطباعة.</p> :
+          !(jobsQ.data ?? []).length ? <p className="p-4 text-sm text-muted-foreground">لا توجد تذاكر طباعة بعد.</p> : (
+            <div className="divide-y divide-border">
+              {jobsQ.data!.map(job => (
+                <div key={job.id} className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
+                  <span className="font-semibold">طلب #{job.orderId} · {stations.find(station => station.stationKey === job.stationKey)?.nameAr ?? job.stationKey}</span>
+                  <span className={job.status === "printed" ? "text-emerald-700" : job.status === "failed" ? "text-destructive" : "text-amber-700"}>
+                    {job.status === "printed" ? "تمت الطباعة" : job.status === "failed" ? "فشلت" : job.status === "processing" ? "قيد الطباعة" : "في الانتظار"}
+                    {job.attempts ? ` · المحاولات ${job.attempts}` : ""}
+                  </span>
+                  {job.status === "failed" && <Button type="button" size="sm" variant="outline"
+                    disabled={retryJob.isPending} onClick={() => retryJob.mutate(job.id)}>إعادة المحاولة</Button>}
+                  {job.lastError && <span role="alert" className="w-full text-xs text-destructive">{job.lastError}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+      </section>
       <p className="text-xs leading-5 text-muted-foreground">
-        هذه الإعدادات تحفظ أسماء الطابعات لكل محطة وفرع فقط. اكتشاف الطابعات واختبارها والطباعة الفعلية لن تعمل حتى يُبنى وسيط الطباعة المحلي ويُشغّل على شبكة الفرع.
+        استخدم رمز الفرع في إعداد وسيط Windows، ثم شغّله مع عنوان API الخاص بالنظام. لا يُحفظ الرمز في المتصفح بعد مغادرة الصفحة.
       </p>
     </div>
   );

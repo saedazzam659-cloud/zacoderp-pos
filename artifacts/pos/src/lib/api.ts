@@ -584,6 +584,12 @@ export const api = {
   rSaveKitchenPrinterRoute: (body: {
     branchId: number; stationKey: string; primaryPrinterName: string; backupPrinterName: string;
   }) => req<RKitchenPrinterRoute>("PUT", "/api/pos-restaurant/kitchen/printer-routes", body),
+  rCreatePrintBridgeToken: (branchId: number) =>
+    req<{ token: string; message: string }>("POST", "/api/pos-restaurant/kitchen/print-bridge/token", { branchId }),
+  rKitchenPrintJobs: (branchId: number) =>
+    req<RKitchenPrintJob[]>("GET", `/api/pos-restaurant/kitchen/print-jobs?branchId=${branchId}`),
+  rRetryKitchenPrintJob: (jobId: number) =>
+    req<{ ok: true }>("POST", `/api/pos-restaurant/kitchen/print-jobs/${jobId}/retry`, {}),
   rCreateKitchenStation: (body: { nameAr: string; nameEn?: string }) =>
     req<RKitchenStation>("POST", "/api/pos-restaurant/menu/kitchen-stations", body),
   rUpdateKitchenStation: (id: number, body: Partial<Pick<RKitchenStation, "nameAr" | "nameEn" | "sortOrder" | "isActive">>) =>
@@ -870,6 +876,17 @@ export type RKitchenPrinterRoute = {
   backupPrinterName: string | null;
   isActive: boolean;
   updatedAt: string;
+};
+
+export type RKitchenPrintJob = {
+  id: number;
+  orderId: number;
+  stationKey: string;
+  status: string;
+  attempts: number;
+  lastError: string | null;
+  printedAt: string | null;
+  createdAt: string;
 };
 
 export type PublicRTableMenu = {

@@ -1,11 +1,17 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
+import { readFile, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 const host = process.env.BRIDGE_HOST ?? "127.0.0.1";
 const port = Number(process.env.BRIDGE_PORT ?? 3217);
 const token = process.env.BRIDGE_TOKEN ?? "";
 const allowedOrigin = process.env.WEB_ORIGIN ?? "";
+const apiBase = (process.env.POS_API_URL ?? "").replace(/\/+$/, "").replace(/\/api$/, "");
+const printedJobsPath = process.env.PRINTED_JOBS_PATH ?? path.join(process.cwd(), "printed-kitchen-jobs.json");
+const printedJobIds = new Set();
+let printedJobsLoaded = false;
 
 if (process.platform !== "win32") {
   throw new Error("Restaurant Print Bridge currently supports Windows only.");
@@ -40,6 +46,106 @@ function send(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+async function printTicket(printerName, payload) {
+  const lines = [
+    `طلب المطبخ: ${payload.orderNumber}`,
+    `المحطة: ${payload.stationName}`,
+    payload.tableName ? `الطاولة: ${payload.tableName}` : "",
+    "------------------------------",
+    ...(payload.items ?? []).flatMap(item => [
+      `${item.qty} × ${item.name}`,
+      ...(item.modifiers ?? []).map(modifier => `  - ${modifier.option}`),
+      ...(item.notes ? [`  ملاحظة: ${item.notes}`] : []),
+    ]),
+    "",
+  ].filter(Boolean);
+  const encodedName = Buffer.from(printerName, "utf16le").toString("base64");
+  const encodedLines = Buffer.from(JSON.stringify(lines), "utf8").toString("base64");
+  const script = `
+    Add-Type -AssemblyName System.Drawing
+    $name = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encodedName}'))
+    $lines = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedLines}')) | ConvertFrom-Json
+    $doc = New-Object System.Drawing.Printing.PrintDocument
+    $doc.PrinterSettings.PrinterName = $name
+    if (-not $doc.PrinterSettings.IsValid) { throw "Printer is unavailable" }
+    $doc.add_PrintPage({
+      param($sender, $event)
+      $font = New-Object System.Drawing.Font('Arial', 12)
+      $fmt = New-Object System.Drawing.StringFormat
+      $fmt.FormatFlags = [System.Drawing.StringFormatFlags]::DirectionRightToLeft
+      $fmt.Alignment = [System.Drawing.StringAlignment]::Far
+      $y = [single]20
+      foreach ($line in $lines) {
+        $event.Graphics.DrawString([string]$line, $font, [System.Drawing.Brushes]::Black, [single]10, $y, $fmt)
+        $y += 24
+      }
+    })
+    $doc.Print()
+    $doc.Dispose()
+  `;
+  await runPowerShell(script);
+}
+
+async function loadPrintedJobs() {
+  if (printedJobsLoaded) return;
+  printedJobsLoaded = true;
+  try {
+    const ids = JSON.parse(await readFile(printedJobsPath, "utf8"));
+    if (Array.isArray(ids)) for (const id of ids) printedJobIds.add(String(id));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
+async function rememberPrintedJob(id) {
+  printedJobIds.add(String(id));
+  const temporaryPath = `${printedJobsPath}.tmp`;
+  await writeFile(temporaryPath, JSON.stringify([...printedJobIds]), { encoding: "utf8" });
+  await rename(temporaryPath, printedJobsPath);
+}
+
+async function pollPrintJobs() {
+  if (!apiBase || pollPrintJobs.busy) return;
+  pollPrintJobs.busy = true;
+  try {
+    await loadPrintedJobs();
+    const headers = { Authorization: `Bearer ${token}` };
+    const jobResponse = await fetch(`${apiBase}/api/pos-restaurant/print-bridge/jobs/next`, {
+      headers, signal: AbortSignal.timeout(8000),
+    });
+    if (!jobResponse.ok) throw new Error(`Queue request failed (${jobResponse.status})`);
+    const { job } = await jobResponse.json();
+    if (!job) return;
+    let printError = "";
+    let printed = printedJobIds.has(String(job.id));
+    if (!printed) {
+      for (const printerName of [job.payload.primaryPrinterName, job.payload.backupPrinterName].filter(Boolean)) {
+        try {
+          await printTicket(printerName, job.payload);
+          printed = true;
+          break;
+        } catch (error) {
+          printError += `${printerName}: ${error instanceof Error ? error.message : String(error)}; `;
+        }
+      }
+      if (printed) await rememberPrintedJob(job.id);
+    }
+    const result = await fetch(`${apiBase}/api/pos-restaurant/print-bridge/jobs/${job.id}/result`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ success: printed, error: printError }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!result.ok) throw new Error(`Could not acknowledge job ${job.id} (${result.status})`);
+    if (!printed) process.stderr.write(`Kitchen print job ${job.id} failed on primary and backup.\n`);
+  } catch (error) {
+    process.stderr.write(`Kitchen print queue: ${error instanceof Error ? error.message : String(error)}\n`);
+  } finally {
+    pollPrintJobs.busy = false;
+  }
+}
+pollPrintJobs.busy = false;
+
 const server = createServer(async (req, res) => {
   const origin = req.headers.origin ?? "";
   if (origin && allowedOrigin && origin !== allowedOrigin) return send(res, 403, { error: "Origin not allowed" });
@@ -72,24 +178,12 @@ const server = createServer(async (req, res) => {
       const input = JSON.parse(body || "{}");
       const printerName = String(input.printerName ?? "").trim();
       if (!printerName || printerName.length > 200) return send(res, 400, { error: "Invalid printer name" });
-      const encodedName = Buffer.from(printerName, "utf16le").toString("base64");
-      const script = `
-        $name = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encodedName}'))
-        $printer = Get-Printer -Name $name -ErrorAction Stop
-        $doc = New-Object System.Drawing.Printing.PrintDocument
-        $doc.PrinterSettings.PrinterName = $printer.Name
-        if (-not $doc.PrinterSettings.IsValid) { throw "Printer is unavailable" }
-        $doc.add_PrintPage({
-          param($sender, $event)
-          $font = New-Object System.Drawing.Font('Arial', 12)
-          $brush = [System.Drawing.Brushes]::Black
-          $event.Graphics.DrawString('اختبار طباعة مطبخ المطعم', $font, $brush, 20, 20)
-          $event.Graphics.DrawString([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'), $font, $brush, 20, 50)
-        })
-        $doc.Print()
-        $doc.Dispose()
-      `;
-      await runPowerShell(`Add-Type -AssemblyName System.Drawing; ${script}`);
+      await printTicket(printerName, {
+        orderNumber: "اختبار",
+        stationName: "طباعة مطبخ المطعم",
+        tableName: new Date().toLocaleString(),
+        items: [],
+      });
       return send(res, 200, { ok: true });
     }
     return send(res, 404, { error: "Not found" });
@@ -101,3 +195,4 @@ const server = createServer(async (req, res) => {
 server.listen(port, host, () => {
   process.stdout.write(`Restaurant Print Bridge listening on http://${host}:${port}\n`);
 });
+if (apiBase) setInterval(() => { void pollPrintJobs(); }, 2000);

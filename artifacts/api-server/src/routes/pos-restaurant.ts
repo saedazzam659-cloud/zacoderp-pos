@@ -6,6 +6,8 @@ import {
   posRestaurantReservationsTable,
   posRestaurantKitchenStationsTable,
   posRestaurantKitchenPrinterRoutesTable,
+  posRestaurantPrintBridgesTable,
+  posRestaurantKitchenPrintJobsTable,
   posMenuCategoriesTable,
   posMenuItemsTable,
   posOrdersTable,
@@ -36,6 +38,65 @@ import { encryptSecret, decryptSecret } from "../lib/encryption.js";
 
 const router = Router();
 const hungerStationTokenCache = new Map<number, { token: string; expiresAt: number }>();
+
+async function authenticatePrintBridge(req: any): Promise<typeof posRestaurantPrintBridgesTable.$inferSelect | null> {
+  const token = String(req.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  if (token.length < 32) return null;
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const [bridge] = await db.select().from(posRestaurantPrintBridgesTable).where(and(
+    eq(posRestaurantPrintBridgesTable.tokenHash, tokenHash),
+    eq(posRestaurantPrintBridgesTable.isActive, true),
+  )).limit(1);
+  if (bridge) {
+    await db.update(posRestaurantPrintBridgesTable).set({ lastSeenAt: new Date() })
+      .where(eq(posRestaurantPrintBridgesTable.id, bridge.id));
+  }
+  return bridge ?? null;
+}
+
+// Branch-scoped bridge endpoints authenticate with a rotated, hashed token,
+// not a cashier session or the general POS Desktop device credential.
+router.get("/print-bridge/jobs/next", async (req, res) => {
+  const bridge = await authenticatePrintBridge(req);
+  if (!bridge) { res.status(401).json({ error: "رمز وسيط الطباعة غير صالح" }); return; }
+  const job = await db.transaction(async tx => {
+    const [next] = await tx.select().from(posRestaurantKitchenPrintJobsTable).where(and(
+      eq(posRestaurantKitchenPrintJobsTable.companyId, bridge.companyId),
+      eq(posRestaurantKitchenPrintJobsTable.branchId, bridge.branchId),
+      sql`(${posRestaurantKitchenPrintJobsTable.status} = 'queued' OR (${posRestaurantKitchenPrintJobsTable.status} = 'processing' AND ${posRestaurantKitchenPrintJobsTable.claimedAt} < NOW() - INTERVAL '2 minutes'))`,
+      sql`${posRestaurantKitchenPrintJobsTable.attempts} < 3`,
+    )).orderBy(asc(posRestaurantKitchenPrintJobsTable.createdAt), asc(posRestaurantKitchenPrintJobsTable.id))
+      .limit(1).for("update");
+    if (!next) return null;
+    const [claimed] = await tx.update(posRestaurantKitchenPrintJobsTable).set({
+      status: "processing", attempts: next.attempts + 1, claimedAt: new Date(), updatedAt: new Date(),
+    }).where(eq(posRestaurantKitchenPrintJobsTable.id, next.id)).returning();
+    return claimed;
+  });
+  res.json({ job: job ?? null });
+});
+
+router.post("/print-bridge/jobs/:id/result", async (req, res) => {
+  const bridge = await authenticatePrintBridge(req);
+  if (!bridge) { res.status(401).json({ error: "رمز وسيط الطباعة غير صالح" }); return; }
+  const id = Number(req.params.id);
+  const success = req.body?.success === true;
+  const error = typeof req.body?.error === "string" ? req.body.error.slice(0, 1000) : "";
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف التذكرة غير صالح" }); return; }
+  const [job] = await db.select().from(posRestaurantKitchenPrintJobsTable).where(and(
+    eq(posRestaurantKitchenPrintJobsTable.id, id),
+    eq(posRestaurantKitchenPrintJobsTable.companyId, bridge.companyId),
+    eq(posRestaurantKitchenPrintJobsTable.branchId, bridge.branchId),
+  ));
+  if (!job || job.status !== "processing") { res.status(404).json({ error: "تذكرة الطباعة غير موجودة أو غير مستلمة" }); return; }
+  await db.update(posRestaurantKitchenPrintJobsTable).set({
+    status: success ? "printed" : job.attempts < 3 ? "queued" : "failed",
+    lastError: success ? null : error || "فشلت الطباعة على الطابعة الأساسية والاحتياطية",
+    printedAt: success ? new Date() : null,
+    updatedAt: new Date(),
+  }).where(eq(posRestaurantKitchenPrintJobsTable.id, id));
+  res.json({ ok: true });
+});
 
 async function getHungerStationAccessToken(integration: typeof posRestaurantDeliveryIntegrationsTable.$inferSelect): Promise<string> {
   const cached = hungerStationTokenCache.get(integration.id);
@@ -1169,6 +1230,64 @@ router.put("/kitchen/printer-routes", async (req, res) => {
   res.json(saved);
 });
 
+router.get("/kitchen/print-jobs", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "سجل الطباعة متاح لمسؤول الشركة فقط" }); return; }
+  const branchId = Number(req.query.branchId);
+  if (!Number.isSafeInteger(branchId) || branchId <= 0) { res.status(400).json({ error: "اختر فرعاً صالحاً" }); return; }
+  const [branch] = await db.select({ id: branchesTable.id }).from(branchesTable)
+    .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)));
+  if (!branch) { res.status(404).json({ error: "الفرع غير موجود" }); return; }
+  res.json(await db.select({
+    id: posRestaurantKitchenPrintJobsTable.id,
+    orderId: posRestaurantKitchenPrintJobsTable.orderId,
+    stationKey: posRestaurantKitchenPrintJobsTable.stationKey,
+    status: posRestaurantKitchenPrintJobsTable.status,
+    attempts: posRestaurantKitchenPrintJobsTable.attempts,
+    lastError: posRestaurantKitchenPrintJobsTable.lastError,
+    printedAt: posRestaurantKitchenPrintJobsTable.printedAt,
+    createdAt: posRestaurantKitchenPrintJobsTable.createdAt,
+  }).from(posRestaurantKitchenPrintJobsTable).where(and(
+    eq(posRestaurantKitchenPrintJobsTable.companyId, cid),
+    eq(posRestaurantKitchenPrintJobsTable.branchId, branchId),
+  )).orderBy(desc(posRestaurantKitchenPrintJobsTable.createdAt)).limit(50));
+});
+
+router.post("/kitchen/print-jobs/:id/retry", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "إعادة الطباعة متاحة لمسؤول الشركة فقط" }); return; }
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف التذكرة غير صالح" }); return; }
+  const [job] = await db.select().from(posRestaurantKitchenPrintJobsTable).where(and(
+    eq(posRestaurantKitchenPrintJobsTable.id, id),
+    eq(posRestaurantKitchenPrintJobsTable.companyId, cid),
+  ));
+  if (!job) { res.status(404).json({ error: "تذكرة الطباعة غير موجودة" }); return; }
+  if (job.status !== "failed") { res.status(409).json({ error: "يمكن إعادة المحاولة للتذاكر الفاشلة فقط" }); return; }
+  await db.update(posRestaurantKitchenPrintJobsTable).set({
+    status: "queued", attempts: 0, lastError: null, claimedAt: null, updatedAt: new Date(),
+  }).where(eq(posRestaurantKitchenPrintJobsTable.id, id));
+  res.json({ ok: true });
+});
+
+router.post("/kitchen/print-bridge/token", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "رمز وسيط الطباعة متاح لمسؤول الشركة فقط" }); return; }
+  const branchId = Number(req.body?.branchId);
+  if (!Number.isSafeInteger(branchId) || branchId <= 0) { res.status(400).json({ error: "اختر فرعاً صالحاً" }); return; }
+  const [branch] = await db.select({ id: branchesTable.id }).from(branchesTable)
+    .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)));
+  if (!branch) { res.status(404).json({ error: "الفرع غير موجود" }); return; }
+  const token = randomBytes(32).toString("base64url");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  await db.insert(posRestaurantPrintBridgesTable).values({ companyId: cid, branchId, tokenHash, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: [posRestaurantPrintBridgesTable.companyId, posRestaurantPrintBridgesTable.branchId],
+      set: { tokenHash, isActive: true, lastSeenAt: null, updatedAt: new Date() },
+    });
+  res.json({ token, message: "انسخ الرمز إلى إعداد وسيط Windows؛ لن يظهر مرة أخرى." });
+});
+
 router.post("/menu/kitchen-stations", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   const nameAr = typeof req.body?.nameAr === "string" ? req.body.nameAr.trim() : "";
@@ -1931,7 +2050,14 @@ router.post("/orders/:id/send", async (req, res) => {
       if (["billed", "cancelled"].includes(order.status)) {
         throw Object.assign(new Error("لا يمكن إرسال طلب مغلق للمطبخ"), { statusCode: 409 });
       }
-      const unsentLines = await tx.select({ id: posOrderItemsTable.id })
+      const unsentLines = await tx.select({
+        id: posOrderItemsTable.id,
+        nameSnapshot: posOrderItemsTable.nameSnapshot,
+        qty: posOrderItemsTable.qty,
+        notes: posOrderItemsTable.notes,
+        modifiers: posOrderItemsTable.modifiers,
+        kitchenStation: posOrderItemsTable.kitchenStation,
+      })
         .from(posOrderItemsTable)
         .where(and(
           eq(posOrderItemsTable.orderId, id),
@@ -1940,6 +2066,46 @@ router.post("/orders/:id/send", async (req, res) => {
         ));
       if (unsentLines.length === 0) {
         throw Object.assign(new Error("لا توجد أصناف جديدة غير مرسلة"), { statusCode: 409 });
+      }
+      const [table] = order.tableId ? await tx.select({ nameAr: posTablesTable.nameAr, code: posTablesTable.code })
+        .from(posTablesTable).where(and(eq(posTablesTable.id, order.tableId), eq(posTablesTable.companyId, cid))) : [];
+      const stations = await tx.select().from(posRestaurantKitchenStationsTable)
+        .where(eq(posRestaurantKitchenStationsTable.companyId, cid));
+      const stationNames = new Map(stations.map(station => [station.stationKey, station.nameAr]));
+      const routes = await tx.select().from(posRestaurantKitchenPrinterRoutesTable).where(and(
+        eq(posRestaurantKitchenPrinterRoutesTable.companyId, cid),
+        eq(posRestaurantKitchenPrinterRoutesTable.branchId, order.branchId),
+        eq(posRestaurantKitchenPrinterRoutesTable.isActive, true),
+      ));
+      const routeByStation = new Map(routes.map(route => [route.stationKey, route]));
+      const groups = new Map<string, typeof unsentLines>();
+      for (const line of unsentLines) groups.set(line.kitchenStation, [...(groups.get(line.kitchenStation) ?? []), line]);
+      for (const [stationKey, lines] of groups) {
+        const route = routeByStation.get(stationKey);
+        if (!route?.primaryPrinterName) continue;
+        const ids = lines.map(line => line.id).sort((a, b) => a - b);
+        const idempotencyKey = `order:${order.id}:station:${stationKey}:lines:${ids.join(",")}`;
+        await tx.insert(posRestaurantKitchenPrintJobsTable).values({
+          companyId: cid,
+          branchId: order.branchId,
+          orderId: order.id,
+          stationKey,
+          idempotencyKey,
+          payload: {
+            orderNumber: order.orderNumber,
+            channel: order.channel,
+            tableName: table ? `${table.nameAr}${table.code ? ` (${table.code})` : ""}` : null,
+            stationName: stationNames.get(stationKey) ?? stationKey,
+            primaryPrinterName: route.primaryPrinterName,
+            backupPrinterName: route.backupPrinterName,
+            items: lines.map(line => ({
+              name: line.nameSnapshot,
+              qty: line.qty,
+              notes: line.notes,
+              modifiers: (line.modifiers ?? []).map(modifier => ({ option: modifier.option })),
+            })),
+          },
+        }).onConflictDoNothing();
       }
       const now = new Date();
       await tx.update(posOrderItemsTable)

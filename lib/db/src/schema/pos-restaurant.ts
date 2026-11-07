@@ -111,6 +111,43 @@ export const posRestaurantKitchenPrinterRoutesTable = pgTable("pos_restaurant_ki
   byCompanyBranch: index("pos_rest_kitchen_printer_route_branch_idx").on(t.companyId, t.branchId),
 }));
 
+export const posRestaurantPrintBridgesTable = pgTable("pos_restaurant_print_bridges", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId: integer("branch_id").notNull().references(() => branchesTable.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  lastSeenAt: timestamp("last_seen_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  companyBranchUnique: uniqueIndex("pos_rest_print_bridge_scope_uniq").on(t.companyId, t.branchId),
+}));
+
+export const posRestaurantKitchenPrintJobsTable = pgTable("pos_restaurant_kitchen_print_jobs", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId: integer("branch_id").notNull().references(() => branchesTable.id, { onDelete: "cascade" }),
+  orderId: integer("order_id").notNull().references(() => posOrdersTable.id, { onDelete: "cascade" }),
+  stationKey: text("station_key").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  payload: jsonb("payload").$type<{
+    orderNumber: string; channel: string; tableName: string | null; stationName: string;
+    primaryPrinterName: string; backupPrinterName: string | null;
+    items: Array<{ name: string; qty: string; notes: string | null; modifiers: Array<{ option: string }> }>;
+  }>().notNull(),
+  status: text("status").notNull().default("queued"),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+  claimedAt: timestamp("claimed_at"),
+  printedAt: timestamp("printed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => ({
+  companyIdempotencyUnique: uniqueIndex("pos_rest_kitchen_print_job_idempotency_uniq").on(t.companyId, t.idempotencyKey),
+  byBranchStatus: index("pos_rest_kitchen_print_job_branch_status_idx").on(t.branchId, t.status, t.createdAt),
+}));
+
 // Company/branch-scoped credentials for official restaurant delivery APIs.
 // Secrets are encrypted by the API server before being persisted.
 export const posRestaurantDeliveryIntegrationsTable = pgTable("pos_restaurant_delivery_integrations", {

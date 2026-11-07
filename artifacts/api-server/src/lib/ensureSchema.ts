@@ -553,6 +553,38 @@ async function ensureRestaurantKitchenPrinterRoutesSchema(): Promise<void> {
       ON pos_restaurant_kitchen_printer_routes(company_id, branch_id, station_key)`,
     `CREATE INDEX IF NOT EXISTS pos_rest_kitchen_printer_route_branch_idx
       ON pos_restaurant_kitchen_printer_routes(company_id, branch_id)`,
+    `CREATE TABLE IF NOT EXISTS pos_restaurant_print_bridges (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      last_seen_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_rest_print_bridge_scope_uniq
+      ON pos_restaurant_print_bridges(company_id, branch_id)`,
+    `CREATE TABLE IF NOT EXISTS pos_restaurant_kitchen_print_jobs (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+      order_id INTEGER NOT NULL REFERENCES pos_orders(id) ON DELETE CASCADE,
+      station_key TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      payload JSONB NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      claimed_at TIMESTAMP,
+      printed_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_rest_kitchen_print_job_idempotency_uniq
+      ON pos_restaurant_kitchen_print_jobs(company_id, idempotency_key)`,
+    `CREATE INDEX IF NOT EXISTS pos_rest_kitchen_print_job_branch_status_idx
+      ON pos_restaurant_kitchen_print_jobs(branch_id, status, created_at)`,
   ];
   for (const statement of statements) {
     try {
