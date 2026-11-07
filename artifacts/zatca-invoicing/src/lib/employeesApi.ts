@@ -29,9 +29,9 @@ export const employeesApi = {
 
   // Project / cost-center payroll allocations
   assignments: (empId: number) => req<any[]>("GET", `/employees/${empId}/assignments`),
-  addAssignment: (empId: number, data: { projectId?: number | null; costCenterId?: number | null; effectiveFrom: string; effectiveTo?: string | null; notes?: string }) =>
+  addAssignment: (empId: number, data: { projectId?: number | null; costCenterId?: number | null; salaryAllocationPct?: number; provisionAllocationPct?: number | null; effectiveFrom: string; effectiveTo?: string | null; notes?: string }) =>
     req<any>("POST", `/employees/${empId}/assignments`, data),
-  updateAssignment: (empId: number, assignmentId: number, data: { projectId?: number | null; costCenterId?: number | null; effectiveFrom: string; effectiveTo?: string | null; notes?: string }) =>
+  updateAssignment: (empId: number, assignmentId: number, data: { projectId?: number | null; costCenterId?: number | null; salaryAllocationPct?: number; provisionAllocationPct?: number | null; effectiveFrom: string; effectiveTo?: string | null; notes?: string }) =>
     req<any>("PUT", `/employees/${empId}/assignments/${assignmentId}`, data),
   deleteAssignment: (empId: number, assignmentId: number) =>
     req<any>("DELETE", `/employees/${empId}/assignments/${assignmentId}`),

@@ -396,7 +396,7 @@ export async function buildPayrollJournal(
     if (!value) return;
     if (value > 0) {
       const allocations = lineSnapshots.length
-        ? allocateComponentBySnapshots(value, lineSnapshots)
+        ? allocateComponentBySnapshots(value, lineSnapshots, "provision")
         : [{ costCenterId: null, amount: value }];
       for (const part of allocations) {
         addDebit(expenseAccountId, part.costCenterId, part.amount, expenseDescription);
@@ -412,7 +412,7 @@ export async function buildPayrollJournal(
         description: `تخفيض ${liabilityDescription}`, sortOrder: 0,
       });
       const allocations = lineSnapshots.length
-        ? allocateComponentBySnapshots(absValue, lineSnapshots)
+        ? allocateComponentBySnapshots(absValue, lineSnapshots, "provision")
         : [{ costCenterId: null, amount: absValue }];
       for (const part of allocations) {
         provisionCreditLines.push({

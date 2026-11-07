@@ -1515,6 +1515,8 @@ router.get("/:id/assignments", requirePermission("hr_employees", "view"), async 
       id: employeeProjectAssignmentsTable.id, companyId: employeeProjectAssignmentsTable.companyId,
       employeeId: employeeProjectAssignmentsTable.employeeId, projectId: employeeProjectAssignmentsTable.projectId,
       costCenterId: employeeProjectAssignmentsTable.costCenterId, effectiveFrom: employeeProjectAssignmentsTable.effectiveFrom,
+      salaryAllocationPct: employeeProjectAssignmentsTable.salaryAllocationPct,
+      provisionAllocationPct: employeeProjectAssignmentsTable.provisionAllocationPct,
       effectiveTo: employeeProjectAssignmentsTable.effectiveTo, notes: employeeProjectAssignmentsTable.notes,
       createdAt: employeeProjectAssignmentsTable.createdAt, updatedAt: employeeProjectAssignmentsTable.updatedAt,
       projectCode: contractingProjectsTable.code, projectNameAr: contractingProjectsTable.nameAr,
@@ -1536,8 +1538,10 @@ router.post("/:id/assignments", requirePermission("hr_employees", "edit"), async
     const from = isoDate(b.effectiveFrom), to = b.effectiveTo ? isoDate(b.effectiveTo) : null;
     const projectId = b.projectId == null || b.projectId === "" ? null : Number(b.projectId);
     const costCenterId = b.costCenterId == null || b.costCenterId === "" ? null : Number(b.costCenterId);
+    const salaryAllocationPct = Number(b.salaryAllocationPct ?? 100);
+    const provisionAllocationPct = b.provisionAllocationPct == null || b.provisionAllocationPct === "" ? null : Number(b.provisionAllocationPct);
     const today = businessToday();
-    if (!employeeId || !/^\d{4}-\d\d-\d\d$/.test(from) || from < today || (to && (!/^\d{4}-\d\d-\d\d$/.test(to) || to < from)) || (!projectId && !costCenterId)) {
+    if (!employeeId || !/^\d{4}-\d\d-\d\d$/.test(from) || from < today || (to && (!/^\d{4}-\d\d-\d\d$/.test(to) || to < from)) || (!projectId && !costCenterId) || !Number.isFinite(salaryAllocationPct) || salaryAllocationPct <= 0 || salaryAllocationPct > 100 || (provisionAllocationPct != null && (!Number.isFinite(provisionAllocationPct) || provisionAllocationPct <= 0 || provisionAllocationPct > 100))) {
       res.status(400).json({ error: "بيانات التكليف أو التواريخ غير صالحة" }); return;
     }
     const row = await db.transaction(async (tx) => {
@@ -1561,22 +1565,26 @@ router.post("/:id/assignments", requirePermission("hr_employees", "edit"), async
       )).for("update");
       // A new transfer closes a prior assignment; future/contained periods are
       // still rejected rather than silently corrupting their effective dates.
-      const previous = existing.find(a => isoDate(a.effectiveFrom) < from && (!a.effectiveTo || isoDate(a.effectiveTo) >= from));
-      if (previous) {
-        if (to && previous.effectiveTo && isoDate(previous.effectiveTo) <= to) throw new Error("فترة التكليف تتداخل مع تكليف قائم");
+      const previousGroup = existing.filter(a => isoDate(a.effectiveFrom) < from && (!a.effectiveTo || isoDate(a.effectiveTo) >= from));
+      if (previousGroup.length) {
+        if (previousGroup.some(a => to && a.effectiveTo && isoDate(a.effectiveTo) <= to)) throw new Error("فترة التكليف تتداخل مع تكليف قائم");
         const snapshots = await tx.select().from(payrollAllocationSnapshotsTable).where(and(
           eq(payrollAllocationSnapshotsTable.companyId, cid), eq(payrollAllocationSnapshotsTable.employeeId, employeeId),
         ));
-        if (assignmentCloseConflictsWithSnapshot(previous, from, snapshots)) {
+        if (previousGroup.some(a => assignmentCloseConflictsWithSnapshot(a, from, snapshots))) {
           throw new Error("لا يمكن بدء التكليف داخل فترة محفوظة في مسير رواتب؛ اختر تاريخاً بعد نهاية المسير");
         }
         await tx.update(employeeProjectAssignmentsTable).set({ effectiveTo: addDays(from, -1), updatedAt: new Date() })
-          .where(eq(employeeProjectAssignmentsTable.id, previous.id));
+          .where(inArray(employeeProjectAssignmentsTable.id, previousGroup.map(a => a.id)));
       }
-      const overlap = existing.find(a => a.id !== previous?.id && isoDate(a.effectiveFrom) <= (to || "9999-12-31") && (!a.effectiveTo || isoDate(a.effectiveTo) >= from));
-      if (overlap) throw new Error("فترة التكليف تتداخل مع تكليف قائم");
+       const previousIds = new Set(previousGroup.map(a => a.id));
+       const overlaps = existing.filter(a => !previousIds.has(a.id) && isoDate(a.effectiveFrom) <= (to || "9999-12-31") && (!a.effectiveTo || isoDate(a.effectiveTo) >= from));
+       if (overlaps.some(a => isoDate(a.effectiveFrom) !== from || (a.effectiveTo ? isoDate(a.effectiveTo) : null) !== to))
+         throw new Error("يجب أن تتطابق فترة سجلات التوزيع بالنسب");
       const [created] = await tx.insert(employeeProjectAssignmentsTable).values({
-        companyId: cid, employeeId, projectId, costCenterId, effectiveFrom: from, effectiveTo: to, notes: N(b.notes),
+         companyId: cid, employeeId, projectId, costCenterId, salaryAllocationPct: String(salaryAllocationPct),
+         provisionAllocationPct: provisionAllocationPct == null ? null : String(provisionAllocationPct),
+         effectiveFrom: from, effectiveTo: to, notes: N(b.notes),
       }).returning();
       return created;
     });
@@ -1591,8 +1599,10 @@ router.put("/:id/assignments/:assignmentId", requirePermission("hr_employees", "
     const from = isoDate(b.effectiveFrom), to = b.effectiveTo ? isoDate(b.effectiveTo) : null;
     const projectId = b.projectId == null || b.projectId === "" ? null : Number(b.projectId);
     const costCenterId = b.costCenterId == null || b.costCenterId === "" ? null : Number(b.costCenterId);
+    const salaryAllocationPct = Number(b.salaryAllocationPct ?? 100);
+    const provisionAllocationPct = b.provisionAllocationPct == null || b.provisionAllocationPct === "" ? null : Number(b.provisionAllocationPct);
     const today = businessToday();
-    if (!/^\d{4}-\d\d-\d\d$/.test(from) || from < today || (to && (!/^\d{4}-\d\d-\d\d$/.test(to) || to < from)) || (!projectId && !costCenterId)) {
+    if (!/^\d{4}-\d\d-\d\d$/.test(from) || from < today || (to && (!/^\d{4}-\d\d-\d\d$/.test(to) || to < from)) || (!projectId && !costCenterId) || !Number.isFinite(salaryAllocationPct) || salaryAllocationPct <= 0 || salaryAllocationPct > 100 || (provisionAllocationPct != null && (!Number.isFinite(provisionAllocationPct) || provisionAllocationPct <= 0 || provisionAllocationPct > 100))) {
       return res.status(400).json({ error: "لا يمكن تعديل مدة بدأت في الماضي؛ تحقق من التواريخ والجهة" });
     }
     const row = await db.transaction(async (tx) => {
@@ -1603,8 +1613,9 @@ router.put("/:id/assignments/:assignmentId", requirePermission("hr_employees", "
       const snapshots = await tx.select().from(payrollAllocationSnapshotsTable).where(and(eq(payrollAllocationSnapshotsTable.companyId, cid), eq(payrollAllocationSnapshotsTable.employeeId, employeeId)));
       if (snapshots.some(s => assignmentRepresentedBySnapshot(current, s))) throw Object.assign(new Error("لا يمكن تعديل تكليف ممثل في لقطة مسير رواتب"), { status: 400 });
       const peers = await tx.select().from(employeeProjectAssignmentsTable).where(and(eq(employeeProjectAssignmentsTable.companyId, cid), eq(employeeProjectAssignmentsTable.employeeId, employeeId))).for("update");
-      if (peers.some(a => a.id !== assignmentId && isoDate(a.effectiveFrom) <= (to || "9999-12-31") && (!a.effectiveTo || isoDate(a.effectiveTo) >= from))) throw Object.assign(new Error("فترة التكليف تتداخل مع تكليف قائم"), { status: 400 });
-      const [updated] = await tx.update(employeeProjectAssignmentsTable).set({ projectId, costCenterId, effectiveFrom: from, effectiveTo: to, notes: N(b.notes), updatedAt: new Date() }).where(eq(employeeProjectAssignmentsTable.id, assignmentId)).returning();
+       const peersOverlapping = peers.filter(a => a.id !== assignmentId && isoDate(a.effectiveFrom) <= (to || "9999-12-31") && (!a.effectiveTo || isoDate(a.effectiveTo) >= from));
+       if (peersOverlapping.some(a => isoDate(a.effectiveFrom) !== from || (a.effectiveTo ? isoDate(a.effectiveTo) : null) !== to)) throw Object.assign(new Error("يجب أن تتطابق فترة سجلات التوزيع بالنسب"), { status: 400 });
+       const [updated] = await tx.update(employeeProjectAssignmentsTable).set({ projectId, costCenterId, salaryAllocationPct: String(salaryAllocationPct), provisionAllocationPct: provisionAllocationPct == null ? null : String(provisionAllocationPct), effectiveFrom: from, effectiveTo: to, notes: N(b.notes), updatedAt: new Date() }).where(eq(employeeProjectAssignmentsTable.id, assignmentId)).returning();
       return updated;
     });
     res.json(row);
@@ -1950,6 +1961,7 @@ router.post("/payroll/runs", async (req, res) => {
             companyId: cid, payrollRunId: run.id, payrollLineId: payrollLine.id, employeeId: Number(l.employeeId),
             projectId: s.projectId, costCenterId: s.costCenterId, periodStart: s.periodStart, periodEnd: s.periodEnd,
             days: s.days, costBasis, basisAmount: String(basisAmount.toFixed(2)), allocatedAmount: s.allocatedAmount,
+            salaryAllocationPct: String(s.salaryAllocationPct), provisionAllocationPct: String(s.provisionAllocationPct),
           });
         }
       }

@@ -1626,6 +1626,10 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     )` },
   { label: "employee_project_assignments_employee_period_idx",
     sql: `CREATE INDEX IF NOT EXISTS employee_project_assignments_employee_period_idx ON employee_project_assignments (company_id, employee_id, effective_from, effective_to)` },
+  { label: "employee_project_assignment_allocation_columns",
+    sql: `ALTER TABLE employee_project_assignments
+            ADD COLUMN IF NOT EXISTS salary_allocation_pct NUMERIC(6,3) NOT NULL DEFAULT 100,
+            ADD COLUMN IF NOT EXISTS provision_allocation_pct NUMERIC(6,3)` },
   { label: "create payroll_allocation_snapshots table",
     sql: `CREATE TABLE IF NOT EXISTS payroll_allocation_snapshots (
       id SERIAL PRIMARY KEY,
@@ -1643,6 +1647,10 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
       allocated_amount NUMERIC(12,2) NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     )` },
+  { label: "payroll_allocation_snapshot_allocation_columns",
+    sql: `ALTER TABLE payroll_allocation_snapshots
+            ADD COLUMN IF NOT EXISTS salary_allocation_pct NUMERIC(6,3) NOT NULL DEFAULT 100,
+            ADD COLUMN IF NOT EXISTS provision_allocation_pct NUMERIC(6,3)` },
   { label: "payroll_allocation_snapshots_run_idx",
     sql: `CREATE INDEX IF NOT EXISTS payroll_allocation_snapshots_run_idx ON payroll_allocation_snapshots (company_id, payroll_run_id, employee_id)` },
   { label: "payroll_allocation_snapshots_immutable",

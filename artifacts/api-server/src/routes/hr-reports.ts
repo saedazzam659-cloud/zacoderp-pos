@@ -201,6 +201,8 @@ router.get("/payroll-allocations", requirePermission("hr_payroll", "view"), asyn
       id: payrollAllocationSnapshotsTable.id, runId: payrollAllocationSnapshotsTable.payrollRunId,
       employeeId: payrollAllocationSnapshotsTable.employeeId, periodStart: payrollAllocationSnapshotsTable.periodStart,
       periodEnd: payrollAllocationSnapshotsTable.periodEnd, days: payrollAllocationSnapshotsTable.days,
+      salaryAllocationPct: payrollAllocationSnapshotsTable.salaryAllocationPct,
+      provisionAllocationPct: payrollAllocationSnapshotsTable.provisionAllocationPct,
       costBasis: payrollAllocationSnapshotsTable.costBasis, basisAmount: payrollAllocationSnapshotsTable.basisAmount,
       allocatedAmount: payrollAllocationSnapshotsTable.allocatedAmount, runCode: payrollRunsTable.code,
       runStatus: payrollRunsTable.status, year: payrollRunsTable.year, month: payrollRunsTable.month,

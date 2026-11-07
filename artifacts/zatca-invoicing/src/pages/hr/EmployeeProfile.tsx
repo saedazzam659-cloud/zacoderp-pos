@@ -566,7 +566,7 @@ function TransfersTab({ empId, emp, cid }: { empId: number; emp: any; cid?: numb
 function AssignmentManager({ empId, cid }: { empId: number; cid?: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const [form, setForm] = useState({ projectId: "", costCenterId: "", effectiveFrom: today(), effectiveTo: "", notes: "" });
+  const [form, setForm] = useState({ projectId: "", costCenterId: "", salaryAllocationPct: "100", provisionAllocationPct: "", effectiveFrom: today(), effectiveTo: "", notes: "" });
   const [editingId, setEditingId] = useState<number | null>(null);
   const assignmentsQ = useQuery({ queryKey: ["employee-assignments", empId], queryFn: () => employeesApi.assignments(empId) });
   const projectsQ = useQuery({ queryKey: ["contracting-projects"], queryFn: employeesApi.projects });
@@ -575,13 +575,15 @@ function AssignmentManager({ empId, cid }: { empId: number; cid?: number }) {
     mutationFn: () => employeesApi.addAssignment(empId, {
       projectId: form.projectId && form.projectId !== "none" ? Number(form.projectId) : null,
       costCenterId: form.costCenterId && form.costCenterId !== "none" ? Number(form.costCenterId) : null,
+      salaryAllocationPct: Number(form.salaryAllocationPct),
+      provisionAllocationPct: form.provisionAllocationPct === "" ? null : Number(form.provisionAllocationPct),
       effectiveFrom: form.effectiveFrom,
       effectiveTo: form.effectiveTo || null,
       notes: form.notes || undefined,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["employee-assignments", empId] });
-      setForm({ projectId: "", costCenterId: "", effectiveFrom: today(), effectiveTo: "", notes: "" });
+      setForm({ projectId: "", costCenterId: "", salaryAllocationPct: "100", provisionAllocationPct: "", effectiveFrom: today(), effectiveTo: "", notes: "" });
       toast({ title: "تمت إضافة التوزيعة" });
     },
     onError: (e: any) => toast({ title: "فشل حفظ التوزيعة", description: String(e.message ?? e), variant: "destructive" }),
@@ -592,8 +594,8 @@ function AssignmentManager({ empId, cid }: { empId: number; cid?: number }) {
     onError: (e: any) => toast({ title: "فشل الحذف", description: String(e.message ?? e), variant: "destructive" }),
   });
   const updateMut = useMutation({
-    mutationFn: () => employeesApi.updateAssignment(empId, editingId!, { projectId: form.projectId && form.projectId !== "none" ? Number(form.projectId) : null, costCenterId: form.costCenterId && form.costCenterId !== "none" ? Number(form.costCenterId) : null, effectiveFrom: form.effectiveFrom, effectiveTo: form.effectiveTo || null, notes: form.notes || undefined }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["employee-assignments", empId] }); setEditingId(null); setForm({ projectId: "", costCenterId: "", effectiveFrom: today(), effectiveTo: "", notes: "" }); toast({ title: "تم تعديل التوزيعة المستقبلية" }); },
+    mutationFn: () => employeesApi.updateAssignment(empId, editingId!, { projectId: form.projectId && form.projectId !== "none" ? Number(form.projectId) : null, costCenterId: form.costCenterId && form.costCenterId !== "none" ? Number(form.costCenterId) : null, salaryAllocationPct: Number(form.salaryAllocationPct), provisionAllocationPct: form.provisionAllocationPct === "" ? null : Number(form.provisionAllocationPct), effectiveFrom: form.effectiveFrom, effectiveTo: form.effectiveTo || null, notes: form.notes || undefined }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["employee-assignments", empId] }); setEditingId(null); setForm({ projectId: "", costCenterId: "", salaryAllocationPct: "100", provisionAllocationPct: "", effectiveFrom: today(), effectiveTo: "", notes: "" }); toast({ title: "تم تعديل التوزيعة المستقبلية" }); },
     onError: (e: any) => toast({ title: "فشل تعديل التوزيعة", description: String(e.message ?? e), variant: "destructive" }),
   });
   const rows = assignmentsQ.data ?? [];
@@ -602,22 +604,26 @@ function AssignmentManager({ empId, cid }: { empId: number; cid?: number }) {
   const columns = useMemo<GridColumn<any>[]>(() => [
     { key: "project", label: "المشروع", type: "text", value: r => r.projectNameAr ?? r.projectName ?? r.project?.nameAr ?? r.project?.name ?? "—" },
     { key: "costCenter", label: "مركز التكلفة", type: "text", value: r => r.costCenterNameAr ?? r.costCenterName ?? r.costCenter?.nameAr ?? r.costCenter?.name ?? "—" },
+    { key: "salaryAllocationPct", label: "نسبة الراتب", type: "text", value: r => `${Number(r.salaryAllocationPct ?? 100)}%` },
+    { key: "provisionAllocationPct", label: "نسبة المخصص", type: "text", value: r => r.provisionAllocationPct == null ? "مثل الراتب" : `${Number(r.provisionAllocationPct)}%` },
     { key: "effectiveFrom", label: "من", type: "text", value: r => r.effectiveFrom ?? r.startDate ?? "" },
     { key: "effectiveTo", label: "إلى", type: "text", value: r => r.effectiveTo ?? r.endDate ?? "مستمر حتى تغيير لاحق" },
     { key: "notes", label: "ملاحظات", type: "text", value: r => r.notes ?? "" },
-    actionsCol(r => <div className="flex justify-center gap-1">{r.effectiveFrom >= today() && <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingId(r.id); setForm({ projectId: r.projectId ? String(r.projectId) : "none", costCenterId: r.costCenterId ? String(r.costCenterId) : "none", effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo ?? "", notes: r.notes ?? "" }); }} aria-label="تعديل التوزيعة"><Pencil className="h-3.5 w-3.5" /></Button>}<Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600" onClick={() => { if (confirm("حذف هذه التوزيعة؟")) deleteMut.mutate(r.id); }} aria-label="حذف التوزيعة"><Trash2 className="h-3.5 w-3.5" /></Button></div>),
+    actionsCol(r => <div className="flex justify-center gap-1">{r.effectiveFrom >= today() && <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingId(r.id); setForm({ projectId: r.projectId ? String(r.projectId) : "none", costCenterId: r.costCenterId ? String(r.costCenterId) : "none", salaryAllocationPct: String(r.salaryAllocationPct ?? 100), provisionAllocationPct: r.provisionAllocationPct == null ? "" : String(r.provisionAllocationPct), effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo ?? "", notes: r.notes ?? "" }); }} aria-label="تعديل التوزيعة"><Pencil className="h-3.5 w-3.5" /></Button>}<Button variant="ghost" size="icon" className="h-7 w-7 text-rose-600" onClick={() => { if (confirm("حذف هذه التوزيعة؟")) deleteMut.mutate(r.id); }} aria-label="حذف التوزيعة"><Trash2 className="h-3.5 w-3.5" /></Button></div>),
   ], []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <section className="border-t pt-4 mt-5 space-y-3">
-       <div><h3 className="font-semibold text-sm">توزيع الراتب على المشاريع ومراكز التكلفة</h3><p className="text-xs text-muted-foreground mt-1">اترك «إلى» فارغًا ليستمر التوزيع حتى تغيير لاحق. السجلات السابقة للعرض فقط.</p></div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end rounded-lg bg-muted/30 p-3">
+     <section className="border-t pt-4 mt-5 space-y-3">
+        <div><h3 className="font-semibold text-sm">توزيع الراتب والمخصصات</h3><p className="text-xs text-muted-foreground mt-1">يمكن توزيع الفترة نفسها على عدة مراكز؛ يجب أن يبلغ مجموع نسب الراتب والمخصصات 100%. ترك نسبة المخصص فارغة يجعلها مثل نسبة الراتب. السجلات السابقة للعرض فقط.</p></div>
+       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2 items-end rounded-lg bg-muted/30 p-3">
         <div><label className="text-xs text-muted-foreground block mb-1">المشروع</label><Select value={form.projectId} onValueChange={v => setForm(p => ({ ...p, projectId: v }))}><SelectTrigger className="h-9"><SelectValue placeholder={projectsQ.isLoading ? "جارٍ التحميل…" : "بدون مشروع"} /></SelectTrigger><SelectContent><SelectItem value="none">بدون مشروع</SelectItem>{(projectsQ.data ?? []).map((p: any) => <SelectItem key={p.id} value={String(p.id)}>{projectName(p)}</SelectItem>)}</SelectContent></Select></div>
         <div><label className="text-xs text-muted-foreground block mb-1">مركز التكلفة</label><Select value={form.costCenterId} onValueChange={v => setForm(p => ({ ...p, costCenterId: v }))}><SelectTrigger className="h-9"><SelectValue placeholder={centersQ.isLoading ? "جارٍ التحميل…" : "بدون مركز"} /></SelectTrigger><SelectContent><SelectItem value="none">بدون مركز</SelectItem>{(centersQ.data ?? []).map((c: any) => <SelectItem key={c.id} value={String(c.id)}>{centerName(c)}</SelectItem>)}</SelectContent></Select></div>
         <div><label className="text-xs text-muted-foreground block mb-1">سريان من *</label><DateField value={form.effectiveFrom} onChange={e => setForm(p => ({ ...p, effectiveFrom: e.target.value }))} /></div>
          <div><label className="text-xs text-muted-foreground block mb-1">إلى (اختياري — مستمر)</label><DateField value={form.effectiveTo} onChange={e => setForm(p => ({ ...p, effectiveTo: e.target.value }))} /></div>
-         <Button size="sm" onClick={() => { if (!form.effectiveFrom || form.effectiveFrom < today()) { toast({ title: "اختر تاريخ سريان من اليوم أو تاريخ لاحق", variant: "destructive" }); return; } if (form.effectiveTo && form.effectiveTo < form.effectiveFrom) { toast({ title: "تاريخ النهاية لا يسبق البداية", variant: "destructive" }); return; } if ((!form.projectId || form.projectId === "none") && (!form.costCenterId || form.costCenterId === "none")) { toast({ title: "اختر مشروعاً أو مركز تكلفة", variant: "destructive" }); return; } if (editingId) updateMut.mutate(); else addMut.mutate(); }} disabled={addMut.isPending || updateMut.isPending || projectsQ.isLoading || centersQ.isLoading}>{editingId ? <Pencil className="h-4 w-4 ms-1" /> : <Plus className="h-4 w-4 ms-1" />}{editingId ? "حفظ التعديل" : "إضافة"}</Button>
-        <div className="sm:col-span-2 lg:col-span-5"><label className="text-xs text-muted-foreground block mb-1">ملاحظات</label><Input value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} /></div>
+          <div><label className="text-xs text-muted-foreground block mb-1">نسبة الراتب %</label><Input type="number" min="0.001" max="100" step="0.001" value={form.salaryAllocationPct} onChange={e => setForm(p => ({ ...p, salaryAllocationPct: e.target.value }))} /></div>
+          <div><label className="text-xs text-muted-foreground block mb-1">نسبة المخصص %</label><Input type="number" min="0.001" max="100" step="0.001" placeholder="مثل الراتب" value={form.provisionAllocationPct} onChange={e => setForm(p => ({ ...p, provisionAllocationPct: e.target.value }))} /></div>
+          <Button size="sm" onClick={() => { if (!form.effectiveFrom || form.effectiveFrom < today()) { toast({ title: "اختر تاريخ سريان من اليوم أو تاريخ لاحق", variant: "destructive" }); return; } if (form.effectiveTo && form.effectiveTo < form.effectiveFrom) { toast({ title: "تاريخ النهاية لا يسبق البداية", variant: "destructive" }); return; } if ((!form.projectId || form.projectId === "none") && (!form.costCenterId || form.costCenterId === "none")) { toast({ title: "اختر مشروعاً أو مركز تكلفة", variant: "destructive" }); return; } if (Number(form.salaryAllocationPct) <= 0 || Number(form.salaryAllocationPct) > 100 || (form.provisionAllocationPct !== "" && (Number(form.provisionAllocationPct) <= 0 || Number(form.provisionAllocationPct) > 100))) { toast({ title: "النسبة يجب أن تكون أكبر من صفر ولا تتجاوز 100%", variant: "destructive" }); return; } if (editingId) updateMut.mutate(); else addMut.mutate(); }} disabled={addMut.isPending || updateMut.isPending || projectsQ.isLoading || centersQ.isLoading}>{editingId ? <Pencil className="h-4 w-4 ms-1" /> : <Plus className="h-4 w-4 ms-1" />}{editingId ? "حفظ التعديل" : "إضافة"}</Button>
+         <div className="sm:col-span-2 lg:col-span-7"><label className="text-xs text-muted-foreground block mb-1">ملاحظات</label><Input value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} /></div>
       </div>
       {assignmentsQ.isLoading ? <Skeleton className="h-24 w-full" /> : assignmentsQ.isError ? <p className="text-sm text-rose-600 border border-rose-200 rounded-lg p-3">تعذر تحميل التوزيعات. حاول تحديث الصفحة.</p> : <AdvancedReportGrid slug="hrEmp_assignments" cid={cid} rows={rows} rowKey={(r: any) => r.id} columns={columns} unitLabel="توزيعة" emptyMessage="لا توجد توزيعات للمشاريع أو مراكز التكلفة" />}
     </section>
