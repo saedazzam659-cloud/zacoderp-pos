@@ -969,6 +969,13 @@ export function SimpleWizard({
     } else if (source.sourceType === "prepaid_amortization") {
       const denominator = Number(source.meta?.approvedProductionQuantity);
       amount = denominator > 0 ? sourceAmount * plannedQty / denominator : 0;
+    } else if (source.sourceType === "payroll") {
+      const denominator = Number(
+        source.meta?.approvedManufacturingHours ?? source.meta?.approvedOperatingHours,
+      );
+      amount = denominator > 0
+        ? sourceAmount * plannedLaborPersonHours / denominator
+        : 0;
     } else if (source.sourceType === "fixed_asset_depreciation" && method === "fixed_hourly_rate") {
       amount = plannedHours * Number(source.meta?.fixedManufacturingRate || 0);
     } else {
@@ -982,7 +989,9 @@ export function SimpleWizard({
 
   const allocationDisplayForSource = (source: any): string => {
     const method = source.meta?.allocationMethod || source.basis;
-    const plannedDriver = method === "production_quantity"
+    const plannedDriver = source.sourceType === "payroll"
+      ? plannedLaborPersonHours
+      : method === "production_quantity"
       ? Number(form.plannedQty || 0)
       : method === "labor_hours"
         ? plannedLaborPersonHours
