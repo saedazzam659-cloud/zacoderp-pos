@@ -747,7 +747,7 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
       <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
         <h2 className="flex items-center gap-2 font-black"><Printer className="h-5 w-5 text-primary" />توجيه طابعات محطات التحضير</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          اختر الطابعة الأساسية والاحتياطية لكل محطة في الفرع. عند تعذر الطباعة على الأساسية، يحاول وسيط الطباعة المحلي استخدام الاحتياطية. اكتب اسم الطابعة كما يظهر في إعداد وسيط الفرع.
+          اختر الطابعة الأساسية والاحتياطية لكل محطة في الفرع. بعد تشغيل وسيط الطباعة المحلي، سيحاول استخدام الاحتياطية إذا تعذرت الأساسية. اكتب اسم الطابعة كما ستظهر في إعداد وسيط الفرع.
         </p>
         <label className="mt-4 block max-w-sm space-y-1 text-xs font-semibold text-muted-foreground">
           الفرع
@@ -801,7 +801,7 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
       )}
       {savedMessage && <p role={save.isError ? "alert" : "status"} className={`rounded-lg border p-3 text-sm ${save.isError ? "border-destructive/30 text-destructive" : "border-emerald-200 text-emerald-700"}`}>{savedMessage}</p>}
       <p className="text-xs leading-5 text-muted-foreground">
-        هذه الإعدادات تحفظ أسماء الطابعات لكل محطة وفرع. توصيل الطابعة واختبارها والطباعة الفعلية يحتاجان تشغيل وسيط الطباعة المحلي على شبكة الفرع.
+        هذه الإعدادات تحفظ أسماء الطابعات لكل محطة وفرع فقط. اكتشاف الطابعات واختبارها والطباعة الفعلية لن تعمل حتى يُبنى وسيط الطباعة المحلي ويُشغّل على شبكة الفرع.
       </p>
     </div>
   );
