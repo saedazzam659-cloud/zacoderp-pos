@@ -1522,7 +1522,7 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
     queryKey: ["r-delivery-orders", current?.id],
     queryFn: () => current ? api.rDeliveryOrders(current.id) : Promise.resolve([]),
     enabled: !!current?.id,
-    refetchInterval: current?.environment === "sandbox" ? 20_000 : false,
+    refetchInterval: current?.id ? 20_000 : false,
   });
   const mappingsQ = useQuery({
     queryKey: ["r-delivery-mappings", current?.id],
@@ -1701,6 +1701,20 @@ function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { bran
                             onClick={() => updateProviderStatus.mutate({ rowId: order.id, status: "DISPATCHED" })}>
                             تأكيد تسليم الطلب للناقل
                           </Button>}
+                        {order.providerStatus === "RECEIVED" && order.posOrderStatus === "cancelled" &&
+                          <Button type="button" size="sm" variant="outline" disabled={updateProviderStatus.isPending}
+                            data-testid={`button-provider-cancel-${order.id}`}
+                            onClick={() => {
+                              if (window.confirm("تم إلغاء طلب POS وإرسال إشعار للمطبخ. هل تريد إبلاغ HungerStation بالإلغاء لعدم توفر الصنف؟")) {
+                                updateProviderStatus.mutate({
+                                  rowId: order.id, status: "CANCELLED", cancellationReason: "ITEM_UNAVAILABLE",
+                                });
+                              }
+                            }}>
+                            إبلاغ HungerStation بإلغاء الطلب
+                          </Button>}
+                        {order.providerStatus === "RECEIVED" && order.posOrderStatus !== "cancelled" &&
+                          <span className="text-muted-foreground">لإلغاء الطلب، ألغِ طلب POS أولاً لإشعار المطبخ.</span>}
                       </>
                     : order.providerStatus === "RECEIVED" && <>
                         <Button type="button" size="sm" disabled={acceptOrder.isPending || mappingsQ.isLoading || menuQ.isLoading} data-testid={`button-accept-delivery-${order.id}`} onClick={() => acceptOrder.mutate(order.id)}>قبول وإرسال للمطبخ</Button>

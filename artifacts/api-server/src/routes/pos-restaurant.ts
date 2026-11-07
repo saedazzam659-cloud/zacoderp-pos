@@ -661,10 +661,19 @@ router.post("/delivery-integrations/:integrationId/orders/:orderId/provider-stat
       if (cancellationReason !== "ITEM_UNAVAILABLE") {
         res.status(400).json({ error: "سبب الإلغاء غير صالح" }); return;
       }
-      if (incoming.posOrderId) {
-        res.status(409).json({ error: "تم إنشاء طلب POS بالفعل؛ استخدم دورة إلغاء المطعم قبل إبلاغ المنصة" }); return;
+      if (incoming.providerStatus === "CANCELLED") {
+        res.json({ ok: true, status, alreadyUpdated: true }); return;
       }
-      if (incoming.providerStatus === "CANCELLED") { res.json({ ok: true, status, alreadyUpdated: true }); return; }
+      if (incoming.posOrderId) {
+        const [posOrder] = await db.select({ id: posOrdersTable.id, status: posOrdersTable.status })
+          .from(posOrdersTable).where(and(
+            eq(posOrdersTable.id, incoming.posOrderId),
+            eq(posOrdersTable.companyId, cid),
+          )).limit(1);
+        if (!posOrder || posOrder.status !== "cancelled") {
+          res.status(409).json({ error: "ألغِ طلب POS أولاً؛ إلغاءه يرسل إشعارًا للمطبخ، ثم أبلغ HungerStation" }); return;
+        }
+      }
       if (incoming.providerStatus !== "RECEIVED") {
         res.status(409).json({ error: "حالة الطلب الحالية لا تسمح بإلغائه" }); return;
       }

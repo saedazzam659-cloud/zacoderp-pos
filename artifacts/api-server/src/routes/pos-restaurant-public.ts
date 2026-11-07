@@ -4,7 +4,8 @@ import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   itemsTable, posMenuCategoriesTable, posMenuItemsTable, posOrderItemsTable,
-  posOrdersTable, posTablesTable,
+  posOrdersTable, posTablesTable, posRestaurantKitchenPrintJobsTable,
+  posRestaurantKitchenPrinterRoutesTable, posRestaurantKitchenStationsTable,
   posRestaurantDeliveryIntegrationsTable, posRestaurantExternalOrdersTable,
 } from "@workspace/db";
 import { calculateRestaurantOrderTotals } from "../lib/restaurant-order-pricing.js";
@@ -68,12 +69,16 @@ router.post("/webhooks/hungerstation/:integrationId", async (req, res): Promise<
   const externalOrderId = typeof body?.external_order_id === "string" && body.external_order_id.trim()
     ? body.external_order_id.trim()
     : typeof body?.order_id === "string" && body.order_id.trim() ? body.order_id.trim() : "";
-  const providerStatus = typeof body?.status === "string" ? body.status : "";
+  const receivedStatus = typeof body?.status === "string" ? body.status : "";
   const allowedStatuses = new Set(["RECEIVED", "READY_FOR_PICKUP", "DISPATCHED", "CANCELLED", "CANCELED", "DELIVERED"]);
-  if (!externalOrderId || externalOrderId.length > 200 || !allowedStatuses.has(providerStatus) ||
-      !Array.isArray(body?.items) || body.items.length > 300) {
+  const cancellationEvent = receivedStatus === "CANCELLED" || receivedStatus === "CANCELED";
+  const webhookItems = Array.isArray(body?.items) ? body.items : [];
+  if (!externalOrderId || externalOrderId.length > 200 || !allowedStatuses.has(receivedStatus) ||
+      (!Array.isArray(body?.items) && !cancellationEvent) || webhookItems.length > 300) {
     res.status(400).json({ error: "بيانات إشعار الطلب غير صالحة" }); return;
   }
+  const providerStatus = receivedStatus === "CANCELED" ? "CANCELLED" : receivedStatus;
+  const providerCancelled = providerStatus === "CANCELLED";
   const customer = body.customer && typeof body.customer === "object" ? body.customer : {};
   const address = customer.delivery_address && typeof customer.delivery_address === "object"
     ? customer.delivery_address
@@ -101,27 +106,169 @@ router.post("/webhooks/hungerstation/:integrationId", async (req, res): Promise<
         instructions: typeof address.instructions === "string" ? address.instructions.slice(0, 500) : null,
       },
     },
-    items: body.items,
+    items: webhookItems,
     payment: body.payment && typeof body.payment === "object" ? body.payment : null,
   };
-  const [saved] = await db.insert(posRestaurantExternalOrdersTable).values({
-    integrationId: integration.id,
-    companyId: integration.companyId,
-    branchId: integration.branchId,
-    externalOrderId,
-    orderCode: normalizedPayload.order_code,
-    providerStatus,
-    orderPayload: normalizedPayload,
-  }).onConflictDoUpdate({
-    target: [posRestaurantExternalOrdersTable.integrationId, posRestaurantExternalOrdersTable.externalOrderId],
-    set: {
-      orderCode: normalizedPayload.order_code,
-      providerStatus,
-      orderPayload: normalizedPayload,
-      updatedAt: new Date(),
-    },
-  }).returning({ id: posRestaurantExternalOrdersTable.id });
-  req.log?.info?.({ integrationId, eventId: saved?.id, providerStatus }, "HungerStation webhook accepted");
+  const saved = await db.transaction(async tx => {
+    const [existing] = await tx.select().from(posRestaurantExternalOrdersTable).where(and(
+      eq(posRestaurantExternalOrdersTable.integrationId, integration.id),
+      eq(posRestaurantExternalOrdersTable.externalOrderId, externalOrderId),
+      eq(posRestaurantExternalOrdersTable.companyId, integration.companyId),
+    )).for("update");
+    if (existing && ["CANCELLED", "CANCELED"].includes(existing.providerStatus) && !providerCancelled) {
+      return { id: existing.id, ignoredTerminal: true as const };
+    }
+    const previousPayload = existing?.orderPayload as Record<string, any> | undefined;
+    const previousCustomer = previousPayload?.customer ?? {};
+    const previousAddress = previousCustomer.delivery_address ?? {};
+    const payloadToSave = existing ? {
+      ...previousPayload,
+      ...normalizedPayload,
+      order_id: normalizedPayload.order_id ?? previousPayload?.order_id ?? null,
+      order_code: normalizedPayload.order_code ?? previousPayload?.order_code ?? existing.orderCode,
+      comment: normalizedPayload.comment ?? previousPayload?.comment ?? null,
+      items: normalizedPayload.items.length
+        ? normalizedPayload.items
+        : Array.isArray(previousPayload?.items) ? previousPayload.items : [],
+      customer: {
+        ...previousCustomer,
+        ...normalizedPayload.customer,
+        first_name: normalizedPayload.customer.first_name ?? previousCustomer.first_name ?? null,
+        last_name: normalizedPayload.customer.last_name ?? previousCustomer.last_name ?? null,
+        phone_number: normalizedPayload.customer.phone_number ?? previousCustomer.phone_number ?? null,
+        delivery_address: {
+          ...previousAddress,
+          ...normalizedPayload.customer.delivery_address,
+          formattedAddress: normalizedPayload.customer.delivery_address.formattedAddress ?? previousAddress.formattedAddress ?? null,
+          street: normalizedPayload.customer.delivery_address.street ?? previousAddress.street ?? null,
+          suburb: normalizedPayload.customer.delivery_address.suburb ?? previousAddress.suburb ?? null,
+          city: normalizedPayload.customer.delivery_address.city ?? previousAddress.city ?? null,
+          building: normalizedPayload.customer.delivery_address.building ?? previousAddress.building ?? null,
+          instructions: normalizedPayload.customer.delivery_address.instructions ?? previousAddress.instructions ?? null,
+        },
+      },
+      payment: normalizedPayload.payment ?? previousPayload?.payment ?? null,
+    } : normalizedPayload;
+    if (existing?.posOrderId && providerCancelled) {
+      const [order] = await tx.select().from(posOrdersTable).where(and(
+        eq(posOrdersTable.id, existing.posOrderId),
+        eq(posOrdersTable.companyId, integration.companyId),
+      )).for("update");
+      if (!order) return { blocked: true as const, reason: "missing" as const };
+      if (order.status === "billed") return { blocked: true as const, reason: "billed" as const };
+      if (order.status !== "cancelled") {
+        const lines = await tx.select({
+          id: posOrderItemsTable.id,
+          name: posOrderItemsTable.nameSnapshot,
+          qty: posOrderItemsTable.qty,
+          notes: posOrderItemsTable.notes,
+          modifiers: posOrderItemsTable.modifiers,
+          stationKey: posOrderItemsTable.kitchenStation,
+          sentAt: posOrderItemsTable.sentAt,
+        }).from(posOrderItemsTable).where(and(
+          eq(posOrderItemsTable.orderId, order.id),
+          inArray(posOrderItemsTable.status, ["pending", "preparing", "ready"] as any),
+        ));
+        const byStation = new Map<string, typeof lines>();
+        for (const line of lines.filter(candidate => candidate.sentAt)) {
+          byStation.set(line.stationKey, [...(byStation.get(line.stationKey) ?? []), line]);
+        }
+        for (const [stationKey, stationLines] of byStation) {
+          const [route] = await tx.select().from(posRestaurantKitchenPrinterRoutesTable).where(and(
+            eq(posRestaurantKitchenPrinterRoutesTable.companyId, order.companyId),
+            eq(posRestaurantKitchenPrinterRoutesTable.branchId, order.branchId),
+            eq(posRestaurantKitchenPrinterRoutesTable.stationKey, stationKey),
+            eq(posRestaurantKitchenPrinterRoutesTable.isActive, true),
+          ));
+          if (!route?.primaryPrinterName) continue;
+          const [station] = await tx.select({ nameAr: posRestaurantKitchenStationsTable.nameAr })
+            .from(posRestaurantKitchenStationsTable).where(and(
+              eq(posRestaurantKitchenStationsTable.companyId, order.companyId),
+              eq(posRestaurantKitchenStationsTable.stationKey, stationKey),
+            ));
+          const [table] = order.tableId ? await tx.select({
+            nameAr: posTablesTable.nameAr, code: posTablesTable.code,
+          }).from(posTablesTable).where(and(
+            eq(posTablesTable.id, order.tableId), eq(posTablesTable.companyId, order.companyId),
+          )) : [];
+          const lineIds = stationLines.map(line => line.id).sort((a, b) => a - b);
+          await tx.insert(posRestaurantKitchenPrintJobsTable).values({
+            companyId: order.companyId,
+            branchId: order.branchId,
+            orderId: order.id,
+            stationKey,
+            idempotencyKey: `cancel:order:${order.id}:station:${stationKey}:lines:${lineIds.join(",")}`,
+            payload: {
+              operation: "cancel",
+              orderNumber: order.orderNumber,
+              channel: order.channel,
+              tableName: table ? `${table.nameAr}${table.code ? ` (${table.code})` : ""}` : null,
+              stationName: station?.nameAr ?? stationKey,
+              primaryPrinterName: route.primaryPrinterName,
+              backupPrinterName: route.backupPrinterName,
+              items: stationLines.map(line => ({
+                name: line.name, qty: line.qty, notes: line.notes,
+                modifiers: (line.modifiers ?? []).map((modifier: any) => ({ option: modifier.option })),
+              })),
+            },
+          }).onConflictDoNothing();
+        }
+        await tx.update(posOrderItemsTable).set({ status: "cancelled", updatedAt: new Date() })
+          .where(and(
+            eq(posOrderItemsTable.orderId, order.id),
+            inArray(posOrderItemsTable.status, ["pending", "preparing", "ready"] as any),
+          ));
+        await tx.update(posOrdersTable).set({
+          status: "cancelled", cancelledAt: new Date(), updatedAt: new Date(),
+        }).where(and(eq(posOrdersTable.id, order.id), eq(posOrdersTable.companyId, order.companyId)));
+        if (order.tableId) {
+          await tx.update(posTablesTable).set({ status: "free", currentOrderId: null, updatedAt: new Date() })
+            .where(and(
+              eq(posTablesTable.id, order.tableId),
+              eq(posTablesTable.companyId, order.companyId),
+              eq(posTablesTable.currentOrderId, order.id),
+            ));
+        }
+      }
+    }
+    const [savedOrder] = existing
+      ? await tx.update(posRestaurantExternalOrdersTable).set({
+          orderCode: payloadToSave.order_code,
+          providerStatus,
+          orderPayload: payloadToSave,
+          updatedAt: new Date(),
+        }).where(eq(posRestaurantExternalOrdersTable.id, existing.id))
+          .returning({ id: posRestaurantExternalOrdersTable.id })
+      : await tx.insert(posRestaurantExternalOrdersTable).values({
+          integrationId: integration.id,
+          companyId: integration.companyId,
+          branchId: integration.branchId,
+          externalOrderId,
+          orderCode: payloadToSave.order_code,
+          providerStatus,
+          orderPayload: payloadToSave,
+        }).onConflictDoUpdate({
+          target: [posRestaurantExternalOrdersTable.integrationId, posRestaurantExternalOrdersTable.externalOrderId],
+          set: {
+            orderCode: payloadToSave.order_code,
+            providerStatus,
+            orderPayload: payloadToSave,
+            updatedAt: new Date(),
+          },
+        }).returning({ id: posRestaurantExternalOrdersTable.id });
+    return { id: savedOrder.id, ignoredTerminal: false as const };
+  });
+  if ("blocked" in saved) {
+    res.status(409).json({
+      error: saved.reason === "billed"
+        ? "لا يمكن إلغاء طلب HungerStation بعد فوترة طلب POS"
+        : "طلب POS المرتبط بطلب HungerStation غير موجود",
+    });
+    return;
+  }
+  req.log?.info?.({
+    integrationId, eventId: saved.id, providerStatus, ignoredTerminal: saved.ignoredTerminal,
+  }, "HungerStation webhook accepted");
   res.status(200).json({ ok: true });
 });
 
