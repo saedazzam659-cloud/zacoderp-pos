@@ -21,6 +21,10 @@ export default function ProvisionSettlements() {
     queryKey: ["employee-provision-balances"],
     queryFn: () => employeesApi.provisionBalances(),
   });
+  const history = useQuery<any[]>({
+    queryKey: ["employee-provision-settlements"],
+    queryFn: () => employeesApi.provisionSettlements(),
+  });
   const leaveQuery = useQuery<any[]>({
     queryKey: ["employee-provision-leaves", selected?.employeeId],
     queryFn: () => employeesApi.leaves(selected.employeeId),
@@ -46,6 +50,15 @@ export default function ProvisionSettlements() {
       toast({ title: "تم ترحيل تسوية المخصص" });
     },
     onError: e => toast({ variant: "destructive", title: "تعذّر ترحيل التسوية", description: parseError(e) }),
+  });
+  const reverseMutation = useMutation({
+    mutationFn: (id: number) => employeesApi.reverseProvisionSettlement(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["employee-provision-balances"] });
+      qc.invalidateQueries({ queryKey: ["employee-provision-settlements"] });
+      toast({ title: "تم عكس التسوية بقيد مقابل" });
+    },
+    onError: e => toast({ variant: "destructive", title: "تعذّر عكس التسوية", description: parseError(e) }),
   });
 
   return <div className="space-y-4">
@@ -96,5 +109,23 @@ export default function ProvisionSettlements() {
         <Button variant="outline" onClick={() => setSelected(null)}>إلغاء</Button>
       </div>
     </div>}
+    <div className="overflow-x-auto rounded-md border">
+      <h4 className="p-3 font-semibold">سجل التسويات</h4>
+      <table className="w-full min-w-[680px] text-sm">
+        <thead className="bg-muted/50"><tr>{["الموظف", "النوع", "الفترة", "المصدر", "المبلغ", "الحالة", ""].map(x =>
+          <th key={x} className="p-2 text-right font-medium">{x}</th>)}</tr></thead>
+        <tbody>{(history.data ?? []).map(row => <tr key={row.id} className="border-t">
+          <td className="p-2">{row.employeeName || `#${row.employeeId}`}</td>
+          <td className="p-2">{row.provisionType === "annual_leave" ? "إجازة" : "تذكرة"}</td>
+          <td className="p-2" dir="ltr">{row.provisionPeriod}</td>
+          <td className="p-2">{row.sourceType === "employee_leave" ? `إجازة #${row.sourceRecordId}` : `سند #${row.sourceRecordId}`}</td>
+          <td className="p-2">{fmt(Number(row.amount))}</td>
+          <td className="p-2">{row.status === "posted" ? "مرحّلة" : "معكوسة"}</td>
+          <td className="p-2">{row.status === "posted" && <Button size="sm" variant="outline"
+            disabled={reverseMutation.isPending} onClick={() => reverseMutation.mutate(row.id)}>عكس</Button>}</td>
+        </tr>)}</tbody>
+      </table>
+      {!history.isLoading && !history.data?.length && <p className="p-4 text-center text-sm text-muted-foreground">لا توجد تسويات سابقة.</p>}
+    </div>
   </div>;
 }

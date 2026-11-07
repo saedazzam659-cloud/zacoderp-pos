@@ -18,6 +18,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { fmt2 } from "@/lib/format";
 import { localizedName } from "@/lib/localizedName";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import ProvisionSettlements from "@/pages/hr/ProvisionSettlements";
 
 export default function Payroll() {
     const gate = useDemoActionGate();
@@ -204,9 +205,13 @@ export default function Payroll() {
         <TabsList>
           <TabsTrigger value="runs" data-testid="tab-runs"><FileSpreadsheet className="size-4 me-1" />{tr("tabRuns")}</TabsTrigger>
           <TabsTrigger value="preview" data-testid="tab-preview"><Calculator className="size-4 me-1" />{tr("tabPreview")}</TabsTrigger>
+          <TabsTrigger value="settlements" data-testid="tab-provision-settlements"><Undo2 className="size-4 me-1" />تسوية المخصصات</TabsTrigger>
           {viewing && <TabsTrigger value="detail" data-testid="tab-detail"><Eye className="size-4 me-1" />{tr("tabDetail")}</TabsTrigger>}
         </TabsList>
 
+        <TabsContent value="settlements" className="space-y-3">
+          <ProvisionSettlements />
+        </TabsContent>
         <TabsContent value="runs" className="space-y-3">
           <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-card p-3">
             <div className="space-y-1">

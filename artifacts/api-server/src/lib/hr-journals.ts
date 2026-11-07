@@ -509,6 +509,7 @@ export async function buildEmployeeProvisionSettlementJournal(
   settlementId: number,
   settlement: { provisionType: "annual_leave" | "travel_ticket"; employeeId: number; amount: unknown; settlementDate: string; provisionPeriod: string },
   dx: DbOrTx = db,
+  reversal = false,
 ): Promise<number> {
   const accounts = await resolveHrAccounts(cid, true, dx);
   const leave = settlement.provisionType === "annual_leave";
@@ -520,14 +521,15 @@ export async function buildEmployeeProvisionSettlementJournal(
   const writable = await assertWritableForDate(cid, settlement.settlementDate);
   if (!writable.ok) throw new Error(writable.reason);
   const period = settlement.provisionPeriod;
-  const description = leave
+  const baseDescription = leave
     ? `تسوية مخصص إجازة الموظف ${settlement.employeeId} عن ${period}`
     : `تسوية مخصص تذكرة الموظف ${settlement.employeeId} عن ${period}`;
+  const description = reversal ? `عكس ${baseDescription}` : baseDescription;
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: null,
     docNumber: (await resolveJeNumber({
-      companyId: cid, sourceType: "employee_provision_settlement", sourceId: settlementId,
+      companyId: cid, sourceType: reversal ? "employee_provision_settlement_reversal" : "employee_provision_settlement", sourceId: settlementId,
       subType: "hr_payroll", branchId: null, docDate: settlement.settlementDate,
       userId: null, dx: dx as any,
     })) ?? `HRS-${settlementId}`,
@@ -535,12 +537,12 @@ export async function buildEmployeeProvisionSettlementJournal(
     currency: "SAR",
     exchangeRate: "1",
     description,
-    entryType: "employee_provision_settlement",
+    entryType: reversal ? "employee_provision_settlement_reversal" : "employee_provision_settlement",
     status: await resolvePostingStatus(cid, "payroll"),
   }).returning({ id: journalEntriesTable.id });
   await dx.insert(journalEntryLinesTable).values([
-    { entryId: entry.id, accountId: liability, debit: fix(amount), credit: "0.00", description: `تخفيض مخصص ${period}`, sortOrder: 0 },
-    { entryId: entry.id, accountId: expense, debit: "0.00", credit: fix(amount), description, sortOrder: 1 },
+    { entryId: entry.id, accountId: reversal ? expense : liability, debit: fix(amount), credit: "0.00", description: `عكس ${description}`, sortOrder: 0 },
+    { entryId: entry.id, accountId: reversal ? liability : expense, debit: "0.00", credit: fix(amount), description, sortOrder: 1 },
   ]);
   return entry.id;
 }

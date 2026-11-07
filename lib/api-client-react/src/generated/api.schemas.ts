@@ -2970,38 +2970,6 @@ export interface EmployeeProvisionBalance {
 
 export type EmployeeProvisionBalanceList = EmployeeProvisionBalance[];
 
-export type EmployeeProvisionSettlementInputProvisionType = typeof EmployeeProvisionSettlementInputProvisionType[keyof typeof EmployeeProvisionSettlementInputProvisionType];
-
-
-export const EmployeeProvisionSettlementInputProvisionType = {
-  annual_leave: 'annual_leave',
-  travel_ticket: 'travel_ticket',
-} as const;
-
-export type EmployeeProvisionSettlementInputSourceType = typeof EmployeeProvisionSettlementInputSourceType[keyof typeof EmployeeProvisionSettlementInputSourceType];
-
-
-export const EmployeeProvisionSettlementInputSourceType = {
-  employee_leave: 'employee_leave',
-  payment_voucher: 'payment_voucher',
-} as const;
-
-export interface EmployeeProvisionSettlementInput {
-  /** @minimum 1 */
-  employeeId: number;
-  provisionType: EmployeeProvisionSettlementInputProvisionType;
-  /** @pattern ^\d{4}-\d{2}$ */
-  provisionPeriod: string;
-  sourceType: EmployeeProvisionSettlementInputSourceType;
-  /** @minimum 1 */
-  sourceRecordId: number;
-  settlementDate: string;
-  /** @exclusiveMinimum 0 */
-  amount: number;
-  /** @maxLength 500 */
-  notes?: string;
-}
-
 export type EmployeeProvisionSettlementProvisionType = typeof EmployeeProvisionSettlementProvisionType[keyof typeof EmployeeProvisionSettlementProvisionType];
 
 
@@ -3040,6 +3008,40 @@ export interface EmployeeProvisionSettlement {
   /** @nullable */
   journalEntryId: number | null;
   status: EmployeeProvisionSettlementStatus;
+}
+
+export type EmployeeProvisionSettlementList = EmployeeProvisionSettlement[];
+
+export type EmployeeProvisionSettlementInputProvisionType = typeof EmployeeProvisionSettlementInputProvisionType[keyof typeof EmployeeProvisionSettlementInputProvisionType];
+
+
+export const EmployeeProvisionSettlementInputProvisionType = {
+  annual_leave: 'annual_leave',
+  travel_ticket: 'travel_ticket',
+} as const;
+
+export type EmployeeProvisionSettlementInputSourceType = typeof EmployeeProvisionSettlementInputSourceType[keyof typeof EmployeeProvisionSettlementInputSourceType];
+
+
+export const EmployeeProvisionSettlementInputSourceType = {
+  employee_leave: 'employee_leave',
+  payment_voucher: 'payment_voucher',
+} as const;
+
+export interface EmployeeProvisionSettlementInput {
+  /** @minimum 1 */
+  employeeId: number;
+  provisionType: EmployeeProvisionSettlementInputProvisionType;
+  /** @pattern ^\d{4}-\d{2}$ */
+  provisionPeriod: string;
+  sourceType: EmployeeProvisionSettlementInputSourceType;
+  /** @minimum 1 */
+  sourceRecordId: number;
+  settlementDate: string;
+  /** @exclusiveMinimum 0 */
+  amount: number;
+  /** @maxLength 500 */
+  notes?: string;
 }
 
 export type CashExpenseInputManufacturingAllocationMethod = typeof CashExpenseInputManufacturingAllocationMethod[keyof typeof CashExpenseInputManufacturingAllocationMethod];

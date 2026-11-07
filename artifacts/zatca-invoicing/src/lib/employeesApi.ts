@@ -125,7 +125,9 @@ export const employeesApi = {
   unpayPayroll:   (id: number) => req<any>("POST", `/employees/payroll/runs/${id}/unpay`, {}),
   payrollJournal: (id: number) => req<any>("GET",  `/employees/payroll/runs/${id}/journal`),
   provisionBalances: () => req<any[]>("GET", "/employees/payroll/provision-balances"),
+  provisionSettlements: () => req<any[]>("GET", "/employees/payroll/provision-settlements"),
   settleProvision: (data: any) => req<any>("POST", "/employees/payroll/provision-settlements", data),
+  reverseProvisionSettlement: (id: number) => req<any>("POST", `/employees/payroll/provision-settlements/${id}/reverse`, {}),
   deletePayroll:  (id: number) => req<any>("DELETE", `/employees/payroll/runs/${id}`),
 
   // Loan disbursement (creates JE)

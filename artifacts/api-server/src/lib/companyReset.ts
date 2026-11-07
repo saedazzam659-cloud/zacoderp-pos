@@ -39,7 +39,7 @@ const RESET_TABLES = [
   "attendance_payroll_transfers", "attendance_audit", "face_recognition_logs",
   "employee_loans", "employee_custodies", "asset_custodies", "employee_violations",
   "employee_travels", "employee_leaves", "employee_salary_adjustments",
-  "employee_transfers", "employee_evaluations", "employee_terminations", "payroll_runs",
+  "employee_transfers", "employee_evaluations", "employee_terminations", "employee_provision_settlements", "payroll_runs",
   "mudad_salary_batches", "exit_permissions", "employee_project_assignments",
   "production_orders", "production_events", "production_cost_allocations",
   "production_stage_resource_costs", "production_pending_utility_claims",

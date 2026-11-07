@@ -2107,6 +2107,14 @@ router.post("/payroll/runs/:id/unpost", requireUnpostRight("payroll"), documentM
       if (!run) throw Object.assign(new Error("غير موجود"), { status: 404 });
       if (run.status !== "posted") throw Object.assign(new Error("المسير ليس معتمداً"), { status: 400 });
       if (run.paymentJournalId) throw Object.assign(new Error("تم صرف رواتب هذا المسير — قم بفك ترحيل قيد الصرف أولاً"), { status: 409 });
+      const provisionPeriod = `${run.year}-${String(run.month).padStart(2, "0")}`;
+      const [provisionUse] = await tx.select({ id: employeeProvisionSettlementsTable.id })
+        .from(employeeProvisionSettlementsTable).where(and(
+          eq(employeeProvisionSettlementsTable.companyId, cid),
+          eq(employeeProvisionSettlementsTable.provisionPeriod, provisionPeriod),
+          eq(employeeProvisionSettlementsTable.status, "posted"),
+        )).limit(1);
+      if (provisionUse) throw Object.assign(new Error("اعكس تسويات المخصصات المرتبطة بالفترة قبل فك ترحيل مسير الرواتب"), { status: 409 });
 
       // Reverse loan paidAmounts
       const lines = await tx.select().from(payrollLinesTable).where(eq(payrollLinesTable.payrollRunId, id));
@@ -2497,6 +2505,59 @@ router.post("/payroll/provision-settlements", requirePostRight("payroll"), async
     });
     res.status(201).json(result);
   } catch (e: any) { res.status(e?.status ?? 400).json({ error: e?.message ?? "تعذّرت تسوية المخصص" }); }
+});
+
+router.get("/payroll/provision-settlements", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const rows = await db.select({
+      id: employeeProvisionSettlementsTable.id,
+      employeeId: employeeProvisionSettlementsTable.employeeId,
+      employeeName: employeesTable.nameAr,
+      provisionType: employeeProvisionSettlementsTable.provisionType,
+      provisionPeriod: employeeProvisionSettlementsTable.provisionPeriod,
+      sourceRecordId: employeeProvisionSettlementsTable.sourceRecordId,
+      settlementDate: employeeProvisionSettlementsTable.settlementDate,
+      amount: employeeProvisionSettlementsTable.amount,
+      journalEntryId: employeeProvisionSettlementsTable.journalEntryId,
+      status: employeeProvisionSettlementsTable.status,
+    }).from(employeeProvisionSettlementsTable).innerJoin(employeesTable,
+      eq(employeesTable.id, employeeProvisionSettlementsTable.employeeId))
+      .where(eq(employeeProvisionSettlementsTable.companyId, cid))
+      .orderBy(desc(employeeProvisionSettlementsTable.createdAt)).limit(100);
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/payroll/provision-settlements/:id/reverse", requirePostRight("payroll"), async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "رقم التسوية غير صالح" }); return; }
+    const row = await db.transaction(async (tx) => {
+      const [settlement] = await tx.select().from(employeeProvisionSettlementsTable).where(and(
+        eq(employeeProvisionSettlementsTable.id, id), eq(employeeProvisionSettlementsTable.companyId, cid),
+      )).for("update");
+      if (!settlement) throw Object.assign(new Error("التسوية غير موجودة"), { status: 404 });
+      if (settlement.status !== "posted") throw Object.assign(new Error("لا يمكن عكس إلا تسوية مرحّلة"), { status: 409 });
+      const lockKey = `employee_provision:${settlement.employeeId}:${settlement.provisionType}:${settlement.provisionPeriod}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${lockKey}))`);
+      const reversalJournalEntryId = await buildEmployeeProvisionSettlementJournal(cid, id, {
+        provisionType: settlement.provisionType as "annual_leave" | "travel_ticket",
+        employeeId: settlement.employeeId,
+        amount: settlement.amount,
+        settlementDate: new Date().toISOString().slice(0, 10),
+        provisionPeriod: settlement.provisionPeriod,
+      }, tx, true);
+      const [updated] = await tx.update(employeeProvisionSettlementsTable).set({
+        status: "reversed", reversalJournalEntryId, updatedAt: new Date(),
+      }).where(and(eq(employeeProvisionSettlementsTable.id, id),
+        eq(employeeProvisionSettlementsTable.status, "posted"))).returning();
+      if (!updated) throw Object.assign(new Error("تغيرت حالة التسوية؛ أعد تحميل البيانات"), { status: 409 });
+      return updated;
+    });
+    res.json(row);
+  } catch (e: any) { res.status(e?.status ?? 400).json({ error: e?.message ?? "تعذّر عكس التسوية" }); }
 });
 
 // GOSI (full breakdown)

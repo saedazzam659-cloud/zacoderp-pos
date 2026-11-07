@@ -3862,6 +3862,16 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/EmployeeProvisionBalanceList" }
   /employees/payroll/provision-settlements:
+    get:
+      operationId: listEmployeeProvisionSettlements
+      tags: [employees]
+      summary: List recent employee provision settlements
+      responses:
+        "200":
+          description: Recent posted and reversed settlements
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmployeeProvisionSettlementList" }
     post:
       operationId: createEmployeeProvisionSettlement
       tags: [employees]
@@ -3879,6 +3889,24 @@ paths:
               schema: { $ref: "#/components/schemas/EmployeeProvisionSettlement" }
         "409":
           description: Available employee provision or source expense is insufficient
+  /employees/payroll/provision-settlements/{id}/reverse:
+    post:
+      operationId: reverseEmployeeProvisionSettlement
+      tags: [employees]
+      summary: Reverse a provision settlement with a compensating journal entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Settlement reversed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmployeeProvisionSettlement" }
+        "409":
+          description: Settlement cannot be reversed
   /admin/agent-instances/{id}/db-schema-diagnostics:
     get:
       operationId: getAgentDatabaseSchemaDiagnostics
@@ -6698,6 +6726,9 @@ components:
     EmployeeProvisionBalanceList:
       type: array
       items: { $ref: "#/components/schemas/EmployeeProvisionBalance" }
+    EmployeeProvisionSettlementList:
+      type: array
+      items: { $ref: "#/components/schemas/EmployeeProvisionSettlement" }
     EmployeeProvisionSettlementInput:
       type: object
       required: [employeeId, provisionType, provisionPeriod, sourceType, sourceRecordId, settlementDate, amount]

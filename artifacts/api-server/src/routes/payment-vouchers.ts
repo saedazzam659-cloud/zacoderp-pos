@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { manufacturingCashExpenseFields, assertManufacturingCashExpenseReversible } from "../lib/manufacturingCashExpense.js";
-import { manufacturingCashExpenseFields, assertManufacturingCashExpenseReversible } from "../lib/manufacturingCashExpense.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { db } from "@workspace/db";
 import {
@@ -14,6 +13,7 @@ import {
   accountingAdjustmentsTable, accountingAdjustmentRunsTable,
   costCentersTable,
   employeesTable, employeeLoansTable, employeeCustodiesTable,
+  employeeProvisionSettlementsTable,
   fixedAssetsTable, faDepreciationRunsTable,
 } from "@workspace/db";
 import { resolveHrAccounts } from "../lib/hr-journals.js";
@@ -1928,6 +1928,17 @@ router.post("/:id/unpost", requireUnpostRight("payment"), async (req, res) => {
     .where(and(eq(paymentVouchersTable.id, id), eq(paymentVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (existing.status !== "posted") { res.status(400).json({ error: "السند ليس مرحّلاً" }); return; }
+  const provisionClaims = await db.select({ id: employeeProvisionSettlementsTable.id })
+    .from(employeeProvisionSettlementsTable).where(and(
+      eq(employeeProvisionSettlementsTable.companyId, cid),
+      eq(employeeProvisionSettlementsTable.provisionType, "travel_ticket"),
+      eq(employeeProvisionSettlementsTable.sourceType, "payment_voucher"),
+      eq(employeeProvisionSettlementsTable.sourceRecordId, id),
+      eq(employeeProvisionSettlementsTable.status, "posted"),
+    )).limit(1);
+  if (provisionClaims.length) {
+    res.status(409).json({ error: "اعكس تسوية مخصص التذكرة قبل فك ترحيل سند المصروف" }); return;
+  }
   if (existing.manufacturingEligible) {
     try {
       const row = await db.transaction(async (tx) => {

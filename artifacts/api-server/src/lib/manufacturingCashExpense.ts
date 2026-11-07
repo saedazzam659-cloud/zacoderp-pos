@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { accountsTable, productionCostAllocationsTable, productionOrdersTable, productionOverheadClosuresTable } from "@workspace/db";
+import { accountsTable, employeeProvisionSettlementsTable, productionCostAllocationsTable, productionOrdersTable, productionOverheadClosuresTable } from "@workspace/db";
 
 /** Only standalone direct expenses may be additional manufacturing sources. */
 export async function manufacturingCashExpenseFields(q: any, companyId: number, body: any) {
@@ -33,6 +33,14 @@ export async function manufacturingCashExpenseFields(q: any, companyId: number, 
 export async function assertManufacturingCashExpenseReversible(tx: any, companyId: number, voucherId: number) {
   await tx.execute(sql`select pg_advisory_xact_lock(${companyId}, hashtext('production_overhead_closure_mutation'))`);
   await tx.execute(sql`select pg_advisory_xact_lock(${companyId}, hashtext(${`cash_expense:${voucherId}`}))`);
+  const [provisionClaim] = await tx.select({ id: employeeProvisionSettlementsTable.id })
+    .from(employeeProvisionSettlementsTable).where(and(
+      eq(employeeProvisionSettlementsTable.companyId, companyId),
+      eq(employeeProvisionSettlementsTable.provisionType, "travel_ticket"),
+      eq(employeeProvisionSettlementsTable.sourceType, "payment_voucher"),
+      eq(employeeProvisionSettlementsTable.sourceRecordId, voucherId),
+      eq(employeeProvisionSettlementsTable.status, "posted"),
+    )).limit(1);
   const [used] = await tx.select({ id: productionCostAllocationsTable.id })
     .from(productionCostAllocationsTable).innerJoin(productionOrdersTable, and(
       eq(productionOrdersTable.id, productionCostAllocationsTable.orderId),
@@ -47,6 +55,6 @@ export async function assertManufacturingCashExpenseReversible(tx: any, companyI
     .from(productionOverheadClosuresTable).where(eq(productionOverheadClosuresTable.companyId, companyId));
   const frozen = closures.some((row: any) => Array.isArray(row.snapshot) &&
     row.snapshot.some((source: any) => source.sourceType === "cash_expense" && Number(source.sourceRecordId) === voucherId));
-  if (used || frozen)
+  if (used || frozen || provisionClaim)
     throw Object.assign(new Error("لا يمكن إلغاء سند المصروف أو فك ترحيله بعد تخصيصه للتصنيع أو إغلاق فترته؛ اعكس استخدامه أولاً"), { status: 409 });
 }

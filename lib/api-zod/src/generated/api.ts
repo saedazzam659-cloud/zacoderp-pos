@@ -6125,6 +6125,25 @@ export const GetEmployeeProvisionBalancesResponse = zod.array(GetEmployeeProvisi
 
 
 /**
+ * @summary List recent employee provision settlements
+ */
+export const ListEmployeeProvisionSettlementsResponseItem = zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "employeeId": zod.number(),
+  "provisionType": zod.enum(['annual_leave', 'travel_ticket']),
+  "provisionPeriod": zod.string(),
+  "sourceType": zod.enum(['employee_leave', 'payment_voucher']),
+  "sourceRecordId": zod.number(),
+  "settlementDate": zod.coerce.date(),
+  "amount": zod.string(),
+  "journalEntryId": zod.number().nullable(),
+  "status": zod.enum(['draft', 'posted', 'reversed'])
+})
+export const ListEmployeeProvisionSettlementsResponse = zod.array(ListEmployeeProvisionSettlementsResponseItem)
+
+
+/**
  * @summary Settle an employee provision against approved leave or a posted expense voucher
  */
 
@@ -6148,6 +6167,31 @@ export const CreateEmployeeProvisionSettlementBody = zod.object({
 })
 
 export const CreateEmployeeProvisionSettlementResponse = zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "employeeId": zod.number(),
+  "provisionType": zod.enum(['annual_leave', 'travel_ticket']),
+  "provisionPeriod": zod.string(),
+  "sourceType": zod.enum(['employee_leave', 'payment_voucher']),
+  "sourceRecordId": zod.number(),
+  "settlementDate": zod.coerce.date(),
+  "amount": zod.string(),
+  "journalEntryId": zod.number().nullable(),
+  "status": zod.enum(['draft', 'posted', 'reversed'])
+})
+
+
+/**
+ * @summary Reverse a provision settlement with a compensating journal entry
+ */
+
+
+
+export const ReverseEmployeeProvisionSettlementParams = zod.object({
+  "id": zod.coerce.number().min(1)
+})
+
+export const ReverseEmployeeProvisionSettlementResponse = zod.object({
   "id": zod.number(),
   "companyId": zod.number(),
   "employeeId": zod.number(),

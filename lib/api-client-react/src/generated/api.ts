@@ -61,6 +61,7 @@ import type {
   EmployeeProvisionBalanceList,
   EmployeeProvisionSettlement,
   EmployeeProvisionSettlementInput,
+  EmployeeProvisionSettlementList,
   ErrorResponse,
   GetAdditionalAccountingReportParams,
   GetAdditionalPurchaseReportParams,
@@ -13417,6 +13418,83 @@ export function useGetEmployeeProvisionBalances<TData = Awaited<ReturnType<typeo
 
 
 
+export const getListEmployeeProvisionSettlementsUrl = () => {
+
+
+
+
+  return `/api/employees/payroll/provision-settlements`
+}
+
+/**
+ * @summary List recent employee provision settlements
+ */
+export const listEmployeeProvisionSettlements = async ( options?: RequestInit): Promise<EmployeeProvisionSettlementList> => {
+
+  return customFetch<EmployeeProvisionSettlementList>(getListEmployeeProvisionSettlementsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListEmployeeProvisionSettlementsQueryKey = () => {
+    return [
+    `/api/employees/payroll/provision-settlements`
+    ] as const;
+    }
+
+
+export const getListEmployeeProvisionSettlementsQueryOptions = <TData = Awaited<ReturnType<typeof listEmployeeProvisionSettlements>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEmployeeProvisionSettlements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListEmployeeProvisionSettlementsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEmployeeProvisionSettlements>>> = ({ signal }) => listEmployeeProvisionSettlements({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEmployeeProvisionSettlements>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListEmployeeProvisionSettlementsQueryResult = NonNullable<Awaited<ReturnType<typeof listEmployeeProvisionSettlements>>>
+export type ListEmployeeProvisionSettlementsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List recent employee provision settlements
+ */
+
+export function useListEmployeeProvisionSettlements<TData = Awaited<ReturnType<typeof listEmployeeProvisionSettlements>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEmployeeProvisionSettlements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListEmployeeProvisionSettlementsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getCreateEmployeeProvisionSettlementUrl = () => {
 
 
@@ -13486,6 +13564,77 @@ export const useCreateEmployeeProvisionSettlement = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getCreateEmployeeProvisionSettlementMutationOptions(options));
+    }
+
+export const getReverseEmployeeProvisionSettlementUrl = (id: number,) => {
+
+
+
+
+  return `/api/employees/payroll/provision-settlements/${id}/reverse`
+}
+
+/**
+ * @summary Reverse a provision settlement with a compensating journal entry
+ */
+export const reverseEmployeeProvisionSettlement = async (id: number, options?: RequestInit): Promise<EmployeeProvisionSettlement> => {
+
+  return customFetch<EmployeeProvisionSettlement>(getReverseEmployeeProvisionSettlementUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getReverseEmployeeProvisionSettlementMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reverseEmployeeProvisionSettlement>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reverseEmployeeProvisionSettlement>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['reverseEmployeeProvisionSettlement'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reverseEmployeeProvisionSettlement>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  reverseEmployeeProvisionSettlement(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReverseEmployeeProvisionSettlementMutationResult = NonNullable<Awaited<ReturnType<typeof reverseEmployeeProvisionSettlement>>>
+
+    export type ReverseEmployeeProvisionSettlementMutationError = ErrorType<void>
+
+    /**
+ * @summary Reverse a provision settlement with a compensating journal entry
+ */
+export const useReverseEmployeeProvisionSettlement = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reverseEmployeeProvisionSettlement>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reverseEmployeeProvisionSettlement>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getReverseEmployeeProvisionSettlementMutationOptions(options));
     }
 
 export const getGetAgentDatabaseSchemaDiagnosticsUrl = (id: number,) => {
