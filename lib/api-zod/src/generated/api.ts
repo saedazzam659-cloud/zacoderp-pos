@@ -5318,7 +5318,11 @@ export const GetCashExpensesResponseItem = zod.object({
   "receiptAvailable": zod.boolean(),
   "createdAt": zod.coerce.date(),
   "isMine": zod.boolean(),
-  "cancelledAt": zod.coerce.date().nullable()
+  "cancelledAt": zod.coerce.date().nullable(),
+  "manufacturingEligible": zod.boolean(),
+  "manufacturingAllocationMethod": zod.enum(['labor_hours', 'production_quantity']),
+  "approvedManufacturingHours": zod.number().nullable(),
+  "approvedProductionQuantity": zod.number().nullable()
 })
 export const GetCashExpensesResponse = zod.array(GetCashExpensesResponseItem)
 
@@ -5335,6 +5339,10 @@ export const createCashExpenseBodyDescriptionMax = 500;
 
 export const createCashExpenseBodyReceiptPathMax = 300;
 
+export const createCashExpenseBodyApprovedManufacturingHoursMin = 0;
+
+export const createCashExpenseBodyApprovedProductionQuantityMin = 0;
+
 
 
 export const CreateCashExpenseBody = zod.object({
@@ -5343,7 +5351,11 @@ export const CreateCashExpenseBody = zod.object({
   "expenseAccountId": zod.number().min(1),
   "amount": zod.number().gt(createCashExpenseBodyAmountExclusiveMin).max(createCashExpenseBodyAmountMax),
   "description": zod.string().min(1).max(createCashExpenseBodyDescriptionMax),
-  "receiptPath": zod.string().max(createCashExpenseBodyReceiptPathMax).nullish()
+  "receiptPath": zod.string().max(createCashExpenseBodyReceiptPathMax).nullish(),
+  "manufacturingEligible": zod.boolean().optional(),
+  "manufacturingAllocationMethod": zod.enum(['labor_hours', 'production_quantity']).optional(),
+  "approvedManufacturingHours": zod.number().min(createCashExpenseBodyApprovedManufacturingHoursMin).nullish(),
+  "approvedProductionQuantity": zod.number().min(createCashExpenseBodyApprovedProductionQuantityMin).nullish()
 })
 
 export const CreateCashExpenseResponse = zod.object({
@@ -5368,7 +5380,11 @@ export const CreateCashExpenseResponse = zod.object({
   "receiptAvailable": zod.boolean(),
   "createdAt": zod.coerce.date(),
   "isMine": zod.boolean(),
-  "cancelledAt": zod.coerce.date().nullable()
+  "cancelledAt": zod.coerce.date().nullable(),
+  "manufacturingEligible": zod.boolean(),
+  "manufacturingAllocationMethod": zod.enum(['labor_hours', 'production_quantity']),
+  "approvedManufacturingHours": zod.number().nullable(),
+  "approvedProductionQuantity": zod.number().nullable()
 })
 
 
@@ -5465,7 +5481,11 @@ export const GetCashExpenseResponse = zod.object({
   "receiptAvailable": zod.boolean(),
   "createdAt": zod.coerce.date(),
   "isMine": zod.boolean(),
-  "cancelledAt": zod.coerce.date().nullable()
+  "cancelledAt": zod.coerce.date().nullable(),
+  "manufacturingEligible": zod.boolean(),
+  "manufacturingAllocationMethod": zod.enum(['labor_hours', 'production_quantity']),
+  "approvedManufacturingHours": zod.number().nullable(),
+  "approvedProductionQuantity": zod.number().nullable()
 })
 
 
@@ -5488,6 +5508,10 @@ export const updateCashExpenseBodyDescriptionMax = 500;
 
 export const updateCashExpenseBodyReceiptPathMax = 300;
 
+export const updateCashExpenseBodyApprovedManufacturingHoursMin = 0;
+
+export const updateCashExpenseBodyApprovedProductionQuantityMin = 0;
+
 
 
 export const UpdateCashExpenseBody = zod.object({
@@ -5496,7 +5520,11 @@ export const UpdateCashExpenseBody = zod.object({
   "expenseAccountId": zod.number().min(1).optional(),
   "amount": zod.number().gt(updateCashExpenseBodyAmountExclusiveMin).max(updateCashExpenseBodyAmountMax).optional(),
   "description": zod.string().min(1).max(updateCashExpenseBodyDescriptionMax).optional(),
-  "receiptPath": zod.string().max(updateCashExpenseBodyReceiptPathMax).nullish()
+  "receiptPath": zod.string().max(updateCashExpenseBodyReceiptPathMax).nullish(),
+  "manufacturingEligible": zod.boolean().optional(),
+  "manufacturingAllocationMethod": zod.enum(['labor_hours', 'production_quantity']).optional(),
+  "approvedManufacturingHours": zod.number().min(updateCashExpenseBodyApprovedManufacturingHoursMin).nullish(),
+  "approvedProductionQuantity": zod.number().min(updateCashExpenseBodyApprovedProductionQuantityMin).nullish()
 })
 
 export const UpdateCashExpenseResponse = zod.object({
@@ -5521,7 +5549,11 @@ export const UpdateCashExpenseResponse = zod.object({
   "receiptAvailable": zod.boolean(),
   "createdAt": zod.coerce.date(),
   "isMine": zod.boolean(),
-  "cancelledAt": zod.coerce.date().nullable()
+  "cancelledAt": zod.coerce.date().nullable(),
+  "manufacturingEligible": zod.boolean(),
+  "manufacturingAllocationMethod": zod.enum(['labor_hours', 'production_quantity']),
+  "approvedManufacturingHours": zod.number().nullable(),
+  "approvedProductionQuantity": zod.number().nullable()
 })
 
 
@@ -5557,7 +5589,11 @@ export const PostCashExpenseResponse = zod.object({
   "receiptAvailable": zod.boolean(),
   "createdAt": zod.coerce.date(),
   "isMine": zod.boolean(),
-  "cancelledAt": zod.coerce.date().nullable()
+  "cancelledAt": zod.coerce.date().nullable(),
+  "manufacturingEligible": zod.boolean(),
+  "manufacturingAllocationMethod": zod.enum(['labor_hours', 'production_quantity']),
+  "approvedManufacturingHours": zod.number().nullable(),
+  "approvedProductionQuantity": zod.number().nullable()
 })
 
 
@@ -5593,7 +5629,11 @@ export const CancelCashExpenseResponse = zod.object({
   "receiptAvailable": zod.boolean(),
   "createdAt": zod.coerce.date(),
   "isMine": zod.boolean(),
-  "cancelledAt": zod.coerce.date().nullable()
+  "cancelledAt": zod.coerce.date().nullable(),
+  "manufacturingEligible": zod.boolean(),
+  "manufacturingAllocationMethod": zod.enum(['labor_hours', 'production_quantity']),
+  "approvedManufacturingHours": zod.number().nullable(),
+  "approvedProductionQuantity": zod.number().nullable()
 })
 
 

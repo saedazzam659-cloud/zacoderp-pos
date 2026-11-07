@@ -6623,7 +6623,7 @@ components:
         objectPath: { type: string }
     CashExpense:
       type: object
-      required: [id, companyId, code, date, branchId, cashBoxId, cashBoxName, currencyCode, expenseAccountId, expenseAccountName, amount, description, status, journalEntryId, createdByUserId, employeeName, salesRepId, salesRepName, receiptAvailable, createdAt, isMine, cancelledAt]
+      required: [id, companyId, code, date, branchId, cashBoxId, cashBoxName, currencyCode, expenseAccountId, expenseAccountName, amount, description, status, journalEntryId, createdByUserId, employeeName, salesRepId, salesRepName, receiptAvailable, createdAt, isMine, cancelledAt, manufacturingEligible, manufacturingAllocationMethod, approvedManufacturingHours, approvedProductionQuantity]
       properties:
         id: { type: integer }
         companyId: { type: integer }
@@ -6647,6 +6647,10 @@ components:
         createdAt: { type: string, format: date-time }
         isMine: { type: boolean }
         cancelledAt: { type: ["string", "null"], format: date-time }
+        manufacturingEligible: { type: boolean }
+        manufacturingAllocationMethod: { type: string, enum: [labor_hours, production_quantity] }
+        approvedManufacturingHours: { type: ["number", "null"], format: double }
+        approvedProductionQuantity: { type: ["number", "null"], format: double }
     CashExpenseList:
       type: array
       items: { $ref: "#/components/schemas/CashExpense" }
@@ -6660,6 +6664,10 @@ components:
         amount: { type: number, exclusiveMinimum: 0, maximum: 999999999999.99 }
         description: { type: string, minLength: 1, maxLength: 500 }
         receiptPath: { type: ["string", "null"], maxLength: 300 }
+        manufacturingEligible: { type: boolean }
+        manufacturingAllocationMethod: { type: string, enum: [labor_hours, production_quantity] }
+        approvedManufacturingHours: { type: ["number", "null"], minimum: 0 }
+        approvedProductionQuantity: { type: ["number", "null"], minimum: 0 }
     CashExpenseUpdate:
       type: object
       minProperties: 1
@@ -6670,6 +6678,10 @@ components:
         amount: { type: number, exclusiveMinimum: 0, maximum: 999999999999.99 }
         description: { type: string, minLength: 1, maxLength: 500 }
         receiptPath: { type: ["string", "null"], maxLength: 300 }
+        manufacturingEligible: { type: boolean }
+        manufacturingAllocationMethod: { type: string, enum: [labor_hours, production_quantity] }
+        approvedManufacturingHours: { type: ["number", "null"], minimum: 0 }
+        approvedProductionQuantity: { type: ["number", "null"], minimum: 0 }
     CashExpenseCashBoxOption:
       type: object
       required: [id, code, name, branchId, currencyId, currencyCode]

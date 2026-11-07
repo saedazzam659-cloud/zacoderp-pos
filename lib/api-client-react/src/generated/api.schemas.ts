@@ -2900,6 +2900,14 @@ export const CashExpenseStatus = {
   cancelled: 'cancelled',
 } as const;
 
+export type CashExpenseManufacturingAllocationMethod = typeof CashExpenseManufacturingAllocationMethod[keyof typeof CashExpenseManufacturingAllocationMethod];
+
+
+export const CashExpenseManufacturingAllocationMethod = {
+  labor_hours: 'labor_hours',
+  production_quantity: 'production_quantity',
+} as const;
+
 export interface CashExpense {
   id: number;
   companyId: number;
@@ -2929,9 +2937,23 @@ export interface CashExpense {
   isMine: boolean;
   /** @nullable */
   cancelledAt: string | null;
+  manufacturingEligible: boolean;
+  manufacturingAllocationMethod: CashExpenseManufacturingAllocationMethod;
+  /** @nullable */
+  approvedManufacturingHours: number | null;
+  /** @nullable */
+  approvedProductionQuantity: number | null;
 }
 
 export type CashExpenseList = CashExpense[];
+
+export type CashExpenseInputManufacturingAllocationMethod = typeof CashExpenseInputManufacturingAllocationMethod[keyof typeof CashExpenseInputManufacturingAllocationMethod];
+
+
+export const CashExpenseInputManufacturingAllocationMethod = {
+  labor_hours: 'labor_hours',
+  production_quantity: 'production_quantity',
+} as const;
 
 export interface CashExpenseInput {
   date: string;
@@ -2954,7 +2976,27 @@ export interface CashExpenseInput {
      * @nullable
      */
   receiptPath?: string | null;
+  manufacturingEligible?: boolean;
+  manufacturingAllocationMethod?: CashExpenseInputManufacturingAllocationMethod;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  approvedManufacturingHours?: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  approvedProductionQuantity?: number | null;
 }
+
+export type CashExpenseUpdateManufacturingAllocationMethod = typeof CashExpenseUpdateManufacturingAllocationMethod[keyof typeof CashExpenseUpdateManufacturingAllocationMethod];
+
+
+export const CashExpenseUpdateManufacturingAllocationMethod = {
+  labor_hours: 'labor_hours',
+  production_quantity: 'production_quantity',
+} as const;
 
 export interface CashExpenseUpdate {
   date?: string;
@@ -2977,6 +3019,18 @@ export interface CashExpenseUpdate {
      * @nullable
      */
   receiptPath?: string | null;
+  manufacturingEligible?: boolean;
+  manufacturingAllocationMethod?: CashExpenseUpdateManufacturingAllocationMethod;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  approvedManufacturingHours?: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  approvedProductionQuantity?: number | null;
 }
 
 export interface CashExpenseCashBoxOption {

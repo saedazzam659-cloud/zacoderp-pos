@@ -137,6 +137,10 @@ export const paymentVouchersTable = pgTable("payment_vouchers", {
   cashExpenseReceiptPath: text("cash_expense_receipt_path"),
   cashExpenseCancelledByUserId: integer("cash_expense_cancelled_by_user_id"),
   cashExpenseCancelledAt: timestamp("cash_expense_cancelled_at"),
+  manufacturingEligible: boolean("manufacturing_eligible").notNull().default(false),
+  manufacturingAllocationMethod: text("manufacturing_allocation_method").notNull().default("labor_hours"),
+  approvedManufacturingHours: numeric("approved_manufacturing_hours", { precision: 12, scale: 3 }),
+  approvedProductionQuantity: numeric("approved_production_quantity", { precision: 15, scale: 3 }),
   // Optional cost-center code propagated to JE lines on /post.
   costCenter:    text("cost_center"),
   status:        cashVoucherStatusEnum("status").notNull().default("draft"),

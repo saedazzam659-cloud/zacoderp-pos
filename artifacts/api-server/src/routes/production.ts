@@ -77,6 +77,7 @@ import {
   fixedAssetsTable,
   accountingAdjustmentRunsTable,
   accountingAdjustmentsTable,
+  paymentVouchersTable,
   salesInvoicesTable,
   salesInvoiceLinesTable,
   salesReturnsTable,
@@ -1411,7 +1412,7 @@ function sanitizeWizardConfiguration(value: unknown): Record<string, unknown> {
 
 type CostSource = {
   sourceType: "payroll" | "fixed_asset_depreciation" | "prepaid_amortization" |
-    "purchase_invoice" | "purchase_return" | "internal_transport";
+    "purchase_invoice" | "purchase_return" | "internal_transport" | "cash_expense";
   sourceRecordId: number;
   label: string;
   periodStart: string;
@@ -1535,6 +1536,37 @@ async function loadPostedCostSources(
       ),
       journalBranch));
 
+  const cashExpenses = await q.select({
+    id: paymentVouchersTable.id,
+    journalId: paymentVouchersTable.journalEntryId,
+    amount: paymentVouchersTable.amount,
+    description: paymentVouchersTable.description,
+    branchId: paymentVouchersTable.branchId,
+    method: paymentVouchersTable.manufacturingAllocationMethod,
+    approvedQty: paymentVouchersTable.approvedProductionQuantity,
+    approvedHours: paymentVouchersTable.approvedManufacturingHours,
+  }).from(paymentVouchersTable)
+    .innerJoin(journalEntriesTable, and(
+      eq(paymentVouchersTable.journalEntryId, journalEntriesTable.id),
+      eq(journalEntriesTable.companyId, cid),
+      eq(journalEntriesTable.status, "posted"),
+    ))
+    .where(and(
+      eq(paymentVouchersTable.companyId, cid),
+      eq(paymentVouchersTable.sourceType, "cash_expense"),
+      eq(paymentVouchersTable.status, "posted"),
+      eq(paymentVouchersTable.manufacturingEligible, true),
+      gte(paymentVouchersTable.date, start),
+      lte(paymentVouchersTable.date, end),
+      or(
+        and(eq(paymentVouchersTable.manufacturingAllocationMethod, "labor_hours"),
+          sql`${paymentVouchersTable.approvedManufacturingHours} > 0`),
+        and(eq(paymentVouchersTable.manufacturingAllocationMethod, "production_quantity"),
+          sql`${paymentVouchersTable.approvedProductionQuantity} > 0`),
+      ),
+      journalBranch,
+    ));
+
   // Purchase owns the industrial tag and determines whether a document is a
   // posted actual source. Manufacturing only adapts that immutable source fact
   // into the existing allocation/capacity/closure contract. Payments and
@@ -1605,7 +1637,7 @@ async function loadPostedCostSources(
     sourceAccountId: Number(source.sourceAccountId),
   }));
 
-  const journalIds = [...payroll, ...assets, ...prepaid, ...industrialWithJournal]
+  const journalIds = [...payroll, ...assets, ...prepaid, ...cashExpenses, ...industrialWithJournal]
     .map((r: any) => Number(r.journalId))
     .filter((id) => Number.isInteger(id) && id > 0);
   const debitLines = journalIds.length ? await q.select({
@@ -1663,6 +1695,22 @@ async function loadPostedCostSources(
       sourceAmount: num(r.amount), meta: sourceMeta(r, { adjustmentId: r.adjustmentId, manufacturingEligible: true,
         allocationMethod: r.method, approvedProductionQuantity: r.approvedQty,
         approvedManufacturingHours: r.approvedHours }) })),
+    ...cashExpenses.map((r: any) => ({
+      sourceType: "cash_expense" as const,
+      sourceRecordId: r.id,
+      label: `مصروف نقدي صناعي — ${r.description || r.id}`,
+      periodStart: start,
+      periodEnd: end,
+      basis: r.method,
+      sourceAmount: debitAmountByJournal.get(Number(r.journalId)) ?? 0,
+      meta: sourceMeta(r, {
+        manufacturingEligible: true,
+        allocationMethod: r.method,
+        approvedManufacturingHours: r.approvedHours,
+        approvedProductionQuantity: r.approvedQty,
+        branchId: r.branchId,
+      }),
+    })),
     ...industrialWithJournal.map((r: any) => ({
       sourceType: r.sourceType as "purchase_invoice" | "purchase_return",
       sourceRecordId: r.sourceLineId,

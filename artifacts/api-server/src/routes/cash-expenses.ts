@@ -179,6 +179,10 @@ function toCashExpense(row: any, userId: number) {
     createdAt: responseDate(row.createdAt),
     isMine: row.cashExpenseCreatedByUserId === userId,
     cancelledAt: row.cashExpenseCancelledAt ? responseDate(row.cashExpenseCancelledAt) : null,
+    manufacturingEligible: row.manufacturingEligible === true,
+    manufacturingAllocationMethod: row.manufacturingAllocationMethod ?? "labor_hours",
+    approvedManufacturingHours: row.approvedManufacturingHours == null ? null : Number(row.approvedManufacturingHours),
+    approvedProductionQuantity: row.approvedProductionQuantity == null ? null : Number(row.approvedProductionQuantity),
   };
 }
 
@@ -197,6 +201,10 @@ const expenseSelect = {
   cashExpenseSalesRepId: paymentVouchersTable.cashExpenseSalesRepId,
   cashExpenseReceiptPath: paymentVouchersTable.cashExpenseReceiptPath,
   cashExpenseCancelledAt: paymentVouchersTable.cashExpenseCancelledAt,
+  manufacturingEligible: paymentVouchersTable.manufacturingEligible,
+  manufacturingAllocationMethod: paymentVouchersTable.manufacturingAllocationMethod,
+  approvedManufacturingHours: paymentVouchersTable.approvedManufacturingHours,
+  approvedProductionQuantity: paymentVouchersTable.approvedProductionQuantity,
   createdAt: paymentVouchersTable.createdAt,
   cashBoxName: cashBoxesTable.nameAr,
   currencyCode: currenciesTable.code,
@@ -386,6 +394,18 @@ router.post("/", async (req: any, res) => {
   const parsed = CreateCashExpenseBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const input = parsed.data;
+  const manufacturingEligible = input.manufacturingEligible === true;
+  const manufacturingAllocationMethod = input.manufacturingAllocationMethod ?? "labor_hours";
+  const approvedManufacturingHours = input.approvedManufacturingHours ?? null;
+  const approvedProductionQuantity = input.approvedProductionQuantity ?? null;
+  if (manufacturingEligible && manufacturingAllocationMethod === "labor_hours" &&
+      !(Number(approvedManufacturingHours) > 0)) {
+    res.status(400).json({ error: "أدخل ساعات التصنيع المعتمدة لمصروف الإيجار" }); return;
+  }
+  if (manufacturingEligible && manufacturingAllocationMethod === "production_quantity" &&
+      !(Number(approvedProductionQuantity) > 0)) {
+    res.status(400).json({ error: "أدخل كمية الإنتاج المعتمدة لمصروف الإيجار" }); return;
+  }
   const expenseDate = toDateString(input.date);
   if (!expenseDate) { res.status(400).json({ error: "التاريخ غير صالح" }); return; }
   if (!validAmount(input.amount)) { res.status(400).json({ error: "المبلغ يجب أن يكون موجباً وبحد أقصى منزلتين عشريتين" }); return; }
@@ -447,6 +467,12 @@ router.post("/", async (req: any, res) => {
         cashExpenseCreatedByUserId: scope.userId,
         cashExpenseSalesRepId: freshScope.salesRepId,
         cashExpenseReceiptPath: receiptPath,
+        manufacturingEligible,
+        manufacturingAllocationMethod,
+        approvedManufacturingHours: manufacturingEligible && manufacturingAllocationMethod === "labor_hours"
+          ? String(approvedManufacturingHours) : null,
+        approvedProductionQuantity: manufacturingEligible && manufacturingAllocationMethod === "production_quantity"
+          ? String(approvedProductionQuantity) : null,
       }).returning({ id: paymentVouchersTable.id });
       if (!voucher) throw new Error("تعذّر إنشاء المصروف");
       await tx.insert(paymentVoucherLinesTable).values({
@@ -634,6 +660,10 @@ router.patch("/:id", async (req: any, res) => {
   const parsed = UpdateCashExpenseBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const input = parsed.data;
+  const requestedManufacturingEligible = input.manufacturingEligible;
+  const requestedManufacturingMethod = input.manufacturingAllocationMethod;
+  const requestedManufacturingHours = input.approvedManufacturingHours;
+  const requestedManufacturingQuantity = input.approvedProductionQuantity;
   const updateDate = input.date === undefined ? undefined : toDateString(input.date);
   if (input.date !== undefined && !updateDate) { res.status(400).json({ error: "التاريخ غير صالح" }); return; }
   if (input.amount !== undefined && !validAmount(input.amount)) { res.status(400).json({ error: "المبلغ يجب أن يكون موجباً وبحد أقصى منزلتين عشريتين" }); return; }
@@ -669,6 +699,20 @@ router.patch("/:id", async (req: any, res) => {
         )).for("update", { of: cashBoxesTable });
       if (!box || !cashExpenseBoxAllowed(box, freshScope)) throw Object.assign(new Error("الخزنة غير متاحة لفروعك أو للمستخدم الحالي"), { status: 403 });
       const targetAccountId = input.expenseAccountId ?? voucher.accountId;
+      const manufacturingEligible = requestedManufacturingEligible ?? voucher.manufacturingEligible;
+      const manufacturingAllocationMethod = requestedManufacturingMethod ?? voucher.manufacturingAllocationMethod ?? "labor_hours";
+      const approvedManufacturingHours = requestedManufacturingHours === undefined
+        ? voucher.approvedManufacturingHours : requestedManufacturingHours;
+      const approvedProductionQuantity = requestedManufacturingQuantity === undefined
+        ? voucher.approvedProductionQuantity : requestedManufacturingQuantity;
+      if (manufacturingEligible && manufacturingAllocationMethod === "labor_hours" &&
+          !(Number(approvedManufacturingHours) > 0)) {
+        throw Object.assign(new Error("أدخل ساعات التصنيع المعتمدة لمصروف الإيجار"), { status: 400 });
+      }
+      if (manufacturingEligible && manufacturingAllocationMethod === "production_quantity" &&
+          !(Number(approvedProductionQuantity) > 0)) {
+        throw Object.assign(new Error("أدخل كمية الإنتاج المعتمدة لمصروف الإيجار"), { status: 400 });
+      }
       const [account] = await tx.select({ id: accountsTable.id }).from(accountsTable).where(and(
         eq(accountsTable.id, targetAccountId!),
         eq(accountsTable.companyId, scope.companyId),
@@ -693,6 +737,12 @@ router.patch("/:id", async (req: any, res) => {
         amount: (input.amount ?? Number(voucher.amount)).toFixed(2),
         description: input.description?.trim() ?? voucher.description,
         cashExpenseReceiptPath: receiptPath,
+        manufacturingEligible,
+        manufacturingAllocationMethod,
+        approvedManufacturingHours: manufacturingEligible && manufacturingAllocationMethod === "labor_hours"
+          ? String(approvedManufacturingHours) : null,
+        approvedProductionQuantity: manufacturingEligible && manufacturingAllocationMethod === "production_quantity"
+          ? String(approvedProductionQuantity) : null,
       }).where(and(
         eq(paymentVouchersTable.id, id),
         eq(paymentVouchersTable.companyId, scope.companyId),
