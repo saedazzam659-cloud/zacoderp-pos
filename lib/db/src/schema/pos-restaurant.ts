@@ -94,6 +94,29 @@ export const posRestaurantKitchenStationsTable = pgTable("pos_restaurant_kitchen
   byCompanyOrder: index("pos_restaurant_kitchen_stations_company_order_idx").on(t.companyId, t.sortOrder, t.id),
 }));
 
+// Company/branch-scoped credentials for official restaurant delivery APIs.
+// Secrets are encrypted by the API server before being persisted.
+export const posRestaurantDeliveryIntegrationsTable = pgTable("pos_restaurant_delivery_integrations", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId: integer("branch_id").notNull().references(() => branchesTable.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull().default("hungerstation"),
+  environment: text("environment").notNull().default("sandbox"),
+  chainId: text("chain_id").notNull(),
+  vendorId: text("vendor_id").notNull(),
+  clientId: text("client_id").notNull(),
+  credentialsEnc: text("credentials_enc").notNull(),
+  webhookTokenHash: text("webhook_token_hash"),
+  isEnabled: boolean("is_enabled").notNull().default(false),
+  updatedByUserId: integer("updated_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  branchProviderUnique: uniqueIndex("pos_rest_delivery_company_branch_provider_uniq")
+    .on(t.companyId, t.branchId, t.provider),
+  byCompany: index("pos_rest_delivery_company_idx").on(t.companyId, t.provider),
+}));
+
 // kitchenStation stores a stable catalog key so each restaurant can define
 // its own stations while order-line snapshots keep their routing identity.
 export const posMenuItemsTable = pgTable("pos_menu_items", {

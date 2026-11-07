@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode, Award, CalendarClock, ChefHat } from "lucide-react";
+import { ChevronRight, Plus, Trash2, Loader2, Save, X, Pencil, Settings, Utensils, ListOrdered, Tags, Sparkles, MapPin, AlertCircle, Clock3, QrCode, Award, CalendarClock, ChefHat, Truck, ExternalLink } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import {
   api, getToken, setStoredUser,
   type AuthUser,
-  type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem, type RKitchenStation, type RLoyaltyProgram, type RLoyaltyRule, type RLoyaltyTier,
+  type Branch, type Item, type RTable, type RMenuCategory, type RMenuItem, type RKitchenStation, type RLoyaltyProgram, type RLoyaltyRule, type RLoyaltyTier, type RestaurantDeliveryIntegration,
 } from "@/lib/api";
 import ShiftManagementTab from "@/components/ShiftManagementTab";
 import RestaurantReservationsTab from "@/components/RestaurantReservationsTab";
@@ -20,6 +20,7 @@ const TABS = [
   { id: "items",   label: "أصناف القائمة",   icon: Utensils },
   { id: "stations", label: "محطات المطبخ", icon: ChefHat },
   { id: "reservations", label: "الحجوزات", icon: CalendarClock },
+  { id: "delivery", label: "منصات التوصيل", icon: Truck },
   { id: "shifts",  label: "الورديات", icon: Clock3 },
   { id: "loyalty", label: "الولاء", icon: Award },
 ] as const;
@@ -55,7 +56,10 @@ export default function RestaurantSettings() {
   const cid = user?.companyId ?? null;
   const canManageShifts = user?.role === "admin" || user?.role === "superadmin";
   const canManageLoyalty = canManageShifts || user?.role === "manager";
-  const visibleTabs = TABS.filter(item => item.id !== "shifts" || canManageShifts).filter(item => item.id !== "loyalty" || canManageLoyalty);
+  const canManageDelivery = canManageShifts;
+  const visibleTabs = TABS.filter(item => item.id !== "shifts" || canManageShifts)
+    .filter(item => item.id !== "loyalty" || canManageLoyalty)
+    .filter(item => item.id !== "delivery" || canManageDelivery);
 
   const branchesQ = useQuery({
     queryKey: ["branches", cid],
@@ -134,6 +138,7 @@ export default function RestaurantSettings() {
         {tab === "items"  && <ItemsTab companyId={cid} />}
         {tab === "stations" && <KitchenStationsTab />}
         {tab === "reservations" && <RestaurantReservationsTab branches={branchesQ.data ?? []} />}
+        {tab === "delivery" && canManageDelivery && <RestaurantDeliveryIntegrationsTab branches={branchesQ.data ?? []} branchesLoading={branchesQ.isLoading} />}
             {tab === "shifts" && canManageShifts && <ShiftManagementTab companyId={cid} />}
             {tab === "shifts" && !canManageShifts && <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-center text-sm text-amber-950">إعدادات الورديات متاحة لمسؤول الشركة فقط.</p>}
             {tab === "loyalty" && canManageLoyalty && <RestaurantLoyaltyTab companyId={cid} />}
@@ -1207,4 +1212,130 @@ function RestaurantLoyaltyTab({ companyId }: { companyId: number }) {
       {save.isSuccess && <p role="status" className="w-full text-sm font-bold text-primary">تم حفظ إعدادات برنامج الولاء.</p>}
     </div>
   </div>;
+}
+
+function RestaurantDeliveryIntegrationsTab({ branches, branchesLoading }: { branches: Branch[]; branchesLoading: boolean }) {
+  const qc = useQueryClient();
+  const [branchId, setBranchId] = useState("");
+  const [draft, setDraft] = useState({
+    environment: "sandbox" as "sandbox" | "production",
+    chainId: "", vendorId: "", clientId: "", clientSecret: "",
+  });
+  const [feedback, setFeedback] = useState("");
+  const integrationsQ = useQuery({
+    queryKey: ["r-delivery-integrations"],
+    queryFn: api.rDeliveryIntegrations,
+  });
+  useEffect(() => {
+    if (!branchId && branches.length) {
+      const preferred = Number(localStorage.getItem("pos_branch_id") || 0);
+      const branch = branches.find(item => item.id === preferred) ?? branches[0];
+      setBranchId(String(branch.id));
+    }
+  }, [branches, branchId]);
+  const current = integrationsQ.data?.find(item => item.branchId === Number(branchId));
+  useEffect(() => {
+    setDraft(current ? {
+      environment: current.environment, chainId: current.chainId,
+      vendorId: current.vendorId, clientId: current.clientId,
+      clientSecret: "",
+    } : { environment: "sandbox", chainId: "", vendorId: "", clientId: "", clientSecret: "" });
+    setFeedback("");
+  }, [branchId, current?.updatedAt]);
+
+  const save = useMutation({
+    mutationFn: () => api.rSaveDeliveryIntegration({
+      branchId: Number(branchId), ...draft,
+      clientSecret: draft.clientSecret || undefined,
+      isEnabled: false,
+    }),
+    onSuccess: async () => {
+      setDraft(value => ({ ...value, clientSecret: "" }));
+      setFeedback("تم حفظ إعدادات HungerStation مشفّرة.");
+      await qc.invalidateQueries({ queryKey: ["r-delivery-integrations"] });
+    },
+  });
+  const test = useMutation({
+    mutationFn: () => current ? api.rTestDeliveryIntegration(current.id) : Promise.reject(new Error("احفظ إعدادات الاتصال أولاً")),
+    onSuccess: result => setFeedback(`نجح الاتصال بـ HungerStation. صلاحية رمز الدخول: ${result.expiresInSeconds ?? "غير محددة"} ثانية.`),
+    onError: error => setFeedback(error instanceof Error ? error.message : "فشل اختبار الاتصال"),
+  });
+
+  if (integrationsQ.isLoading || branchesLoading) return <div role="status" className="rounded-2xl border bg-card p-8 text-center text-sm">جارٍ تحميل إعدادات الربط والفروع...</div>;
+  if (integrationsQ.isError) return <div role="alert" className="rounded-2xl border border-destructive/20 bg-card p-5 text-sm text-destructive">تعذّر تحميل إعدادات الربط. <button type="button" className="font-bold underline" onClick={() => integrationsQ.refetch()}>إعادة المحاولة</button></div>;
+  if (!branches.length) return <p role="alert" className="rounded-xl border bg-card p-5 text-sm">لا توجد فروع متاحة لربط منصات التوصيل.</p>;
+
+  return (
+    <div className="space-y-4" data-testid="restaurant-delivery-integrations">
+      <section className="rounded-2xl border border-primary/20 bg-card p-4 shadow-sm sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Truck className="h-5 w-5" /></div>
+            <div>
+              <h2 className="text-lg font-black">قنوات التوصيل والتكامل الخارجي</h2>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+                إعداد اتصال HungerStation الرسمي لكل فرع. تُحفظ بيانات الاعتماد مشفّرة على الخادم، ولا تُعرض مرة أخرى بعد الحفظ.
+              </p>
+            </div>
+          </div>
+          <span className={`rounded-full border px-3 py-1.5 text-xs font-bold ${current ? "border-primary/30 bg-primary/5 text-primary" : "border-amber-300 bg-amber-50 text-amber-900"}`} data-testid="status-hungerstation-connection">
+            {current ? (current.isEnabled ? "مفعّل" : "إعداد محفوظ") : "غير مهيأ"}
+          </span>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold text-primary">المرحلة الأولى</p>
+            <h3 className="mt-1 text-base font-black">HungerStation · Partner Picking</h3>
+            <p className="mt-1 text-sm text-muted-foreground">بيانات OAuth 2.0 الرسمية لسلسلة المطاعم والفرع.</p>
+          </div>
+          <a href="https://developer.hungerstation.com/api-specifications" target="_blank" rel="noreferrer"
+            data-testid="link-hungerstation-api-docs"
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-border px-3 text-sm font-bold hover:bg-muted">
+            وثائق API الرسمية <ExternalLink className="h-4 w-4" />
+          </a>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="space-y-1 text-xs font-bold text-muted-foreground">الفرع
+            <select value={branchId} onChange={event => setBranchId(event.target.value)} data-testid="select-delivery-integration-branch" className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground">
+              {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.nameAr}</option>)}
+            </select>
+          </label>
+          <label className="space-y-1 text-xs font-bold text-muted-foreground">بيئة الاتصال
+            <select value={draft.environment} onChange={event => setDraft({ ...draft, environment: event.target.value as "sandbox" | "production" })} data-testid="select-delivery-environment" className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground">
+              <option value="sandbox">Sandbox</option><option value="production">Production</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs font-bold text-muted-foreground">Chain ID
+            <Input value={draft.chainId} onChange={event => setDraft({ ...draft, chainId: event.target.value })} data-testid="input-delivery-chain-id" autoComplete="off" />
+          </label>
+          <label className="space-y-1 text-xs font-bold text-muted-foreground">Vendor ID
+            <Input value={draft.vendorId} onChange={event => setDraft({ ...draft, vendorId: event.target.value })} data-testid="input-delivery-vendor-id" autoComplete="off" />
+          </label>
+          <label className="space-y-1 text-xs font-bold text-muted-foreground">Client ID
+            <Input value={draft.clientId} onChange={event => setDraft({ ...draft, clientId: event.target.value })} data-testid="input-delivery-client-id" autoComplete="off" />
+          </label>
+          <label className="space-y-1 text-xs font-bold text-muted-foreground">Client Secret {current && <span className="font-normal">اتركه فارغًا للاحتفاظ بالمحفوظ</span>}
+            <Input type="password" value={draft.clientSecret} onChange={event => setDraft({ ...draft, clientSecret: event.target.value })} data-testid="input-delivery-client-secret" autoComplete="new-password" />
+          </label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button type="button" disabled={!branchId || save.isPending || !draft.chainId.trim() || !draft.vendorId.trim() || !draft.clientId.trim() || (!current && !draft.clientSecret.trim())}
+            data-testid="button-save-delivery-integration" onClick={() => save.mutate()}>
+            {save.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Save className="ml-2 h-4 w-4" />} حفظ إعدادات الاتصال
+          </Button>
+          <Button type="button" variant="outline" disabled={!current || test.isPending} data-testid="button-test-delivery-integration" onClick={() => test.mutate()}>
+            {test.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : null} اختبار OAuth
+          </Button>
+        </div>
+        {save.isError && <p role="alert" className="mt-3 text-sm text-destructive">{save.error.message}</p>}
+        {(feedback || save.isSuccess) && <p role={test.isError || save.isError ? "alert" : "status"} className="mt-3 rounded-lg border border-border bg-background p-3 text-sm" data-testid="status-delivery-integration-feedback">{feedback}</p>}
+        <p className="mt-4 rounded-lg border border-border bg-background p-3 text-xs leading-5 text-muted-foreground" data-testid="text-delivery-integration-prerequisite">
+          الإعدادات تُحفظ مشفّرة ويمكن اختبار OAuth. لا يتم تفعيل استقبال Webhook أو الطلبات أو مزامنة الحالات في هذه المرحلة؛ لن يؤثر هذا الإعداد على دورة POS الحالية حتى استكمالها واختبارها على Sandbox.
+        </p>
+      </section>
+    </div>
+  );
 }

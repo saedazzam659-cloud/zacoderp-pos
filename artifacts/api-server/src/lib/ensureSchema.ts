@@ -535,6 +535,39 @@ async function ensureRestaurantKitchenStationsSchema(): Promise<void> {
   }
 }
 
+async function ensureRestaurantDeliveryIntegrationsSchema(): Promise<void> {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS pos_restaurant_delivery_integrations (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL DEFAULT 'hungerstation',
+      environment TEXT NOT NULL DEFAULT 'sandbox',
+      chain_id TEXT NOT NULL,
+      vendor_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      credentials_enc TEXT NOT NULL,
+      webhook_token_hash TEXT,
+      is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS pos_rest_delivery_company_branch_provider_uniq
+      ON pos_restaurant_delivery_integrations(company_id, branch_id, provider)`,
+    `CREATE INDEX IF NOT EXISTS pos_rest_delivery_company_idx
+      ON pos_restaurant_delivery_integrations(company_id, provider)`,
+  ];
+  for (const statement of statements) {
+    try {
+      await execDDL(statement);
+    } catch (err) {
+      logger.error({ err, statement }, "ensureSchema: restaurant delivery integration schema reconciliation failed");
+      throw err;
+    }
+  }
+}
+
 // Generic schema inspection can run after traffic starts in an external agent.
 // These source-fact columns are read during manufacturing close, so heal them
 // explicitly before any purchasing/production route can expose a tagged line.
@@ -4856,6 +4889,7 @@ async function runHeal(options: {
   await ensureRestaurantLoyaltySchema();
   await ensureRestaurantReservationsSchema();
   await ensureRestaurantKitchenStationsSchema();
+  await ensureRestaurantDeliveryIntegrationsSchema();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must
@@ -5072,6 +5106,7 @@ async function runHeal(options: {
   await ensureRestaurantLoyaltySchema();
   await ensureRestaurantReservationsSchema();
   await ensureRestaurantKitchenStationsSchema();
+  await ensureRestaurantDeliveryIntegrationsSchema();
   await ensureIndustrialPurchaseCostCompatibility();
   await ensureInvoiceCreateIdempotencySchema();
   // Request-replay claims are operational state, but their additive table must

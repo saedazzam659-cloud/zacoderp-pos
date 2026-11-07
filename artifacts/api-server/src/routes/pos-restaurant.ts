@@ -21,6 +21,7 @@ import {
   customerGroupsTable,
   posRestaurantLoyaltyProgramsTable,
   posRestaurantLoyaltyLedgerTable,
+  posRestaurantDeliveryIntegrationsTable,
 } from "@workspace/db";
 import { and, eq, sql, desc, asc, isNull, isNotNull, gte, lte, inArray, ne } from "drizzle-orm";
 import { branchScopeSpread, extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -28,6 +29,7 @@ import { requirePermission } from "../middleware/permissions.js";
 import { generateRestaurantTables } from "../lib/posRestaurantTableBatch.js";
 import { calculateRestaurantOrderTotals } from "../lib/restaurant-order-pricing.js";
 import { validateRestaurantModifierSelection } from "../lib/restaurant-modifier-selection.js";
+import { encryptSecret, decryptSecret } from "../lib/encryption.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -76,6 +78,124 @@ function cidOr401(req: any, res: any): number | null {
   if (!cid) { res.status(401).json({ error: "غير مصرّح" }); return null; }
   return cid;
 }
+
+function isRestaurantDeliveryAdmin(req: any): boolean {
+  return req.authUser?.role === "admin" || req.authUser?.role === "superadmin";
+}
+
+router.get("/delivery-integrations", async (req, res): Promise<void> => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "إعداد التكامل متاح لمسؤول الشركة فقط" }); return; }
+  const rows = await db.select({
+    id: posRestaurantDeliveryIntegrationsTable.id,
+    branchId: posRestaurantDeliveryIntegrationsTable.branchId,
+    provider: posRestaurantDeliveryIntegrationsTable.provider,
+    environment: posRestaurantDeliveryIntegrationsTable.environment,
+    chainId: posRestaurantDeliveryIntegrationsTable.chainId,
+    vendorId: posRestaurantDeliveryIntegrationsTable.vendorId,
+    clientId: posRestaurantDeliveryIntegrationsTable.clientId,
+    isEnabled: posRestaurantDeliveryIntegrationsTable.isEnabled,
+    updatedAt: posRestaurantDeliveryIntegrationsTable.updatedAt,
+  }).from(posRestaurantDeliveryIntegrationsTable)
+    .where(eq(posRestaurantDeliveryIntegrationsTable.companyId, cid));
+  res.json(rows);
+});
+
+router.put("/delivery-integrations", async (req, res): Promise<void> => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "إعداد التكامل متاح لمسؤول الشركة فقط" }); return; }
+  const branchId = Number(req.body?.branchId);
+  const { environment, chainId, vendorId, clientId } = req.body ?? {};
+  const clientSecret = typeof req.body?.clientSecret === "string" ? req.body.clientSecret.trim() : "";
+  // Order reception and status sync are gated until the provider webhook
+  // handler and order lifecycle are deployed and verified against Sandbox.
+  const isEnabled = false;
+  if (!Number.isSafeInteger(branchId) || branchId <= 0 ||
+      !["sandbox", "production"].includes(environment) ||
+      typeof chainId !== "string" || !chainId.trim() || chainId.length > 200 ||
+      typeof vendorId !== "string" || !vendorId.trim() || vendorId.length > 200 ||
+      typeof clientId !== "string" || !clientId.trim() || clientId.length > 200 ||
+      clientSecret.length > 2000) {
+    res.status(400).json({ error: "بيانات ربط HungerStation غير مكتملة أو غير صالحة" }); return;
+  }
+  const [branch] = await db.select({ id: branchesTable.id }).from(branchesTable)
+    .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid))).limit(1);
+  if (!branch) { res.status(404).json({ error: "الفرع غير موجود في الشركة" }); return; }
+  const [existing] = await db.select().from(posRestaurantDeliveryIntegrationsTable).where(and(
+    eq(posRestaurantDeliveryIntegrationsTable.companyId, cid),
+    eq(posRestaurantDeliveryIntegrationsTable.branchId, branchId),
+    eq(posRestaurantDeliveryIntegrationsTable.provider, "hungerstation"),
+  )).limit(1);
+  if (!existing && !clientSecret) { res.status(400).json({ error: "أدخل Client Secret لحفظ الربط لأول مرة" }); return; }
+  const credentialsEnc = clientSecret
+    ? encryptSecret(JSON.stringify({ clientSecret }))
+    : existing!.credentialsEnc;
+  const values = {
+    environment, chainId: chainId.trim(), vendorId: vendorId.trim(),
+    clientId: clientId.trim(), credentialsEnc, isEnabled,
+    updatedByUserId: req.authUser?.id ?? null, updatedAt: new Date(),
+  };
+  const [saved] = existing
+    ? await db.update(posRestaurantDeliveryIntegrationsTable).set(values)
+      .where(eq(posRestaurantDeliveryIntegrationsTable.id, existing.id)).returning()
+    : await db.insert(posRestaurantDeliveryIntegrationsTable).values({
+      companyId: cid, branchId, provider: "hungerstation", ...values,
+    }).returning();
+  res.json({
+    id: saved.id, branchId: saved.branchId, provider: saved.provider,
+    environment: saved.environment, chainId: saved.chainId, vendorId: saved.vendorId,
+    clientId: saved.clientId, isEnabled: saved.isEnabled, updatedAt: saved.updatedAt,
+    credentialsConfigured: true,
+  });
+});
+
+router.post("/delivery-integrations/:id/test", async (req, res): Promise<void> => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  if (!isRestaurantDeliveryAdmin(req)) { res.status(403).json({ error: "إعداد التكامل متاح لمسؤول الشركة فقط" }); return; }
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "معرّف الربط غير صالح" }); return; }
+  const [integration] = await db.select().from(posRestaurantDeliveryIntegrationsTable).where(and(
+    eq(posRestaurantDeliveryIntegrationsTable.companyId, cid),
+    eq(posRestaurantDeliveryIntegrationsTable.id, id),
+  )).limit(1);
+  if (!integration) { res.status(404).json({ error: "إعداد الربط غير موجود" }); return; }
+  let secret: string;
+  try {
+    const credentials = JSON.parse(decryptSecret(integration.credentialsEnc) ?? "{}") as { clientSecret?: string };
+    secret = String(credentials.clientSecret ?? "");
+  } catch {
+    res.status(500).json({ error: "تعذّر فك تشفير بيانات الربط؛ راجع إعداد SESSION_SECRET" }); return;
+  }
+  if (!secret) { res.status(409).json({ error: "Client Secret غير محفوظ" }); return; }
+  const host = integration.environment === "sandbox"
+    ? "https://sandbox.partner.deliveryhero.io"
+    : "https://hungerstation.partner.deliveryhero.io";
+  try {
+    const response = await fetch(`${host}/v2/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: integration.clientId,
+        client_secret: secret,
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!response.ok) {
+      req.log.warn({ integrationId: id, providerStatus: response.status }, "HungerStation OAuth connectivity test failed");
+      res.status(502).json({ error: response.status === 401 || response.status === 400
+        ? "رفضت HungerStation بيانات الاعتماد أو بيئة الربط"
+        : `تعذر التحقق من الاتصال (HTTP ${response.status})` });
+      return;
+    }
+    const tokenResponse = await response.json() as { access_token?: string; expires_in?: number };
+    if (!tokenResponse.access_token) { res.status(502).json({ error: "استجابة المصادقة من HungerStation غير مكتملة" }); return; }
+    res.json({ ok: true, expiresInSeconds: Number(tokenResponse.expires_in) || null });
+  } catch (error) {
+    req.log.warn({ err: error, integrationId: id }, "HungerStation OAuth connectivity test errored");
+    res.status(502).json({ error: "تعذر الوصول إلى HungerStation؛ تحقق من الشبكة والبيئة المختارة" });
+  }
+});
 
 async function nextOrderNumber(cid: number): Promise<string> {
   const today = new Date();

@@ -646,6 +646,14 @@ export const api = {
     req<RLoyaltyProgram>("GET", "/api/pos-restaurant/loyalty"),
   rSaveLoyaltyProgram: (body: RLoyaltyProgram) =>
     req<RLoyaltyProgram>("PUT", "/api/pos-restaurant/loyalty", body),
+  rDeliveryIntegrations: () =>
+    req<RestaurantDeliveryIntegration[]>("GET", "/api/pos-restaurant/delivery-integrations"),
+  rSaveDeliveryIntegration: (body: {
+    branchId: number; environment: "sandbox" | "production"; chainId: string;
+    vendorId: string; clientId: string; clientSecret?: string; isEnabled: boolean;
+  }) => req<RestaurantDeliveryIntegration>("PUT", "/api/pos-restaurant/delivery-integrations", body),
+  rTestDeliveryIntegration: (id: number) =>
+    req<{ ok: true; expiresInSeconds: number | null }>("POST", `/api/pos-restaurant/delivery-integrations/${id}/test`),
   rLoyaltyPreview: (orderId: number, customerId: number, pointsRequested: number) =>
     req<RLoyaltyPreview>("GET", `/api/pos-restaurant/orders/${orderId}/loyalty-preview?customerId=${customerId}&pointsRequested=${pointsRequested}`),
   rBillOrder: (id: number, b: { salesInvoiceId?: number; customerId?: number; pointsRedeemed?: number } = {}) =>
@@ -753,6 +761,19 @@ export type RRestaurantReservation = {
   durationMinutes: number;
   notes?: string | null;
   createdAt: string;
+};
+
+export type RestaurantDeliveryIntegration = {
+  id: number;
+  branchId: number;
+  provider: "hungerstation" | string;
+  environment: "sandbox" | "production";
+  chainId: string;
+  vendorId: string;
+  clientId: string;
+  isEnabled: boolean;
+  updatedAt: string;
+  credentialsConfigured?: boolean;
 };
 
 export type RMenuCategory = {
