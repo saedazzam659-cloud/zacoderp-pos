@@ -1,0 +1,8 @@
+{
+  "name": "zacode-restaurant-print-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

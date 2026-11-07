@@ -692,6 +692,12 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
   const [branchId, setBranchId] = useState("");
   const [drafts, setDrafts] = useState<Record<string, { primary: string; backup: string }>>({});
   const [savedMessage, setSavedMessage] = useState("");
+  const [bridgeToken, setBridgeToken] = useState("");
+  const [bridgePrinters, setBridgePrinters] = useState<string[]>([]);
+  const [bridgeMessage, setBridgeMessage] = useState("");
+  const [bridgeBusy, setBridgeBusy] = useState(false);
+  const [testingPrinter, setTestingPrinter] = useState("");
+  const bridgeUrl = "http://127.0.0.1:3217";
 
   useEffect(() => {
     if (!branches.length || branchId) return;
@@ -742,6 +748,46 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
 
   const stations = (stationsQ.data ?? []).filter(station => station.isActive);
 
+  async function connectBridge() {
+    setBridgeBusy(true);
+    setBridgeMessage("");
+    try {
+      const response = await fetch(`${bridgeUrl}/printers`, {
+        headers: { Authorization: `Bearer ${bridgeToken}` },
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.error || "تعذر الاتصال بوسيط الطباعة.");
+      const names = (body.printers ?? []).map((item: { Name?: string; name?: string }) => item.Name ?? item.name).filter(Boolean);
+      setBridgePrinters(names);
+      setBridgeMessage(names.length ? `تم العثور على ${names.length} طابعة.` : "اتصل الوسيط، لكن لم يعثر على طابعات.");
+    } catch (error) {
+      setBridgePrinters([]);
+      setBridgeMessage(error instanceof Error ? error.message : "تعذر الاتصال بوسيط الطباعة.");
+    } finally {
+      setBridgeBusy(false);
+    }
+  }
+
+  async function testPrinter(printerName: string) {
+    if (!printerName.trim()) return;
+    setTestingPrinter(printerName);
+    setBridgeMessage("");
+    try {
+      const response = await fetch(`${bridgeUrl}/test-print`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bridgeToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ printerName: printerName.trim() }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.error || "فشل إرسال اختبار الطباعة.");
+      setBridgeMessage(`أُرسل اختبار الطباعة إلى ${printerName}.`);
+    } catch (error) {
+      setBridgeMessage(error instanceof Error ? error.message : "فشل إرسال اختبار الطباعة.");
+    } finally {
+      setTestingPrinter("");
+    }
+  }
+
   return (
     <div className="space-y-4">
       <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
@@ -758,6 +804,20 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
             {branches.map(branch => <option key={branch.id} value={branch.id}>{branch.nameAr}</option>)}
           </select>
         </label>
+        <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+          <label className="space-y-1 text-xs font-semibold text-muted-foreground">
+            رمز وسيط الطباعة المحلي
+            <Input type="password" autoComplete="off" value={bridgeToken} maxLength={256}
+              onChange={event => setBridgeToken(event.target.value)}
+              placeholder="أدخل الرمز الموجود في إعداد الوسيط" aria-label="رمز وسيط الطباعة المحلي" />
+          </label>
+          <Button type="button" variant="outline" className="self-end"
+            disabled={bridgeBusy || bridgeToken.length < 32} onClick={() => void connectBridge()}>
+            {bridgeBusy ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Printer className="ml-2 h-4 w-4" />}
+            اكتشاف الطابعات
+          </Button>
+        </div>
+        {bridgeMessage && <p role="status" className="mt-2 rounded-lg border bg-background px-3 py-2 text-xs">{bridgeMessage}</p>}
       </section>
 
       {stationsQ.isLoading || routesQ.isLoading ? (
@@ -779,15 +839,25 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
                   <div className="font-bold">{station.nameAr}</div>
                   <label className="space-y-1 text-xs font-semibold text-muted-foreground">
                     الطابعة الأساسية
-                    <Input value={values.primary} maxLength={200} placeholder="اسم الطابعة الأساسية"
-                      aria-label={`الطابعة الأساسية لمحطة ${station.nameAr}`}
-                      onChange={event => setDrafts(current => ({ ...current, [station.stationKey]: { ...values, primary: event.target.value } }))} />
+                    <span className="flex gap-1">
+                      <Input list="restaurant-bridge-printers" value={values.primary} maxLength={200} placeholder="اسم الطابعة الأساسية"
+                        aria-label={`الطابعة الأساسية لمحطة ${station.nameAr}`}
+                        onChange={event => setDrafts(current => ({ ...current, [station.stationKey]: { ...values, primary: event.target.value } }))} />
+                      <Button type="button" size="sm" variant="outline" aria-label={`اختبار الطابعة الأساسية ${station.nameAr}`}
+                        disabled={!bridgeToken || !values.primary.trim() || testingPrinter === values.primary}
+                        onClick={() => void testPrinter(values.primary)}>اختبار</Button>
+                    </span>
                   </label>
                   <label className="space-y-1 text-xs font-semibold text-muted-foreground">
                     الطابعة الاحتياطية
-                    <Input value={values.backup} maxLength={200} placeholder="اختيارية"
-                      aria-label={`الطابعة الاحتياطية لمحطة ${station.nameAr}`}
-                      onChange={event => setDrafts(current => ({ ...current, [station.stationKey]: { ...values, backup: event.target.value } }))} />
+                    <span className="flex gap-1">
+                      <Input list="restaurant-bridge-printers" value={values.backup} maxLength={200} placeholder="اختيارية"
+                        aria-label={`الطابعة الاحتياطية لمحطة ${station.nameAr}`}
+                        onChange={event => setDrafts(current => ({ ...current, [station.stationKey]: { ...values, backup: event.target.value } }))} />
+                      <Button type="button" size="sm" variant="outline" aria-label={`اختبار الطابعة الاحتياطية ${station.nameAr}`}
+                        disabled={!bridgeToken || !values.backup.trim() || testingPrinter === values.backup}
+                        onClick={() => void testPrinter(values.backup)}>اختبار</Button>
+                    </span>
                   </label>
                   <Button disabled={!branchId || !values.primary.trim() || save.isPending}
                     onClick={() => { setSavedMessage(""); save.mutate({ stationKey: station.stationKey, values }); }}>
@@ -797,6 +867,9 @@ function KitchenPrinterRoutingTab({ branches }: { branches: Branch[] }) {
               );
             })}
           </div>
+          <datalist id="restaurant-bridge-printers">
+            {bridgePrinters.map(name => <option key={name} value={name} />)}
+          </datalist>
         </div>
       )}
       {savedMessage && <p role={save.isError ? "alert" : "status"} className={`rounded-lg border p-3 text-sm ${save.isError ? "border-destructive/30 text-destructive" : "border-emerald-200 text-emerald-700"}`}>{savedMessage}</p>}
