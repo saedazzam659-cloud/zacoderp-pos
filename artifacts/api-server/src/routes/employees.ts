@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { EMPLOYEE_PROVISION_SETTLEMENTS_READY } from "../lib/hrProvisionReadiness.js";
 import { requirePostRight, requireUnpostRight } from "../lib/postingRights.js";
 import { documentMutationLock } from "../lib/document-mutation-lock.js";
 import { db } from "@workspace/db";
@@ -2382,6 +2383,8 @@ router.get("/payroll/provision-balances", async (req, res) => {
       ticketAmount: sql<string>`coalesce(sum(${payrollLinesTable.travelTicketProvisionAmount}), 0)`,
     }).from(payrollRunsTable)
       .innerJoin(payrollLinesTable, eq(payrollLinesTable.payrollRunId, payrollRunsTable.id))
+      .innerJoin(journalEntriesTable, and(eq(journalEntriesTable.id, payrollRunsTable.postedJournalId),
+        eq(journalEntriesTable.companyId, cid), eq(journalEntriesTable.status, "posted")))
       .innerJoin(employeesTable, eq(employeesTable.id, payrollLinesTable.employeeId))
       .where(and(eq(payrollRunsTable.companyId, cid), inArray(payrollRunsTable.status, ["posted", "paid"])))
       .groupBy(payrollLinesTable.employeeId, employeesTable.nameAr, employeesTable.nameEn, payrollRunsTable.year, payrollRunsTable.month);
@@ -2410,6 +2413,9 @@ router.get("/payroll/provision-balances", async (req, res) => {
 router.post("/payroll/provision-settlements", requirePostRight("payroll"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    if (!EMPLOYEE_PROVISION_SETTLEMENTS_READY) {
+      res.status(409).json({ error: "تسويات المخصصات ما زالت قيد التحقق؛ لن يُنشأ قيد حتى اكتمال التحقق" }); return;
+    }
     const b = req.body ?? {};
     const employeeId = Number(b.employeeId);
     const sourceRecordId = Number(b.sourceRecordId);
@@ -2436,9 +2442,17 @@ router.post("/payroll/provision-settlements", requirePostRight("payroll"), async
         eq(employeesTable.id, employeeId), eq(employeesTable.companyId, cid),
       ));
       if (!employee) throw Object.assign(new Error("الموظف غير موجود في الشركة الحالية"), { status: 404 });
+      const [accrualRun] = await tx.select({ id: payrollRunsTable.id }).from(payrollRunsTable).where(and(
+        eq(payrollRunsTable.companyId, cid), eq(payrollRunsTable.year, Number(period.slice(0, 4))),
+        eq(payrollRunsTable.month, Number(period.slice(5, 7))),
+        inArray(payrollRunsTable.status, ["posted", "paid"]),
+      )).for("update");
+      if (!accrualRun) throw Object.assign(new Error("مسير المخصص لهذه الفترة غير مرحّل"), { status: 409 });
       const [runAmounts] = await tx.select({
         accrued: sql<string>`coalesce(sum(${provisionType === "annual_leave" ? payrollLinesTable.leaveProvisionAmount : payrollLinesTable.travelTicketProvisionAmount}), 0)`,
       }).from(payrollRunsTable).innerJoin(payrollLinesTable, eq(payrollLinesTable.payrollRunId, payrollRunsTable.id))
+        .innerJoin(journalEntriesTable, and(eq(journalEntriesTable.id, payrollRunsTable.postedJournalId),
+          eq(journalEntriesTable.companyId, cid), eq(journalEntriesTable.status, "posted")))
         .where(and(eq(payrollRunsTable.companyId, cid), eq(payrollLinesTable.employeeId, employeeId),
           eq(payrollRunsTable.year, Number(period.slice(0, 4))), eq(payrollRunsTable.month, Number(period.slice(5, 7))),
           inArray(payrollRunsTable.status, ["posted", "paid"])));
@@ -2456,9 +2470,11 @@ router.post("/payroll/provision-settlements", requirePostRight("payroll"), async
           eq(employeeLeavesTable.id, sourceRecordId), eq(employeeLeavesTable.companyId, cid),
           eq(employeeLeavesTable.employeeId, employeeId), eq(employeeLeavesTable.status, "approved"),
           eq(employeeLeavesTable.paid, true), eq(employeeLeavesTable.leaveType, "annual"),
+          lte(employeeLeavesTable.startDate, settlementDate),
         ));
         if (!leave) throw Object.assign(new Error("اختر إجازة سنوية مدفوعة ومعتمدة لهذا الموظف"), { status: 400 });
       } else {
+        await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${`employee_provision_source:payment_voucher:${sourceRecordId}`}))`);
         const [voucher] = await tx.select({
           id: paymentVouchersTable.id,
           journalEntryId: paymentVouchersTable.journalEntryId,
@@ -2504,7 +2520,7 @@ router.post("/payroll/provision-settlements", requirePostRight("payroll"), async
       return posted;
     });
     res.status(201).json(result);
-  } catch (e: any) { res.status(e?.status ?? 400).json({ error: e?.message ?? "تعذّرت تسوية المخصص" }); }
+  } catch (e: any) { res.status(e?.status ?? (e?.code === "23505" ? 409 : 400)).json({ error: e?.message ?? "تعذّرت تسوية المخصص" }); }
 });
 
 router.get("/payroll/provision-settlements", async (req, res) => {
@@ -2512,10 +2528,12 @@ router.get("/payroll/provision-settlements", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const rows = await db.select({
       id: employeeProvisionSettlementsTable.id,
+      companyId: employeeProvisionSettlementsTable.companyId,
       employeeId: employeeProvisionSettlementsTable.employeeId,
       employeeName: employeesTable.nameAr,
       provisionType: employeeProvisionSettlementsTable.provisionType,
       provisionPeriod: employeeProvisionSettlementsTable.provisionPeriod,
+      sourceType: employeeProvisionSettlementsTable.sourceType,
       sourceRecordId: employeeProvisionSettlementsTable.sourceRecordId,
       settlementDate: employeeProvisionSettlementsTable.settlementDate,
       amount: employeeProvisionSettlementsTable.amount,
@@ -2546,6 +2564,7 @@ router.post("/payroll/provision-settlements/:id/reverse", requirePostRight("payr
         provisionType: settlement.provisionType as "annual_leave" | "travel_ticket",
         employeeId: settlement.employeeId,
         amount: settlement.amount,
+        originalJournalEntryId: settlement.journalEntryId,
         settlementDate: new Date().toISOString().slice(0, 10),
         provisionPeriod: settlement.provisionPeriod,
       }, tx, true);

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { EMPLOYEE_PROVISION_SETTLEMENTS_READY } from "../lib/hrProvisionReadiness.js";
 import { db } from "@workspace/db";
 import { companiesTable, accountsTable, cashBoxesTable, bankAccountsTable } from "@workspace/db";
 import { and, eq, asc, inArray } from "drizzle-orm";
@@ -80,6 +81,7 @@ router.get("/", async (req, res) => {
         vehicleInsurance: (company?.hrAlertThresholds as any)?.vehicleInsurance ?? 60,
       },
       monthlyProvisionsEnabled: company?.hrMonthlyProvisionsEnabled === true,
+      provisionSettlementsReady: EMPLOYEE_PROVISION_SETTLEMENTS_READY,
       accounts: allAccounts,
       cashBoxes,
       bankAccounts: banks,
@@ -100,6 +102,9 @@ router.put("/", async (req, res) => {
     const set: Record<string, any> = { updatedAt: new Date() };
     if (req.body?.monthlyProvisionsEnabled === true) {
       const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, cid));
+      if (!EMPLOYEE_PROVISION_SETTLEMENTS_READY && !company?.hrMonthlyProvisionsEnabled) {
+        res.status(409).json({ error: "يبقى تفعيل المخصصات مغلقًا حتى اكتمال التحقق من التسويات والتكاليف" }); return;
+      }
       const accountId = (key: string, column: keyof typeof company) =>
         hasMapping && key in m ? toInt(m[key]) : Number(company?.[column] ?? 0) || null;
       const required = [

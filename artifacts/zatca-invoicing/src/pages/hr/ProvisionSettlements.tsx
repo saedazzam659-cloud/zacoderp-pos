@@ -21,6 +21,11 @@ export default function ProvisionSettlements() {
     queryKey: ["employee-provision-balances"],
     queryFn: () => employeesApi.provisionBalances(),
   });
+  const readiness = useQuery<any>({
+    queryKey: ["hr", "settings"],
+    queryFn: employeesApi.hrSettings,
+  });
+  const ready = readiness.data?.provisionSettlementsReady === true;
   const history = useQuery<any[]>({
     queryKey: ["employee-provision-settlements"],
     queryFn: () => employeesApi.provisionSettlements(),
@@ -46,6 +51,7 @@ export default function ProvisionSettlements() {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["employee-provision-balances"] });
+      qc.invalidateQueries({ queryKey: ["employee-provision-settlements"] });
       setSelected(null); setAmount(""); setNotes(""); setLeaveId(""); setVoucherId("");
       toast({ title: "تم ترحيل تسوية المخصص" });
     },
@@ -62,6 +68,9 @@ export default function ProvisionSettlements() {
   });
 
   return <div className="space-y-4">
+    {!ready && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+      تسويات المخصصات قيد التحقق. الترحيل والتفعيل الجديد مغلقان حتى اكتمال دورة التسوية.
+    </p>}
     <div className="rounded-md border p-4 text-sm">
       <h3 className="mb-2 font-semibold">تسوية مخصص الإجازات وتذاكر السفر</h3>
       <p className="text-muted-foreground">تخفض التسوية الالتزام وتقيد مقابله دائنًا على المصروف الحالي دون إضافة تكلفة مكررة. الإجازة سنوية مدفوعة ومعتمدة؛ وسند التذكرة مرحّل على حساب مصروف التذاكر.</p>
@@ -78,7 +87,7 @@ export default function ProvisionSettlements() {
             <td className="p-2">{row.provisionType === "annual_leave" ? "إجازة سنوية" : "تذكرة سفر"}</td>
             <td className="p-2">{fmt(Number(row.accrued))}</td><td className="p-2">{fmt(Number(row.settled))}</td>
             <td className="p-2 font-semibold">{fmt(Number(row.balance))}</td>
-            <td className="p-2"><Button size="sm" variant="outline" disabled={Number(row.balance) <= 0}
+            <td className="p-2"><Button size="sm" variant="outline" disabled={!ready || Number(row.balance) <= 0}
               onClick={() => { setSelected(row); setLeaveId(""); setVoucherId(""); setAmount(""); }}>تسوية</Button></td>
           </tr>)}</tbody>
         </table>
@@ -103,7 +112,7 @@ export default function ProvisionSettlements() {
       </div>
       <label className="block space-y-1 text-sm">ملاحظات<Input maxLength={500} value={notes} onChange={e => setNotes(e.target.value)} /></label>
       <div className="flex gap-2">
-        <Button disabled={mutation.isPending || !date || !amount || Number(amount) <= 0 ||
+        <Button disabled={!ready || mutation.isPending || !date || !amount || Number(amount) <= 0 ||
           Number(amount) > Number(selected.balance) || (selected.provisionType === "annual_leave" ? !leaveId : !voucherId)}
           onClick={() => mutation.mutate()}>{mutation.isPending ? "جارٍ الترحيل…" : "ترحيل التسوية"}</Button>
         <Button variant="outline" onClick={() => setSelected(null)}>إلغاء</Button>

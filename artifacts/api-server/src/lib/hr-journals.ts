@@ -507,15 +507,26 @@ export async function buildPayrollJournal(
 export async function buildEmployeeProvisionSettlementJournal(
   cid: number,
   settlementId: number,
-  settlement: { provisionType: "annual_leave" | "travel_ticket"; employeeId: number; amount: unknown; settlementDate: string; provisionPeriod: string },
+  settlement: { provisionType: "annual_leave" | "travel_ticket"; employeeId: number; amount: unknown; settlementDate: string; provisionPeriod: string; originalJournalEntryId?: number | null },
   dx: DbOrTx = db,
   reversal = false,
 ): Promise<number> {
-  const accounts = await resolveHrAccounts(cid, true, dx);
+  const accounts = reversal ? null : await resolveHrAccounts(cid, true, dx);
   const leave = settlement.provisionType === "annual_leave";
-  const liability = leave ? accounts.leaveProvisionLiability : accounts.travelTicketLiability;
-  const expense = leave ? accounts.salariesExpense : accounts.travelTicketExpense;
-  if (!liability || !expense) throw new Error("حسابات تسوية المخصص غير مربوطة");
+  const liability = leave ? accounts?.leaveProvisionLiability : accounts?.travelTicketLiability;
+  const expense = leave ? accounts?.salariesExpense : accounts?.travelTicketExpense;
+  if (!reversal && (!liability || !expense)) throw new Error("حسابات تسوية المخصص غير مربوطة");
+  const originalLines = reversal && settlement.originalJournalEntryId
+    ? await dx.select({
+      accountId: journalEntryLinesTable.accountId, debit: journalEntryLinesTable.debit,
+      credit: journalEntryLinesTable.credit, costCenter: journalEntryLinesTable.costCenter,
+    }).from(journalEntryLinesTable).innerJoin(journalEntriesTable, and(
+      eq(journalEntriesTable.id, journalEntryLinesTable.entryId),
+      eq(journalEntriesTable.companyId, cid), eq(journalEntriesTable.entryType, "employee_provision_settlement"),
+      eq(journalEntriesTable.status, "posted"),
+    )).where(eq(journalEntryLinesTable.entryId, settlement.originalJournalEntryId))
+    : [];
+  if (reversal && !originalLines.length) throw new Error("قيد التسوية الأصلي غير موجود أو غير مرحّل؛ تعذر العكس");
   const amount = roundMoney(num(settlement.amount));
   if (!(amount > 0)) throw new Error("مبلغ التسوية يجب أن يكون موجباً");
   const writable = await assertWritableForDate(cid, settlement.settlementDate);
@@ -525,6 +536,8 @@ export async function buildEmployeeProvisionSettlementJournal(
     ? `تسوية مخصص إجازة الموظف ${settlement.employeeId} عن ${period}`
     : `تسوية مخصص تذكرة الموظف ${settlement.employeeId} عن ${period}`;
   const description = reversal ? `عكس ${baseDescription}` : baseDescription;
+  const postingStatus = await resolvePostingStatus(cid, "payroll");
+  if (postingStatus !== "posted") throw new Error("تسوية المخصص تتطلب قيدًا مرحّلًا؛ راجع سياسة ترحيل الرواتب");
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
     branchId: null,
@@ -538,12 +551,17 @@ export async function buildEmployeeProvisionSettlementJournal(
     exchangeRate: "1",
     description,
     entryType: reversal ? "employee_provision_settlement_reversal" : "employee_provision_settlement",
-    status: await resolvePostingStatus(cid, "payroll"),
+    status: postingStatus,
   }).returning({ id: journalEntriesTable.id });
-  await dx.insert(journalEntryLinesTable).values([
-    { entryId: entry.id, accountId: reversal ? expense : liability, debit: fix(amount), credit: "0.00", description: `عكس ${description}`, sortOrder: 0 },
-    { entryId: entry.id, accountId: reversal ? liability : expense, debit: "0.00", credit: fix(amount), description, sortOrder: 1 },
-  ]);
+  await dx.insert(journalEntryLinesTable).values(reversal
+    ? originalLines.map((line, index) => ({
+      entryId: entry.id, accountId: line.accountId, costCenter: line.costCenter,
+      debit: line.credit, credit: line.debit, description, sortOrder: index,
+    }))
+    : [
+      { entryId: entry.id, accountId: liability!, debit: fix(amount), credit: "0.00", description: `تخفيض مخصص ${period}`, sortOrder: 0 },
+      { entryId: entry.id, accountId: expense!, debit: "0.00", credit: fix(amount), description, sortOrder: 1 },
+    ]);
   return entry.id;
 }
 
