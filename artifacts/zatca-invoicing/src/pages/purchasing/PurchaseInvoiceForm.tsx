@@ -52,9 +52,9 @@ import PurchaseInvoiceDetails from "./PurchaseInvoiceDetails";
 import QuickAddCatalogItemDialog from "../sales/QuotationQuickAddItemDialog";
 import IndustrialCostsTab, { type IndustrialCostDraft } from "./IndustrialCostsTab";
 import {
-  catalogUnitsWithHistoricalSelection,
+  defaultDocumentUnitId,
+  documentItemUnitOptions,
   isActiveItemUnit,
-  itemUnitsWithHistoricalSelection,
   persistedLineIdForSelectedItem,
   serializeDocumentLine,
 } from "@/lib/documentLineUnits";
@@ -404,6 +404,7 @@ function PurchaseInvoiceFormContent() {
     setSearch: setItemSearch,
     isSearching: isSearchingItems,
   } = useInventoryItemSearch(cid, authH, [...lines.map(line => line.itemId), qaItemId], !!user);
+  const quickAddItem = inventoryItems.find((item: any) => String(item.id) === qaItemId);
 
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
@@ -794,12 +795,11 @@ function PurchaseInvoiceFormContent() {
     (async () => {
       const us = await fetchItemUnits(qaItemId);
       if (cancelled) return;
-      const base = us.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? us.find(isActiveItemUnit);
-      setQaUnitId(base?.unitId != null ? String(base.unitId) : "");
+      setQaUnitId(defaultDocumentUnitId(us, quickAddItem?.unitId));
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qaItemId]);
+  }, [qaItemId, quickAddItem?.unitId]);
 
   // Per-currency cost cache: itemId → [{ currencyCode, costPrice, ... }]
   const [itemCurrencyPricesMap, setItemCurrencyPricesMap] = useState<Record<string, any[]>>({});
@@ -832,8 +832,16 @@ function PurchaseInvoiceFormContent() {
     const item = createdItem ?? inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) { updateLine(lineId, "itemId", ""); return; }
     const itemUnits = await fetchItemUnits(itemId);
-    const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
-    const fallbackUnit = units.find((u: any) => u.id === item.unitId);
+    const baseUnitId = defaultDocumentUnitId(itemUnits, item.unitId);
+    const baseRow = itemUnits.find((u: any) => String(u.unitId) === baseUnitId);
+    const fallbackUnit = units.find((u: any) => String(u.id) === String(item.unitId));
+    const base = baseRow ?? (baseUnitId ? {
+      unitId: Number(baseUnitId),
+      conversionFactor: "1",
+      costPrice: item.costPrice ?? null,
+      isBase: true,
+      unit: fallbackUnit,
+    } : undefined);
     const selectedCurrency = currencyCode || defaultCurrency?.code || "";
     const unitFactor = Number(base?.conversionFactor ?? 1);
     const catalogPrice = Number(base?.costPrice ?? 0);
@@ -956,7 +964,8 @@ function PurchaseInvoiceFormContent() {
       if (isDefault) {
         const itemUnits = await fetchItemUnits(l.itemId);
         const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
-          ?? itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
+          ?? itemUnits.find((u: any) => String(u.unitId) === String(inventoryItems.find((item: any) => String(item.id) === l.itemId)?.unitId))
+          ?? itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u));
         const last = await fetchLastPurchaseUnitPrice(l.itemId, code);
         const factor = Number(row?.conversionFactor ?? 1);
         const catalog = Number(row?.costPrice ?? 0);
@@ -969,7 +978,8 @@ function PurchaseInvoiceFormContent() {
         else {
           const itemUnits = await fetchItemUnits(l.itemId);
           const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
-            ?? itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
+            ?? itemUnits.find((u: any) => String(u.unitId) === String(inventoryItems.find((item: any) => String(item.id) === l.itemId)?.unitId))
+            ?? itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u));
           const last = await fetchLastPurchaseUnitPrice(l.itemId, code);
           const factor = Number(row?.conversionFactor ?? 1);
           if (last != null && Number.isFinite(factor) && factor > 0) np = String(Number(last) * factor);
@@ -1313,9 +1323,6 @@ function PurchaseInvoiceFormContent() {
       labelEn: i.nameEn || undefined,
     })),
   ], usageModes);
-  const unitItems = units
-    .filter((u: any) => u.isActive !== false)
-    .map((u: any) => ({ value: String(u.id), label: unitNameOf(u) }));
   const showBatchExpiryFields = user?.company?.purchaseBatchExpiryEnabled === true;
 
   // Ledger-grid headers (sales-invoice items-tab design): leading "#" index
@@ -1483,10 +1490,10 @@ function PurchaseInvoiceFormContent() {
           <label className="text-[11px] text-muted-foreground">{tr("lineCols.unit")}</label>
           {(() => {
             const iu = (qaItemId && itemUnitsMap[qaItemId]) ? itemUnitsMap[qaItemId] : [];
-            const opts = itemUnitsWithHistoricalSelection(iu, qaUnitId).map((u: any) => ({
+            const opts = documentItemUnitOptions(iu, quickAddItem?.unitId, units, qaUnitId).map((u: any) => ({
               value: String(u.unitId),
               label: `${unitNameOf(u.unit)}${Number(u.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(u.conversionFactor)})` : ""}`,
-              disabled: u.isActive === false || u.unit?.isActive === false,
+              disabled: u.historicalOnly === true || u.isActive === false || u.unit?.isActive === false,
             }));
             return (
               <Select value={qaUnitId || undefined} onValueChange={setQaUnitId} disabled={opts.length === 0}>
@@ -2365,18 +2372,12 @@ function PurchaseInvoiceFormContent() {
                       )}
                       {(() => {
                         const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
-                        const opts = itemUnits.length > 0
-                          ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
-                              value: String(iu.unitId),
-                              label: `${unitNameOf(iu.unit)}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
-                              disabled: iu.isActive === false || iu.unit?.isActive === false,
-                            }))
-                          : [
-                              ...unitItems,
-                              ...catalogUnitsWithHistoricalSelection(units, l.unitId)
-                                .filter((u: any) => !unitItems.some((x: any) => x.value === String(u.id)))
-                                .map((u: any) => ({ value: String(u.id), label: unitNameOf(u) || `#${u.id}`, disabled: u.isActive === false })),
-                            ];
+                        const item = inventoryItems.find((candidate: any) => String(candidate.id) === l.itemId);
+                        const opts = documentItemUnitOptions(itemUnits, item?.unitId, units, l.unitId).map((iu: any) => ({
+                          value: String(iu.unitId),
+                          label: `${unitNameOf(iu.unit)}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+                          disabled: iu.historicalOnly === true || iu.isActive === false || iu.unit?.isActive === false,
+                        }));
                         return units.length > 0 ? (
                           <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
                             <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={tr("unitPh")} /></SelectTrigger>

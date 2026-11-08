@@ -19,6 +19,70 @@ export function itemUnitsWithHistoricalSelection(rows: any[], selectedId: string
   return active;
 }
 
+export function defaultDocumentUnitId(
+  rows: any[],
+  baseUnitId: string | number | null | undefined,
+): string {
+  if (baseUnitId != null && baseUnitId !== "") {
+    const itemBaseRow = rows.find((row: any) => String(row.unitId) === String(baseUnitId));
+    if (itemBaseRow) return isActiveItemUnit(itemBaseRow) ? String(itemBaseRow.unitId) : "";
+    return String(baseUnitId);
+  }
+
+  const active = activeItemUnits(rows);
+  const markedBase = active.find((row: any) => row.isBase === true && row.referenceUnitId == null);
+  if (markedBase) return String(markedBase.unitId);
+
+  if (rows.length === 1 && rows[0].referenceUnitId == null && isActiveItemUnit(rows[0])) {
+    return String(rows[0].unitId);
+  }
+  return "";
+}
+
+/**
+ * Transaction forms may offer only item-owned units, plus the item's saved
+ * base when older data has no explicit base row. A selected non-linked unit is
+ * retained as a disabled historical choice so an unchanged old document can
+ * still be saved without making that unit available for new lines.
+ */
+export function documentItemUnitOptions(
+  rows: any[],
+  baseUnitId: string | number | null | undefined,
+  catalogUnits: any[],
+  selectedId: string | number | null | undefined,
+): any[] {
+  const options = itemUnitsWithHistoricalSelection(rows, selectedId);
+  const hasOption = (id: unknown) => options.some((row: any) => String(row.unitId) === String(id));
+
+  if (baseUnitId != null && baseUnitId !== "" && !hasOption(baseUnitId)) {
+    const explicitBaseRow = rows.find((row: any) => String(row.unitId) === String(baseUnitId));
+    const catalogUnit = catalogUnits.find((unit: any) => String(unit.id) === String(baseUnitId));
+    if (!explicitBaseRow && catalogUnit && catalogUnit.isActive !== false) {
+      options.unshift({
+        unitId: Number(baseUnitId),
+        conversionFactor: "1",
+        isBase: true,
+        isActive: true,
+        unit: catalogUnit,
+      });
+    }
+  }
+
+  if (selectedId != null && selectedId !== "" && !hasOption(selectedId)) {
+    const historicalUnit = catalogUnits.find((unit: any) => String(unit.id) === String(selectedId));
+    if (historicalUnit) {
+      options.push({
+        unitId: Number(selectedId),
+        conversionFactor: "1",
+        isActive: false,
+        historicalOnly: true,
+        unit: historicalUnit,
+      });
+    }
+  }
+  return options;
+}
+
 export function isActiveCatalogUnit(unit: any): boolean {
   return unit?.isActive !== false;
 }

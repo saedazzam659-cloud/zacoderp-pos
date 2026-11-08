@@ -20,6 +20,12 @@ Stored document and stage conversion snapshots are authoritative for historical 
 
 Historical factors must follow stable persisted line identities, never array position or the first matching item.
 
+Transaction unit selectors must offer item-linked units and the item's saved base only. Preserve an already-selected unlinked historical unit solely as a disabled option for an unchanged document; never offer the whole company unit catalog as new choices.
+
+**Why:** A purchase form that falls back to global catalog units can let users select a unit the server correctly rejects as unlinked, even when the item has a usable base.
+
+**How to apply:** Build purchase, sales, and stock-document choices from the item's unit graph, add the saved base when legacy data omits its explicit row, and keep historical selections non-selectable for new lines.
+
 First-base assignment for a used legacy item is initialization, not a base-unit change, when it has no established base and its relationships and historical unit labels are compatible with the selected unit. Unlabelled legacy quantities remain numerically unchanged; conflicting labelled history must block assignment.
 
 **Why:** Applying the used-item base-change ban to missing bases traps old items: invoices require a base, but the editor cannot supply one.
