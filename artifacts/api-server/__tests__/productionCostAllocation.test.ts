@@ -4,6 +4,7 @@ import {
   allocateToSourceAccounts,
   assertAllocationCapacity,
   calculateFormulaAllocation,
+  calculateStageEmployeeLabor,
   calculateSourceAllocation,
 } from "../src/lib/productionCostAllocation.js";
 
@@ -53,6 +54,34 @@ test("final execution hours derive immutable delta targets from one approved sou
 test("formula allocation rejects invalid approved inputs", () => {
   assert.throws(() => calculateFormulaAllocation("operating_hours", 100, 2, 0));
   assert.throws(() => calculateFormulaAllocation("production_quantity", 100, -1, 20));
+});
+
+test("direct stage labor uses each employee salary and frozen provisions over 240 hours", () => {
+  const result = calculateStageEmployeeLabor(3, [
+    {
+      employeeId: 31, salaryAmount: 4500, leaveProvision: 0,
+      travelTicketProvision: 0, eosProvision: 0, monthlyHours: 240,
+    },
+    {
+      employeeId: 32, salaryAmount: 3500, leaveProvision: 0,
+      travelTicketProvision: 0, eosProvision: 0, monthlyHours: 240,
+    },
+  ]);
+  assert.equal(result.amount, 100);
+  assert.deepEqual(result.employees.map((employee) => employee.stageCost), [56.25, 43.75]);
+
+  const withProvisions = calculateStageEmployeeLabor(3, [{
+    employeeId: 31, salaryAmount: 4500, leaveProvision: 100,
+    travelTicketProvision: 50, eosProvision: 75, monthlyHours: 240,
+  }]);
+  assert.equal(withProvisions.amount, 59.06);
+});
+
+test("direct stage labor refuses to invent missing historical provision amounts", () => {
+  assert.throws(() => calculateStageEmployeeLabor(3, [{
+    employeeId: 31, salaryAmount: 4500, leaveProvision: null,
+    travelTicketProvision: 0, eosProvision: 0, monthlyHours: 240,
+  }]), /frozen employee provision snapshots/);
 });
 
 test("v1 execution sources may reserve a zero baseline until stage actuals exist", () => {

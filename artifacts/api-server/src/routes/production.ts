@@ -72,7 +72,9 @@ import {
   PRODUCTION_STATUS_TRANSITIONS,
   usersTable,
   employeesTable,
+  employeeContractsTable,
   payrollAllocationSnapshotsTable,
+  payrollLinesTable,
   payrollRunsTable,
   faDepreciationRunsTable,
   fixedAssetsTable,
@@ -126,6 +128,7 @@ import {
   allocateToSourceAccounts,
   assertAllocationCapacity,
   calculateFormulaAllocation,
+  calculateStageEmployeeLabor,
   type WeightedAccount,
 } from "../lib/productionCostAllocation.js";
 import {

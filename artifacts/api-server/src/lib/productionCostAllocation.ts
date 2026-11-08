@@ -24,6 +24,61 @@ export function calculateFormulaAllocation(
   return Number(amount.toFixed(2));
 }
 
+export type StageLaborEmployeeInput = {
+  employeeId: number;
+  salaryAmount: number;
+  leaveProvision: number | null;
+  travelTicketProvision: number | null;
+  eosProvision: number | null;
+  monthlyHours: number;
+};
+
+export function calculateStageEmployeeLabor(
+  stageHours: number,
+  employees: StageLaborEmployeeInput[],
+): {
+  amount: number;
+  employees: Array<StageLaborEmployeeInput & {
+    monthlyCost: number;
+    hourlyRate: number;
+    stageCost: number;
+  }>;
+} {
+  if (!Number.isFinite(stageHours) || stageHours < 0)
+    throw new Error("stageHours must be a non-negative number");
+  if (!employees.length) throw new Error("stage labor employees are required");
+  const seen = new Set<number>();
+  let totalCents = 0;
+  const breakdown = employees.map((employee) => {
+    if (!Number.isInteger(employee.employeeId) || employee.employeeId <= 0 ||
+        seen.has(employee.employeeId)) {
+      throw new Error("stage labor employees must be unique valid employee ids");
+    }
+    seen.add(employee.employeeId);
+    if (!Number.isFinite(employee.salaryAmount) || employee.salaryAmount < 0 ||
+        !Number.isFinite(employee.monthlyHours) || employee.monthlyHours <= 0) {
+      throw new Error("employee salary and monthly hours must be valid");
+    }
+    const provisions = [
+      employee.leaveProvision,
+      employee.travelTicketProvision,
+      employee.eosProvision,
+    ];
+    if (provisions.some((amount) => amount == null || !Number.isFinite(amount))) {
+      throw new Error("frozen employee provision snapshots are required");
+    }
+    const monthlyCost = employee.salaryAmount + provisions.reduce(
+      (sum, amount) => sum + Number(amount), 0,
+    );
+    if (monthlyCost < 0) throw new Error("employee monthly labor cost cannot be negative");
+    const hourlyRate = monthlyCost / employee.monthlyHours;
+    const stageCost = Number((hourlyRate * stageHours).toFixed(2));
+    totalCents += Math.round(stageCost * 100);
+    return { ...employee, monthlyCost, hourlyRate, stageCost };
+  });
+  return { amount: totalCents / 100, employees: breakdown };
+}
+
 export function assertAllocationCapacity(sourceAmount: number, alreadyAllocated: number, requested: number): void {
   if (alreadyAllocated < 0 || requested < 0 || alreadyAllocated + requested > sourceAmount + 0.005)
     throw new Error("allocation exceeds available source amount");
