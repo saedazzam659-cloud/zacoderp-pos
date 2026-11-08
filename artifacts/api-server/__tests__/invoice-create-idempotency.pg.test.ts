@@ -296,6 +296,27 @@ test("a used item can repair a stale base marker without losing its alternate pu
     legacyConversionConflict: true,
   }).returning({ id: itemUnitPricesTable.id });
 
+  const saveBeforeMarkerCleanup = await post("/api/purchasing/purchase-invoices", {
+    ...commonPayload(randomUUID()),
+    supplierId,
+    docNumber: `${TEST_TAG}-ALT-BEFORE-CLEANUP`,
+    lines: [{
+      itemId: repairItem.id,
+      itemName: `${TEST_TAG} صنف بوحدتين`,
+      itemCode: `${TEST_TAG}-MULTI-UNIT`,
+      unitId: alternateUnit.id,
+      unit: `${TEST_TAG}-KG`,
+      qty: "1",
+      unitPrice: "10",
+      vatRate: "0",
+      lineTotal: "10",
+    }],
+  });
+  assert.equal(saveBeforeMarkerCleanup.status, 201, JSON.stringify(saveBeforeMarkerCleanup.body));
+  const [savedBeforeCleanupLine] = await db.select().from(purchaseInvoiceLinesTable)
+    .where(eq(purchaseInvoiceLinesTable.invoiceId, Number(saveBeforeMarkerCleanup.body.id)));
+  assert.equal(Number(savedBeforeCleanupLine.conversionFactor), 1000);
+
   const repaired = await put(`/api/inventory/items/${repairItem.id}/units/${link.id}`, {
     unitId: alternateUnit.id,
     referenceUnitId: unitId,

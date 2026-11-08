@@ -767,6 +767,54 @@ export interface ResolvedItemUnitConversion {
 }
 
 /**
+ * Some imports left a linked alternate unit marked as both a base and a legacy
+ * conflict even though the item-level base and the saved reference edge define
+ * one exact, valid graph. For reads only, ignore that stale metadata when the
+ * graph resolves after clearing only those two markers and its cached factor
+ * exactly matches the resolved factor. The database is not changed here.
+ */
+function resolveKnownStaleBaseMarkerGraph(
+  baseUnitId: number | null,
+  rows: UnitGraphRow[],
+): { graph: UnitGraphResolution; rows: UnitGraphRow[] } | null {
+  if (baseUnitId == null) return null;
+  const activeRows = rows.filter((row) => row.isActive !== false);
+  const conflictRows = activeRows.filter((row) => row.legacyConversionConflict === true);
+  const staleBaseRows = activeRows.filter((row) => row.isBase === true && row.unitId !== baseUnitId);
+  if (conflictRows.length !== 1 || staleBaseRows.length !== 1) return null;
+
+  const staleRow = conflictRows[0];
+  if (
+    staleRow.unitId !== staleBaseRows[0].unitId
+    || staleRow.isBase !== true
+    || staleRow.referenceUnitId == null
+  ) return null;
+  const rootRow = activeRows.find((row) => row.unitId === baseUnitId);
+  if (rootRow && rootRow.referenceUnitId != null) return null;
+
+  const normalizedRows = rows.map((row) => row.unitId === staleRow.unitId
+    ? { ...row, isBase: false, legacyConversionConflict: false }
+    : row);
+  let graph: UnitGraphResolution;
+  try {
+    graph = resolveUnitGraph({ baseUnitId, rows: normalizedRows });
+  } catch (error) {
+    if (error instanceof UnitConversionError) return null;
+    throw error;
+  }
+
+  const resolvedFactor = graph.factors.get(staleRow.unitId);
+  if (
+    staleRow.conversionFactor == null
+    || resolvedFactor == null
+    || formatRational(parseExactDecimal(staleRow.conversionFactor))
+      !== formatRational(parseExactDecimal(decimalForStorage(resolvedFactor, 18, "half_up")))
+  ) return null;
+
+  return { graph, rows: normalizedRows };
+}
+
+/**
  * Resolve one item's unit to its base unit. An explicit unit never falls back
  * to the global catalog conversion factor: it must belong to the item graph
  * (with the item's base unit as the one permitted implicit root).
@@ -876,18 +924,31 @@ export async function resolveItemUnitConversion(args: ResolveItemUnitConversionA
   }
 
   let graph: UnitGraphResolution;
+  let resolutionRows = rows;
   try {
     graph = resolveUnitGraph({ baseUnitId, rows });
   } catch (error) {
-    if (args.historicalFactor !== undefined && error instanceof UnitConversionError && error.code === "LEGACY_CONFLICT") {
-      const factor = parseExactDecimal(args.historicalFactor);
-      if (factor.numerator <= 0n) throw new UnitConversionError("INVALID_HISTORICAL_FACTOR", "Historical factor must be positive");
-      return { factor: formatRational(factor), baseUnitId, unitId: chosenId, itemId: args.itemId, companyId: args.companyId, historical: true, legacyConflict: true };
+    if (
+      error instanceof UnitConversionError
+      && (error.code === "LEGACY_CONFLICT" || error.code === "CONFLICTING_BASE")
+    ) {
+      const staleMarkerResolution = resolveKnownStaleBaseMarkerGraph(baseUnitId, rows);
+      if (staleMarkerResolution) {
+        graph = staleMarkerResolution.graph;
+        resolutionRows = staleMarkerResolution.rows;
+      } else if (args.historicalFactor !== undefined && error.code === "LEGACY_CONFLICT") {
+        const factor = parseExactDecimal(args.historicalFactor);
+        if (factor.numerator <= 0n) throw new UnitConversionError("INVALID_HISTORICAL_FACTOR", "Historical factor must be positive");
+        return { factor: formatRational(factor), baseUnitId, unitId: chosenId, itemId: args.itemId, companyId: args.companyId, historical: true, legacyConflict: true };
+      } else {
+        throw error;
+      }
+    } else {
+      throw error;
     }
-    throw error;
   }
   if (chosenId === null) throw new UnitConversionError("MISSING_BASE", "The item has no base unit");
-  const row = rows.find((candidate: UnitGraphRow) => candidate.unitId === chosenId);
+  const row = resolutionRows.find((candidate: UnitGraphRow) => candidate.unitId === chosenId);
   if (!row && chosenId !== graph.baseUnitId) {
     if (args.historicalFactor !== undefined) {
       const factor = parseExactDecimal(args.historicalFactor);

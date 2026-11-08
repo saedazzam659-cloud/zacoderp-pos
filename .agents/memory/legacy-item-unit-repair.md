@@ -11,11 +11,11 @@ For flat legacy rows, reject missing/invalid saved factors or historical unit ID
 
 For a legacy item with no linked unit rows, the first explicit source-to-reference conversion may establish the reference as base when its user-entered factor creates a valid proposed graph containing every non-null historical unit ID. Validate the proposed graph and update the item base plus first relationship in one transaction. Keep blocking when history names any unit outside that graph; do not infer its factor.
 
-An explicit edit may clear a stale non-base marker and legacy-conflict flag even when the item has history only when the item root, every unit/reference edge, active state, and exact relation factor stay unchanged; the full graph resolves, and each cached item factor already matches the resolved graph. Never change historical document snapshots or allow a factor/reference edit through this exception.
+For invoice-time reads, ignore a stale base/conflict marker without writing to the database only when the item has an explicit root, exactly one active non-root row carries both stale markers and a reference edge, clearing just those markers yields a valid full graph, and its cached factor matches the resolved factor. Keep every other ambiguous or malformed graph blocked.
 
-**Why:** A production item had an alternate unit linked to its saved base with a matching historical conversion snapshot, but stale base/conflict markers blocked new invoices. Deleting the alternate link would have hidden the inconsistency by removing a valid unit.
+**Why:** A production item can visibly show a valid base plus linked alternate unit while stale compatibility markers contradict the graph and block invoice creation. Requiring the user to edit an otherwise valid unit is not an acceptable save precondition.
 
-**How to apply:** Use an explicit edit to clear only the incorrect base marker; retain the alternate link and factor. Reject the repair if any edge, factor, active state, or cached conversion disagrees.
+**How to apply:** Normalize only the recognized stale markers in memory for resolution; do not change historical snapshots or persist repairs during invoice save. Keep strict rejection for missing roots, multiple stale markers, invalid edges, and cached-factor mismatches.
 
 When the item already has a saved base unit but no item-unit rows, new alternate-unit forms should default their reference to that saved base. Do not make the user establish a second base or leave the required reference blank.
 
