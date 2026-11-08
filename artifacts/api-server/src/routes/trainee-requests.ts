@@ -268,6 +268,10 @@ router.post("/:id/approve", async (req, res) => {
         }).returning();
         const code = `ZTC-${company.id}`;
         await tx.update(companiesTable).set({ code }).where(eq(companiesTable.id, company.id));
+        const { accountingModulesFromMenu, seedOptionalModuleAccountingTx } =
+          await import("../lib/optionalModuleAccounting.js");
+        const modules = accountingModulesFromMenu(menuPermissions);
+        if (modules.hr) await seedOptionalModuleAccountingTx(tx, company.id, { hr: true });
 
         const cur = resolveDefaultCurrency(reqRow.country);
         await tx.insert(currenciesTable).values({
@@ -497,9 +501,21 @@ router.patch("/:id", async (req, res) => {
           .where(eq(usersTable.id, reqRow.userId));
       } else if (reqRow.envMode === "separate" && reqRow.companyId) {
         const menuPermissions = await buildTraineeMenuPermissions(allowedModules);
-        await db.update(companiesTable)
-          .set({ menuPermissions })
-          .where(eq(companiesTable.id, reqRow.companyId));
+        const { accountingModulesFromMenu, seedOptionalModuleAccountingTx } =
+          await import("../lib/optionalModuleAccounting.js");
+        await db.transaction(async (tx) => {
+          const [company] = await tx.select().from(companiesTable)
+            .where(eq(companiesTable.id, reqRow.companyId!)).for("update");
+          if (!company) throw new Error("الشركة التدريبية غير موجودة");
+          const previous = accountingModulesFromMenu(company.menuPermissions);
+          const next = accountingModulesFromMenu(menuPermissions);
+          if (next.hr && !previous.hr) {
+            await seedOptionalModuleAccountingTx(tx, reqRow.companyId!, { hr: true });
+          }
+          await tx.update(companiesTable)
+            .set({ menuPermissions, updatedAt: new Date() })
+            .where(eq(companiesTable.id, reqRow.companyId!));
+        });
       }
     }
 

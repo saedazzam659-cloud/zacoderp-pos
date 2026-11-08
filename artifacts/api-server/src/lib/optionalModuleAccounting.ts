@@ -2,6 +2,8 @@ import { db, accountsTable, accountingMappingsTable, companiesTable, manufacturi
 import { and, eq, isNull } from "drizzle-orm";
 import { DEFAULT_CHART_OF_ACCOUNTS } from "./defaultChartOfAccounts.js";
 import { SCHOOL_FEE_DEFAULT_MAPPINGS, seedPosAccountingMappingsTx } from "./accountingMappings.js";
+import { HR_ACCOUNT_CODES, HR_OPTIONAL_ACCOUNTS, type HrAccountKey } from "./hrAccountDefaults.js";
+import { resolveHrAccounts } from "./hr-journals.js";
 
 type Kind = "asset" | "liability" | "revenue" | "expense";
 type AccountRow = typeof accountsTable.$inferSelect;
@@ -42,7 +44,7 @@ export const MANUFACTURING_ACCOUNTS = [
  * hand-maintained accounting. Optional defaults are exclusively owned by the
  * module seeder, even if an industry spreadsheet uses old generic accounts. */
 export const OPTIONAL_MODULE_ACCOUNT_CODES: ReadonlySet<string> = new Set(
-  [...CONTRACTING_ACCOUNTS, ...MANUFACTURING_ACCOUNTS].map((a) => a.code),
+  [...CONTRACTING_ACCOUNTS, ...MANUFACTURING_ACCOUNTS, ...HR_OPTIONAL_ACCOUNTS].map((a) => a.code),
 );
 export function isOptionalModuleTemplateMapping(documentType: string): boolean {
   return documentType.startsWith("contracting_") ||
@@ -169,7 +171,14 @@ export function missingManufacturingFields(
     .filter(([field]) => existing?.[field as keyof typeof MANUFACTURING_FIELDS] == null));
 }
 
-export type AccountingModules = { pos?: boolean; contracting?: boolean; production?: boolean; simple_manufacturing?: boolean; school?: boolean };
+export type AccountingModules = {
+  pos?: boolean;
+  contracting?: boolean;
+  production?: boolean;
+  simple_manufacturing?: boolean;
+  school?: boolean;
+  hr?: boolean;
+};
 export function accountingModulesFromMenu(menu: string | null | undefined): AccountingModules {
   if (!menu) return {};
   const parsed = JSON.parse(menu);
@@ -177,12 +186,14 @@ export function accountingModulesFromMenu(menu: string | null | undefined): Acco
   return { pos: parsed.pos_cashier === true || parsed.pos_returns === true ||
       parsed.pos_waiter === true || parsed.pos_kitchen === true,
     contracting: parsed.contracting === true, production: parsed.production === true,
-    simple_manufacturing: parsed.simple_manufacturing === true, school: parsed.school === true };
+    simple_manufacturing: parsed.simple_manufacturing === true, school: parsed.school === true,
+    hr: parsed.hr_module === true };
 }
 
 /** Called only for new tenants or a disabled→enabled transition, never at startup. */
 export async function seedOptionalModuleAccounting(companyId: number, modules: AccountingModules) {
-  if (!modules.pos && !modules.contracting && !modules.production && !modules.simple_manufacturing && !modules.school) return { accountsInserted: 0, mappingsInserted: 0 };
+  if (!modules.pos && !modules.contracting && !modules.production && !modules.simple_manufacturing && !modules.school && !modules.hr)
+    return { accountsInserted: 0, mappingsInserted: 0 };
   return db.transaction((tx) => seedOptionalModuleAccountingTx(tx, companyId, modules));
 }
 
@@ -241,7 +252,8 @@ export async function seedOptionalAccountingForFreshCompany(
 }
 
 export async function seedOptionalModuleAccountingTx(tx: any, companyId: number, modules: AccountingModules) {
-  if (!modules.pos && !modules.contracting && !modules.production && !modules.simple_manufacturing && !modules.school) return { accountsInserted: 0, mappingsInserted: 0 };
+  if (!modules.pos && !modules.contracting && !modules.production && !modules.simple_manufacturing && !modules.school && !modules.hr)
+    return { accountsInserted: 0, mappingsInserted: 0 };
   {
     // Serialize simultaneous activation requests for this tenant.
     const [company] = await tx.select({ id: companiesTable.id }).from(companiesTable)
@@ -250,9 +262,11 @@ export async function seedOptionalModuleAccountingTx(tx: any, companyId: number,
     let existing = await tx.select().from(accountsTable).where(eq(accountsTable.companyId, companyId)) as AccountRow[];
     let accountsInserted = 0;
     const catalog = [...(modules.contracting ? CONTRACTING_ACCOUNTS : []),
-      ...(modules.production || modules.simple_manufacturing ? MANUFACTURING_ACCOUNTS : [])];
+      ...(modules.production || modules.simple_manufacturing ? MANUFACTURING_ACCOUNTS : []),
+      ...(modules.hr ? HR_OPTIONAL_ACCOUNTS : [])];
     const required = new Set(catalog.map((a) => a.code));
     if (modules.contracting) for (const [, , code] of CONTRACTING_ROLES) required.add(code);
+    if (modules.hr) for (const code of Object.values(HR_ACCOUNT_CODES)) required.add(code);
     const defs = new Map(catalog.map((a) => [a.code, a]));
     const mappings = modules.contracting
       ? await tx.select({
@@ -358,6 +372,14 @@ export async function seedOptionalModuleAccountingTx(tx: any, companyId: number,
     if (modules.pos) {
       const seeded = await seedPosAccountingMappingsTx(tx, companyId);
       mappingsInserted += seeded.inserted;
+    }
+    if (modules.hr) {
+      const resolved = await resolveHrAccounts(companyId, true, tx);
+      const missing = (Object.keys(HR_ACCOUNT_CODES) as HrAccountKey[])
+        .filter((key) => resolved[key] == null);
+      if (missing.length) {
+        throw new Error(`HR accounting mappings could not be completed: ${missing.join(", ")}`);
+      }
     }
     return { accountsInserted, mappingsInserted };
   }

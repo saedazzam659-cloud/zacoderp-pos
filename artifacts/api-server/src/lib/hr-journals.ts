@@ -29,50 +29,11 @@ import {
 import type { ProvisionExpenseSnapshot } from "./employeeProvisionManufacturing.js";
 import { monthlyBasicLeaveProvision } from "./hrProvisionMath.js";
 import { getLinkedSourceJournalEntry, replaceLinkedSourceJournalEntry } from "./sourceJournalEntryLifecycle.js";
+import { HR_ACCOUNT_CODES, HR_ACCOUNT_COLUMNS, type HrAccountKey } from "./hrAccountDefaults.js";
 
 type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-const HR_ACCOUNT_COLUMNS = {
-  salariesExpense: "hrSalariesExpenseAccountId",
-  allowancesExpense: "hrAllowancesExpenseAccountId",
-  housingAllowanceExpense: "hrHousingAllowanceExpenseAccountId",
-  transportAllowanceExpense: "hrTransportAllowanceExpenseAccountId",
-  overtimeExpense: "hrOvertimeExpenseAccountId",
-  bonusExpense: "hrBonusExpenseAccountId",
-  gosiExpense: "hrGosiExpenseAccountId",
-  eosExpense: "hrEosExpenseAccountId",
-  salariesPayable: "hrSalariesPayableAccountId",
-  gosiPayable: "hrGosiPayableAccountId",
-  otherDeductions: "hrOtherDeductionsAccountId",
-  employeeLoans: "hrEmployeeLoansAccountId",
-  employeeCustody: "hrEmployeeCustodyAccountId",
-  eosProvision: "hrEosProvisionAccountId",
-  leaveProvisionExpense: "hrLeaveProvisionExpenseAccountId",
-  leaveProvisionLiability: "hrLeaveProvisionLiabilityAccountId",
-  travelTicketExpense: "hrTravelTicketExpenseAccountId",
-  travelTicketLiability: "hrTravelTicketLiabilityAccountId",
-} as const;
-
-export type HrAccountKey = keyof typeof HR_ACCOUNT_COLUMNS;
-
-// Auto-resolve only established chart codes. Newly split payroll components
-// remain manually selectable because no standard chart codes are defined for them.
-const HR_ACCOUNT_CODES: Partial<Record<HrAccountKey, string>> = {
-  salariesExpense: "5201",
-  allowancesExpense: "5202",
-  gosiExpense: "5203",
-  eosExpense: "5215",
-  salariesPayable: "21051",
-  gosiPayable: "21052",
-  otherDeductions: "21053",
-  employeeLoans: "11081",
-  employeeCustody: "11082",
-  eosProvision: "22021",
-  leaveProvisionExpense: "5217",
-  leaveProvisionLiability: "22022",
-  travelTicketExpense: "5218",
-  travelTicketLiability: "22023",
-};
+export type { HrAccountKey } from "./hrAccountDefaults.js";
 
 export interface HrAccountMap {
   salariesExpense:   number | null;
@@ -120,8 +81,8 @@ export async function assertCompanyAccount(
 
 /**
  * Returns the HR account map for a company. If the company has stored mappings
- * they are used; otherwise the function auto-resolves them from the seeded COA
- * by code (5201 / 5202 / 21051 ...) and persists them on the company.
+ * they are used; otherwise the function auto-resolves them from the seeded
+ * company chart using the approved HR account-code catalog.
  */
 export async function resolveHrAccounts(cid: number, persist = true, dx: DbOrTx = db): Promise<HrAccountMap> {
   const [c] = await dx.select().from(companiesTable).where(eq(companiesTable.id, cid));

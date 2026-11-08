@@ -11,6 +11,7 @@ import {
   resolveMappedCoreAccounts,
 } from "../src/lib/optionalModuleAccounting.js";
 import { DEFAULT_MAPPINGS } from "../src/lib/accountingMappings.js";
+import { HR_ACCOUNT_CODES, HR_ACCOUNT_COLUMNS, HR_OPTIONAL_ACCOUNTS } from "../src/lib/hrAccountDefaults.js";
 
 test("contracting mapping catalog includes every exposed role and no duplicate", () => {
   const configured = DOCUMENT_TYPES.filter((d) => d.key.startsWith("contracting_"))
@@ -22,7 +23,7 @@ test("contracting mapping catalog includes every exposed role and no duplicate",
 
 test("optional codes have valid typed parents and never collide with commercial codes", () => {
   const base = new Map(DEFAULT_CHART_OF_ACCOUNTS.map((a) => [a.code, a]));
-  const optional = [...CONTRACTING_ACCOUNTS, ...MANUFACTURING_ACCOUNTS];
+  const optional = [...CONTRACTING_ACCOUNTS, ...MANUFACTURING_ACCOUNTS, ...HR_OPTIONAL_ACCOUNTS];
   const byCode = new Map(optional.map((a) => [a.code, a]));
   assert.equal(byCode.size, optional.length);
   for (const a of optional) {
@@ -36,11 +37,24 @@ test("optional codes have valid typed parents and never collide with commercial 
     if ("isPosting" in account!) assert.equal(account.isPosting, true, code);
   }
   for (const code of Object.values(MANUFACTURING_FIELDS)) assert.ok(byCode.has(code), code);
+  for (const code of Object.values(HR_ACCOUNT_CODES)) {
+    assert.ok(byCode.has(code) || base.has(code), code);
+  }
+  assert.deepEqual(
+    Object.keys(HR_ACCOUNT_CODES).sort(),
+    Object.keys(HR_ACCOUNT_COLUMNS).sort(),
+  );
+  for (const account of HR_OPTIONAL_ACCOUNTS) {
+    assert.equal(base.has(account.code), false, account.code);
+    assert.equal(account.type, "expense");
+    assert.equal(account.parent, "52");
+  }
 });
 
 test("only explicit true grants optional module defaults", () => {
   assert.deepEqual(accountingModulesFromMenu('{"contracting":false,"production":1,"simple_manufacturing":true}'),
-    { pos: false, contracting: false, production: false, simple_manufacturing: true, school: false });
+    { pos: false, contracting: false, production: false, simple_manufacturing: true, school: false, hr: false });
+  assert.equal(accountingModulesFromMenu('{"hr_module":true}').hr, true);
   assert.deepEqual(accountingModulesFromMenu(null), {});
 });
 
@@ -50,6 +64,9 @@ test("new-company industry/template optional rows are deferred to the module see
   assert.equal(isOptionalModuleTemplateMapping("manufacturing_issue"), true);
   assert.equal(isOptionalModuleTemplateMapping("production_completion"), true);
   for (const code of Object.values(MANUFACTURING_FIELDS)) assert.equal(OPTIONAL_MODULE_ACCOUNT_CODES.has(code), true);
+  for (const account of HR_OPTIONAL_ACCOUNTS) {
+    assert.equal(OPTIONAL_MODULE_ACCOUNT_CODES.has(account.code), true);
+  }
   assert.equal(OPTIONAL_MODULE_ACCOUNT_CODES.has("11031"), false);
 });
 

@@ -1437,6 +1437,7 @@ router.patch("/:id/menu-permissions", async (req, res) => {
           production: next.production && !previous.production,
           simple_manufacturing: next.simple_manufacturing && !previous.simple_manufacturing,
           school: next.school && !previous.school,
+          hr: next.hr && !previous.hr,
         };
         await seedOptionalModuleAccountingTx(tx, id, enabled);
         const [updated] = await tx.update(companiesTable).set({

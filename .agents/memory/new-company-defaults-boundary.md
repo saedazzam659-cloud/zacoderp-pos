@@ -15,11 +15,11 @@ Negative-stock cost enforcement is also a creation-time setting: enable it for r
 
 **How to apply:** Keep this policy out of startup migrations, company updates, clone/restore/import paths, and approval of already-created pending companies. Deployed independent agents need an application update before their own future creations can use new defaults.
 
-Contracting and manufacturing accounting have a separately authorized exception: provision their module-specific chart accounts and mappings for fresh companies only when the module is enabled, and fill missing defaults during an explicit disabled-to-enabled module transition.
+Contracting, manufacturing, and HR accounting have a separately authorized exception: provision their module-specific chart accounts and mappings for fresh companies only when the module is enabled, and fill missing defaults during an explicit disabled-to-enabled module transition.
 
-**Why:** The user explicitly requested ready-to-use module accounting on central and agent installations, while accounting settings should show only the company's enabled modules.
+**Why:** The user explicitly requested ready-to-use module accounting, including HR, while accounting settings should show only the company's enabled modules.
 
-**How to apply:** Do not backfill every existing company at startup. Preserve existing mapped accounts and historical postings; disabling a module hides settings rather than deleting accounts. Fresh template defaults must not bypass module selection. Manufacturing defaults use the canonical manufacturing settings, not duplicate accounting-mapping records. This exception does not authorize resetting other company defaults.
+**How to apply:** Do not backfill every existing company at startup. Preserve existing mapped accounts and historical postings; disabling a module hides settings rather than deleting accounts. Fresh template defaults must not bypass module selection. HR activation must not enable monthly provisions or bypass their readiness gate. Manufacturing defaults use the canonical manufacturing settings, not duplicate accounting-mapping records. This exception does not authorize resetting other company defaults.
 
 When provisioning optional contracting roles, reuse a company's explicitly mapped commercial account when it is active, postable, and the correct account type; do not require its canonical label/code or rewrite it. Keep fiscal advance receivables separate from customer-level balances.
 

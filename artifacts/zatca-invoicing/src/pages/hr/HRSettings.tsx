@@ -70,6 +70,8 @@ export default function HRSettings() {
   function autoMap() {
     const codeMap: Record<string, string> = {
       salariesExpense: "5201", allowancesExpense: "5202",
+      housingAllowanceExpense: "5219", transportAllowanceExpense: "5220",
+      overtimeExpense: "5221", bonusExpense: "5222",
       gosiExpense: "5203", eosExpense: "5215",
       salariesPayable: "21051", gosiPayable: "21052", otherDeductions: "21053",
       employeeLoans: "11081", employeeCustody: "11082", eosProvision: "22021",
