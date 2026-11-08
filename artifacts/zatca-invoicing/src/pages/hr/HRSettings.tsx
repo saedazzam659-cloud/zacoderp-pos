@@ -237,6 +237,9 @@ export default function HRSettings() {
               <tr className="border-t"><td className="p-2">{tr("rowGosiPayable")}</td><td className="p-2 text-center">—</td><td className="p-2 text-center">✓</td></tr>
               <tr className="border-t"><td className="p-2">{tr("rowEmployeeLoans")}</td><td className="p-2 text-center">—</td><td className="p-2 text-center">✓</td></tr>
               <tr className="border-t"><td className="p-2">{tr("rowOtherDeductions")}</td><td className="p-2 text-center">—</td><td className="p-2 text-center">✓</td></tr>
+              <tr className="border-t"><td className="p-2">{tr("rowEosProvision")}</td><td className="p-2 text-center">✓</td><td className="p-2 text-center">✓</td></tr>
+              <tr className="border-t"><td className="p-2">{tr("rowLeaveProvision")}</td><td className="p-2 text-center">✓</td><td className="p-2 text-center">✓</td></tr>
+              <tr className="border-t"><td className="p-2">{tr("rowTravelTicketProvision")}</td><td className="p-2 text-center">✓</td><td className="p-2 text-center">✓</td></tr>
             </tbody>
           </table>
         </div>

@@ -282,6 +282,13 @@ export async function resolveCashAccount(
 export type PayrollJournalPreviewResult = {
   entry: Record<string, any>;
   lines: Array<Record<string, any>>;
+  provisions: {
+    enabled: boolean;
+    snapshotCaptured: boolean;
+    eos: string;
+    leave: string;
+    travelTicket: string;
+  };
 };
 
 async function buildPayrollJournalInternal(
@@ -559,6 +566,13 @@ async function buildPayrollJournalInternal(
     return {
       entry: { ...header, totalDebit: fix(journalDebit), totalCredit: fix(journalCredit) },
       lines: journalLines,
+      provisions: {
+        enabled: provisionsEnabled,
+        snapshotCaptured: run.provisionSnapshotsCaptured === true,
+        eos: fix(eosProvisionTotal),
+        leave: fix(leaveProvisionTotal),
+        travelTicket: fix(ticketProvisionTotal),
+      },
     };
   }
   if (retainedEntry) {

@@ -538,6 +538,32 @@ export default function Payroll() {
                       <div className="p-4"><Skeleton className="h-32" /></div>
                     ) : (
                       <div className="p-4 space-y-3">
+                        {viewRun.status === "draft" && journalData.provisions && (
+                          <div className="rounded-lg border bg-muted/20 p-3 space-y-2" data-testid="payroll-provision-summary">
+                            <div className="font-medium text-sm">{tr("provisionSummaryTitle")}</div>
+                            <p className="text-xs text-muted-foreground">
+                              {journalData.provisions.snapshotCaptured
+                                ? tr("provisionsSnapshotNotice")
+                                : journalData.provisions.enabled
+                                  ? tr("provisionsEnabledNotice")
+                                  : tr("provisionsDisabledNotice")}
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                              <div className="rounded border bg-card p-2">
+                                <div className="text-xs text-muted-foreground">{tr("provisionEos")}</div>
+                                <div className="font-semibold tabular-nums">{fmt2(journalData.provisions.eos)}</div>
+                              </div>
+                              <div className="rounded border bg-card p-2">
+                                <div className="text-xs text-muted-foreground">{tr("provisionLeave")}</div>
+                                <div className="font-semibold tabular-nums">{fmt2(journalData.provisions.leave)}</div>
+                              </div>
+                              <div className="rounded border bg-card p-2">
+                                <div className="text-xs text-muted-foreground">{tr("provisionTravelTicket")}</div>
+                                <div className="font-semibold tabular-nums">{fmt2(journalData.provisions.travelTicket)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         <div className="text-sm text-muted-foreground">
                           {tr(viewRun.status === "draft" ? "previewRunCodeLabel" : "docNumberLabel")} <strong>{journalData.entry.docNumber}</strong> ·
                           {" "}{tr("dateLabel")} <strong>{journalData.entry.entryDate}</strong> ·

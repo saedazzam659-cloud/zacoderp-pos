@@ -2136,7 +2136,7 @@ router.get("/payroll/runs/:id/journal", async (req, res) => {
           accountNameEn: account?.nameEn ?? "",
         };
       });
-      res.json({ entry: preview.entry, lines, isPreview: true });
+      res.json({ entry: preview.entry, lines, provisions: preview.provisions, isPreview: true });
       return;
     }
     if (!run.postedJournalId) { res.status(404).json({ error: "لا يوجد قيد لهذا المسير" }); return; }
