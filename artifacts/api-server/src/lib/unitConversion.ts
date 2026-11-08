@@ -767,34 +767,38 @@ export interface ResolvedItemUnitConversion {
 }
 
 /**
- * Some imports left a linked alternate unit marked as both a base and a legacy
- * conflict even though the item-level base and the saved reference edge define
- * one exact, valid graph. For reads only, ignore that stale metadata when the
- * graph resolves after clearing only those two markers and its cached factor
- * exactly matches the resolved factor. The database is not changed here.
+ * The item's saved base and directed relation edges define current conversion
+ * behavior. Some legacy rows carry stale base/conflict metadata that disagrees
+ * with those explicit edges. Normalize only those metadata flags in memory,
+ * and only when the entire graph still resolves. The database is not changed.
  */
-function resolveKnownStaleBaseMarkerGraph(
+function resolveGraphFromExplicitBaseAndEdges(
   baseUnitId: number | null,
   rows: UnitGraphRow[],
 ): { graph: UnitGraphResolution; rows: UnitGraphRow[] } | null {
   if (baseUnitId == null) return null;
   const activeRows = rows.filter((row) => row.isActive !== false);
-  const conflictRows = activeRows.filter((row) => row.legacyConversionConflict === true);
-  const staleBaseRows = activeRows.filter((row) => row.isBase === true && row.unitId !== baseUnitId);
-  if (conflictRows.length !== 1 || staleBaseRows.length !== 1) return null;
-
-  const staleRow = conflictRows[0];
-  if (
-    staleRow.unitId !== staleBaseRows[0].unitId
-    || staleRow.isBase !== true
-    || staleRow.referenceUnitId == null
-  ) return null;
   const rootRow = activeRows.find((row) => row.unitId === baseUnitId);
   if (rootRow && rootRow.referenceUnitId != null) return null;
 
-  const normalizedRows = rows.map((row) => row.unitId === staleRow.unitId
-    ? { ...row, isBase: false, legacyConversionConflict: false }
-    : row);
+  const staleRows = activeRows.filter((row) =>
+    row.legacyConversionConflict === true || (row.isBase === true && row.unitId !== baseUnitId),
+  );
+  if (staleRows.length === 0) return null;
+  if (staleRows.some((row) => row.unitId !== baseUnitId && row.referenceUnitId == null)) return null;
+
+  const normalizedRows = rows.map((row) => {
+    if (row.isActive === false) return row;
+    if (row.unitId === baseUnitId && row.legacyConversionConflict === true) {
+      return { ...row, legacyConversionConflict: false };
+    }
+    if (row.unitId !== baseUnitId && (
+      row.isBase === true || row.legacyConversionConflict === true
+    )) {
+      return { ...row, isBase: false, legacyConversionConflict: false };
+    }
+    return row;
+  });
   let graph: UnitGraphResolution;
   try {
     graph = resolveUnitGraph({ baseUnitId, rows: normalizedRows });
@@ -802,14 +806,6 @@ function resolveKnownStaleBaseMarkerGraph(
     if (error instanceof UnitConversionError) return null;
     throw error;
   }
-
-  const resolvedFactor = graph.factors.get(staleRow.unitId);
-  if (
-    staleRow.conversionFactor == null
-    || resolvedFactor == null
-    || formatRational(parseExactDecimal(staleRow.conversionFactor))
-      !== formatRational(parseExactDecimal(decimalForStorage(resolvedFactor, 18, "half_up")))
-  ) return null;
 
   return { graph, rows: normalizedRows };
 }
@@ -932,7 +928,7 @@ export async function resolveItemUnitConversion(args: ResolveItemUnitConversionA
       error instanceof UnitConversionError
       && (error.code === "LEGACY_CONFLICT" || error.code === "CONFLICTING_BASE")
     ) {
-      const staleMarkerResolution = resolveKnownStaleBaseMarkerGraph(baseUnitId, rows);
+      const staleMarkerResolution = resolveGraphFromExplicitBaseAndEdges(baseUnitId, rows);
       if (staleMarkerResolution) {
         graph = staleMarkerResolution.graph;
         resolutionRows = staleMarkerResolution.rows;

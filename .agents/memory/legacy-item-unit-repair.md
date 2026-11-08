@@ -11,11 +11,11 @@ For flat legacy rows, reject missing/invalid saved factors or historical unit ID
 
 For a legacy item with no linked unit rows, the first explicit source-to-reference conversion may establish the reference as base when its user-entered factor creates a valid proposed graph containing every non-null historical unit ID. Validate the proposed graph and update the item base plus first relationship in one transaction. Keep blocking when history names any unit outside that graph; do not infer its factor.
 
-For invoice-time reads, ignore a stale base/conflict marker without writing to the database only when the item has an explicit root, exactly one active non-root row carries both stale markers and a reference edge, clearing just those markers yields a valid full graph, and its cached factor matches the resolved factor. Keep every other ambiguous or malformed graph blocked.
+For invoice-time resolution, the saved item base and active reference edges define the current graph. If legacy base/conflict metadata contradicts those edges, normalize only the stale markers in memory when the entire graph still resolves. Do not write during invoice save or alter historical snapshots; keep missing roots, unlinked references, cycles, duplicate active units, and invalid factors blocked.
 
 **Why:** A production item can visibly show a valid base plus linked alternate unit while stale compatibility markers contradict the graph and block invoice creation. Requiring the user to edit an otherwise valid unit is not an acceptable save precondition.
 
-**How to apply:** Normalize only the recognized stale markers in memory for resolution; do not change historical snapshots or persist repairs during invoice save. Keep strict rejection for missing roots, multiple stale markers, invalid edges, and cached-factor mismatches.
+**How to apply:** Use relation factors for new invoices after validating the complete graph; treat `conversionFactor` only as a cached value, not as authority over the explicit graph. Normalize stale metadata in memory only and preserve strict rejection for structural graph errors.
 
 When the item already has a saved base unit but no item-unit rows, new alternate-unit forms should default their reference to that saved base. Do not make the user establish a second base or leave the required reference blank.
 

@@ -316,6 +316,10 @@ test("a used item can repair a stale base marker without losing its alternate pu
   const [savedBeforeCleanupLine] = await db.select().from(purchaseInvoiceLinesTable)
     .where(eq(purchaseInvoiceLinesTable.invoiceId, Number(saveBeforeMarkerCleanup.body.id)));
   assert.equal(Number(savedBeforeCleanupLine.conversionFactor), 1000);
+  const [unchangedLink] = await db.select().from(itemUnitPricesTable)
+    .where(eq(itemUnitPricesTable.id, link.id));
+  assert.equal(unchangedLink.isBase, true, "invoice save must not rewrite the item setup");
+  assert.equal(unchangedLink.legacyConversionConflict, true, "invoice save must not persist marker cleanup");
 
   const repaired = await put(`/api/inventory/items/${repairItem.id}/units/${link.id}`, {
     unitId: alternateUnit.id,
