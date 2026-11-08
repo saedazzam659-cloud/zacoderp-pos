@@ -394,6 +394,10 @@ export function SimpleOrderWizardReadonly({
         تُعرض إعدادات وتوزيعات التكلفة الملتقطة مع الأمر كما حُفظت. لا تُعاد قراءة مصادر الفترة ولا تُعاد حساب أي مبلغ.
       </div>
       <div className="grid gap-3 md:grid-cols-2">
+        <Field
+          label="طريقة التكلفة المحفوظة"
+          value={savedOrder.manufacturingCostingMethod === "estimated" ? "تقديرية" : "قياسية"}
+        />
         <Field label="فترة مصادر التكلفة المحفوظة" value={valueOrNotSaved(meta.costPeriod)} />
         <Field label="التكلفة التقديرية المحفوظة" value={savedNumber(savedOrder.estimatedCost)} />
       </div>

@@ -216,6 +216,12 @@ export function SimpleOrderList({
                 <span className="text-muted-foreground text-xs uppercase">الحالة</span>
                 <div><Badge className="text-sm px-2 py-0.5">{statusLabel(selectedOrder.status)}</Badge></div>
               </div>
+              <div className="space-y-1">
+                <span className="text-muted-foreground text-xs uppercase">طريقة التكلفة المحفوظة</span>
+                <div className="font-semibold text-base">
+                  {selectedOrder.manufacturingCostingMethod === "estimated" ? "تقديرية" : "قياسية"}
+                </div>
+              </div>
             </div>
             {(selectedOrder.producedQty != null || selectedStages.length > 0) && (
               <div
