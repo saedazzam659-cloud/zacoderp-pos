@@ -29,6 +29,7 @@ export default function Payroll() {
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`hrPages.payroll.${k}`, opts) as string;
   const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
+  const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
   const STATUS: Record<string, { label: string; cls: string }> = {
     draft:  { label: tr("statusDraft"),  cls: "bg-amber-50 text-amber-700 border-amber-200" },
@@ -70,6 +71,40 @@ export default function Payroll() {
     onSuccess: (data) => { setPreview(data); setTab("preview"); toast({ title: tr("toastPreviewDone") }); },
     onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
+
+  function updateBonus(employeeId: number, rawValue: string) {
+    const value = rawValue.replace(",", ".");
+    if (!/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})?$/.test(value)) return;
+    const nextBonus = Number(value || 0);
+    if (!Number.isFinite(nextBonus) || nextBonus > 999999999) return;
+
+    setPreview((current: any) => {
+      if (!current) return current;
+      const lines = current.lines.map((line: any) => {
+        if (Number(line.employeeId) !== employeeId) return line;
+        const previous = Number(line.bonusAmount ?? 0);
+        const previousBonus = Number.isFinite(previous) ? previous : 0;
+        const delta = roundMoney(nextBonus - previousBonus);
+        return {
+          ...line,
+          bonusAmount: value,
+          grossSalary: roundMoney(Number(line.grossSalary || 0) + delta),
+          netSalary: roundMoney(Number(line.netSalary || 0) + delta),
+        };
+      });
+      return {
+        ...current,
+        lines,
+        totals: {
+          ...current.totals,
+          gross: roundMoney(lines.reduce((sum: number, line: any) => sum + Number(line.grossSalary || 0), 0)),
+          deductions: roundMoney(lines.reduce((sum: number, line: any) => sum + Number(line.totalDeductions || 0), 0)),
+          net: roundMoney(lines.reduce((sum: number, line: any) => sum + Number(line.netSalary || 0), 0)),
+          employeesCount: lines.length,
+        },
+      };
+    });
+  }
 
   const createMut = useMutation({
     mutationFn: (data: any) => employeesApi.createPayroll(data),
@@ -200,10 +235,10 @@ export default function Payroll() {
       if (!(await gate('export'))) return;
     const r = viewRun;
     if (!r) return;
-    const head = [tr("csvCode"), tr("csvName"), tr("csvBasic"), tr("csvHousing"), tr("csvTransport"), tr("csvOther"), tr("csvOvertime"), tr("csvGross"), tr("csvGosi"), tr("csvLoans"), "خصم مخالفات", tr("csvAbsence"), tr("csvDeductions"), tr("csvNet"), tr("csvIban")];
+    const head = [tr("csvCode"), tr("csvName"), tr("csvBasic"), tr("csvHousing"), tr("csvTransport"), tr("csvOther"), tr("csvOvertime"), tr("csvBonus"), tr("csvGross"), tr("csvGosi"), tr("csvLoans"), "خصم مخالفات", tr("csvAbsence"), tr("csvDeductions"), tr("csvNet"), tr("csvIban")];
     const rows = r.lines.map((l: any) => [
       l.empCode, pickName(l.empNameAr, l.empNameEn), l.basicSalary, l.housingAllow, l.transportAllow, l.otherAllow,
-      l.overtimeAmount, l.grossSalary, l.gosiEmployee, l.loanDeduction, l.violationDeduction ?? 0, l.absenceDeduction, l.totalDeductions, l.netSalary, l.iban || "",
+      l.overtimeAmount, l.bonusAmount ?? 0, l.grossSalary, l.gosiEmployee, l.loanDeduction, l.violationDeduction ?? 0, l.absenceDeduction, l.totalDeductions, l.netSalary, l.iban || "",
     ]);
     const csv = "\uFEFF" + [head, ...rows].map(r => r.map((c: any) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -363,6 +398,7 @@ export default function Payroll() {
                       <th className="p-2">{tr("prevColHousing")}</th>
                       <th className="p-2">{tr("prevColTransport")}</th>
                       <th className="p-2">{tr("prevColOvertime")}</th>
+                      <th className="p-2">{tr("prevColBonus")}</th>
                       <th className="p-2 bg-amber-50">{tr("prevColTotal")}</th>
                       <th className="p-2">{tr("prevColInsurance")}</th>
                       <th className="p-2">{tr("prevColLoans")}</th>
@@ -383,6 +419,18 @@ export default function Payroll() {
                         <td className="p-2 tabular-nums text-center">{fmt2(l.housingAllow)}</td>
                         <td className="p-2 tabular-nums text-center">{fmt2(l.transportAllow)}</td>
                         <td className="p-2 tabular-nums text-center">{l.overtimeAmount > 0 ? <span className="text-emerald-700 font-medium">{fmt2(l.overtimeAmount)}</span> : "—"}</td>
+                        <td className="p-2 text-center">
+                          <Input
+                            type="text"
+                            inputMode="decimal"
+                            dir="ltr"
+                            value={String(l.bonusAmount ?? "")}
+                            onChange={(e) => updateBonus(Number(l.employeeId), e.target.value)}
+                            aria-label={tr("bonusInputLabel", { employee: pickName(l.empNameAr, l.empNameEn) })}
+                            className="h-8 w-24 mx-auto text-center tabular-nums"
+                            data-testid={`input-bonus-${l.employeeId}`}
+                          />
+                        </td>
                         <td className="p-2 tabular-nums text-center bg-amber-50/30 font-semibold">{fmt2(l.grossSalary)}</td>
                         <td className="p-2 tabular-nums text-center text-rose-600">{l.gosiEmployee > 0 ? fmt2(l.gosiEmployee) : "—"}</td>
                         <td className="p-2 tabular-nums text-center text-rose-600">{l.loanDeduction > 0 ? fmt2(l.loanDeduction) : "—"}</td>
@@ -534,6 +582,7 @@ export default function Payroll() {
                         <th className="p-2">{tr("detailColBasic")}</th>
                         <th className="p-2">{tr("detailColAllowances")}</th>
                         <th className="p-2">{tr("detailColOvertime")}</th>
+                        <th className="p-2">{tr("detailColBonus")}</th>
                         <th className="p-2">{tr("detailColTotal")}</th>
                         <th className="p-2">خصم مخالفات</th>
                         <th className="p-2">{tr("detailColDeductions")}</th>
@@ -551,6 +600,7 @@ export default function Payroll() {
                           <td className="p-2 tabular-nums text-center">{fmt2(l.basicSalary)}</td>
                           <td className="p-2 tabular-nums text-center">{fmt2(Number(l.housingAllow)+Number(l.transportAllow)+Number(l.otherAllow))}</td>
                           <td className="p-2 tabular-nums text-center">{fmt2(l.overtimeAmount)}</td>
+                          <td className="p-2 tabular-nums text-center">{fmt2(l.bonusAmount ?? 0)}</td>
                           <td className="p-2 tabular-nums text-center font-medium">{fmt2(l.grossSalary)}</td>
                           <td className="p-2 tabular-nums text-center text-rose-600">{Number(l.violationDeduction) > 0 ? fmt2(l.violationDeduction) : "—"}</td>
                           <td className="p-2 tabular-nums text-center text-rose-700">{fmt2(l.totalDeductions)}</td>

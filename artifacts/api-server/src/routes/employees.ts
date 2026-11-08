@@ -11,6 +11,7 @@ import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middle
 import { nextSequenceOrFallback, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { requireAdminRole, requirePermission } from "../middleware/permissions.js";
 import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal, buildPayrollPaymentJournal, buildEmployeeProvisionSettlementJournal, checkPayrollAccountMappings, resolveHrAccounts } from "../lib/hr-journals.js";
+import { calculatePayrollLineTotals } from "../lib/payrollCalculations.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import {
   HrValidationError, dateOrNull, requireDate, assertDateOrder, moneyOrZero, requirePositiveMoney,
@@ -1900,7 +1901,10 @@ router.post("/payroll/runs", async (req, res) => {
         const delta = +(server - client).toFixed(2);
         l.violationDeduction = server;
         l.totalDeductions = +(Number(l.totalDeductions || 0) + delta).toFixed(2);
-        l.netSalary = +(Number(l.netSalary || 0) - delta).toFixed(2);
+        l.bonusAmount = moneyOrZero(l.bonusAmount, "المكافأة");
+        const totals = calculatePayrollLineTotals(l);
+        l.grossSalary = totals.grossSalary;
+        l.netSalary = totals.netSalary;
       }
 
       let totalGross = 0, totalDed = 0, totalNet = 0;

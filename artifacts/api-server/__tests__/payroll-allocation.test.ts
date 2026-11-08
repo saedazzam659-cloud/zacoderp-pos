@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { allocationBuckets, allocateComponentBySnapshots, assignmentsOverlap, assignmentRepresentedBySnapshot, assignmentCloseConflictsWithSnapshot } from "../src/lib/payrollAllocation.ts";
 import { missingPayrollExpenseMappings, payrollExpenseComponents, payrollExpenseTotals } from "../src/lib/payrollExpenseComponents.ts";
+import { calculatePayrollLineTotals } from "../src/lib/payrollCalculations.ts";
 
 test("allocates calendar days across a mid-month transfer with exact cents", () => {
   const rows = allocationBuckets([
@@ -104,6 +105,18 @@ test("splits each payroll expense onto its own account and identifies only missi
     ["overtimeExpense", 75],
     ["bonusExpense", 200],
   ]);
+});
+
+test("includes a one-time bonus in gross and net without changing deductions", () => {
+  assert.deepEqual(calculatePayrollLineTotals({
+    basicSalary: "2000.00",
+    housingAllow: "300.00",
+    transportAllow: "100.00",
+    otherAllow: "50.00",
+    overtimeAmount: "75.00",
+    bonusAmount: "250.00",
+    totalDeductions: "400.00",
+  }), { grossSalary: 2775, netSalary: 2375 });
 });
 
 test("supports separate salary and provision ratios across multiple cost centers", () => {
