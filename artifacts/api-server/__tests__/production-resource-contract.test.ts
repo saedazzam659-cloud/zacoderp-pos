@@ -109,7 +109,12 @@ test("route resource estimates use employee payroll rates and stay read-only", a
 
   assert.ok(start >= 0);
   assert.match(handler, /payrollLinesTable\.employeeId/);
-  assert.match(handler, /Number\(pay\.grossSalary\)\s*\/\s*\(\s*30\s*\*\s*Number\(contract\.workingHours\)\s*\)/);
+  assert.match(handler, /const monthlyHours = 30 \* Number\(contract\.workingHours\)/);
+  assert.match(handler, /const monthlyCost = Number\(pay\.grossSalary\)\s*\+/);
+  assert.match(handler, /monthlyCost \/ monthlyHours/);
+  assert.match(handler, /leaveProvisionAmount \+/);
+  assert.match(handler, /travelTicketProvisionAmount \+/);
+  assert.match(handler, /eosProvisionAmount/);
   assert.match(handler, /productionOrderStagesTable\.expectedDurationMinutes/);
   assert.match(handler, /productionOrderStagesTable\.actualDurationMinutes/);
   assert.match(handler, /employeeHourlyRate\(employeeId,\s*actualPeriod\)/);

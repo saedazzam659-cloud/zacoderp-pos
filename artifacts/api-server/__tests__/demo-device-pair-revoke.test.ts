@@ -291,7 +291,10 @@ test("source RBAC and menu grants propagate to an active retained demo workspace
     menuPermissions: companiesTable.menuPermissions,
   }).from(companiesTable).where(eq(companiesTable.id, workspaceCompany.id));
   assert.deepEqual(updatedUser.permissions, permissions);
-  assert.equal(updatedCompany.menuPermissions, enabledMenus);
+  assert.deepEqual(JSON.parse(updatedCompany.menuPermissions!), {
+    fixed_assets: true,
+    simple_manufacturing: false,
+  });
 
   // Existing workspaces that were stale before the propagation hooks shipped
   // must repair themselves on the next /auth/me refresh.
@@ -317,7 +320,10 @@ test("source RBAC and menu grants propagate to an active retained demo workspace
     menuPermissions: companiesTable.menuPermissions,
   }).from(companiesTable).where(eq(companiesTable.id, workspaceCompany.id));
   assert.deepEqual(healedUser.permissions, permissions);
-  assert.equal(healedCompany.menuPermissions, enabledMenus);
+  assert.deepEqual(JSON.parse(healedCompany.menuPermissions!), {
+    fixed_assets: true,
+    simple_manufacturing: false,
+  });
 });
 
 test("a failed atomic session write rolls the whole handoff back", async () => {
@@ -606,18 +612,22 @@ test("pair-code creation stays disabled", async () => {
 });
 
 test("non-isolated user passes through untouched", async () => {
-  await db.update(usersTable).set({ demoDeviceIsolation: false }).where(eq(usersTable.id, sourceUserId));
-  try {
-    const source = await loadSource();
-    assert.equal(await needsDemoDevicePreparation(source, undefined), false);
-    const result = await resolveDemoDeviceLogin({ sourceUser: source, deviceToken: undefined });
-    assert.equal(result.deviceToken, null);
-    assert.equal(result.deviceLinkId, null);
-    assert.equal(result.effectiveUser.id, sourceUserId);
-    assert.equal(result.bindingWasCreated, false);
-  } finally {
-    await db.update(usersTable).set({ demoDeviceIsolation: true }).where(eq(usersTable.id, sourceUserId));
-  }
+  const [source] = await db.insert(usersTable).values({
+    username: `${tag}_non_isolated`,
+    passwordHash: "not-used",
+    companyId,
+    role: "admin",
+    isActive: true,
+    demoDeviceIsolation: false,
+    isDemoShadow: false,
+  }).returning();
+  cleanupUserIds.push(source.id);
+  assert.equal(await needsDemoDevicePreparation(source, undefined), false);
+  const result = await resolveDemoDeviceLogin({ sourceUser: source, deviceToken: undefined });
+  assert.equal(result.deviceToken, null);
+  assert.equal(result.deviceLinkId, null);
+  assert.equal(result.effectiveUser.id, source.id);
+  assert.equal(result.bindingWasCreated, false);
 });
 
 test("no leftover unrevoked links from cleanup helpers", async () => {

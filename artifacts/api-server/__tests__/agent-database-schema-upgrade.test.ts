@@ -80,7 +80,8 @@ test("agent initialization verifies the strict schema before planting its finger
     ensureSchema.indexOf("/**\n * Fast request-readiness pass", ensureSchema.indexOf("export async function runAgentInitializationSchemaHealOnActiveDb")),
   );
   assert.match(strictHeal, /runHeal\(\{[\s\S]*strictSchema: true/);
-  assert.match(strictHeal, /reconcilePostgresSequences/);
+  assert.match(strictHeal, /ensureSequenceProtectionSchema/);
+  assert.doesNotMatch(strictHeal, /reconcilePostgresSequences/);
 });
 
 test("all full-company restore paths reconcile the active schema before reporting success", () => {

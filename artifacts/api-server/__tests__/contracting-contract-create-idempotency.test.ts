@@ -36,8 +36,12 @@ test("both web contract forms retain and send a create key and block concurrent 
     assert.ok(form, `${name} exists`);
     assert.match(form, /if \(saveInFlight\.current\) return/);
     assert.match(form, /createRequestId\.current \?\?= crypto\.randomUUID\(\)/);
-    assert.match(form, /JSON\.stringify\(isEdit \? editing : \{ \.\.\.editing, clientRequestId: createRequestId\.current \}\)/);
-    assert.match(form, /<Button disabled=\{saving\} onClick=\{save\}>/);
+    const body = name === "OwnerContractTab" ? "contractBody" : "editing";
+    assert.match(
+      form,
+      new RegExp(`body: JSON.stringify\\(isEdit \\? ${body} : \\{ \\.\\.\\.${body}, clientRequestId: createRequestId\\.current \\}\\)`),
+    );
+    assert.match(form, /<Button disabled=\{saving(?:\s*\|\|[^}]*)?\} onClick=\{save\}>/);
   }
 });
 

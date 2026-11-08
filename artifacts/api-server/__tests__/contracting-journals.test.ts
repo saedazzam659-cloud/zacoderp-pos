@@ -36,6 +36,9 @@ import {
   accountsTable,
   accountingMappingsTable,
   contractingProjectsTable,
+  contractingContractorsTable,
+  contractingOwnerContractsTable,
+  contractingSubContractsTable,
   contractingProgressBillsTable,
   journalEntriesTable,
   journalEntryLinesTable,
@@ -50,6 +53,9 @@ const TAG = `tt_ctg_${randomBytes(4).toString("hex")}`;
 
 let cid: number;
 let projectId: number;
+let contractorId: number;
+let ownerContractId: number;
+let subcontractorContractId: number;
 let acctAR: number;
 let acctRetRecv: number;
 let acctRevenue: number;
@@ -63,6 +69,9 @@ const insertedCompanyIds: number[] = [];
 const insertedAccountIds: number[] = [];
 const insertedMappingIds: number[] = [];
 const insertedProjectIds: number[] = [];
+const insertedContractorIds: number[] = [];
+const insertedOwnerContractIds: number[] = [];
+const insertedSubcontractorContractIds: number[] = [];
 const insertedBillIds: number[] = [];
 const insertedEntryIds: number[] = [];
 
@@ -112,6 +121,32 @@ before(async () => {
   }).returning();
   projectId = p.id;
   insertedProjectIds.push(projectId);
+
+  const [contractor] = await db.insert(contractingContractorsTable).values({
+    companyId: cid,
+    name: `${TAG} subcontractor`,
+  }).returning();
+  contractorId = contractor.id;
+  insertedContractorIds.push(contractorId);
+
+  const [ownerContract] = await db.insert(contractingOwnerContractsTable).values({
+    companyId: cid,
+    projectId,
+    contractNumber: `${TAG}_OWNER`,
+    contractDate: "2025-01-01",
+  }).returning();
+  ownerContractId = ownerContract.id;
+  insertedOwnerContractIds.push(ownerContractId);
+
+  const [subcontract] = await db.insert(contractingSubContractsTable).values({
+    companyId: cid,
+    projectId,
+    contractorId,
+    contractNumber: `${TAG}_SUB`,
+    contractDate: "2025-01-01",
+  }).returning();
+  subcontractorContractId = subcontract.id;
+  insertedSubcontractorContractIds.push(subcontractorContractId);
 });
 
 after(async () => {
@@ -119,6 +154,15 @@ after(async () => {
   if (insertedEntryIds.length) {
     await db.delete(journalEntryLinesTable).where(inArray(journalEntryLinesTable.entryId, insertedEntryIds));
     await db.delete(journalEntriesTable).where(inArray(journalEntriesTable.id, insertedEntryIds));
+  }
+  if (insertedSubcontractorContractIds.length) {
+    await db.delete(contractingSubContractsTable).where(inArray(contractingSubContractsTable.id, insertedSubcontractorContractIds));
+  }
+  if (insertedOwnerContractIds.length) {
+    await db.delete(contractingOwnerContractsTable).where(inArray(contractingOwnerContractsTable.id, insertedOwnerContractIds));
+  }
+  if (insertedContractorIds.length) {
+    await db.delete(contractingContractorsTable).where(inArray(contractingContractorsTable.id, insertedContractorIds));
   }
   if (insertedProjectIds.length) await db.delete(contractingProjectsTable).where(inArray(contractingProjectsTable.id, insertedProjectIds));
   if (insertedMappingIds.length) await db.delete(accountingMappingsTable).where(inArray(accountingMappingsTable.id, insertedMappingIds));
@@ -150,6 +194,7 @@ test("outgoing: DR AR+Retention / CR Revenue+VAT — balanced, posted, bill link
 
   const [bill] = await db.insert(contractingProgressBillsTable).values({
     companyId: cid, projectId, direction: "outgoing",
+    ownerContractId,
     billNumber: `${TAG}_OB1`, billDate: "2025-05-01",
     grossAmount: "1000", retentionPercent: "5", retentionAmount: String(m.ret),
     previousPaid: "0", dueAmount: String(m.due),
@@ -193,6 +238,7 @@ test("outgoing: cumulative second bill recognises only the period delta as reven
 
   const [bill] = await db.insert(contractingProgressBillsTable).values({
     companyId: cid, projectId, direction: "outgoing",
+    ownerContractId,
     billNumber: `${TAG}_OB2`, billDate: "2025-06-01",
     grossAmount: "1500", retentionPercent: "5", retentionAmount: String(m.ret),
     previousPaid: String(prevPaid), dueAmount: String(m.due),
@@ -217,6 +263,7 @@ test("outgoing: status follows autoPostCtgOutgoingBill toggle (false → draft)"
     const m = billMath(500, 5, 15, 0);
     const [bill] = await db.insert(contractingProgressBillsTable).values({
       companyId: cid, projectId, direction: "outgoing",
+      ownerContractId,
       billNumber: `${TAG}_OB3`, billDate: "2025-07-01",
       grossAmount: "500", retentionPercent: "5", retentionAmount: String(m.ret),
       previousPaid: "0", dueAmount: String(m.due),
@@ -236,6 +283,7 @@ test("outgoing: idempotent — calling twice does not create a second JE", async
   const m = billMath(800, 5, 15, 0);
   const [bill] = await db.insert(contractingProgressBillsTable).values({
     companyId: cid, projectId, direction: "outgoing",
+    ownerContractId,
     billNumber: `${TAG}_OB4`, billDate: "2025-08-01",
     grossAmount: "800", retentionPercent: "5", retentionAmount: String(m.ret),
     previousPaid: "0", dueAmount: String(m.due),
@@ -256,7 +304,7 @@ test("incoming: DR WIP+VATIn / CR AP+RetentionPayable — balanced, posted, bill
 
   const [bill] = await db.insert(contractingProgressBillsTable).values({
     companyId: cid, projectId, direction: "incoming",
-    contractorId: null,
+    contractorId, subcontractorContractId,
     billNumber: `${TAG}_IB1`, billDate: "2025-05-15",
     grossAmount: "2000", retentionPercent: "10", retentionAmount: String(m.ret),
     previousPaid: "500", dueAmount: String(m.due),
@@ -296,6 +344,7 @@ test("incoming: status follows autoPostCtgIncomingBill toggle (false → draft)"
     const m = billMath(300, 5, 15, 0);
     const [bill] = await db.insert(contractingProgressBillsTable).values({
       companyId: cid, projectId, direction: "incoming",
+      contractorId, subcontractorContractId,
       billNumber: `${TAG}_IB2`, billDate: "2025-06-15",
       grossAmount: "300", retentionPercent: "5", retentionAmount: String(m.ret),
       previousPaid: "0", dueAmount: String(m.due),
@@ -320,6 +369,7 @@ test("outgoing: throws clear Arabic error when revenue mapping is missing", asyn
     const m = billMath(100, 5, 15, 0);
     const [bill] = await db.insert(contractingProgressBillsTable).values({
       companyId: cid, projectId, direction: "outgoing",
+      ownerContractId,
       billNumber: `${TAG}_OB_ERR`, billDate: "2025-09-01",
       grossAmount: "100", retentionPercent: "5", retentionAmount: String(m.ret),
       previousPaid: "0", dueAmount: String(m.due),

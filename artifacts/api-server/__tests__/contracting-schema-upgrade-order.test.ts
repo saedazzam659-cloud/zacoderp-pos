@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../src/lib/ensureSchema.ts", import.meta.url), "utf8");
 const activeRunHealStart = source.lastIndexOf("async function runHeal(");
-const shared = source.slice(activeRunHealStart, source.indexOf("export async function ensureInvoiceCreateIdempotencySchema"));
+const activeRunHealEnd = source.indexOf("export function ensureSchemaUpToDate", activeRunHealStart);
+const shared = source.slice(activeRunHealStart, activeRunHealEnd);
 const required = [
   "contracting_settings",
   "contracting_bill_lines",
@@ -24,20 +25,22 @@ test("contracting tables are created in the shared pass before strict validation
 });
 
 test("agent BOQ creation precedes bill/accounting dependencies and strict validation", () => {
-  const boq = shared.indexOf("if (getActiveExternalDb()) await ensureContractingBoqTables()");
+  const agentBlock = shared.indexOf("if (getActiveExternalDb()) {");
+  const boq = shared.indexOf("await ensureContractingBoqTables()", agentBlock);
   const billDetails = shared.indexOf("await ensureContractingBillDetailsTables()");
   const accounting = shared.indexOf("await ensureContractingAccountingTables()");
   const validate = shared.indexOf("const r = await ensureColumns(");
-  assert.ok(boq > 0 && boq < billDetails && billDetails < accounting && accounting < validate);
+  assert.ok(agentBlock >= 0 && boq > agentBlock && boq < billDetails && billDetails < accounting && accounting < validate);
   const earlierPass = source.slice(source.indexOf("async function runHeal("), activeRunHealStart);
   assert.match(earlierPass, /if \(getActiveExternalDb\(\)\) await ensureContractingBoqTables\(\)/);
 });
 
 test("external owner-bill tax mapping DDL runs before strict validation and is scoped per database", () => {
-  const boq = shared.indexOf("if (getActiveExternalDb()) await ensureContractingBoqTables()");
+  const agentBlock = shared.indexOf("if (getActiveExternalDb()) {");
+  const boq = shared.indexOf("await ensureContractingBoqTables()", agentBlock);
   const mapping = shared.indexOf("if (getActiveExternalDb()) await ensureContractingLocalTaxMappingTables()");
   const validate = shared.indexOf("const r = await ensureColumns(");
-  assert.ok(boq > 0 && mapping > boq && validate > mapping);
+  assert.ok(agentBlock >= 0 && boq > agentBlock && mapping > boq && validate > mapping);
 
   const service = readFileSync(new URL("../src/lib/contracting-local-tax-mapping-service.ts", import.meta.url), "utf8");
   assert.match(service, /new WeakMap<object, Promise<void>>\(\)/);

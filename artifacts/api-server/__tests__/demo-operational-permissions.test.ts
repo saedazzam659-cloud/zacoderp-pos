@@ -112,7 +112,7 @@ test("receipt/delivery UI preserves its existing flow while backend gates effect
   ]) {
     const ui = readFileSync(new URL(`../../zatca-invoicing/src/pages/inventory/${page}.tsx`, import.meta.url), "utf8");
     const server = readFileSync(new URL(`../src/routes/${router}.ts`, import.meta.url), "utf8");
-    assert.match(ui, /!isEdit && j\?\.id && \(j.status \?\? "draft"\) === "draft"/);
+    assert.match(ui, /!editingId && j\?\.id && \(j.status \?\? "draft"\) === "draft"/);
     assert.match(ui, /onClick=\{\(\) => postMut.mutate\(Number\(r.id\)\)\}/);
     assert.match(ui, /await gate\('print'\)/);
     assert.match(ui, /await gate\('export'\)/);

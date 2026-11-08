@@ -25,7 +25,7 @@ test("issued 388 locks source bill corrections and ordinary bills need no 386 ap
   const accounting=readFileSync(new URL("../src/lib/contracting-accounting-service.ts",import.meta.url),"utf8");
   assert.doesNotMatch(fiscal,/if \(!applications\.length\) fail/);
   assert.match(fiscal,/const adjustments=\[\.\.\.grouped\.values\(\)\]/);
-  assert.match(fiscal,/vat !== \(base \* 15n \+ 50n\) \/ 100n/);
+  assert.match(fiscal,/const vat = inclusive \? quoted - base : \(base \* rate \+ 5000n\) \/ 10000n/);
   for (const name of ["unapproveBill","createPostedCorrection","billMutationGuard"]) {
     const section=accounting.split(`export async function ${name}(`)[1];
     assert.ok(section,`${name} must exist`);

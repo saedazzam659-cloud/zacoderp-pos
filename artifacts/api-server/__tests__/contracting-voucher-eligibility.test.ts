@@ -26,7 +26,10 @@ test("retention releases require an explicit certificate and the correct voucher
     ["subcontract_retention_release", "payment", "receipt"],
   ] as const) {
     const allocation = { kind, projectId: 3, contractId: 4, billId: 5 };
-    assert.deepEqual(parseContractingAllocation(allocation, voucher), allocation);
+    assert.deepEqual(parseContractingAllocation(allocation, voucher), {
+      ...allocation,
+      taxableAdvanceInvoiceId: null,
+    });
     assert.throws(() => parseContractingAllocation({ ...allocation, billId: null }, voucher), /billId/);
     assert.throws(() => parseContractingAllocation(allocation, opposite), /نوع السند/);
   }
