@@ -29,6 +29,7 @@ import { DateField } from "@/components/ui/date-field";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePermission } from "@/hooks/usePermission";
 import { openStockTransferPrintWindow, printPersistedStockTransfer } from "@/lib/stockTransferPrint";
+import { defaultDocumentUnitId } from "@/lib/documentLineUnits";
 
 const STATUS_CONFIG: Record<string, { color: string }> = {
   draft:     { color: "bg-amber-50 text-amber-700" },
@@ -279,7 +280,13 @@ export default function StockTransfer() {
     } catch {
       return;
     }
-    const baseUp = ups.find((u: any) => u.isBase) ?? ups[0] ?? null;
+    const baseUnitId = defaultDocumentUnitId(ups, item?.unitId);
+    const baseUp = ups.find((u: any) => String(u.unitId) === baseUnitId)
+      ?? (baseUnitId ? {
+        unitId: Number(baseUnitId),
+        costPrice: item?.costPrice ?? "0",
+        conversionFactor: "1",
+      } : null);
     setLines(prev =>
       prev.map((l, idx) =>
         idx === lineIdx
@@ -303,9 +310,12 @@ export default function StockTransfer() {
       prev.map((l, idx) => {
         if (idx !== lineIdx) return l;
         const ups: any[] = itemUnitsMap[l.itemId] ?? [];
+        const item = (items as any[]).find((candidate: any) => String(candidate.id) === l.itemId);
+        const baseUnitId = defaultDocumentUnitId(ups, item?.unitId);
         const up = unitId
           ? ups.find((u: any) => String(u.unitId) === unitId)
-          : ups.find((u: any) => u.isBase || Number(u.conversionFactor ?? 1) === 1);
+          : ups.find((u: any) => String(u.unitId) === baseUnitId)
+            ?? (baseUnitId ? { unitId: Number(baseUnitId), costPrice: item?.costPrice ?? l.costPrice, conversionFactor: "1" } : undefined);
         return {
           ...l,
           unitId: unitId || (up ? String(up.unitId) : ""),
@@ -397,14 +407,24 @@ export default function StockTransfer() {
   // Get only units linked to this item's active unit-price rows.
   function getLineUnits(line: any): { id: number; nameAr?: string | null; nameEn?: string | null; code?: string }[] {
     const cached = itemUnitsMap[line.itemId];
-    if (cached && cached.length > 0) {
-      return cached.filter((u: any) => u.isActive !== false).map((u: any) => ({
+    const linkedUnits = (cached ?? []).filter((u: any) => u.isActive !== false).map((u: any) => ({
         id: u.unitId,
         nameAr: u.unit?.nameAr ?? null,
         nameEn: u.unit?.nameEn ?? null,
         code: u.unit?.code,
       }));
+    const item = (items as any[]).find((candidate: any) => String(candidate.id) === String(line.itemId));
+    const baseId = item?.unitId == null ? "" : String(item.unitId);
+    const explicitBaseRow = (cached ?? []).find((u: any) => String(u.unitId) === baseId);
+    if (baseId && !explicitBaseRow && item?.unit?.isActive !== false) {
+      linkedUnits.unshift({
+        id: Number(baseId),
+        nameAr: item.unit?.nameAr ?? null,
+        nameEn: item.unit?.nameEn ?? null,
+        code: item.unit?.code,
+      });
     }
+    if (linkedUnits.length > 0) return linkedUnits;
     // Never fall back to the company's global unit list: a transaction unit
     // must be linked to this item so the central engine can resolve it.
     return [];

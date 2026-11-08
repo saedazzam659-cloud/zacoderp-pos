@@ -50,8 +50,9 @@ export function documentItemUnitOptions(
   baseUnitId: string | number | null | undefined,
   catalogUnits: any[],
   selectedId: string | number | null | undefined,
+  preserveHistorical = true,
 ): any[] {
-  const options = itemUnitsWithHistoricalSelection(rows, selectedId);
+  const options = itemUnitsWithHistoricalSelection(rows, preserveHistorical ? selectedId : undefined);
   const hasOption = (id: unknown) => options.some((row: any) => String(row.unitId) === String(id));
 
   if (baseUnitId != null && baseUnitId !== "" && !hasOption(baseUnitId)) {
@@ -68,7 +69,7 @@ export function documentItemUnitOptions(
     }
   }
 
-  if (selectedId != null && selectedId !== "" && !hasOption(selectedId)) {
+  if (preserveHistorical && selectedId != null && selectedId !== "" && !hasOption(selectedId)) {
     const historicalUnit = catalogUnits.find((unit: any) => String(unit.id) === String(selectedId));
     if (historicalUnit) {
       options.push({

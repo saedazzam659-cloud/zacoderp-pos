@@ -57,9 +57,9 @@ import { localizedName } from "@/lib/localizedName";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 import {
-  catalogUnitsWithHistoricalSelection,
+  defaultDocumentUnitId,
+  documentItemUnitOptions,
   isActiveItemUnit,
-  itemUnitsWithHistoricalSelection,
   serializeDocumentLine,
 } from "@/lib/documentLineUnits";
 
@@ -644,8 +644,17 @@ export default function GoodsDeliveries() {
     const item = inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) return;
     const itemUnits = await fetchItemUnits(itemId);
-    const base = itemUnits.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? itemUnits.find(isActiveItemUnit);
-    const fallbackUnit = units.find((u: any) => u.id === item.unitId);
+    const baseUnitId = defaultDocumentUnitId(itemUnits, item.unitId);
+    const baseRow = itemUnits.find((u: any) => String(u.unitId) === baseUnitId);
+    const fallbackUnit = units.find((u: any) => String(u.id) === String(item.unitId));
+    const base = baseRow ?? (baseUnitId ? {
+      unitId: Number(baseUnitId),
+      conversionFactor: "1",
+      salePrice: item.salePrice ?? null,
+      costPrice: item.costPrice ?? null,
+      isBase: true,
+      unit: fallbackUnit,
+    } : undefined);
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
       const updated: DeliveryLine = {
@@ -1408,14 +1417,12 @@ ${sections}
                         )}
                         {(() => {
                           const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
-                          const opts = itemUnits.length > 0
-                            ? itemUnitsWithHistoricalSelection(itemUnits, l.unitId).map((iu: any) => ({
-                                value: String(iu.unitId),
-                                label: unitName(iu.unit) || `#${iu.unitId}`,
-                                disabled: iu.isActive === false || iu.unit?.isActive === false,
-                              }))
-                            : catalogUnitsWithHistoricalSelection(units as any[], l.unitId)
-                              .map((u: any) => ({ value: String(u.id), label: unitName(u) || `#${u.id}`, disabled: u.isActive === false }));
+                          const item = inventoryItems.find((candidate: any) => String(candidate.id) === l.itemId);
+                          const opts = documentItemUnitOptions(itemUnits, item?.unitId, units, l.unitId, Boolean(l.id)).map((iu: any) => ({
+                            value: String(iu.unitId),
+                            label: unitName(iu.unit) || `#${iu.unitId}`,
+                            disabled: iu.historicalOnly === true || iu.isActive === false || iu.unit?.isActive === false,
+                          }));
                           return (
                             <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
                               <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={tr("unitPh")} /></SelectTrigger>

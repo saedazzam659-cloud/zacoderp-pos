@@ -61,8 +61,9 @@ import SalesDocumentDetails from "@/pages/sales/SalesDocumentDetails";
 import { SalesBatchAllocationControl, type SalesBatchAllocation } from "./SalesBatchAllocationControl";
 import QuickAddCatalogItemDialog from "./QuotationQuickAddItemDialog";
 import {
+  defaultDocumentUnitId,
+  documentItemUnitOptions,
   isActiveItemUnit,
-  itemUnitsWithHistoricalSelection,
   serializeDocumentLine,
 } from "@/lib/documentLineUnits";
 import {
@@ -1038,7 +1039,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     items: inventoryItems,
     setSearch: setItemSearch,
     isSearching: isSearchingItems,
-  } = useInventoryItemSearch(cid, authH, lines.map(line => line.itemId), !!user);
+  } = useInventoryItemSearch(cid, authH, [...lines.map(line => line.itemId), qaItemId], !!user);
+  const quickAddItem = inventoryItems.find((item: any) => String(item.id) === qaItemId);
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
     queryFn: () => fetchJsonArray(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, authH),
@@ -1261,10 +1263,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       let np: string | null = null;
       if (isDefault) {
         const itemUnits = await fetchItemUnits(l.itemId);
-        const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
-          ?? itemUnits.find((u: any) => u.isBase)
-          ?? itemUnits[0];
         const item = inventoryItems.find((i: any) => String(i.id) === l.itemId);
+        const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
+          ?? itemUnits.find((u: any) => String(u.unitId) === String(item?.unitId))
+          ?? itemUnits.find((u: any) => u.isBase)
+          ?? undefined;
         const v = resolveSalesItemUnitPrice(item, row);
         if (v != null) np = String(v);
       } else {
@@ -1603,11 +1606,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     (async () => {
       const us = await fetchItemUnits(qaItemId);
       if (cancelled) return;
-      const base = us.find((u: any) => u.isBase && isActiveItemUnit(u)) ?? us.find(isActiveItemUnit);
-      setQaUnitId(base?.unitId != null ? String(base.unitId) : "");
+      setQaUnitId(defaultDocumentUnitId(us, quickAddItem?.unitId));
     })();
     return () => { cancelled = true; };
-  }, [qaItemId]);
+  }, [qaItemId, quickAddItem?.unitId]);
 
   // Cache item-specific per-currency prices: itemId → [{ currencyCode, salePrice, costPrice, ... }]
   // The header currency drives line pricing — when a non-default currency is
@@ -2815,7 +2817,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       value: String(u.id),
       label: localizedName(u.nameAr, u.nameEn, isRtl ? "ar" : "en") || `#${u.id}`,
     }));
-  function salesLineUnitOptions(itemId: string, selectedUnitId: string) {
+  function salesLineUnitOptions(itemId: string, selectedUnitId: string, preserveHistorical = false) {
     if (!itemId) return unitItems;
     const itemUnits = itemUnitsMap[itemId] ?? [];
     const item = inventoryItems.find((candidate: any) => String(candidate.id) === itemId);
@@ -2834,22 +2836,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       }
       return [];
     }
-    if (itemUnits.length > 0) {
-      return itemUnitsWithHistoricalSelection(itemUnits, selectedUnitId).map((iu: any) => ({
-        value: String(iu.unitId),
-        label: `${localizedName(iu.unit?.nameAr, iu.unit?.nameEn, isRtl ? "ar" : "en")}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
-        disabled: iu.isActive === false || iu.unit?.isActive === false,
-      }));
-    }
-
-    const allowedIds = new Set([baseUnitId, !isNew ? selectedUnitId : ""].filter(Boolean));
-    return units
-      .filter((unit: any) => allowedIds.has(String(unit.id)))
-      .map((unit: any) => ({
-        value: String(unit.id),
-        label: localizedName(unit.nameAr, unit.nameEn, isRtl ? "ar" : "en") || `#${unit.id}`,
-        disabled: unit.isActive === false || (String(unit.id) !== baseUnitId && !isNew),
-      }));
+    return documentItemUnitOptions(itemUnits, baseUnitId, units, selectedUnitId, preserveHistorical).map((iu: any) => ({
+      value: String(iu.unitId),
+      label: `${localizedName(iu.unit?.nameAr, iu.unit?.nameEn, isRtl ? "ar" : "en")}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+      disabled: iu.historicalOnly === true || iu.isActive === false || iu.unit?.isActive === false,
+    }));
   }
 
   const Icon  = isInvoice ? ShoppingBag : isOrder ? ClipboardList : FileSignature;
@@ -3252,7 +3243,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 </div>
               ) : filled.map((l, idx) => {
                 const dMode = lineDiscMode[l._id] ?? "pct";
-                const unitOpts = salesLineUnitOptions(l.itemId, l.unitId);
+                const unitOpts = salesLineUnitOptions(l.itemId, l.unitId, Boolean(l.id));
                 return (
                 <div key={l._id} className="px-3 py-2 text-xs hover:bg-muted/30 transition-colors">
                   <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: gridCols }}>
@@ -3565,7 +3556,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         <Input className="h-9 text-xs" placeholder="—" readOnly />
                       )}
                       {(() => {
-                        const opts = salesLineUnitOptions(l.itemId, l.unitId);
+                        const opts = salesLineUnitOptions(l.itemId, l.unitId, Boolean(l.id));
                         return units.length > 0 ? (
                           <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)} disabled={!!l.itemId && opts.length === 0}>
                             <SelectTrigger className="h-9 text-xs"><SelectValue placeholder={l.itemId && opts.length === 0 ? t("inventoryMaster.units.baseRequired") : t("salesDocForm.colUnit")} /></SelectTrigger>
