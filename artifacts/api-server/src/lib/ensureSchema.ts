@@ -1066,6 +1066,7 @@ const ITEM_UNIT_CONVERSION_COMPATIBILITY_DDL = [
            WHERE company_id = item_row.company_id
              AND item_id = item_row.item_id
              AND reference_unit_id IS NULL
+             AND unit_id <> candidate_base
         ) INTO has_unmigrated_row;
         IF has_unmigrated_row THEN
           UPDATE item_unit_prices

@@ -2827,6 +2827,18 @@ router.put("/items/:id/units/:upId", async (req, res) => {
         roundingMode: values.roundingMode,
         legacyConversionConflict: clearLegacyConflict ? false : current.legacyConversionConflict,
       }).where(and(eq(itemUnitPricesTable.id, upId), eq(itemUnitPricesTable.companyId, cid))).returning();
+      if (clearLegacyConflict) {
+        const repairedRows = await tx.update(itemUnitPricesTable).set({ legacyConversionConflict: false })
+          .where(and(
+            eq(itemUnitPricesTable.companyId, cid),
+            eq(itemUnitPricesTable.itemId, itemId),
+            eq(itemUnitPricesTable.legacyConversionConflict, true),
+          )).returning();
+        for (const repaired of repairedRows) {
+          const before = rows.find((candidate: any) => candidate.id === repaired.id);
+          if (before) auditSubEntity(req, "item_unit_prices", repaired.id, "edit", before, repaired);
+        }
+      }
       await recomputeCachedItemFactors(tx, cid, itemId);
       auditSubEntity(req, "item_unit_prices", upId, "edit", current, row);
       res.json(row);

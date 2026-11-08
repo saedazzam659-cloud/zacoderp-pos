@@ -587,8 +587,8 @@ export function resolveUnitGraph(input: {
 }
 
 /**
- * Clear one stale legacy marker only after an explicit unit-row edit, and only
- * when the saved base and complete active graph resolve without any historical
+ * Clear stale legacy markers only after an explicit unit-row edit, and only
+ * when the saved base and complete active graph resolve without historical
  * usage that could depend on the old ambiguous conversion.
  */
 export function canClearLegacyConversionConflictAfterExplicitEdit(input: {
@@ -601,9 +601,7 @@ export function canClearLegacyConversionConflictAfterExplicitEdit(input: {
   const edited = input.rows.find((row) => row.id === input.editedRowId);
   if (!edited?.legacyConversionConflict || edited.isActive === false) return false;
 
-  const candidateRows = input.rows.map((row) =>
-    row.id === input.editedRowId ? { ...row, legacyConversionConflict: false } : row,
-  );
+  const candidateRows = input.rows.map((row) => ({ ...row, legacyConversionConflict: false }));
   try {
     resolveUnitGraph({ baseUnitId: input.baseUnitId, rows: candidateRows });
     return true;

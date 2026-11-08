@@ -104,6 +104,21 @@ test("an explicit edit may clear a stale marker on a valid graph with no history
   }), false);
 });
 
+test("one explicit edit can clear migration markers from a valid graph, but not when used", () => {
+  const rows = [
+    { id: 76, unitId: 46, referenceUnitId: null, relationFactor: "1", isBase: true,
+      isActive: true, legacyConversionConflict: true },
+    { id: 77, unitId: 47, referenceUnitId: 46, relationFactor: "12", isBase: false,
+      isActive: true, legacyConversionConflict: true },
+  ];
+  assert.equal(canClearLegacyConversionConflictAfterExplicitEdit({
+    baseUnitId: 46, editedRowId: 77, rows, historicalUsage: false,
+  }), true);
+  assert.equal(canClearLegacyConversionConflictAfterExplicitEdit({
+    baseUnitId: 46, editedRowId: 77, rows, historicalUsage: true,
+  }), false);
+});
+
 test("used legacy unitless quantities may receive their first base unit", () => {
   const decision = validateBaseUnitAssignment({
     currentBaseUnitId: null,
