@@ -1,5 +1,11 @@
 export type Catalog = {
-  employees?: Array<{ id: number; nameAr?: string | null; nameEn?: string | null; code?: string | null }>;
+  employees?: Array<{
+    id: number;
+    nameAr?: string | null;
+    nameEn?: string | null;
+    code?: string | null;
+    manufacturingLaborType?: "direct" | "indirect" | "supervisor" | "unclassified" | string | null;
+  }>;
   // `/catalog` returns the inventory identifiers used by the simple facade.
   // Keep `unitId` separate from the display/unit-code value: the endpoint does
   // not return a unit code, so callers must use their explicit PCE fallback.

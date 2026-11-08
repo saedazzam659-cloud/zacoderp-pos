@@ -1,4 +1,5 @@
 import { Clock } from "lucide-react";
+import { Fragment } from "react";
 
 /** Read-only view of persisted execution and approved source snapshots. */
 export function ProductionTimeCosts({ trace, status }: { trace: any; status: string }) {
@@ -64,6 +65,9 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
               ? "تتضمن اللقطة كهرباء معلّقة تحمل حساب استحقاق ومبلغاً مجمداً من الخادم. يُرسمل هذا المبلغ في استلام الإنتاج/FG ثم تُصفّيه تسوية الفاتورة الفعلية وتحمّل فرقها فقط. لا يضاف مرة ثانية يدوياً إلى WIP أو FG أو COGS."
               : "الكهرباء أدناه لقطة استخدام مجمّدة من الخادم. عند ربطها بمصدر كهرباء صناعي مرحّل تبقى المعالجة مرتبطة بالمصدر وساعات الآلة الفعلية. اللقطات التاريخية التي لا تحمل حساب استحقاق تبقى دليل استخدام فقط ولا يعاد تفسيرها أو إضافتها إلى WIP/FG/COGS."}
           </p>
+          <p className="text-xs text-slate-600">
+            مصدر الإهلاك المرتبط بالأمر لا يُحمّل تلقائياً على كل مرحلة؛ يلزم أن تكون المرحلة آلة/آلة + عمالة، وأن تكون الآلة مرتبطة بالأصل نفسه ومؤهلة للتصنيع.
+          </p>
           {resourceStages.length > 0 ? <div className="overflow-x-auto">
              <table className="w-full min-w-[1050px] text-xs">
               <thead><tr className="border-b text-slate-500">
@@ -72,6 +76,25 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
               <tbody>{resourceStages.map((stage: any) => {
                 const routeStage = stages.find((candidate: any) => String(candidate.id) === String(stage.stageId));
                 const modeLabel = stage.resourceMode === "both" ? "آلة + عمالة" : stage.resourceMode === "machine" ? "آلة" : "عمالة";
+                const snapshots = Array.isArray(stage.snapshot) ? stage.snapshot : [];
+                const laborEvidence = snapshots.find((component: any) => component?.component === "labor")?.snapshot ?? {};
+                const employeeCosts = Array.isArray(laborEvidence.employeeCostBreakdown)
+                  ? laborEvidence.employeeCostBreakdown : [];
+                const hasZeroNetProvisions = employeeCosts.length > 0 && employeeCosts.every((employee: any) =>
+                  Number(employee.leaveProvisionAmount || 0) === 0 &&
+                  Number(employee.travelTicketProvisionAmount || 0) === 0 &&
+                  Number(employee.eosProvisionAmount || 0) === 0,
+                );
+                const depreciationEvidence = snapshots.find((component: any) => component?.component === "depreciation")?.snapshot ?? null;
+                const depreciationReason = !depreciationEvidence &&
+                    (stage.resourceMode === "machine" || stage.resourceMode === "both")
+                  ? "لا توجد لقطة إهلاك للمرحلة؛ تحقق من ربط الآلة بالأصل المؤهل ومصدر الإهلاك وساعات التشغيل المعتمدة."
+                  : depreciationEvidence?.costStatus === "pending_depreciation" &&
+                    !(Number(depreciationEvidence?.hourlyRate) > 0)
+                    ? "لم يتوفر معدل إهلاك مرجعي صالح لهذه المرحلة."
+                    : stage.depreciation == null && stage.resourceMode === "labor"
+                      ? "المرحلة عمالة فقط؛ مصدر الإهلاك المرتبط بالأمر لا يرتبط بها."
+                      : null;
                 const electricity = (Array.isArray(stage.snapshot) ? stage.snapshot : [])
                   .find((component: any) => component?.component === "electricity")?.snapshot ?? null;
                 const provisionalAmount = Number(electricity?.provisionalAccrualAmount);
@@ -90,12 +113,51 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
                     : stage.costStatus === "calculated"
                       ? "محسوبة من مصدر"
                       : "غير محسوبة";
-                return <tr key={stage.stageId} className="border-b last:border-0">
+                return <Fragment key={stage.stageId}>
+                  <tr className="border-b last:border-0">
                   <td className="p-2 font-medium">{routeStage?.name ?? `#${stage.stageId}`}</td>
                   <td className="p-2">{statusLabel}</td><td className="p-2">{money(stage.provisionalEstimate)}</td>
-                  <td className="p-2">{modeLabel}</td><td className="p-2">{money(stage.labor)}</td><td className="p-2">{money(stage.depreciation)}</td>
+                  <td className="p-2">{modeLabel}</td>
+                  <td className="p-2">
+                    {money(stage.labor)}
+                    {employeeCosts.map((employee: any) => (
+                      <div key={`${stage.stageId}-${employee.employeeId}`} className="mt-2 border-t pt-2 text-[11px] leading-5">
+                        <div className="font-semibold">{employee.employeeName || `موظف #${employee.employeeId}`}</div>
+                        <div>
+                          الأجر {money(employee.salaryAmount)} + إجازة {money(employee.leaveProvisionAmount)}
+                          {" + "}تذكرة {money(employee.travelTicketProvisionAmount)}
+                          {" + "}نهاية خدمة {money(employee.eosProvisionAmount)}
+                          {" = "}شهرياً {money(employee.monthlyCost)}
+                        </div>
+                        <div>
+                          ÷ {fmt(employee.monthlyHours)} ساعة × {fmt(employee.stageHours)} ساعة فعلياً
+                          {" = "}{money(employee.amount)}
+                        </div>
+                        {(Number(employee.leaveProvisionOffset || 0) > 0 ||
+                          Number(employee.travelTicketProvisionOffset || 0) > 0 ||
+                          Number(employee.eosProvisionOffset || 0) > 0) && (
+                          <div className="text-slate-500">
+                            خُصمت تسويات مخصصات مرحّلة لتجنب التكرار:
+                            {" "}إجازة {money(employee.leaveProvisionOffset)}
+                            {"، "}تذكرة {money(employee.travelTicketProvisionOffset)}
+                            {"، "}نهاية خدمة {money(employee.eosProvisionOffset)}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {hasZeroNetProvisions && (
+                      <div className="mt-2 rounded bg-amber-50 p-2 text-[10px] leading-4 text-amber-800">
+                        صافي المخصصات المثبتة في هذه اللقطة يساوي صفراً. لن يُعاد حساب مخصصات مسير مرحّل من بيانات اليوم.
+                      </div>
+                    )}
+                  </td>
+                  <td className="p-2">
+                    {money(stage.depreciation)}
+                    {depreciationReason && <div className="mt-1 max-w-56 text-[10px] leading-4 text-amber-700">{depreciationReason}</div>}
+                  </td>
                   <td className="p-2">{money(stage.electricity)}</td><td className="p-2">{electricityTreatment}</td><td className="p-2">{money(stage.factoryOverhead)}</td><td className="p-2 font-semibold">{money(stage.total)}</td>
-                </tr>;
+                  </tr>
+                </Fragment>;
               })}</tbody>
               {resourceCost?.totals && <tfoot><tr className="border-t-2 border-violet-200 font-semibold text-violet-950">
                 <td className="p-2" colSpan={4}>إجمالي لقطة الخادم</td><td className="p-2">{money(resourceCost.totals.labor)}</td><td className="p-2">{money(resourceCost.totals.depreciation)}</td>
@@ -108,16 +170,26 @@ export function ProductionTimeCosts({ trace, status }: { trace: any; status: str
       <div className="space-y-2">
         {allocations.map((source: any) => {
           const meta = source.snapshotMeta ?? {};
-            const method = meta.formulaMethod;
-            const industrialDriver = meta.industrialDriver ?? meta.allocationMethod;
+          const method = meta.formulaMethod;
+          const industrialDriver = meta.industrialDriver ?? meta.allocationMethod;
+          const denominator = meta.formulaDenominator ?? meta.denominatorOrRate;
+          const numerator = meta.formulaNumerator ?? meta.numerator;
           const rule = method === "operating_hours"
-            ? `ساعات التشغيل ÷ ${fmt(meta.denominatorOrRate)} ساعة معتمدة × قيمة المصدر`
+            ? `${fmt(numerator)} ساعة تشغيل ÷ ${fmt(denominator)} ساعة معتمدة × قيمة المصدر`
             : method === "fixed_hourly_rate"
-              ? `ساعات التشغيل × معدل ${fmt(meta.denominatorOrRate)} للساعة`
+              ? `ساعات التشغيل × معدل ${fmt(denominator)} للساعة`
               : method === "production_quantity" ? "حسب كمية الإنتاج، وليس الوقت" : "حسب التخصيص المعتمد، وليس الوقت";
           return <div key={source.id} className="rounded-lg border bg-white p-3 text-sm">
             <div className="font-medium">{sourceLabels[source.sourceType] ?? "مصدر تكلفة"} #{source.sourceRecordId}</div>
             <div className="text-xs text-slate-600 mt-1">{rule}</div>
+            <div className="mt-1 text-xs text-slate-600">
+              قيمة المصدر {money(source.sourceAmount)} · المبلغ الموزع على الأمر {money(source.allocatedAmount)}
+            </div>
+            {source.sourceType === "payroll" && (
+              <div className="mt-1 text-xs text-slate-600">
+                المخصصات المجمدة {money(meta.monthlyProvisionAmount)} · خصومات التسويات السابقة {money(meta.provisionSettlementOffset)}
+              </div>
+            )}
             {(source.sourceType === "purchase_invoice" || source.sourceType === "purchase_return") && <div className="text-xs text-indigo-700 mt-1">مصدر صناعي: {industrialCostLabels[String(meta.costType)] ?? String(meta.costType ?? "غير مصنف")} — المحرك: {String(industrialDriver ?? "غير محدد")}</div>}
             {source.sourceType === "purchase_invoice" && meta.costType === "employee_insurance" && industrialDriver === "labor_hours" && <div className="text-xs text-emerald-700 mt-1">قسط صاحب العمل المرحّل موزع حسب ساعات العمالة الفعلية؛ سندات الصرف المتعددة تسدد الفاتورة ولا تضيف تكلفة جديدة.</div>}
             {source.sourceType === "prepaid_amortization" && meta.industrialDriver === "labor_hours" && <div className="text-xs text-emerald-700 mt-1">القسط الشهري من المصروف المقدم موزع حسب ساعات العمالة؛ الفاتورة الأصلية وسندات سدادها لا تُحمّل مرة أخرى.</div>}

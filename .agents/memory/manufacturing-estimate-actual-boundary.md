@@ -1,10 +1,10 @@
 ---
 name: Manufacturing estimate versus actual
-description: Read-only manufacturing route cost estimates and individual employee payroll rate basis.
+description: Per-employee manufacturing labor cost, frozen payroll provisions, and depreciation evidence.
 ---
 
-Smart Manufacturing should show planned and executed route-resource costs separately from posted production-order costs. This comparison is informational and must never create or alter payroll, depreciation, WIP, order costs, or journal entries.
+Smart Manufacturing must cost each assigned employee separately from the employee's gross pay plus frozen annual-leave, travel-ticket, and Saudi end-of-service provision amounts, less any already-posted manufacturing offsets for those same provisions. Divide by 30 times the employee's contract daily hours (240 hours for an eight-hour day), then multiply by that employee's actual stage hours. Do not flatten employees into one hourly average, reconstruct missing historical provisions, or silently rewrite saved or posted history. Reconcile an existing posted payroll source through the established allocation/driver flow; stage evidence is not a second payroll journal.
 
-**Why:** The user wants costs visible from route stages while keeping accounting entries unchanged; employee salaries differ and must not be flattened into one company-wide hourly average.
+**Why:** The user requires salary plus leave, ticket, and Saudi EOS provisions at a 240-hour monthly basis, with no duplicate recognition and no rewriting of posted history. Employee costs differ, and missing frozen values cannot be safely inferred from current contract settings.
 
-**How to apply:** Use each stage employee's gross salary from the latest posted payroll run appropriate to the stage period, divided by 30 days times that employee's contractual daily hours. Apply it to planned duration for planned cost and actual duration for executed-resource analysis. Require recorded employee IDs/count to agree before showing actual labor. Use linked-asset rates for depreciation, and label current electricity tariff use and missing inputs clearly. Keep accounting/posting costs unchanged.
+**How to apply:** Require the posted payroll run's frozen provision snapshots and a contract valid for that payroll period; subtract posted provision settlements once by employee and source journal. Apply each employee's own rate to their actual stage hours and reconcile only through the existing source allocation and driver-reconciliation lifecycle. Keep route estimates read-only and separate from posted order costs. Depreciation applies only through a machine stage linked to an eligible fixed asset with a valid configured hourly rate or posted depreciation divided by approved operating hours; show missing inputs explicitly. Never reconstruct or silently update historical snapshots.

@@ -32,6 +32,7 @@ import {
   productionResourcesTable,
   employeesTable,
   employeeContractsTable,
+  employeeProvisionSettlementsTable,
   fixedAssetsTable,
   payrollRunsTable,
   payrollLinesTable,
@@ -389,6 +390,7 @@ router.get("/execution-catalog", view, async (req, res) => {
         nameAr: employeesTable.nameAr,
         nameEn: employeesTable.nameEn,
         code: employeesTable.code,
+        manufacturingLaborType: employeesTable.manufacturingLaborType,
         branchId: employeesTable.branchId,
       }).from(employeesTable).where(employeeWhere)
         .orderBy(asc(employeesTable.nameAr), asc(employeesTable.nameEn), asc(employeesTable.code)),
@@ -2157,8 +2159,16 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
         : [],
     ))];
     const payrollRows = employeeIds.length ? await db.select({
+      payrollRunId: payrollRunsTable.id,
+      journalId: payrollRunsTable.postedJournalId,
       employeeId: payrollLinesTable.employeeId,
       grossSalary: payrollLinesTable.grossSalary,
+      leaveProvisionAmount: payrollLinesTable.leaveProvisionAmount,
+      travelTicketProvisionAmount: payrollLinesTable.travelTicketProvisionAmount,
+      eosProvisionAmount: payrollLinesTable.eosProvisionAmount,
+      provisionSnapshotsCaptured: payrollRunsTable.provisionSnapshotsCaptured,
+      employeeName: employeesTable.nameAr,
+      employeeCode: employeesTable.code,
       year: payrollRunsTable.year,
       month: payrollRunsTable.month,
       periodEnd: payrollRunsTable.periodEnd,
@@ -2182,6 +2192,32 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
       ))
       .orderBy(desc(payrollRunsTable.year), desc(payrollRunsTable.month))
       : [];
+    const payrollJournalIds = [...new Set(payrollRows
+      .map((row) => Number(row.journalId))
+      .filter((id) => Number.isInteger(id) && id > 0))];
+    const provisionSettlements = payrollJournalIds.length && employeeIds.length
+      ? await db.select({
+        employeeId: employeeProvisionSettlementsTable.employeeId,
+        provisionType: employeeProvisionSettlementsTable.provisionType,
+        snapshot: employeeProvisionSettlementsTable.sourceSnapshot,
+      }).from(employeeProvisionSettlementsTable).where(and(
+        eq(employeeProvisionSettlementsTable.companyId, cid),
+        eq(employeeProvisionSettlementsTable.status, "posted"),
+        inArray(employeeProvisionSettlementsTable.employeeId, employeeIds),
+        inArray(sql<string>`${employeeProvisionSettlementsTable.sourceSnapshot}->>'sourceJournalId'`, payrollJournalIds.map(String)),
+      ))
+      : [];
+    const provisionOffsetsByEmployeeRun = new Map<string, { leave: number; ticket: number; eos: number }>();
+    for (const settlement of provisionSettlements) {
+      const journalId = Number((settlement.snapshot as any)?.sourceJournalId);
+      const key = `${settlement.employeeId}:${journalId}`;
+      const offsets = provisionOffsetsByEmployeeRun.get(key) ?? { leave: 0, ticket: 0, eos: 0 };
+      const amount = Number((settlement.snapshot as any)?.manufacturingOffsetAmount ?? 0);
+      if (settlement.provisionType === "annual_leave") offsets.leave += amount;
+      else if (settlement.provisionType === "travel_ticket") offsets.ticket += amount;
+      else if (["eos", "end_of_service"].includes(String(settlement.provisionType))) offsets.eos += amount;
+      provisionOffsetsByEmployeeRun.set(key, offsets);
+    }
     const employeeContracts = employeeIds.length ? await db.select({
       employeeId: employeeContractsTable.employeeId,
       startDate: employeeContractsTable.startDate,
@@ -2243,33 +2279,81 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
       if (!(Number(contract?.workingHours) > 0)) {
         return { rate: null, sourcePeriod: null, reason: "ساعات العقد غير محددة" };
       }
+      if (!pay.provisionSnapshotsCaptured ||
+          pay.leaveProvisionAmount == null ||
+          pay.travelTicketProvisionAmount == null ||
+          pay.eosProvisionAmount == null) {
+        return { rate: null, sourcePeriod: null, reason: "مخصصات المسير غير مجمدة" };
+      }
       if (!(Number(pay.grossSalary) > 0)) {
         return { rate: null, sourcePeriod: null, reason: "راتب المسير غير متاح" };
       }
+      const monthlyHours = 30 * Number(contract.workingHours);
+      const offsets = provisionOffsetsByEmployeeRun.get(`${employeeId}:${pay.journalId}`) ??
+        { leave: 0, ticket: 0, eos: 0 };
+      const leaveProvisionAmount = Math.max(0, Number(pay.leaveProvisionAmount) - offsets.leave);
+      const travelTicketProvisionAmount = Math.max(0, Number(pay.travelTicketProvisionAmount) - offsets.ticket);
+      const eosProvisionAmount = Number(pay.eosProvisionAmount) - offsets.eos;
+      const monthlyCost = Number(pay.grossSalary) +
+        leaveProvisionAmount +
+        travelTicketProvisionAmount +
+        eosProvisionAmount;
+      if (!(monthlyCost >= 0)) {
+        return { rate: null, sourcePeriod: null, reason: "تكلفة الموظف الشهرية غير صالحة" };
+      }
       return {
-        rate: Number(pay.grossSalary) / (30 * Number(contract.workingHours)),
+        rate: monthlyCost / monthlyHours,
         sourcePeriod: `${pay.year}-${String(pay.month).padStart(2, "0")}`,
+        employeeName: pay.employeeName || `موظف #${employeeId}`,
+        employeeCode: pay.employeeCode ?? null,
+        salaryAmount: Number(pay.grossSalary),
+        leaveProvisionAmount,
+        travelTicketProvisionAmount,
+        eosProvisionAmount,
+        leaveProvisionOffset: offsets.leave,
+        travelTicketProvisionOffset: offsets.ticket,
+        eosProvisionOffset: offsets.eos,
+        monthlyCost,
+        monthlyHours,
         reason: null,
       };
     };
     const depreciationRate = (stage: typeof stageRows[number], effectivePeriod: string) => {
+      if (!stage.fixedAssetId) {
+        return { rate: 0, source: null, reason: "آلة المرحلة غير مرتبطة بأصل ثابت" };
+      }
+      if (!stage.usedInManufacturing) {
+        return { rate: 0, source: null, reason: "الأصل غير مفعّل للاستخدام في التصنيع" };
+      }
       const method = String(stage.allocationMethod || "");
       if (method === "fixed_hourly_rate") {
-        return {
-          rate: Number(stage.fixedManufacturingRate) > 0 ? Number(stage.fixedManufacturingRate) : 0,
-          source: "معدل الساعة المحدد على الأصل",
-        };
+        const rate = Number(stage.fixedManufacturingRate);
+        return rate > 0
+          ? { rate, source: "معدل الساعة المحدد على الأصل", reason: null as string | null }
+          : { rate: 0, source: null, reason: "معدل الإهلاك الثابت غير محدد على الأصل" };
       }
-      if (method === "operating_hours" && stage.fixedAssetId && Number(stage.approvedOperatingHours) > 0) {
-        const run = depreciationByAsset.get(Number(stage.fixedAssetId))?.find((row) =>
-          `${row.year}-${String(row.month).padStart(2, "0")}` <= effectivePeriod,
-        );
-        return {
-          rate: run ? Number(run.amount) / Number(stage.approvedOperatingHours) : 0,
-          source: run ? `${run.year}-${String(run.month).padStart(2, "0")}` : null,
-        };
+      if (method !== "operating_hours") {
+        return { rate: 0, source: null, reason: "طريقة توزيع إهلاك الأصل غير محددة" };
       }
-      return { rate: 0, source: null as string | null };
+      const approvedHours = Number(stage.approvedOperatingHours);
+      if (!(approvedHours > 0)) {
+        return { rate: 0, source: null, reason: "ساعات التشغيل الشهرية المعتمدة للأصل غير محددة" };
+      }
+      const run = depreciationByAsset.get(Number(stage.fixedAssetId))?.find((row) =>
+        `${row.year}-${String(row.month).padStart(2, "0")}` <= effectivePeriod,
+      );
+      if (!run) {
+        return { rate: 0, source: null, reason: "لا يوجد إهلاك مرحّل للأصل في هذه الفترة أو قبلها" };
+      }
+      const rate = Number(run.amount) / approvedHours;
+      if (!(rate > 0)) {
+        return { rate: 0, source: null, reason: "مبلغ الإهلاك المرحّل أو ساعات الأصل غير صالحين" };
+      }
+      return {
+        rate,
+        source: `${run.year}-${String(run.month).padStart(2, "0")}`,
+        reason: null as string | null,
+      };
     };
     const orderMap = new Map(orders.map((order) => [order.id, order]));
     const totals = { labor: 0, depreciation: 0, electricity: 0, total: 0 };
@@ -2301,6 +2385,8 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
       const actualMissing: string[] = [];
       let plannedHourlyTotal = 0;
       let actualHourlyTotal = 0;
+      const plannedLaborBreakdown: any[] = [];
+      const actualLaborBreakdown: any[] = [];
       let plannedLaborRatesComplete = true;
       let actualLaborRatesComplete = true;
       const laborSourcePeriods: string[] = [];
@@ -2319,6 +2405,7 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
           else {
             plannedHourlyTotal += plannedRate.rate;
             if (plannedRate.sourcePeriod) laborSourcePeriods.push(plannedRate.sourcePeriod);
+            plannedLaborBreakdown.push({ ...plannedRate, stageHours });
           }
           const actualRate = employeeHourlyRate(employeeId, actualPeriod);
           if (actualRate.rate == null) {
@@ -2327,6 +2414,7 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
           } else {
             actualHourlyTotal += actualRate.rate;
             if (actualRate.sourcePeriod) actualLaborSourcePeriods.push(actualRate.sourcePeriod);
+            actualLaborBreakdown.push({ ...actualRate, stageHours: actualHours });
           }
         }
         if (stage.workerCount != null && Number(stage.workerCount) !== ids.length)
@@ -2349,20 +2437,22 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
         if (!stage.resourceId || !stage.resourceName) missing.push("الآلة غير محددة");
         if (actualExecutionRecorded && !(actualHours > 0))
           actualMissing.push("لم تُسجل مدة الآلة الفعلية");
+        const plannedRate = depreciationRate(stage, period);
+        const actualRate = depreciationRate(stage, actualPeriod);
         if (stage.fixedAssetId && stage.usedInManufacturing) {
-          const plannedRate = depreciationRate(stage, period);
-          const actualRate = depreciationRate(stage, actualPeriod);
           if (stageHours > 0 && plannedRate.rate > 0) {
             depreciation = stageHours * plannedRate.rate;
             depreciationSourcePeriod = plannedRate.source;
-          } else if (stageHours > 0) missing.push("معدل إهلاك الساعة غير متاح");
+          } else if (stageHours > 0) missing.push(plannedRate.reason || "معدل إهلاك الساعة غير متاح");
           if (actualHours > 0 && actualRate.rate > 0) {
             actualDepreciation = actualHours * actualRate.rate;
             actualDepreciationSourcePeriod = actualRate.source;
-          } else if (actualHours > 0) actualMissing.push("معدل إهلاك الساعة الفعلي غير متاح");
+          } else if (actualHours > 0)
+            actualMissing.push(actualRate.reason || "معدل إهلاك الساعة الفعلي غير متاح");
         } else {
-          if (stageHours > 0) missing.push("الأصل الصناعي أو معدل الإهلاك غير متاح");
-          if (actualExecutionRecorded && actualHours > 0) actualMissing.push("الأصل الصناعي أو معدل الإهلاك غير متاح");
+          if (stageHours > 0) missing.push(plannedRate.reason || "الأصل الصناعي أو معدل الإهلاك غير متاح");
+          if (actualExecutionRecorded && actualHours > 0)
+            actualMissing.push(actualRate.reason || "الأصل الصناعي أو معدل الإهلاك غير متاح");
         }
         if (stage.electricityEnabled) {
           const tariff = Number(settings?.electricityTariffPerKwh);
@@ -2392,6 +2482,8 @@ router.get("/reports/resource-estimates", view, async (req, res) => {
         actualTotal: Number(actualStageTotal.toFixed(2)),
         laborSourcePeriods: [...new Set(laborSourcePeriods)],
         actualLaborSourcePeriods: [...new Set(actualLaborSourcePeriods)],
+        plannedLaborBreakdown,
+        actualLaborBreakdown,
         depreciationSourcePeriod,
         actualDepreciationSourcePeriod,
         missing: [...new Set(missing)],

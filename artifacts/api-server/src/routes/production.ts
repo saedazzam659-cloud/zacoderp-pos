@@ -73,6 +73,7 @@ import {
   usersTable,
   employeesTable,
   employeeContractsTable,
+  employeeProvisionSettlementsTable,
   payrollAllocationSnapshotsTable,
   payrollLinesTable,
   payrollRunsTable,
@@ -389,9 +390,19 @@ async function settlePendingResourceEvidence(evidenceId: number) {
     }
     if (!source || !(source.amount > 0) || !(source.denominator > 0)) return;
     const driver = sourceType === "payroll" ? Number(snapshot.personHours) : Number(snapshot.hours);
-    const actualAmount = Number((source.fixedRate
-      ? driver * source.denominator
-      : driver * source.amount / source.denominator).toFixed(2));
+    const directEmployeeAmounts = sourceType === "payroll" &&
+      Array.isArray(snapshot.employeeCostBreakdown) &&
+      snapshot.employeeCostBreakdown.length > 0
+      ? snapshot.employeeCostBreakdown.map((employee: any) => Number(employee.amount))
+      : null;
+    if (directEmployeeAmounts?.some((amount: number) => !Number.isFinite(amount) || amount < 0)) {
+      throw Object.assign(new Error("لقطة تكلفة الموظفين غير صالحة لمطابقة مصدر الرواتب"), { status: 409 });
+    }
+    const actualAmount = directEmployeeAmounts
+      ? Number(directEmployeeAmounts.reduce((sum: number, amount: number) => sum + amount, 0).toFixed(2))
+      : Number((source.fixedRate
+        ? driver * source.denominator
+        : driver * source.amount / source.denominator).toFixed(2));
     if (!(driver > 0) || !(actualAmount > 0)) return;
     await tx.execute(sql`select pg_advisory_xact_lock(
       ${evidence.companyId}, hashtext(${sourceType + ":" + source.id})
@@ -1495,6 +1506,7 @@ async function loadPostedCostSources(
     journalId: payrollRunsTable.postedJournalId,
     method: payrollRunsTable.manufacturingAllocationMethod,
     hours: payrollRunsTable.approvedManufacturingHours,
+    provisionSnapshotsCaptured: payrollRunsTable.provisionSnapshotsCaptured,
     amount: sql<string>`coalesce(sum(${payrollAllocationSnapshotsTable.allocatedAmount}), 0)`,
   }).from(payrollRunsTable)
     .innerJoin(payrollAllocationSnapshotsTable, eq(payrollAllocationSnapshotsTable.payrollRunId, payrollRunsTable.id))
@@ -1506,8 +1518,34 @@ async function loadPostedCostSources(
       eq(payrollRunsTable.month, month), inArray(payrollRunsTable.status, ["posted", "paid"]),
       eq(journalEntriesTable.status, "posted"), eq(payrollRunsTable.manufacturingEligible, true),
       eq(payrollRunsTable.manufacturingAllocationMethod, "operating_hours"),
+      eq(payrollRunsTable.provisionSnapshotsCaptured, true),
       sql`${payrollRunsTable.approvedManufacturingHours} > 0`, journalBranch))
     .groupBy(payrollRunsTable.id, payrollRunsTable.code);
+  const payrollProvisionRows = payroll.length ? await q.select({
+    runId: payrollLinesTable.payrollRunId,
+    amount: sql<string>`coalesce(sum(
+      coalesce(${payrollLinesTable.leaveProvisionAmount}, 0) +
+      coalesce(${payrollLinesTable.travelTicketProvisionAmount}, 0) +
+      coalesce(${payrollLinesTable.eosProvisionAmount}, 0)
+    ), 0)`,
+    missingSnapshots: sql<number>`count(*) filter (where
+      ${payrollLinesTable.leaveProvisionAmount} IS NULL OR
+      ${payrollLinesTable.travelTicketProvisionAmount} IS NULL OR
+      ${payrollLinesTable.eosProvisionAmount} IS NULL
+    )`,
+  }).from(payrollLinesTable).where(inArray(
+    payrollLinesTable.payrollRunId, payroll.map((row: any) => row.id),
+  )).groupBy(payrollLinesTable.payrollRunId) : [];
+  const payrollProvisionByRun = new Map<number, number>();
+  for (const row of payrollProvisionRows) {
+    if (Number(row.missingSnapshots) > 0) {
+      throw Object.assign(
+        new Error("لقطات مخصصات مسير الرواتب غير مكتملة؛ لا يمكن تحميل المصدر الصناعي"),
+        { status: 409 },
+      );
+    }
+    payrollProvisionByRun.set(Number(row.runId), num(row.amount));
+  }
 
   const assets = await q.select({
     id: faDepreciationRunsTable.id, journalId: faDepreciationRunsTable.journalEntryId,
@@ -1725,8 +1763,13 @@ async function loadPostedCostSources(
   return [
     ...payroll.map((r: any) => ({ sourceType: "payroll" as const, sourceRecordId: r.id,
       label: `رواتب ${r.code}`, periodStart: start, periodEnd: end, basis: "posted_payroll_allocation",
-      sourceAmount: netProvisionSourceAmount(num(r.amount), payrollProvisionOffsets.get(r.id) ?? 0),
+      sourceAmount: netProvisionSourceAmount(
+        num(r.amount) + (payrollProvisionByRun.get(Number(r.id)) ?? 0),
+        payrollProvisionOffsets.get(r.id) ?? 0,
+      ),
       meta: sourceMeta(r, { payrollRunId: r.id, provisionSettlementOffset: payrollProvisionOffsets.get(r.id) ?? 0,
+        monthlyProvisionAmount: payrollProvisionByRun.get(Number(r.id)) ?? 0,
+        provisionSnapshotsCaptured: r.provisionSnapshotsCaptured,
         manufacturingEligible: true, allocationMethod: r.method, approvedManufacturingHours: r.hours }) })),
     ...assets.map((r: any) => {
       // Manufacturing may consume only the amount actually debited by the
@@ -7529,6 +7572,8 @@ async function reconcileFinalStageDrivers(
   const frozenResourceCosts = Number(order.resourceCostingVersion) >= 1
     ? await tx.select({
       component: productionStageResourceCostsTable.component,
+      sourceType: productionStageResourceCostsTable.sourceType,
+      amount: productionStageResourceCostsTable.amount,
       snapshot: productionStageResourceCostsTable.snapshot,
     }).from(productionStageResourceCostsTable).where(and(
       eq(productionStageResourceCostsTable.companyId, cid),
@@ -7536,6 +7581,7 @@ async function reconcileFinalStageDrivers(
     ))
     : [];
   const resourceHoursByAllocationId = new Map<number, number>();
+  const resourceLaborAmountByAllocationId = new Map<number, number>();
   for (const frozen of frozenResourceCosts) {
     const snapshot = (frozen.snapshot ?? {}) as Record<string, unknown>;
     const allocationId = Number(snapshot.sourceAllocationId);
@@ -7545,6 +7591,19 @@ async function reconcileFinalStageDrivers(
       allocationId,
       (resourceHoursByAllocationId.get(allocationId) ?? 0) + hours,
     );
+    if (frozen.component === "labor" && frozen.sourceType === "payroll" &&
+        Array.isArray(snapshot.employeeCostBreakdown) &&
+        snapshot.employeeCostBreakdown.length > 0) {
+      const employeeAmounts = snapshot.employeeCostBreakdown.map((employee: any) => Number(employee.amount));
+      if (employeeAmounts.some((amount: number) => !Number.isFinite(amount) || amount < 0)) {
+        throw Object.assign(new Error("لقطة تكلفة العمالة لا تصلح لتسوية مصدر الرواتب"), { status: 409 });
+      }
+      const directAmount = Number(employeeAmounts.reduce((sum: number, amount: number) => sum + amount, 0).toFixed(2));
+      resourceLaborAmountByAllocationId.set(
+        allocationId,
+        Number(((resourceLaborAmountByAllocationId.get(allocationId) ?? 0) + directAmount).toFixed(2)),
+      );
+    }
   }
   const allocations = await tx.select().from(productionCostAllocationsTable).where(and(
     eq(productionCostAllocationsTable.companyId, cid),
@@ -7623,10 +7682,15 @@ async function reconcileFinalStageDrivers(
             ? actualLaborPersonHours
             : actualHours;
     if (!(actual >= 0) || !(denominator > 0)) continue;
-    const target = actual === 0 ? 0 : calculateFormulaAllocation(
-      method as "operating_hours" | "fixed_hourly_rate" | "production_quantity",
-      num(allocation.sourceAmount), actual, denominator,
-    );
+    const hasEmployeePayrollCost = Number(order.resourceCostingVersion) >= 1 &&
+      allocation.sourceType === "payroll" &&
+      resourceLaborAmountByAllocationId.has(Number(allocation.id));
+    const target = hasEmployeePayrollCost
+      ? resourceLaborAmountByAllocationId.get(Number(allocation.id))!
+      : actual === 0 ? 0 : calculateFormulaAllocation(
+        method as "operating_hours" | "fixed_hourly_rate" | "production_quantity",
+        num(allocation.sourceAmount), actual, denominator,
+      );
     const delta = Number((target - num(allocation.allocatedAmount)).toFixed(2));
     const stagedPosted = stagePostedByAllocation.get(Number(allocation.id));
     rows.push({ allocation, meta, method, planned, denominator, actual, target, delta,
@@ -10810,61 +10874,166 @@ async function freezeStageResourceCosts(
   }
   const hours = num(stage.actualDurationMinutes) / 60;
   const rows: any[] = [];
-  const stageEmployeeIds = Array.isArray(stage.workerEmployeeIds) && stage.workerEmployeeIds.length
+  const stageEmployeeIds: unknown[] = Array.isArray(stage.workerEmployeeIds) && stage.workerEmployeeIds.length
     ? stage.workerEmployeeIds
     : stage.operatorEmployeeId != null ? [stage.operatorEmployeeId] : [];
-  const employeeIds = [...new Set(
-    stageEmployeeIds
-      .map((id: unknown) => Number(id))
-      .filter((id: number) => Number.isInteger(id) && id > 0),
+  const employeeIds: number[] = [...new Set<number>(
+    stageEmployeeIds.map(Number).filter((id) => Number.isInteger(id) && id > 0),
   )].sort((a, b) => a - b);
-  const employeeCostBreakdown = async (amount: number, payrollRunId: number) => {
-    if (!employeeIds.length) return [];
-    const snapshots = await tx.select({
-      id: payrollAllocationSnapshotsTable.id,
-      employeeId: payrollAllocationSnapshotsTable.employeeId,
-      amount: payrollAllocationSnapshotsTable.allocatedAmount,
-      laborType: payrollAllocationSnapshotsTable.manufacturingLaborType,
-    }).from(payrollAllocationSnapshotsTable).where(and(
-      eq(payrollAllocationSnapshotsTable.companyId, cid),
-      eq(payrollAllocationSnapshotsTable.payrollRunId, payrollRunId),
-      inArray(payrollAllocationSnapshotsTable.employeeId, employeeIds),
-    ));
-    const snapshotIdsByEmployee = new Map<number, number[]>();
-    const amountByEmployee = new Map<number, number>();
-    const laborTypeByEmployee = new Map<number, string>();
-    for (const snapshot of snapshots) {
-      snapshotIdsByEmployee.set(snapshot.employeeId, [
-        ...(snapshotIdsByEmployee.get(snapshot.employeeId) ?? []), snapshot.id,
-      ]);
-      amountByEmployee.set(
-        snapshot.employeeId,
-        (amountByEmployee.get(snapshot.employeeId) ?? 0) + num(snapshot.amount),
-      );
-      if (!laborTypeByEmployee.has(snapshot.employeeId)) {
-        laborTypeByEmployee.set(snapshot.employeeId, snapshot.laborType ?? "unclassified");
-      }
+  const employeeCostBreakdown = async (payrollRunId: number, stageHours: number) => {
+    if (!employeeIds.length) {
+      throw Object.assign(new Error("عيّن الموظفين الفعليين للمرحلة قبل احتساب تكلفة العمالة"), { status: 422 });
     }
-    const hasAllSnapshots = employeeIds.every((id) => (amountByEmployee.get(id) ?? 0) > 0);
-    const weights = employeeIds.map((id) =>
-      hasAllSnapshots ? amountByEmployee.get(id)! : 1,
-    );
-    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-    const totalCents = Math.round(amount * 100);
-    let allocatedCents = 0;
-    return employeeIds.map((employeeId, index) => {
-      const cents = index === employeeIds.length - 1
-        ? totalCents - allocatedCents
-        : Math.round(totalCents * weights[index] / totalWeight);
-      allocatedCents += cents;
+    const [run] = await tx.select({
+      id: payrollRunsTable.id,
+      periodEnd: payrollRunsTable.periodEnd,
+      journalId: payrollRunsTable.postedJournalId,
+      provisionSnapshotsCaptured: payrollRunsTable.provisionSnapshotsCaptured,
+    }).from(payrollRunsTable).where(and(
+      eq(payrollRunsTable.id, payrollRunId),
+      eq(payrollRunsTable.companyId, cid),
+    )).limit(1);
+    if (!run || !run.provisionSnapshotsCaptured) {
+      throw Object.assign(
+        new Error("مسير الرواتب لا يحتوي لقطة مخصصات مجمدة؛ لا يمكن إعادة حساب مخصصات فترة مرحّلة من بيانات اليوم"),
+        { status: 409 },
+      );
+    }
+    const [lines, contracts, employeeRows, allocationSnapshots, provisionSettlements] = await Promise.all([
+      tx.select({
+        id: payrollLinesTable.id,
+        employeeId: payrollLinesTable.employeeId,
+        salaryAmount: payrollLinesTable.grossSalary,
+        leaveProvision: payrollLinesTable.leaveProvisionAmount,
+        ticketProvision: payrollLinesTable.travelTicketProvisionAmount,
+        eosProvision: payrollLinesTable.eosProvisionAmount,
+      }).from(payrollLinesTable).where(and(
+        eq(payrollLinesTable.payrollRunId, payrollRunId),
+        inArray(payrollLinesTable.employeeId, employeeIds),
+      )),
+      tx.select({
+        employeeId: employeeContractsTable.employeeId,
+        startDate: employeeContractsTable.startDate,
+        endDate: employeeContractsTable.endDate,
+        workingHours: employeeContractsTable.workingHours,
+      }).from(employeeContractsTable).where(and(
+        eq(employeeContractsTable.companyId, cid),
+        inArray(employeeContractsTable.employeeId, employeeIds),
+      )),
+      tx.select({
+        id: employeesTable.id,
+        nameAr: employeesTable.nameAr,
+        nameEn: employeesTable.nameEn,
+        code: employeesTable.code,
+      }).from(employeesTable).where(and(
+        eq(employeesTable.companyId, cid),
+        inArray(employeesTable.id, employeeIds),
+      )),
+      tx.select({
+        id: payrollAllocationSnapshotsTable.id,
+        employeeId: payrollAllocationSnapshotsTable.employeeId,
+        laborType: payrollAllocationSnapshotsTable.manufacturingLaborType,
+      }).from(payrollAllocationSnapshotsTable).where(and(
+        eq(payrollAllocationSnapshotsTable.companyId, cid),
+        eq(payrollAllocationSnapshotsTable.payrollRunId, payrollRunId),
+        inArray(payrollAllocationSnapshotsTable.employeeId, employeeIds),
+      )),
+      run.journalId ? tx.select({
+        employeeId: employeeProvisionSettlementsTable.employeeId,
+        provisionType: employeeProvisionSettlementsTable.provisionType,
+        snapshot: employeeProvisionSettlementsTable.sourceSnapshot,
+      }).from(employeeProvisionSettlementsTable).where(and(
+        eq(employeeProvisionSettlementsTable.companyId, cid),
+        eq(employeeProvisionSettlementsTable.status, "posted"),
+        sql`${employeeProvisionSettlementsTable.sourceSnapshot}->>'sourceJournalId' = ${String(run.journalId)}`,
+        inArray(employeeProvisionSettlementsTable.employeeId, employeeIds),
+      )) : Promise.resolve([]),
+    ]);
+    const lineByEmployee = new Map<number, any>(lines.map((line: any) => [Number(line.employeeId), line]));
+    const employeeById = new Map<number, any>(employeeRows.map((employee: any) => [Number(employee.id), employee]));
+    const snapshotsByEmployee = new Map<number, Array<{ id: number; laborType: string }>>();
+    const offsetsByEmployee = new Map<number, { leave: number; ticket: number; eos: number }>();
+    for (const snapshot of allocationSnapshots) {
+      snapshotsByEmployee.set(snapshot.employeeId, [
+        ...(snapshotsByEmployee.get(snapshot.employeeId) ?? []),
+        { id: snapshot.id, laborType: snapshot.laborType ?? "unclassified" },
+      ]);
+    }
+    for (const settlement of provisionSettlements as any[]) {
+      const current = offsetsByEmployee.get(settlement.employeeId) ?? { leave: 0, ticket: 0, eos: 0 };
+      const amount = num(settlement.snapshot?.manufacturingOffsetAmount);
+      if (settlement.provisionType === "annual_leave") current.leave += amount;
+      else if (settlement.provisionType === "travel_ticket") current.ticket += amount;
+      else if (["eos", "end_of_service"].includes(String(settlement.provisionType))) current.eos += amount;
+      offsetsByEmployee.set(settlement.employeeId, current);
+    }
+    const periodEnd = String(run.periodEnd).slice(0, 10);
+    const inputs = employeeIds.map((employeeId) => {
+      const line = lineByEmployee.get(employeeId) as any;
+      if (!line) {
+        throw Object.assign(new Error(`لا يوجد سطر راتب مجمّد للموظف #${employeeId} في المسير المختار`), { status: 409 });
+      }
+      if (line.leaveProvision == null || line.ticketProvision == null || line.eosProvision == null) {
+        throw Object.assign(
+          new Error(`مخصصات الموظف #${employeeId} غير محفوظة في المسير؛ لن أعيد إنشاء قيمة تاريخية`),
+          { status: 409 },
+        );
+      }
+      const contract = contracts
+        .filter((row: any) => row.employeeId === employeeId &&
+          String(row.startDate) <= periodEnd &&
+          (!row.endDate || String(row.endDate) >= periodEnd))
+        .sort((a: any, b: any) => String(b.startDate).localeCompare(String(a.startDate)))[0] as any;
+      const dailyHours = num(contract?.workingHours);
+      if (!(dailyHours > 0)) {
+        throw Object.assign(new Error(`ساعات العقد غير محددة للموظف #${employeeId}`), { status: 409 });
+      }
+      const snapshots = snapshotsByEmployee.get(employeeId) ?? [];
+      const offsets = offsetsByEmployee.get(employeeId) ?? { leave: 0, ticket: 0, eos: 0 };
+      const employee = employeeById.get(employeeId) as any;
+      const leaveProvision = Math.max(0, num(line.leaveProvision) - offsets.leave);
+      const travelTicketProvision = Math.max(0, num(line.ticketProvision) - offsets.ticket);
+      const eosProvision = num(line.eosProvision) - offsets.eos;
       return {
         employeeId,
-        laborType: laborTypeByEmployee.get(employeeId) ?? "unclassified",
-        amount: cents / 100,
-        payrollSnapshotIds: snapshotIdsByEmployee.get(employeeId) ?? [],
-        allocationBasis: hasAllSnapshots ? "payroll_snapshot_amount" : "equal_employee_hours",
+        salaryAmount: num(line.salaryAmount),
+        leaveProvision,
+        travelTicketProvision,
+        eosProvision,
+        monthlyHours: dailyHours * 30,
+        employeeName: employee?.nameAr || employee?.nameEn || `موظف #${employeeId}`,
+        employeeCode: employee?.code ?? null,
+        payrollLineId: line.id,
+        leaveProvisionOffset: offsets.leave,
+        travelTicketProvisionOffset: offsets.ticket,
+        eosProvisionOffset: offsets.eos,
+        payrollSnapshotIds: snapshots.map((snapshot) => snapshot.id),
+        laborType: snapshots[0]?.laborType ?? "unclassified",
       };
     });
+    const costs = calculateStageEmployeeLabor(stageHours, inputs);
+    return costs.employees.map((employee: any) => ({
+      employeeId: employee.employeeId,
+      employeeName: employee.employeeName,
+      employeeCode: employee.employeeCode,
+      laborType: employee.laborType,
+      salaryBasis: "payroll_gross_salary",
+      salaryAmount: employee.salaryAmount,
+      leaveProvisionAmount: employee.leaveProvision,
+      travelTicketProvisionAmount: employee.travelTicketProvision,
+      eosProvisionAmount: employee.eosProvision,
+      leaveProvisionOffset: employee.leaveProvisionOffset,
+      travelTicketProvisionOffset: employee.travelTicketProvisionOffset,
+      eosProvisionOffset: employee.eosProvisionOffset,
+      monthlyCost: Number(employee.monthlyCost.toFixed(2)),
+      monthlyHours: employee.monthlyHours,
+      hourlyRate: Number(employee.hourlyRate.toFixed(6)),
+      stageHours,
+      amount: employee.stageCost,
+      payrollLineId: employee.payrollLineId,
+      payrollSnapshotIds: employee.payrollSnapshotIds,
+      allocationBasis: "employee_monthly_cost_and_frozen_provisions",
+    }));
   };
 
   // Payroll remains owned by HR. In v1 the existing posted payroll source
@@ -10924,17 +11093,26 @@ async function freezeStageResourceCosts(
           .limit(1)
         : [];
       const workers = Number(stage.workerCount);
-      const personHours = hours * (Number.isInteger(workers) && workers > 0 ? workers : 0);
-      const hourlyRate = lastPayroll && num(lastPayroll.approvedHours) > 0
-        ? num(lastPayroll.sourceAmount) / num(lastPayroll.approvedHours)
-        : 0;
+      if (!Number.isInteger(workers) || workers <= 0 || workers !== employeeIds.length) {
+        throw Object.assign(
+          new Error("حدد الموظفين الفعليين بحيث يطابق عددهم عدد عمال المرحلة"),
+          { status: 422 },
+        );
+      }
+      if (!lastPayroll) {
+        throw Object.assign(
+          new Error("لا يوجد مسير مرحّل بساعات تصنيع معتمدة ولقطات مخصصات لحساب تكلفة الموظفين"),
+          { status: 409 },
+        );
+      }
+      const personHours = hours * workers;
       const sourcePeriod = lastPayroll
         ? `${lastPayroll.year}-${String(lastPayroll.month).padStart(2, "0")}`
         : null;
-      const estimatedAmount = Number((personHours * hourlyRate).toFixed(2));
-      const employeeBreakdown = lastPayroll
-        ? await employeeCostBreakdown(estimatedAmount, Number(lastPayroll.id))
-        : [];
+      const employeeBreakdown = await employeeCostBreakdown(Number(lastPayroll.id), hours);
+      const estimatedAmount = Number(employeeBreakdown.reduce((sum: number, employee: any) =>
+        sum + Number(employee.amount), 0).toFixed(2));
+      const hourlyRate = personHours > 0 ? estimatedAmount / personHours : 0;
       // Operational execution must not wait for month-end payroll posting.
       // This row is explicitly provisional, does not consume the reference
       // payroll source, and is never another salary journal.
@@ -10960,6 +11138,8 @@ async function freezeStageResourceCosts(
           personHours,
           employeeId: stage.operatorEmployeeId ?? null,
           employeeCostBreakdown: employeeBreakdown,
+          salaryBasis: "payroll_gross_salary",
+          provisionBasis: "frozen_payroll_line_snapshots",
           driver: "actual_duration_hours_times_worker_count",
         },
         createdBy: actorId,
@@ -10972,19 +11152,18 @@ async function freezeStageResourceCosts(
       payrollMeta.approvedManufacturingHours ?? payrollMeta.formulaDenominator,
     );
     const workers = Number(stage.workerCount);
-    if (!Number.isInteger(workers) || workers <= 0 || !(approvedPersonHours > 0)) {
+    if (!Number.isInteger(workers) || workers <= 0 || workers !== employeeIds.length ||
+        !(approvedPersonHours > 0)) {
       throw Object.assign(
-        new Error("مصدر الرواتب لا يملك ساعات تصنيع معتمدة أو أن عدد العمال غير صحيح"),
+        new Error("مصدر الرواتب يحتاج ساعات تصنيع معتمدة، ويجب أن يطابق عدد العمال الموظفين المحددين"),
         { status: 422 },
       );
     }
     const personHours = hours * workers;
-    const hourlyRate = num(payroll.sourceAmount) / approvedPersonHours;
-    const laborAmount = Number((personHours * hourlyRate).toFixed(2));
-    const employeeBreakdown = await employeeCostBreakdown(
-      laborAmount,
-      Number(payroll.sourceRecordId),
-    );
+    const employeeBreakdown = await employeeCostBreakdown(Number(payroll.sourceRecordId), hours);
+    const laborAmount = Number(employeeBreakdown.reduce((sum: number, employee: any) =>
+      sum + Number(employee.amount), 0).toFixed(2));
+    const hourlyRate = personHours > 0 ? laborAmount / personHours : 0;
     const productionPeriod = String((order.meta as any)?.costPeriod ?? "");
     const payrollSourcePeriod = String(payrollMeta.periodEnd ?? payrollMeta.periodStart ?? "").slice(0, 7);
     const payrollRateIsPriorPeriod = Boolean(
@@ -11004,6 +11183,8 @@ async function freezeStageResourceCosts(
         workerCount: workers,
         personHours,
         hourlyRate,
+        salaryBasis: "payroll_gross_salary",
+        provisionBasis: "frozen_payroll_line_snapshots",
         rateSourcePeriod: payrollSourcePeriod || null,
         rateIsFromPriorPeriod: payrollRateIsPriorPeriod,
         employeeCostBreakdown: employeeBreakdown,

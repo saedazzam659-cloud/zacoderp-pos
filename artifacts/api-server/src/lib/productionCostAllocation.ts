@@ -67,7 +67,7 @@ export function calculateStageEmployeeLabor(
     if (provisions.some((amount) => amount == null || !Number.isFinite(amount))) {
       throw new Error("frozen employee provision snapshots are required");
     }
-    const monthlyCost = employee.salaryAmount + provisions.reduce(
+    const monthlyCost = employee.salaryAmount + provisions.reduce<number>(
       (sum, amount) => sum + Number(amount), 0,
     );
     if (monthlyCost < 0) throw new Error("employee monthly labor cost cannot be negative");

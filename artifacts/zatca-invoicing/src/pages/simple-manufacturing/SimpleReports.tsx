@@ -179,7 +179,7 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
                 ))}
               </div>
               <p className="text-xs text-slate-500">
-                سعر ساعة الموظف = راتبه الإجمالي في آخر مسير مرحّل مناسب ÷ (30 يوماً × ساعات دوامه اليومية في العقد الساري). العمالة الفعلية تستخدم ساعات التنفيذ الفعلية ومعدل كل موظف في فترة التنفيذ؛ الكهرباء تستخدم التعريفة المسجلة حالياً.
+                تكلفة الشهر لكل موظف = مبلغ الأجر المعتمد في المسير + مخصص الإجازة + مخصص التذكرة + مخصص نهاية الخدمة المجمدة؛ سعر الساعة = الإجمالي ÷ (30 يوماً × ساعات العقد اليومية). العمالة الفعلية تستخدم مدة التنفيذ الفعلية.
                 الإجمالي المنفذ قد يكون جزئياً عند نقص البيانات؛ لا يُعامل النقص كتكلفة مؤكدة.
               </p>
               {actualIncompleteStages > 0 && (
@@ -233,6 +233,32 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
                                 {!!stage.actualLaborSourcePeriods?.length && (
                                   <div className="text-slate-500">مسير التنفيذ: {stage.actualLaborSourcePeriods.join("، ")}</div>
                                 )}
+                                {!!stage.actualLaborBreakdown?.length && (
+                                  <details className="mt-2 rounded border bg-slate-50 p-2">
+                                    <summary className="cursor-pointer font-medium text-indigo-700">
+                                      تفصيل تكلفة كل موظف
+                                    </summary>
+                                    <div className="mt-2 space-y-2">
+                                      {stage.actualLaborBreakdown.map((employee: any) => (
+                                        <div key={`${employee.employeeCode ?? employee.employeeName}-${employee.sourcePeriod}`} className="border-t pt-2">
+                                          <div className="font-medium">{employee.employeeName}{employee.employeeCode ? ` (${employee.employeeCode})` : ""}</div>
+                                          <div className="text-slate-600">
+                                            الأجر {Number(employee.salaryAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                            {" + "}إجازة {Number(employee.leaveProvisionAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                            {" + "}تذكرة {Number(employee.travelTicketProvisionAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                            {" + "}نهاية خدمة {Number(employee.eosProvisionAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                            {" = "}شهرياً {Number(employee.monthlyCost || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                          </div>
+                                          <div className="text-slate-600">
+                                            ÷ {Number(employee.monthlyHours || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} ساعة
+                                            × {Number(employee.stageHours || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} ساعة فعلية
+                                            = {Number((Number(employee.rate || 0) * Number(employee.stageHours || 0)).toFixed(2)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </details>
+                                )}
                                 {stage.depreciationSourcePeriod && (
                                   <div className="text-slate-500">أساس الإهلاك: {stage.depreciationSourcePeriod}</div>
                                 )}
@@ -254,7 +280,7 @@ export function SimpleReports({ request }: { request: (path: string, init?: Requ
                               </td>
                               <td className="p-2">{stage.durationMinutes ?? "—"} / {Number(stage.actualDurationMinutes) > 0 ? stage.actualDurationMinutes : "—"} دقيقة</td>
                               <td className="p-2 font-mono">{Number(stage.labor || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                              <td className="p-2 font-mono">{!stage.actualExecutionRecorded || stage.actualLaborSourcePeriods?.length !== stage.assignedEmployeeCount || stage.actualMissing?.some((m: string) => /(موظف|عامل|مسير|عقد|راتب)/.test(m))
+                              <td className="p-2 font-mono">{!stage.actualExecutionRecorded || stage.actualLaborBreakdown?.length !== stage.assignedEmployeeCount || stage.actualMissing?.some((m: string) => /(موظف|عامل|مسير|عقد|راتب|مخصص)/.test(m))
                                 ? "—" : Number(stage.actualLabor || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                               <td className="p-2 font-mono">{Number(stage.depreciation || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                               <td className="p-2 font-mono">{!stage.actualExecutionRecorded || stage.actualMissing?.some((m: string) => m.includes("إهلاك") || m.includes("الأصل"))
