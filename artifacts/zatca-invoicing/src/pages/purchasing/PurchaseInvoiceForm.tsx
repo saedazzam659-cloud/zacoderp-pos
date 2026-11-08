@@ -1490,7 +1490,7 @@ function PurchaseInvoiceFormContent() {
           <label className="text-[11px] text-muted-foreground">{tr("lineCols.unit")}</label>
           {(() => {
             const iu = (qaItemId && itemUnitsMap[qaItemId]) ? itemUnitsMap[qaItemId] : [];
-            const opts = documentItemUnitOptions(iu, quickAddItem?.unitId, units, qaUnitId).map((u: any) => ({
+            const opts = documentItemUnitOptions(iu, quickAddItem?.unitId, units, qaUnitId, false).map((u: any) => ({
               value: String(u.unitId),
               label: `${unitNameOf(u.unit)}${Number(u.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(u.conversionFactor)})` : ""}`,
               disabled: u.historicalOnly === true || u.isActive === false || u.unit?.isActive === false,
@@ -2373,7 +2373,7 @@ function PurchaseInvoiceFormContent() {
                       {(() => {
                         const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
                         const item = inventoryItems.find((candidate: any) => String(candidate.id) === l.itemId);
-                        const opts = documentItemUnitOptions(itemUnits, item?.unitId, units, l.unitId).map((iu: any) => ({
+                        const opts = documentItemUnitOptions(itemUnits, item?.unitId, units, l.unitId, Boolean(l.id)).map((iu: any) => ({
                           value: String(iu.unitId),
                           label: `${unitNameOf(iu.unit)}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
                           disabled: iu.historicalOnly === true || iu.isActive === false || iu.unit?.isActive === false,

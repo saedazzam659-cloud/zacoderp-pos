@@ -91,7 +91,14 @@ test("an unlinked unit on an old purchase line remains visible but disabled", ()
   assert.equal(options.at(-1)?.historicalOnly, true);
 });
 
+test("new purchase documents do not retain an unlinked unit as a historical choice", () => {
+  const currentHistoricalUnit = { id: 9, nameAr: "وحدة قديمة", isActive: true };
+  const options = documentItemUnitOptions([], 3, [currentHistoricalUnit], 9, false);
+
+  assert.deepEqual(options, []);
+});
+
 test("purchase invoice unit selectors use item-specific choices", () => {
-  assert.match(purchaseInvoiceForm, /documentItemUnitOptions\(itemUnits, item\?\.unitId, units, l\.unitId\)/);
+  assert.match(purchaseInvoiceForm, /documentItemUnitOptions\(itemUnits, item\?\.unitId, units, l\.unitId, Boolean\(l\.id\)\)/);
   assert.doesNotMatch(purchaseInvoiceForm, /catalogUnitsWithHistoricalSelection\(units, l\.unitId\)/);
 });
