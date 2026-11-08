@@ -60,6 +60,7 @@ export function SimpleSetup({
     electricityTariffPerKwh?: number | null;
     internalTransportEnabled?: boolean;
      comprehensiveCostingEnabled?: boolean;
+    costingMethod?: "standard" | "estimated";
   }) => Promise<unknown>;
 }) {
   const { fmtQty } = useFmt();
@@ -94,6 +95,9 @@ export function SimpleSetup({
   );
   const [comprehensiveCostingEnabled, setComprehensiveCostingEnabled] = useState(
     catalog.accounting?.settings?.comprehensiveCostingEnabled === true,
+  );
+  const [costingMethod, setCostingMethod] = useState<"standard" | "estimated">(
+    catalog.accounting?.settings?.costingMethod === "estimated" ? "estimated" : "standard",
   );
   const [savingTransportSetting, setSavingTransportSetting] = useState(false);
   const inventoryCompanyId = actingCompanyId ?? user?.companyId ?? undefined;
@@ -138,6 +142,34 @@ export function SimpleSetup({
   useEffect(() => {
     setComprehensiveCostingEnabled(catalog.accounting?.settings?.comprehensiveCostingEnabled === true);
   }, [catalog.accounting?.settings?.comprehensiveCostingEnabled]);
+
+  useEffect(() => {
+    setCostingMethod(catalog.accounting?.settings?.costingMethod === "estimated" ? "estimated" : "standard");
+  }, [catalog.accounting?.settings?.costingMethod]);
+
+  const saveCostingMethod = async (next: "standard" | "estimated") => {
+    const previous = costingMethod;
+    setCostingMethod(next);
+    setSavingTransportSetting(true);
+    try {
+      await onSaveAccounting({
+        defaultWipAccountId: catalog.accounting?.settings?.defaultWipAccountId ?? null,
+        defaultRawInventoryAccountId: catalog.accounting?.settings?.defaultRawInventoryAccountId ?? null,
+        defaultFinishedGoodsAccountId: catalog.accounting?.settings?.defaultFinishedGoodsAccountId ?? null,
+        defaultOverheadAccountId: catalog.accounting?.settings?.defaultOverheadAccountId ?? null,
+        defaultWasteAccountId: catalog.accounting?.settings?.defaultWasteAccountId ?? null,
+        electricityTariffPerKwh: catalog.accounting?.settings?.electricityTariffPerKwh == null
+          ? null : Number(catalog.accounting.settings.electricityTariffPerKwh),
+        internalTransportEnabled,
+        comprehensiveCostingEnabled,
+        costingMethod: next,
+      });
+    } catch {
+      setCostingMethod(previous);
+    } finally {
+      setSavingTransportSetting(false);
+    }
+  };
 
   // Dialog open states
   const [openMat, setOpenMat] = useState(false);
@@ -471,6 +503,54 @@ export function SimpleSetup({
               {comprehensiveCostingEnabled ? "مفعّل" : "متوقف"}
             </span>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-emerald-200 bg-emerald-50/30 shadow-sm md:col-span-2">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base text-emerald-950">طريقة تكلفة أوامر التصنيع الجديدة</CardTitle>
+          <CardDescription>
+            يظل النظام الحالي هو الافتراضي. اختيار الطريقة التقديرية يؤثر على الأوامر الجديدة فقط، وتحفظ الطريقة على كل أمر عند إنشائه.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2">
+          {([
+            {
+              value: "standard" as const,
+              title: "التكلفة القياسية",
+              detail: "استخدام مسار النظام الحالي دون تغيير.",
+            },
+            {
+              value: "estimated" as const,
+              title: "التكلفة التقديرية",
+              detail: "اختيار منفصل للأوامر الجديدة؛ تبقى الأوامر المحفوظة على طريقتها.",
+            },
+          ]).map((option) => {
+            const selected = costingMethod === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => void saveCostingMethod(option.value)}
+                disabled={savingTransportSetting || busy || !canEdit || selected}
+                aria-pressed={selected}
+                className={`rounded-xl border p-4 text-right transition ${
+                  selected
+                    ? "border-emerald-600 bg-white shadow-sm ring-1 ring-emerald-600"
+                    : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50"
+                } disabled:cursor-not-allowed disabled:opacity-70`}
+              >
+                <span className="block font-semibold text-slate-900">{option.title}</span>
+                <span className="mt-1 block text-xs leading-5 text-slate-600">{option.detail}</span>
+                <span className="mt-3 block text-xs font-medium text-emerald-800">
+                  {selected ? "الطريقة الحالية" : "تفعيل للأوامر الجديدة"}
+                </span>
+              </button>
+            );
+          })}
+          <p className="text-xs text-slate-600 sm:col-span-2">
+            تغيير الطريقة لا يعيد احتساب أوامر سابقة، ولا يغير إعداد تكلفة الموارد الشاملة.
+          </p>
         </CardContent>
       </Card>
 

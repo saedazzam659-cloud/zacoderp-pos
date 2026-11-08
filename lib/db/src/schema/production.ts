@@ -108,6 +108,11 @@ export const productionOrdersTable = pgTable(
     resourceCostingVersion: integer("resource_costing_version")
       .notNull()
       .default(0),
+    // Smart Manufacturing costing policy is frozen on each order. Legacy and
+    // new companies remain on standard costing unless explicitly changed.
+    manufacturingCostingMethod: text("manufacturing_costing_method")
+      .notNull()
+      .default("standard"),
     // ─── SAP-style WIP cycle: header-level warehouses + cost allocation ────
     // When the order moves to "in_production" the BOM raw lines are
     // decremented from rawWarehouseId; on "completed" the produced qty is
@@ -850,6 +855,9 @@ export const manufacturingSettingsTable = pgTable(
     // Applies resource-based costing only to newly-created production orders.
     // Saved orders retain their own resourceCostingVersion snapshot.
     comprehensiveCostingEnabled: boolean("comprehensive_costing_enabled").notNull().default(false),
+    // Independent from comprehensive resource costing. The standard method
+    // remains the legacy behavior; estimated costing is an explicit opt-in.
+    costingMethod: text("costing_method").notNull().default("standard"),
     // ─── Round A — Approval gate (informational on this MVP) ─────────────
     // When approvalRequired is true (or estimatedCost >= approvalThreshold),
     // the order's pending-approval UI surfaces it for manual approval before

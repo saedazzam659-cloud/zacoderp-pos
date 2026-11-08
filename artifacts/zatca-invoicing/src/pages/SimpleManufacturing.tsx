@@ -483,6 +483,7 @@ export default function SimpleManufacturing() {
     electricityTariffPerKwh?: number | null;
     internalTransportEnabled?: boolean;
     comprehensiveCostingEnabled?: boolean;
+    costingMethod?: "standard" | "estimated";
   }) => {
     return mutate(() => request("/api/simple-manufacturing/setup/accounting", {
       method: "PUT",

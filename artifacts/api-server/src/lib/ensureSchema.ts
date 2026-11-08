@@ -1737,6 +1737,11 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
           ALTER TABLE production_resources ADD COLUMN IF NOT EXISTS electricity_kw NUMERIC(14,4);
           ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS resource_costing_version INTEGER NOT NULL DEFAULT 0;
           ALTER TABLE manufacturing_settings ADD COLUMN IF NOT EXISTS electricity_tariff_per_kwh NUMERIC(14,6) NOT NULL DEFAULT 0` },
+  { label: "smart manufacturing costing method snapshots",
+    sql: `ALTER TABLE manufacturing_settings
+            ADD COLUMN IF NOT EXISTS costing_method TEXT NOT NULL DEFAULT 'standard';
+          ALTER TABLE production_orders
+            ADD COLUMN IF NOT EXISTS manufacturing_costing_method TEXT NOT NULL DEFAULT 'standard'` },
   { label: "production_waste_records classification",
     sql: `ALTER TABLE production_waste_records ADD COLUMN IF NOT EXISTS waste_classification TEXT NOT NULL DEFAULT 'normal';
           ALTER TABLE production_waste_records ADD COLUMN IF NOT EXISTS unit_factor NUMERIC(14,8) NOT NULL DEFAULT 1` },

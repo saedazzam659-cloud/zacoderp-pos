@@ -58,6 +58,7 @@ export function SimpleWizard({
     defaultWasteAccountId: number | null;
     electricityTariffPerKwh?: number | null;
     internalTransportEnabled?: boolean;
+    costingMethod?: "standard" | "estimated";
   }) => Promise<unknown>;
   onSubmit: (mode: "draft" | "execute", payload: any) => Promise<void>;
   onCancel: () => void;

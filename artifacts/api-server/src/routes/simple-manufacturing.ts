@@ -758,9 +758,14 @@ router.get("/setup/accounting", view, async (req, res) => {
       electricityTariffPerKwh: manufacturingSettingsTable.electricityTariffPerKwh,
       internalTransportEnabled: manufacturingSettingsTable.internalTransportEnabled,
       comprehensiveCostingEnabled: manufacturingSettingsTable.comprehensiveCostingEnabled,
+      costingMethod: manufacturingSettingsTable.costingMethod,
     }).from(manufacturingSettingsTable)
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
-    res.json({ settings: settings ?? { internalTransportEnabled: false, comprehensiveCostingEnabled: false } });
+    res.json({ settings: settings ?? {
+      internalTransportEnabled: false,
+      comprehensiveCostingEnabled: false,
+      costingMethod: "standard",
+    } });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -799,11 +804,19 @@ router.put("/setup/accounting", edit, async (req, res) => {
       electricityTariffPerKwh: manufacturingSettingsTable.electricityTariffPerKwh,
       internalTransportEnabled: manufacturingSettingsTable.internalTransportEnabled,
       comprehensiveCostingEnabled: manufacturingSettingsTable.comprehensiveCostingEnabled,
+      costingMethod: manufacturingSettingsTable.costingMethod,
     }).from(manufacturingSettingsTable)
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
     const requestedIds = new Set<number>();
     let internalTransportEnabled = current?.internalTransportEnabled ?? false;
     let comprehensiveCostingEnabled = current?.comprehensiveCostingEnabled ?? false;
+    let costingMethod = current?.costingMethod ?? "standard";
+    if (req.body?.costingMethod !== undefined) {
+      if (req.body.costingMethod !== "standard" && req.body.costingMethod !== "estimated") {
+        return void res.status(400).json({ error: "طريقة التكلفة يجب أن تكون standard أو estimated" });
+      }
+      costingMethod = req.body.costingMethod;
+    }
     if (req.body?.internalTransportEnabled !== undefined) {
       if (typeof req.body.internalTransportEnabled !== "boolean") {
         return void res.status(400).json({ error: "internalTransportEnabled يجب أن يكون true أو false" });
@@ -896,6 +909,7 @@ router.put("/setup/accounting", edit, async (req, res) => {
       electricityTariffPerKwh,
       internalTransportEnabled,
       comprehensiveCostingEnabled,
+      costingMethod,
       updatedAt: new Date(),
     }).onConflictDoUpdate({
       target: manufacturingSettingsTable.companyId,
@@ -904,6 +918,7 @@ router.put("/setup/accounting", edit, async (req, res) => {
         electricityTariffPerKwh,
         internalTransportEnabled,
         comprehensiveCostingEnabled,
+        costingMethod,
         updatedAt: new Date(),
       },
     }).returning();

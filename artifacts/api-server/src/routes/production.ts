@@ -6462,6 +6462,9 @@ export async function productionWizardHandler(req: any, res: any) {
       .where(eq(manufacturingSettingsTable.companyId, cid)).limit(1);
     // Company policy is frozen onto new orders only. Reconfiguring an existing
     // draft must not silently change its costing model.
+    const manufacturingCostingMethod = editing
+      ? String(orderBeingEdited?.manufacturingCostingMethod ?? "standard")
+      : String(mfg?.costingMethod ?? "standard");
     if (!editing && mfg?.comprehensiveCostingEnabled === true) {
       resourceCostingVersion = 1;
     }
@@ -6869,6 +6872,7 @@ export async function productionWizardHandler(req: any, res: any) {
         ...(editing ? {} : { wizardRequestId }),
         title: String(b.title).trim(), status: "draft",
         plannedQty: String(plannedQty), productItemId, unitCode: b.unitCode || tmpl.outputUnitCode || "PCE",
+        manufacturingCostingMethod,
         resourceCostingVersion,
         plannedStartDate: b.plannedStartDate || null, plannedEndDate: b.plannedEndDate || null,
         rawWarehouseId, finishedWarehouseId, workCenterId: wc?.id ?? null,

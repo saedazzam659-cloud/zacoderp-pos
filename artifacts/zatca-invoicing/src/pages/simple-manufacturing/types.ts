@@ -95,6 +95,7 @@ export type Catalog = {
       electricityTariffPerKwh?: string | number | null;
       internalTransportEnabled?: boolean;
       comprehensiveCostingEnabled?: boolean;
+      costingMethod?: "standard" | "estimated";
     } | null;
     accounts: Array<{
       id: number;
@@ -127,6 +128,7 @@ export type Order = {
   estimatedCost: string | number;
   actualCost: string | number;
   resourceCostingVersion?: number;
+  manufacturingCostingMethod?: "standard" | "estimated" | string;
   productItemId: number | null;
   issueJournalEntryId?: number | null;
   receiptJournalEntryId?: number | null;
