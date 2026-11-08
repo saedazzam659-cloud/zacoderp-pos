@@ -10,7 +10,7 @@ import { and, eq, asc, desc, sql, lte, gte, or, isNotNull, inArray } from "drizz
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { nextSequenceOrFallback, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { requireAdminRole, requirePermission } from "../middleware/permissions.js";
-import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal, buildPayrollPaymentJournal, buildEmployeeProvisionSettlementJournal, resolveHrAccounts } from "../lib/hr-journals.js";
+import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal, buildPayrollPaymentJournal, buildEmployeeProvisionSettlementJournal, checkPayrollAccountMappings, resolveHrAccounts } from "../lib/hr-journals.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import {
   HrValidationError, dateOrNull, requireDate, assertDateOrder, moneyOrZero, requirePositiveMoney,
@@ -2078,6 +2078,21 @@ const protectedMonthlyPayrollJournalPost = documentMutationLock("payroll_run", p
 router.post("/payroll/monthly-journals/:id/post", requirePostRight("payroll"), protectedMonthlyPayrollJournalPost);
 // Backward-compatible route for existing clients; both paths share one posting flow.
 router.post("/payroll/runs/:id/post", requirePostRight("payroll"), protectedMonthlyPayrollJournalPost);
+
+// Pre-posting check for missing payroll account mappings.
+router.get("/payroll/runs/:id/account-check", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      res.status(400).json({ error: "رقم مسير الرواتب غير صحيح" });
+      return;
+    }
+    res.json(await checkPayrollAccountMappings(cid, id));
+  } catch (e: any) {
+    res.status(e?.status || 400).json({ error: e?.message ?? "تعذر التحقق من الحسابات" });
+  }
+});
 
 // Get the JE attached to a payroll run (if posted)
 router.get("/payroll/runs/:id/journal", async (req, res) => {

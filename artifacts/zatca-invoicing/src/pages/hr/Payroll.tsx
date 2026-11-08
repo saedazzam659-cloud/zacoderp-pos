@@ -83,8 +83,26 @@ export default function Payroll() {
   });
 
   const postMut = useMutation({
-    mutationFn: (id: number) => employeesApi.postMonthlyPayrollJournal(id),
-    onSuccess: () => {
+    mutationFn: async (id: number) => {
+      const check = await employeesApi.payrollAccountCheck(id);
+      if (!check.ready) return { blocked: true, missing: check.missing ?? [] };
+      return employeesApi.postMonthlyPayrollJournal(id);
+    },
+    onSuccess: (result: any) => {
+      if (result?.blocked) {
+        const missing = result.missing
+          .map((item: any) => {
+            const label = tr(`accountCheckLabels.${item.key}`, { defaultValue: item.label });
+            return item.amount == null ? label : `${label} (${fmt2(item.amount)})`;
+          })
+          .join("، ");
+        toast({
+          variant: "destructive",
+          title: tr("toastAccountCheckBlockedTitle"),
+          description: tr("toastAccountCheckBlockedDesc", { missing }),
+        });
+        return;
+      }
       qc.invalidateQueries({ queryKey: ["payroll-runs"] });
       qc.invalidateQueries({ queryKey: ["payroll-run", viewing] });
       qc.invalidateQueries({ queryKey: ["loans"] });
@@ -293,7 +311,7 @@ export default function Payroll() {
                         {r.status === "draft" && (
                           <>
                             <Button size="sm" variant="ghost" onClick={() => { if (confirm(tr("approveConfirm"))) postMut.mutate(r.id); }}
-                              title={tr("approveTooltip")} data-testid={`btn-post-${r.id}`}>
+                              title={tr("approveTooltip")} disabled={postMut.isPending} data-testid={`btn-post-${r.id}`}>
                               <CheckCircle2 className="size-3.5 text-emerald-600" />
                             </Button>
                             <Button size="sm" variant="ghost" onClick={() => { if (confirm(tr("deleteDraftConfirm"))) delMut.mutate(r.id); }}

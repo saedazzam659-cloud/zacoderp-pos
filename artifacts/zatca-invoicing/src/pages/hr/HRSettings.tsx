@@ -20,12 +20,17 @@ const FIELD_KEYS: Array<{
 }> = [
   { key: "salariesExpense",   labelKey: "fldSalariesExpense",   hintKey: "fldSalariesExpenseHint",   filter: "expense"   },
   { key: "allowancesExpense", labelKey: "fldAllowancesExpense", hintKey: "fldAllowancesExpenseHint", filter: "expense"   },
+  { key: "housingAllowanceExpense", labelKey: "fldHousingAllowanceExpense", hintKey: "fldHousingAllowanceExpenseHint", filter: "expense" },
+  { key: "transportAllowanceExpense", labelKey: "fldTransportAllowanceExpense", hintKey: "fldTransportAllowanceExpenseHint", filter: "expense" },
+  { key: "overtimeExpense", labelKey: "fldOvertimeExpense", hintKey: "fldOvertimeExpenseHint", filter: "expense" },
+  { key: "bonusExpense", labelKey: "fldBonusExpense", hintKey: "fldBonusExpenseHint", filter: "expense" },
   { key: "gosiExpense",       labelKey: "fldGosiExpense",       hintKey: "fldGosiExpenseHint",       filter: "expense"   },
   { key: "eosExpense",        labelKey: "fldEosExpense",        hintKey: "fldEosExpenseHint",        filter: "expense"   },
   { key: "salariesPayable",   labelKey: "fldSalariesPayable",   hintKey: "fldSalariesPayableHint",   filter: "liability" },
   { key: "gosiPayable",       labelKey: "fldGosiPayable",       hintKey: "fldGosiPayableHint",       filter: "liability" },
   { key: "otherDeductions",   labelKey: "fldOtherDeductions",   hintKey: "fldOtherDeductionsHint",   filter: "liability" },
   { key: "employeeLoans",     labelKey: "fldEmployeeLoans",     hintKey: "fldEmployeeLoansHint",     filter: "asset"     },
+  { key: "employeeCustody",   labelKey: "fldEmployeeCustody",   hintKey: "fldEmployeeCustodyHint",   filter: "asset"     },
   { key: "eosProvision",      labelKey: "fldEosProvision",      hintKey: "fldEosProvisionHint",      filter: "liability" },
   { key: "leaveProvisionExpense", labelKey: "fldLeaveProvisionExpense", hintKey: "fldLeaveProvisionExpenseHint", filter: "expense" },
   { key: "leaveProvisionLiability", labelKey: "fldLeaveProvisionLiability", hintKey: "fldLeaveProvisionLiabilityHint", filter: "liability" },
@@ -63,9 +68,10 @@ export default function HRSettings() {
 
   function autoMap() {
     const codeMap: Record<string, string> = {
-      salariesExpense: "5201", allowancesExpense: "5202", gosiExpense: "5203", eosExpense: "5215",
+      salariesExpense: "5201", allowancesExpense: "5202",
+      gosiExpense: "5203", eosExpense: "5215",
       salariesPayable: "21051", gosiPayable: "21052", otherDeductions: "21053",
-      employeeLoans: "11081", eosProvision: "22021",
+      employeeLoans: "11081", employeeCustody: "11082", eosProvision: "22021",
       leaveProvisionExpense: "5217", leaveProvisionLiability: "22022",
       travelTicketExpense: "5218", travelTicketLiability: "22023",
     };
@@ -222,7 +228,11 @@ export default function HRSettings() {
             </thead>
             <tbody>
               <tr className="border-t"><td className="p-2">{tr("rowSalariesExpense")}</td><td className="p-2 text-center">✓</td><td className="p-2 text-center">—</td></tr>
+              <tr className="border-t"><td className="p-2">{tr("rowHousingAllowanceExpense")}</td><td className="p-2 text-center">✓</td><td className="p-2 text-center">—</td></tr>
+              <tr className="border-t"><td className="p-2">{tr("rowTransportAllowanceExpense")}</td><td className="p-2 text-center">✓</td><td className="p-2 text-center">—</td></tr>
               <tr className="border-t"><td className="p-2">{tr("rowAllowancesExpense")}</td><td className="p-2 text-center">✓</td><td className="p-2 text-center">—</td></tr>
+              <tr className="border-t"><td className="p-2">{tr("rowOvertimeExpense")}</td><td className="p-2 text-center">✓</td><td className="p-2 text-center">—</td></tr>
+              <tr className="border-t"><td className="p-2">{tr("rowBonusExpense")}</td><td className="p-2 text-center">✓</td><td className="p-2 text-center">—</td></tr>
               <tr className="border-t"><td className="p-2">{tr("rowSalariesPayable")}</td><td className="p-2 text-center">—</td><td className="p-2 text-center">✓</td></tr>
               <tr className="border-t"><td className="p-2">{tr("rowGosiPayable")}</td><td className="p-2 text-center">—</td><td className="p-2 text-center">✓</td></tr>
               <tr className="border-t"><td className="p-2">{tr("rowEmployeeLoans")}</td><td className="p-2 text-center">—</td><td className="p-2 text-center">✓</td></tr>

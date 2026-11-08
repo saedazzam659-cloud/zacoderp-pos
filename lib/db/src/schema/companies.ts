@@ -266,6 +266,10 @@ export const companiesTable = pgTable("companies", {
   // ─── HR / Payroll account mapping (resolved from COA on first use) ─────
   hrSalariesExpenseAccountId:    integer("hr_salaries_expense_account_id"),
   hrAllowancesExpenseAccountId:  integer("hr_allowances_expense_account_id"),
+  hrHousingAllowanceExpenseAccountId: integer("hr_housing_allowance_expense_account_id"),
+  hrTransportAllowanceExpenseAccountId: integer("hr_transport_allowance_expense_account_id"),
+  hrOvertimeExpenseAccountId:    integer("hr_overtime_expense_account_id"),
+  hrBonusExpenseAccountId:       integer("hr_bonus_expense_account_id"),
   hrGosiExpenseAccountId:        integer("hr_gosi_expense_account_id"),
   hrEosExpenseAccountId:         integer("hr_eos_expense_account_id"),
   hrSalariesPayableAccountId:    integer("hr_salaries_payable_account_id"),

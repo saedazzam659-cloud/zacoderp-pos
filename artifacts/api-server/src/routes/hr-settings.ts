@@ -57,6 +57,10 @@ router.get("/", async (req, res) => {
       mapping: {
         salariesExpense:        company?.hrSalariesExpenseAccountId   ?? accounts.salariesExpense,
         allowancesExpense:      company?.hrAllowancesExpenseAccountId ?? accounts.allowancesExpense,
+        housingAllowanceExpense: company?.hrHousingAllowanceExpenseAccountId ?? accounts.housingAllowanceExpense,
+        transportAllowanceExpense: company?.hrTransportAllowanceExpenseAccountId ?? accounts.transportAllowanceExpense,
+        overtimeExpense:        company?.hrOvertimeExpenseAccountId ?? accounts.overtimeExpense,
+        bonusExpense:           company?.hrBonusExpenseAccountId ?? accounts.bonusExpense,
         gosiExpense:            company?.hrGosiExpenseAccountId       ?? accounts.gosiExpense,
         eosExpense:             company?.hrEosExpenseAccountId        ?? accounts.eosExpense,
         salariesPayable:        company?.hrSalariesPayableAccountId   ?? accounts.salariesPayable,
@@ -100,6 +104,61 @@ router.put("/", async (req, res) => {
     const hasMapping = m && typeof m === "object" && Object.keys(m).length > 0;
     const toInt = (v: any) => (v == null || v === "" ? null : Number(v));
     const set: Record<string, any> = { updatedAt: new Date() };
+    if (hasMapping) {
+      const accountMappings = [
+        { key: "salariesExpense", type: "expense" },
+        { key: "allowancesExpense", type: "expense" },
+        { key: "housingAllowanceExpense", type: "expense" },
+        { key: "transportAllowanceExpense", type: "expense" },
+        { key: "overtimeExpense", type: "expense" },
+        { key: "bonusExpense", type: "expense" },
+        { key: "gosiExpense", type: "expense" },
+        { key: "eosExpense", type: "expense" },
+        { key: "salariesPayable", type: "liability" },
+        { key: "gosiPayable", type: "liability" },
+        { key: "otherDeductions", type: "liability" },
+        { key: "employeeLoans", type: "asset" },
+        { key: "employeeCustody", type: "asset" },
+        { key: "eosProvision", type: "liability" },
+        { key: "leaveProvisionExpense", type: "expense" },
+        { key: "leaveProvisionLiability", type: "liability" },
+        { key: "travelTicketExpense", type: "expense" },
+        { key: "travelTicketLiability", type: "liability" },
+      ] as const;
+      const selectedMappings = accountMappings
+        .map((mapping) => ({ ...mapping, id: toInt(m[mapping.key]) }))
+        .filter((mapping) => mapping.id != null);
+      const selectedIds = [...new Set(selectedMappings.map((mapping) => mapping.id!))];
+      if (selectedIds.length) {
+        const owned = await db.select({
+          id: accountsTable.id,
+          accountType: accountsTable.accountType,
+          isPosting: accountsTable.isPosting,
+          isActive: accountsTable.isActive,
+        }).from(accountsTable).where(and(
+          eq(accountsTable.companyId, cid),
+          inArray(accountsTable.id, selectedIds),
+        ));
+        if (owned.length !== selectedIds.length || selectedMappings.some((mapping) =>
+          !owned.some((account) => account.id === mapping.id &&
+            account.accountType === mapping.type && account.isPosting && account.isActive))) {
+          res.status(400).json({ error: "تحقق من أن كل حساب تابع للشركة ونشط وقابل للترحيل ونوعه صحيح" });
+          return;
+        }
+      }
+      const independentExpenseKeys = [
+        "salariesExpense", "allowancesExpense", "housingAllowanceExpense",
+        "transportAllowanceExpense", "overtimeExpense", "bonusExpense",
+        "gosiExpense", "eosExpense", "leaveProvisionExpense", "travelTicketExpense",
+      ];
+      const independentIds = independentExpenseKeys
+        .map((key) => toInt(m[key]))
+        .filter((id): id is number => id != null);
+      if (new Set(independentIds).size !== independentIds.length) {
+        res.status(400).json({ error: "اربط كل بند مصروف في الموارد البشرية بحساب مستقل" });
+        return;
+      }
+    }
     if (req.body?.monthlyProvisionsEnabled === true) {
       const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, cid));
       if (!EMPLOYEE_PROVISION_SETTLEMENTS_READY && !company?.hrMonthlyProvisionsEnabled) {
@@ -133,6 +192,10 @@ router.put("/", async (req, res) => {
       Object.assign(set, {
         hrSalariesExpenseAccountId:   toInt(m.salariesExpense),
         hrAllowancesExpenseAccountId: toInt(m.allowancesExpense),
+        hrHousingAllowanceExpenseAccountId: toInt(m.housingAllowanceExpense),
+        hrTransportAllowanceExpenseAccountId: toInt(m.transportAllowanceExpense),
+        hrOvertimeExpenseAccountId: toInt(m.overtimeExpense),
+        hrBonusExpenseAccountId: toInt(m.bonusExpense),
         hrGosiExpenseAccountId:       toInt(m.gosiExpense),
         hrEosExpenseAccountId:        toInt(m.eosExpense),
         hrSalariesPayableAccountId:   toInt(m.salariesPayable),

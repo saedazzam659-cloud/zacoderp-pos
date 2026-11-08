@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { allocationBuckets, allocateComponentBySnapshots, assignmentsOverlap, assignmentRepresentedBySnapshot, assignmentCloseConflictsWithSnapshot } from "../src/lib/payrollAllocation.ts";
+import { missingPayrollExpenseMappings, payrollExpenseComponents, payrollExpenseTotals } from "../src/lib/payrollExpenseComponents.ts";
 
 test("allocates calendar days across a mid-month transfer with exact cents", () => {
   const rows = allocationBuckets([
@@ -60,6 +61,49 @@ test("splits salary and allowance components independently without cent drift", 
   assert.equal(salary.reduce((n, row) => n + row.amount, 0).toFixed(2), "100.01");
   assert.equal(allowances.reduce((n, row) => n + row.amount, 0).toFixed(2), "10.03");
   assert.equal(salary[1].costCenterId, null, "unassigned allocation stays without a cost center");
+});
+
+test("splits each payroll expense onto its own account and identifies only missing active components", () => {
+  const lines = [
+    {
+      basicSalary: "2500.00",
+      absenceDeduction: "100.00",
+      housingAllow: "600.00",
+      transportAllow: "300.00",
+      otherAllow: "100.00",
+      overtimeAmount: "75.00",
+      bonusAmount: "200.00",
+    },
+    { basicSalary: "1000.00", housingAllow: "0", transportAllow: "0", otherAllow: "0", overtimeAmount: "0", bonusAmount: "0" },
+  ];
+  assert.deepEqual(payrollExpenseComponents(lines[0]).map(({ accountKey, amount }) => [accountKey, amount]), [
+    ["salariesExpense", 2400],
+    ["housingAllowanceExpense", 600],
+    ["transportAllowanceExpense", 300],
+    ["allowancesExpense", 100],
+    ["overtimeExpense", 75],
+    ["bonusExpense", 200],
+  ]);
+  assert.deepEqual(payrollExpenseTotals(lines), {
+    salariesExpense: 3400,
+    housingAllowanceExpense: 600,
+    transportAllowanceExpense: 300,
+    allowancesExpense: 100,
+    overtimeExpense: 75,
+    bonusExpense: 200,
+  });
+  assert.deepEqual(missingPayrollExpenseMappings(lines, {
+    salariesExpense: 1,
+    housingAllowanceExpense: null,
+    transportAllowanceExpense: 3,
+    allowancesExpense: 4,
+    overtimeExpense: null,
+    bonusExpense: null,
+  }).map(({ key, amount }) => [key, amount]), [
+    ["housingAllowanceExpense", 600],
+    ["overtimeExpense", 75],
+    ["bonusExpense", 200],
+  ]);
 });
 
 test("supports separate salary and provision ratios across multiple cost centers", () => {

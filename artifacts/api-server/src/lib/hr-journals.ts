@@ -21,34 +21,24 @@ import { assertWritableForDate } from "./periodGuard.js";
 import { nextJeSubSequence, resolveJeNumber } from "./sequences.js";
 import { isHrPostingBranchBackfill, resolveHrPostingBranch } from "./hrPostingBranch.js";
 import { allocateComponentBySnapshots } from "./payrollAllocation.js";
+import {
+  missingPayrollExpenseMappings,
+  payrollExpenseComponents,
+  payrollExpenseTotals,
+} from "./payrollExpenseComponents.js";
 import type { ProvisionExpenseSnapshot } from "./employeeProvisionManufacturing.js";
 import { monthlyBasicLeaveProvision } from "./hrProvisionMath.js";
 import { getLinkedSourceJournalEntry, replaceLinkedSourceJournalEntry } from "./sourceJournalEntryLifecycle.js";
 
 type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-// Standard HR account codes — must match seeded COA in coaTemplates.ts
-const HR_ACCOUNT_CODES = {
-  salariesExpense:    "5201",
-  allowancesExpense:  "5202",
-  gosiExpense:        "5203",
-  eosExpense:         "5215",
-  salariesPayable:    "21051",
-  gosiPayable:        "21052",
-  otherDeductions:    "21053",
-  employeeLoans:      "11081",
-  employeeCustody:    "11082",
-  eosProvision:       "22021",
-  leaveProvisionExpense: "5217",
-  leaveProvisionLiability: "22022",
-  travelTicketExpense: "5218",
-  travelTicketLiability: "22023",
-} as const;
-
-export type HrAccountKey = keyof typeof HR_ACCOUNT_CODES;
-const HR_ACCOUNT_COLUMNS: Record<HrAccountKey, string> = {
+const HR_ACCOUNT_COLUMNS = {
   salariesExpense: "hrSalariesExpenseAccountId",
   allowancesExpense: "hrAllowancesExpenseAccountId",
+  housingAllowanceExpense: "hrHousingAllowanceExpenseAccountId",
+  transportAllowanceExpense: "hrTransportAllowanceExpenseAccountId",
+  overtimeExpense: "hrOvertimeExpenseAccountId",
+  bonusExpense: "hrBonusExpenseAccountId",
   gosiExpense: "hrGosiExpenseAccountId",
   eosExpense: "hrEosExpenseAccountId",
   salariesPayable: "hrSalariesPayableAccountId",
@@ -61,11 +51,36 @@ const HR_ACCOUNT_COLUMNS: Record<HrAccountKey, string> = {
   leaveProvisionLiability: "hrLeaveProvisionLiabilityAccountId",
   travelTicketExpense: "hrTravelTicketExpenseAccountId",
   travelTicketLiability: "hrTravelTicketLiabilityAccountId",
+} as const;
+
+export type HrAccountKey = keyof typeof HR_ACCOUNT_COLUMNS;
+
+// Auto-resolve only established chart codes. Newly split payroll components
+// remain manually selectable because no standard chart codes are defined for them.
+const HR_ACCOUNT_CODES: Partial<Record<HrAccountKey, string>> = {
+  salariesExpense: "5201",
+  allowancesExpense: "5202",
+  gosiExpense: "5203",
+  eosExpense: "5215",
+  salariesPayable: "21051",
+  gosiPayable: "21052",
+  otherDeductions: "21053",
+  employeeLoans: "11081",
+  employeeCustody: "11082",
+  eosProvision: "22021",
+  leaveProvisionExpense: "5217",
+  leaveProvisionLiability: "22022",
+  travelTicketExpense: "5218",
+  travelTicketLiability: "22023",
 };
 
 export interface HrAccountMap {
   salariesExpense:   number | null;
   allowancesExpense: number | null;
+  housingAllowanceExpense: number | null;
+  transportAllowanceExpense: number | null;
+  overtimeExpense: number | null;
+  bonusExpense: number | null;
   gosiExpense:       number | null;
   eosExpense:        number | null;
   salariesPayable:   number | null;
@@ -115,6 +130,10 @@ export async function resolveHrAccounts(cid: number, persist = true, dx: DbOrTx 
   const map: HrAccountMap = {
     salariesExpense:   c.hrSalariesExpenseAccountId   ?? null,
     allowancesExpense: c.hrAllowancesExpenseAccountId ?? null,
+    housingAllowanceExpense: c.hrHousingAllowanceExpenseAccountId ?? null,
+    transportAllowanceExpense: c.hrTransportAllowanceExpenseAccountId ?? null,
+    overtimeExpense: c.hrOvertimeExpenseAccountId ?? null,
+    bonusExpense: c.hrBonusExpenseAccountId ?? null,
     gosiExpense:       c.hrGosiExpenseAccountId       ?? null,
     eosExpense:        c.hrEosExpenseAccountId        ?? null,
     salariesPayable:   c.hrSalariesPayableAccountId   ?? null,
@@ -134,7 +153,8 @@ export async function resolveHrAccounts(cid: number, persist = true, dx: DbOrTx 
   // Auto-resolve missing mappings from COA codes
   const updates: any = {};
   const keys: HrAccountKey[] = [
-    "salariesExpense","allowancesExpense","gosiExpense","eosExpense",
+    "salariesExpense","allowancesExpense","housingAllowanceExpense","transportAllowanceExpense",
+    "overtimeExpense","bonusExpense","gosiExpense","eosExpense",
     "salariesPayable","gosiPayable","otherDeductions","employeeLoans","employeeCustody","eosProvision",
     "leaveProvisionExpense","leaveProvisionLiability","travelTicketExpense","travelTicketLiability",
   ];
@@ -154,8 +174,9 @@ export async function resolveHrAccounts(cid: number, persist = true, dx: DbOrTx 
     }
   }
   for (const k of keys) {
-    if (!map[k]) {
-      const id = await findAccountByCode(cid, HR_ACCOUNT_CODES[k], dx);
+    const defaultCode = HR_ACCOUNT_CODES[k];
+    if (!map[k] && defaultCode) {
+      const id = await findAccountByCode(cid, defaultCode, dx);
       if (id) {
         map[k] = id;
         updates[HR_ACCOUNT_COLUMNS[k]] = id;
@@ -167,11 +188,47 @@ export async function resolveHrAccounts(cid: number, persist = true, dx: DbOrTx 
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(companiesTable.id, cid));
   }
-  // Custody falls back to the combined loans/advances account (11081) when a
-  // dedicated custody account (11082) hasn't been seeded yet. Not persisted, so
-  // it auto-upgrades the moment a real custody account exists.
-  if (!map.employeeCustody) map.employeeCustody = map.employeeLoans;
   return map;
+}
+
+export async function checkPayrollAccountMappings(cid: number, runId: number, dx: DbOrTx = db) {
+  const [run] = await dx.select().from(payrollRunsTable)
+    .where(and(eq(payrollRunsTable.id, runId), eq(payrollRunsTable.companyId, cid)));
+  if (!run) throw new Error("مسير الرواتب غير موجود");
+  const lines = await dx.select().from(payrollLinesTable)
+    .where(eq(payrollLinesTable.payrollRunId, runId));
+  if (!lines.length) throw new Error("لا توجد سطور في المسير");
+
+  const accounts = await resolveHrAccounts(cid, true, dx);
+  const missing: Array<{ key: string; label: string; amount: number | null }> =
+    missingPayrollExpenseMappings(lines, accounts);
+  const addIfMissing = (key: keyof HrAccountMap, label: string, amount: number) => {
+    if (amount > 0 && !accounts[key]) missing.push({ key, label, amount });
+  };
+  const total = (selector: (line: typeof lines[number]) => unknown) =>
+    roundMoney(lines.reduce((sum, line) => sum + num(selector(line)), 0));
+  addIfMissing("salariesPayable", "الرواتب المستحقة", total((line) => line.netSalary));
+  addIfMissing("gosiPayable", "التأمينات المستحقة (حصة الموظف)", total((line) => line.gosiEmployee));
+  addIfMissing("employeeLoans", "سلف الموظفين", total((line) => line.loanDeduction));
+  addIfMissing("otherDeductions", "الاستقطاعات الأخرى", total((line) =>
+    num(line.otherDeduction) + num((line as any).violationDeduction)));
+
+  const [company] = await dx.select({ provisionsEnabled: companiesTable.hrMonthlyProvisionsEnabled })
+    .from(companiesTable).where(eq(companiesTable.id, cid));
+  const requireProvisionMappings = company?.provisionsEnabled === true;
+  const eosAmount = run.provisionSnapshotsCaptured ? total((line) => line.eosProvisionAmount) : 0;
+  const leaveAmount = run.provisionSnapshotsCaptured ? total((line) => line.leaveProvisionAmount) : 0;
+  const ticketAmount = run.provisionSnapshotsCaptured ? total((line) => line.travelTicketProvisionAmount) : 0;
+  if ((requireProvisionMappings || eosAmount !== 0) && (!accounts.eosExpense || !accounts.eosProvision)) {
+    missing.push({ key: "eosProvision", label: "حسابا مصروف ومخصص نهاية الخدمة", amount: eosAmount || null });
+  }
+  if ((requireProvisionMappings || leaveAmount > 0) && (!accounts.leaveProvisionExpense || !accounts.leaveProvisionLiability)) {
+    missing.push({ key: "leaveProvisionExpense", label: "حسابا مصروف ومخصص الإجازات", amount: leaveAmount || null });
+  }
+  if ((requireProvisionMappings || ticketAmount > 0) && (!accounts.travelTicketExpense || !accounts.travelTicketLiability)) {
+    missing.push({ key: "travelTicketExpense", label: "حسابا مصروف ومخصص تذاكر السفر", amount: ticketAmount || null });
+  }
+  return { ready: missing.length === 0, missing, checkedLineCount: lines.length };
 }
 
 function num(v: any): number { return Number(v ?? 0) || 0; }
@@ -238,16 +295,13 @@ export async function buildPayrollJournal(
   const snapshots = await dx.select().from(payrollAllocationSnapshotsTable)
     .where(and(eq(payrollAllocationSnapshotsTable.companyId, cid), eq(payrollAllocationSnapshotsTable.payrollRunId, runId)));
 
-  // Aggregate
-  let salariesEarned = 0; // basic + overtime + bonus - absence
-  let allowances     = 0; // housing + transport + other
+  // Aggregate the payable and deduction accounts. Payroll expense components
+  // are totaled separately below so each one can use its own mapped account.
   let netPayable     = 0;
   let gosiEmployee   = 0;
   let loanDeduction  = 0;
   let otherDeduction = 0;
   for (const l of lines) {
-    salariesEarned += num(l.basicSalary) + num(l.overtimeAmount) + num(l.bonusAmount) - num(l.absenceDeduction);
-    allowances     += num(l.housingAllow) + num(l.transportAllow) + num(l.otherAllow);
     netPayable     += num(l.netSalary);
     gosiEmployee   += num(l.gosiEmployee);
     loanDeduction  += num(l.loanDeduction);
@@ -317,22 +371,22 @@ export async function buildPayrollJournal(
   const ticketProvisionTotal = roundMoney(provisionRows.reduce((sum, row) => sum + row.ticketAmount, 0));
   const eosProvisionTotal = roundMoney(provisionRows.reduce((sum, row) => sum + row.eosChange, 0));
   const hasEosProvision = provisionRows.some((row) => row.eosChange !== 0);
+  const expenseTotals = payrollExpenseTotals(lines);
   const missing: string[] = [];
-  if (salariesEarned > 0  && !accounts.salariesExpense)   missing.push("مصروف الرواتب (5201)");
-  if (allowances > 0      && !accounts.allowancesExpense) missing.push("مصروف البدلات (5202)");
+  for (const item of missingPayrollExpenseMappings(lines, accounts)) missing.push(item.label);
   if (netPayable > 0      && !accounts.salariesPayable)   missing.push("الرواتب المستحقة (21051)");
   if (gosiEmployee > 0    && !accounts.gosiPayable)       missing.push("التأمينات المستحقة (21052)");
   if (loanDeduction > 0   && !accounts.employeeLoans)     missing.push("سلف الموظفين (11081)");
   if (otherDeduction > 0  && !accounts.otherDeductions)   missing.push("استقطاعات أخرى (21053)");
-  if (hasEosProvision && (!accounts.eosExpense || !accounts.eosProvision))
+  if ((hasEosProvision || provisionsEnabled) && (!accounts.eosExpense || !accounts.eosProvision))
     missing.push("مصروف/مخصص نهاية الخدمة");
-  if (leaveProvisionTotal > 0 && (!accounts.leaveProvisionExpense || !accounts.leaveProvisionLiability))
+  if ((leaveProvisionTotal > 0 || provisionsEnabled) && (!accounts.leaveProvisionExpense || !accounts.leaveProvisionLiability))
     missing.push("مصروف/مخصص الإجازات");
-  if (ticketProvisionTotal > 0 && (!accounts.travelTicketExpense || !accounts.travelTicketLiability))
+  if ((ticketProvisionTotal > 0 || provisionsEnabled) && (!accounts.travelTicketExpense || !accounts.travelTicketLiability))
     missing.push("مصروف/مخصص تذاكر السفر");
   if (missing.length) throw new Error("الحسابات التالية غير مربوطة في إعدادات الموارد البشرية: " + missing.join("، "));
 
-  const totalDr = +(salariesEarned + allowances).toFixed(2);
+  const totalDr = roundMoney(Object.values(expenseTotals).reduce((sum, amount) => sum + amount, 0));
   const totalCr = +(netPayable + gosiEmployee + loanDeduction + otherDeduction).toFixed(2);
   if (Math.abs(totalDr - totalCr) > 0.05) {
     throw new Error(`القيد غير متوازن: مدين ${fix(totalDr)} ≠ دائن ${fix(totalCr)}`);
@@ -369,9 +423,8 @@ export async function buildPayrollJournal(
   const [entry] = retainedEntry ? [{ id: retainedEntry.id }] : await dx.insert(journalEntriesTable).values(header).returning();
 
   const drLines: any[] = [];
-  // New runs have immutable daily snapshots. Split EACH expense class by the
-  // same frozen cost-center weights, independently rounding in cents, so the
-  // old salary/allowance aggregate totals remain mathematically identical.
+   // New runs have immutable daily snapshots. Split EACH expense component by
+   // the same frozen cost-center weights, independently rounding in cents.
   const snapshotsByLine = new Map<number, typeof snapshots>();
   for (const snapshot of snapshots) {
     const list = snapshotsByLine.get(snapshot.payrollLineId) ?? [];
@@ -388,17 +441,18 @@ export async function buildPayrollJournal(
   };
   for (const line of lines) {
     const lineSnapshots = snapshotsByLine.get(line.id) ?? [];
-    const salaryAmount = +(num(line.basicSalary) + num(line.overtimeAmount) + num(line.bonusAmount) - num(line.absenceDeduction)).toFixed(2);
-    const allowanceAmount = +(num(line.housingAllow) + num(line.transportAllow) + num(line.otherAllow)).toFixed(2);
+    const components = payrollExpenseComponents(line);
     if (!lineSnapshots.length) { // legacy run created before allocation feature
-      addDebit(accounts.salariesExpense!, null, salaryAmount, `رواتب وأجور الفترة ${period}`);
-      addDebit(accounts.allowancesExpense!, null, allowanceAmount, `بدلات وحوافز الفترة ${period}`);
+      for (const component of components) {
+        addDebit(accounts[component.accountKey]!, null, component.amount, `${component.label} ${period}`);
+      }
       continue;
     }
-    for (const part of allocateComponentBySnapshots(salaryAmount, lineSnapshots))
-      addDebit(accounts.salariesExpense!, part.costCenterId, part.amount, `رواتب وأجور الفترة ${period}`);
-    for (const part of allocateComponentBySnapshots(allowanceAmount, lineSnapshots))
-      addDebit(accounts.allowancesExpense!, part.costCenterId, part.amount, `بدلات وحوافز الفترة ${period}`);
+    for (const component of components) {
+      for (const part of allocateComponentBySnapshots(component.amount, lineSnapshots)) {
+        addDebit(accounts[component.accountKey]!, part.costCenterId, part.amount, `${component.label} ${period}`);
+      }
+    }
   }
   const provisionDebitLines: any[] = [];
   const provisionCreditLines: any[] = [];

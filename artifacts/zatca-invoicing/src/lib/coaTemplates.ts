@@ -145,6 +145,7 @@ const COMMERCIAL_LEAVES: CoaRow[] = [
   { code: "21052", nameAr: "تأمينات اجتماعية مستحقة الدفع",     nameEn: "GOSI Payable",                 accountType: "liability", level: 4, isPosting: true, parentCode: "2105" },
   { code: "21053", nameAr: "استقطاعات أخرى مستحقة الدفع",       nameEn: "Other Deductions Payable",     accountType: "liability", level: 4, isPosting: true, parentCode: "2105" },
   { code: "11081", nameAr: "سلف وعُهد الموظفين",                nameEn: "Loans & Advances to Employees",accountType: "asset",     level: 4, isPosting: true, parentCode: "1108" },
+  { code: "11082", nameAr: "عُهد الموظفين",                    nameEn: "Employee Custody / Imprest",   accountType: "asset",     level: 4, isPosting: true, parentCode: "1108" },
   { code: "22021", nameAr: "مخصص مكافأة نهاية الخدمة",          nameEn: "EOS Provision",                accountType: "liability", level: 4, isPosting: true, parentCode: "2202" },
   { code: "22022", nameAr: "مخصص الإجازات المستحقة",           nameEn: "Accrued Leave Provision",       accountType: "liability", level: 4, isPosting: true, parentCode: "2202" },
   { code: "22023", nameAr: "مخصص تذاكر سفر الموظفين",          nameEn: "Employee Travel Ticket Provision", accountType: "liability", level: 4, isPosting: true, parentCode: "2202" },
