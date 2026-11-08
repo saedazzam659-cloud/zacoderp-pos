@@ -15,11 +15,11 @@ Monthly provision posting is explicitly enabled per company and defaults off. Ex
 
 **Why:** On 2026-11-08 the user explicitly selected “الأساسي فقط” for the leave provision salary basis. This clarification is prospective; preserve all previously posted period snapshots.
 
-Settlement decisions: paid-leave provision is settled with a separate entry when the leave is used; travel-ticket provision is settled against the actual ticket invoice or expense. Keep monthly provision activation off until manufacturing allocation, settlement, and consolidated reporting are complete.
+Paid-leave provision is settled with a separate entry when leave is used; travel-ticket provision is settled against the actual ticket invoice or expense. After payroll, balance, settlement, reversal, and manufacturing-offset verification passes, allow each company to opt in; keep existing companies off until they explicitly enable it. Never backfill runs posted before activation.
 
-**Why:** The user confirmed these settlement sources on 2026-11-08 and required the activation gate to remain off until the related workflows are complete.
+**Why:** On 2026-11-09 the user chose to complete lifecycle verification and unlock the setting after noticing missing journal lines. This supersedes the earlier temporary system-wide activation gate, but not the company-level opt-in or no-backfill boundary.
 
-**How to apply:** Link each settlement to its source employee and provision period, reduce the liability without charging the same cost twice, and preserve posted snapshots.
+**How to apply:** Keep the feature default-off for each company; add new accruals only when that company opts in and posts a payroll run. Link each settlement to its source employee and provision period, reduce liabilities without duplicate expense, preserve posted snapshots, and keep manufacturing offsets/reversal guards in place.
 
 Freeze employee provision amounts on first payroll posting, including explicit zeros when accrual is disabled. Reposting must reuse the original period basis, not current entitlements.
 

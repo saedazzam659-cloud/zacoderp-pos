@@ -1,3 +1,4 @@
-// Keep new liability/settlement posting unavailable until the complete
-// payroll, source-reversal and employee-balance lifecycle is verified.
-export const EMPLOYEE_PROVISION_SETTLEMENTS_READY = false;
+// The payroll accrual, employee balance, source-checked settlement/reversal,
+// and manufacturing-offset lifecycle is covered by the HR provisions
+// PostgreSQL integration test. Company activation remains opt-in.
+export const EMPLOYEE_PROVISION_SETTLEMENTS_READY = true;
