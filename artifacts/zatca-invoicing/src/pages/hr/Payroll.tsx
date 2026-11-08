@@ -158,10 +158,10 @@ export default function Payroll() {
     onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
 
-  const { data: journalData, isLoading: loadingJe } = useQuery<any>({
-    queryKey: ["payroll-journal", viewing],
+  const { data: journalData, isLoading: loadingJe, error: journalError } = useQuery<any>({
+    queryKey: ["payroll-journal", viewing, viewRun?.status],
     queryFn: () => employeesApi.payrollJournal(viewing!),
-    enabled: !!viewing && showJournal && viewRun?.status === "posted",
+    enabled: !!viewing && showJournal && (viewRun?.status === "draft" || viewRun?.status === "posted"),
   });
 
   const explainJeMut = useMutation({
@@ -476,17 +476,22 @@ export default function Payroll() {
                         <CheckCircle2 className="size-4 me-1" /> {tr("btnPostDetail")}
                       </Button>
                     )}
-                    {viewRun.status === "posted" && (
+                    {(viewRun.status === "draft" || viewRun.status === "posted") && (
                       <>
-                        <Button variant="outline" onClick={() => { setShowJournal((s) => !s); setJeExplain(""); }} data-testid="btn-toggle-je">
-                          <BookOpen className="size-4 me-1" /> {showJournal ? tr("btnHideJournal") : tr("btnShowJournal")}
+                        <Button variant="outline" onClick={() => { setShowJournal((s) => !s); setJeExplain(""); }}
+                          data-testid={viewRun.status === "draft" ? "btn-preview-je" : "btn-toggle-je"}>
+                          <BookOpen className="size-4 me-1" /> {showJournal
+                            ? tr("btnHideJournal")
+                            : viewRun.status === "draft" ? tr("btnPreviewJournal") : tr("btnShowJournal")}
                         </Button>
-                        <Button variant="outline" className="text-rose-700 hover:text-rose-800"
-                          onClick={() => { if (confirm(tr("unpostConfirm"))) unpostMut.mutate(viewRun.id); }}
-                          disabled={unpostMut.isPending} data-testid="btn-unpost">
-                          {unpostMut.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <RotateCcw className="size-4 me-1" />}
-                          {tr("btnUnpost")}
-                        </Button>
+                        {viewRun.status === "posted" && (
+                          <Button variant="outline" className="text-rose-700 hover:text-rose-800"
+                            onClick={() => { if (confirm(tr("unpostConfirm"))) unpostMut.mutate(viewRun.id); }}
+                            disabled={unpostMut.isPending} data-testid="btn-unpost">
+                            {unpostMut.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <RotateCcw className="size-4 me-1" />}
+                            {tr("btnUnpost")}
+                          </Button>
+                        )}
                       </>
                     )}
                   </div>
@@ -507,25 +512,34 @@ export default function Payroll() {
                     onClick={()=>mfgConfigMut.mutate()}>حفظ إعداد التصنيع</Button>
                 </div>
 
-                {showJournal && viewRun.status === "posted" && (
+                {showJournal && (viewRun.status === "draft" || viewRun.status === "posted") && (
                   <div className="rounded-lg border bg-card overflow-hidden">
                     <div className="bg-muted/40 p-3 border-b font-semibold flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2">
-                        <BookOpen className="size-4" /> {tr("journalTitle")}
+                        <BookOpen className="size-4" /> {tr(viewRun.status === "draft" ? "journalPreviewTitle" : "journalTitle")}
                       </div>
-                      {journalData && (
+                      {viewRun.status === "draft" && (
+                        <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200" data-testid="status-journal-preview">
+                          {tr("journalPreviewNotice")}
+                        </Badge>
+                      )}
+                      {viewRun.status === "posted" && journalData && (
                         <Button size="sm" variant="outline" onClick={() => explainJeMut.mutate()} disabled={explainJeMut.isPending} data-testid="btn-explain-je">
                           {explainJeMut.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <Sparkles className="size-4 me-1" />}
                           {tr("btnExplainAi")}
                         </Button>
                       )}
                     </div>
-                    {loadingJe || !journalData ? (
+                    {loadingJe ? (
+                      <div className="p-4"><Skeleton className="h-32" /></div>
+                    ) : journalError ? (
+                      <div className="p-4 text-sm text-destructive" role="alert">{parseError(journalError)}</div>
+                    ) : !journalData ? (
                       <div className="p-4"><Skeleton className="h-32" /></div>
                     ) : (
                       <div className="p-4 space-y-3">
                         <div className="text-sm text-muted-foreground">
-                          {tr("docNumberLabel")} <strong>{journalData.entry.docNumber}</strong> ·
+                          {tr(viewRun.status === "draft" ? "previewRunCodeLabel" : "docNumberLabel")} <strong>{journalData.entry.docNumber}</strong> ·
                           {" "}{tr("dateLabel")} <strong>{journalData.entry.entryDate}</strong> ·
                           {" "}{tr("descriptionLabel")} <strong>{journalData.entry.description}</strong>
                         </div>

@@ -279,12 +279,18 @@ export async function resolveCashAccount(
 }
 
 // ─── PAYROLL POSTING JOURNAL ─────────────────────────────────────────────────
-export async function buildPayrollJournal(
+export type PayrollJournalPreviewResult = {
+  entry: Record<string, any>;
+  lines: Array<Record<string, any>>;
+};
+
+async function buildPayrollJournalInternal(
   cid: number,
   runId: number,
   dx: DbOrTx = db,
   retainedEntryId?: number | null,
-): Promise<number> {
+  preview = false,
+): Promise<number | PayrollJournalPreviewResult> {
   const [run] = await dx.select().from(payrollRunsTable)
     .where(and(eq(payrollRunsTable.id, runId), eq(payrollRunsTable.companyId, cid)));
   if (!run) throw new Error("مسير الرواتب غير موجود");
@@ -309,7 +315,7 @@ export async function buildPayrollJournal(
     otherDeduction += num(l.otherDeduction) + num((l as any).violationDeduction);
   }
 
-  const accounts = await resolveHrAccounts(cid, true, dx);
+  const accounts = await resolveHrAccounts(cid, !preview, dx);
   const [companyProvisions] = await dx.select({ enabled: companiesTable.hrMonthlyProvisionsEnabled })
     .from(companiesTable).where(eq(companiesTable.id, cid));
   const provisionsEnabled = companyProvisions?.enabled === true;
@@ -356,7 +362,7 @@ export async function buildPayrollJournal(
     const ticketAmount = run.provisionSnapshotsCaptured ? num(line.travelTicketProvisionAmount) : computedTicket;
     return { line, eosChange, leaveAmount, ticketAmount };
   }) : [];
-  if (captureProvisionSnapshots) {
+  if (captureProvisionSnapshots && !preview) {
     for (const row of provisionRows) {
       await dx.update(payrollLinesTable).set({
         eosProvisionAmount: fix(row.eosChange),
@@ -396,20 +402,22 @@ export async function buildPayrollJournal(
   const desc = `قيد الرواتب والمخصصات الشهرية ${run.code} عن الفترة ${period}`;
 
   const payrollDate = run.payDate || run.periodEnd;
-  const prW = await assertWritableForDate(cid, payrollDate);
-  if (!prW.ok) throw new Error(prW.reason);
+  if (!preview) {
+    const prW = await assertWritableForDate(cid, payrollDate);
+    if (!prW.ok) throw new Error(prW.reason);
+  }
   // JE draws its own continuous "journal_entry" number; run code stays in the
   // description + source link. Falls back to the run code.
   // Reuses a stashed number on unpost→repost (keyed payroll_run:runId) so
   // re-approving a payroll run keeps its original JE number (no gaps).
-  const retainedEntry = retainedEntryId
+  const retainedEntry = !preview && retainedEntryId
     ? await getLinkedSourceJournalEntry(dx, cid, retainedEntryId, "payroll_run")
     : null;
-  const jeStatus = await resolvePostingStatus(cid, "payroll");
+  const jeStatus = preview ? "draft" : await resolvePostingStatus(cid, "payroll");
   const header = {
     companyId: cid,
     branchId: run.branchId ?? null,
-    docNumber: retainedEntry ? retainedEntry.docNumber : (await resolveJeNumber({
+    docNumber: preview ? run.code : retainedEntry ? retainedEntry.docNumber : (await resolveJeNumber({
       companyId: cid, sourceType: "payroll_run", sourceId: runId, subType: "hr_payroll",
       branchId: run.branchId ?? null, docDate: payrollDate, userId: null, dx: dx as any,
     })) ?? run.code,
@@ -420,7 +428,11 @@ export async function buildPayrollJournal(
     entryType: "payroll_run",
     status: jeStatus,
   };
-  const [entry] = retainedEntry ? [{ id: retainedEntry.id }] : await dx.insert(journalEntriesTable).values(header).returning();
+  const entry = preview
+    ? { id: 0 }
+    : retainedEntry
+      ? { id: retainedEntry.id }
+      : (await dx.insert(journalEntriesTable).values(header).returning())[0];
 
   const drLines: any[] = [];
    // New runs have immutable daily snapshots. Split EACH expense component by
@@ -543,6 +555,12 @@ export async function buildPayrollJournal(
   if (Math.abs(journalDebit - journalCredit) > 0.05) {
     throw new Error(`القيد غير متوازن بعد احتساب المخصصات: مدين ${fix(journalDebit)} ≠ دائن ${fix(journalCredit)}`);
   }
+  if (preview) {
+    return {
+      entry: { ...header, totalDebit: fix(journalDebit), totalCredit: fix(journalCredit) },
+      lines: journalLines,
+    };
+  }
   if (retainedEntry) {
     return replaceLinkedSourceJournalEntry(dx, {
       companyId: cid,
@@ -555,6 +573,26 @@ export async function buildPayrollJournal(
   }
   await dx.insert(journalEntryLinesTable).values(journalLines);
   return entry.id;
+}
+
+export async function buildPayrollJournal(
+  cid: number,
+  runId: number,
+  dx: DbOrTx = db,
+  retainedEntryId?: number | null,
+): Promise<number> {
+  const result = await buildPayrollJournalInternal(cid, runId, dx, retainedEntryId);
+  if (typeof result !== "number") throw new Error("تعذر إنشاء قيد الرواتب");
+  return result;
+}
+
+export async function previewPayrollJournal(
+  cid: number,
+  runId: number,
+): Promise<PayrollJournalPreviewResult> {
+  const result = await buildPayrollJournalInternal(cid, runId, db, undefined, true);
+  if (typeof result === "number") throw new Error("تعذر معاينة قيد الرواتب");
+  return result;
 }
 
 // ─── PAYROLL PAYMENT JOURNAL (صرف الرواتب) ──────────────────────────────────

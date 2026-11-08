@@ -10,7 +10,7 @@ import { and, eq, asc, desc, sql, lte, gte, or, isNotNull, inArray } from "drizz
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { nextSequenceOrFallback, reserveJeNumberFromEntry } from "../lib/sequences.js";
 import { requireAdminRole, requirePermission } from "../middleware/permissions.js";
-import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal, buildPayrollPaymentJournal, buildEmployeeProvisionSettlementJournal, checkPayrollAccountMappings, resolveHrAccounts } from "../lib/hr-journals.js";
+import { buildPayrollJournal, previewPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal, buildPayrollPaymentJournal, buildEmployeeProvisionSettlementJournal, checkPayrollAccountMappings, resolveHrAccounts } from "../lib/hr-journals.js";
 import { calculatePayrollLineTotals } from "../lib/payrollCalculations.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import {
@@ -2098,14 +2098,48 @@ router.get("/payroll/runs/:id/account-check", async (req, res) => {
   }
 });
 
-// Get the JE attached to a payroll run (if posted)
+// Get the JE attached to a posted run, or a side-effect-free preview for drafts.
 router.get("/payroll/runs/:id/journal", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      res.status(400).json({ error: "رقم مسير الرواتب غير صحيح" });
+      return;
+    }
     const [run] = await db.select().from(payrollRunsTable)
       .where(and(eq(payrollRunsTable.id, id), eq(payrollRunsTable.companyId, cid)));
-    if (!run?.postedJournalId) { res.status(404).json({ error: "لا يوجد قيد لهذا المسير" }); return; }
+    if (!run) { res.status(404).json({ error: "مسير الرواتب غير موجود" }); return; }
+    if (run.status === "draft") {
+      const preview = await previewPayrollJournal(cid, id);
+      const accountIds = [...new Set(preview.lines
+        .map((line: any) => Number(line.accountId))
+        .filter((accountId: number) => Number.isSafeInteger(accountId) && accountId > 0))];
+      const accountRows = accountIds.length
+        ? await db.select({
+            id: accountsTable.id,
+            code: accountsTable.code,
+            nameAr: accountsTable.nameAr,
+            nameEn: accountsTable.nameEn,
+          }).from(accountsTable).where(and(
+            eq(accountsTable.companyId, cid),
+            inArray(accountsTable.id, accountIds),
+          ))
+        : [];
+      const accountsById = new Map(accountRows.map((account) => [account.id, account]));
+      const lines = preview.lines.map((line: any) => {
+        const account = accountsById.get(Number(line.accountId));
+        return {
+          ...line,
+          accountCode: account?.code ?? "",
+          accountNameAr: account?.nameAr ?? "",
+          accountNameEn: account?.nameEn ?? "",
+        };
+      });
+      res.json({ entry: preview.entry, lines, isPreview: true });
+      return;
+    }
+    if (!run.postedJournalId) { res.status(404).json({ error: "لا يوجد قيد لهذا المسير" }); return; }
     const [entry] = await db.select().from(journalEntriesTable)
       .where(eq(journalEntriesTable.id, run.postedJournalId));
     const lines = await db.select().from(journalEntryLinesTable)
