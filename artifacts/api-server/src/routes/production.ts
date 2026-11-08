@@ -17791,6 +17791,15 @@ function serializeEstimatedCostClosure(closure: any): any {
   };
 }
 
+function stableEstimatedSnapshotJson(value: unknown): string {
+  return JSON.stringify(value, (_key, child) => {
+    if (!child || typeof child !== "object" || Array.isArray(child)) return child;
+    return Object.fromEntries(
+      Object.keys(child).sort().map((key) => [key, (child as Record<string, unknown>)[key]]),
+    );
+  }) ?? "null";
+}
+
 productionEstimatedCostingRouter.get("/estimated-costing/pools",
   requirePermission("simple_manufacturing", "view"), async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
@@ -18817,7 +18826,7 @@ productionEstimatedCostingRouter.post("/estimated-costing/closures/:id/post",
         const period = String(closure.periodStart).slice(0, 7);
         const built = await buildEstimatedCostClosureSnapshot(tx, cid, period, closure.branchId ?? null);
         const savedSnapshot = Array.isArray(closure.sourceSnapshot) ? closure.sourceSnapshot[0] : null;
-        if (JSON.stringify(savedSnapshot) !== JSON.stringify(built.snapshot) ||
+        if (stableEstimatedSnapshotJson(savedSnapshot) !== stableEstimatedSnapshotJson(built.snapshot) ||
             round2(num(closure.actualAmount)) !== built.actualAmount ||
             round2(num(closure.appliedAmount)) !== built.appliedAmount ||
             round2(num(closure.varianceAmount)) !== built.varianceAmount) {

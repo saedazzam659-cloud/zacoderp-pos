@@ -279,7 +279,7 @@ function getDeleteFailureReason(error: unknown): string {
   return parts.join(" — ") || String(error ?? "");
 }
 
-async function deleteCompanyWithRelations(id: number, requireSoftDeleted = false) {
+export async function deleteCompanyWithRelations(id: number, requireSoftDeleted = false) {
   if (requireSoftDeleted) {
     await ensureCompanyPurgeSchema();
   }

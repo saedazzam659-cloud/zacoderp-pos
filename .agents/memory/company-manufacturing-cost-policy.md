@@ -23,6 +23,12 @@ Estimated costing is opt-in; Standard remains the default, and each order keeps 
 
 **How to apply:** Keep pool setup and draft creation separate from posting. Reconcile actual differences into the affected WIP, finished-goods, COGS, or variance accounts; do not re-post the source expense.
 
+Compare frozen closure JSONB snapshots structurally or with canonical key ordering; PostgreSQL JSONB does not preserve object-key order.
+
+**Why:** Raw string comparison can reject an unchanged snapshot after PostgreSQL normalizes JSONB keys, blocking an otherwise valid reviewed settlement.
+
+**How to apply:** Normalize JSONB snapshots before comparison wherever posting revalidates a saved closure.
+
 Employee cost category is owned by HR as employee master data; payroll snapshots freeze it for the period. Manufacturing execution records which employees worked each stage, and stage costs retain the direct/indirect split. Production supervisors are indirect labor by default and should be charged to stages/orders only when assigned there; use actual supervision time when available, otherwise a company-approved driver.
 
 The factory's annual rent advance is part of the same lease as the monthly installments. The user confirmed that each monthly cash-expense voucher records only the remaining rent after the prepaid portion is deducted. Recognize the contract's rent once per month by combining the posted prepaid amortization with that remaining direct expense. Rent is indirect manufacturing overhead.

@@ -1746,6 +1746,9 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     CREATE OR REPLACE FUNCTION reject_production_estimated_cost_allocation_mutation() RETURNS trigger AS $$
     BEGIN
       IF TG_OP = 'DELETE' THEN
+        IF current_setting('zacode.company_purge_company_id', true) = OLD.company_id::text THEN
+          RETURN OLD;
+        END IF;
         RAISE EXCEPTION 'estimated manufacturing allocation snapshots cannot be deleted';
       END IF;
       IF NEW.company_id IS DISTINCT FROM OLD.company_id
@@ -1799,6 +1802,9 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     CREATE OR REPLACE FUNCTION reject_production_estimated_cost_closure_snapshot_mutation() RETURNS trigger AS $$
     BEGIN
       IF TG_OP = 'DELETE' THEN
+        IF current_setting('zacode.company_purge_company_id', true) = OLD.company_id::text THEN
+          RETURN OLD;
+        END IF;
         RAISE EXCEPTION 'estimated manufacturing closure snapshots cannot be deleted';
       END IF;
       IF NEW.company_id IS DISTINCT FROM OLD.company_id
