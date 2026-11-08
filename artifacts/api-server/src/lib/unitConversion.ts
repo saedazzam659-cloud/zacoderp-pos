@@ -595,20 +595,61 @@ export function canClearLegacyConversionConflictAfterExplicitEdit(input: {
   baseUnitId: number | null;
   editedRowId: number;
   rows: UnitGraphRow[];
+  previousRows?: UnitGraphRow[];
   historicalUsage: boolean;
 }): boolean {
-  if (input.baseUnitId == null || input.historicalUsage) return false;
+  if (input.baseUnitId == null) return false;
   const edited = input.rows.find((row) => row.id === input.editedRowId);
   if (!edited?.legacyConversionConflict || edited.isActive === false) return false;
 
   const candidateRows = input.rows.map((row) => ({ ...row, legacyConversionConflict: false }));
   try {
     resolveUnitGraph({ baseUnitId: input.baseUnitId, rows: candidateRows });
-    return true;
   } catch (error) {
     if (error instanceof UnitConversionError) return false;
     throw error;
   }
+
+  if (!input.historicalUsage) return true;
+
+  // Historical usage blocks any change that could alter a saved quantity.
+  // A stale "base" marker can still be repaired when an explicit edit only
+  // clears that marker: the item-level root, active state, graph edges, and
+  // exact factors must all remain unchanged, and the corrected full graph
+  // above must resolve successfully. Existing document conversion snapshots
+  // therefore continue to mean exactly what they meant before the edit.
+  if (edited.isBase !== false || edited.unitId === input.baseUnitId || !input.previousRows) return false;
+  if (input.previousRows.length !== input.rows.length) return false;
+  const previousById = new Map(
+    input.previousRows.map((row) => [row.id ?? row.unitId, row] as const),
+  );
+  if (previousById.size !== input.rows.length) return false;
+
+  const sameFactor = (left: string, right: string): boolean => {
+    try {
+      return formatRational(parseExactDecimal(left)) === formatRational(parseExactDecimal(right));
+    } catch {
+      return false;
+    }
+  };
+  for (const row of input.rows) {
+    const key = row.id ?? row.unitId;
+    const previous = previousById.get(key);
+    if (
+      !previous
+      || previous.unitId !== row.unitId
+      || previous.referenceUnitId !== row.referenceUnitId
+      || previous.isActive !== row.isActive
+      || !sameFactor(previous.relationFactor, row.relationFactor)
+    ) return false;
+
+    if (key === input.editedRowId) {
+      if (previous.isBase !== true || row.isBase !== false) return false;
+    } else if (previous.isBase !== row.isBase) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
