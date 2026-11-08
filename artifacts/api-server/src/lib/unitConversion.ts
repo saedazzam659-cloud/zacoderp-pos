@@ -269,6 +269,17 @@ export interface UnitGraphResolution {
   conflict: boolean;
 }
 
+/** The saved item base is exact without consulting any alternate-unit edge. */
+export function isExactBaseUnitRequest(
+  baseUnitId: number | null,
+  baseUnitCode: string | null | undefined,
+  requestedCode: string,
+): boolean {
+  return baseUnitId !== null && Number.isInteger(baseUnitId) && baseUnitId > 0
+    && typeof baseUnitCode === "string" && baseUnitCode.length > 0
+    && requestedCode === baseUnitCode;
+}
+
 /**
  * The first explicit base assignment is different from a re-base.  A legacy
  * item with no declared base can safely be initialised when its persisted

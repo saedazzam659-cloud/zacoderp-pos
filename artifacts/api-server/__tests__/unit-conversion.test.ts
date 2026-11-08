@@ -11,7 +11,15 @@ import {
   UnitConversionError,
   validateBaseUnitAssignment,
   assertUnitGraphTenantOwnership,
+  isExactBaseUnitRequest,
 } from "../src/lib/unitConversion.js";
+
+test("only the exact saved base unit is safe when alternate conversion data conflicts", () => {
+  assert.equal(isExactBaseUnitRequest(7, "KG", "KG"), true);
+  assert.equal(isExactBaseUnitRequest(7, "KG", "BOX"), false);
+  assert.equal(isExactBaseUnitRequest(null, "KG", "KG"), false);
+  assert.equal(isExactBaseUnitRequest(7, null, "KG"), false);
+});
 
 test("carton x12 conversion and inverse stay exact", () => {
   assert.equal(multiplyQuantity("3", "12"), "36");

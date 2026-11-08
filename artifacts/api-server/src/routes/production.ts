@@ -170,6 +170,7 @@ import { logger } from "../lib/logger.js";
 // back to the legacy global units.conversionFactor field.
 import {
   resolveItemUnitConversion,
+  isExactBaseUnitRequest,
   multiplyQuantity,
   divideQuantity,
   roundQuantity,
@@ -1083,6 +1084,7 @@ export async function resolveProductionItemUnit(
     itemId: itemsTable.id,
     baseUnitId: itemsTable.unitId,
     baseUnitCode: unitsTable.code,
+    itemName: itemsTable.nameAr,
   }).from(itemsTable)
     .leftJoin(unitsTable, and(
       eq(itemsTable.unitId, unitsTable.id),
@@ -1110,6 +1112,26 @@ export async function resolveProductionItemUnit(
       executor,
     });
   } catch (error: any) {
+    if (error?.code === "LEGACY_CONFLICT" &&
+        isExactBaseUnitRequest(item.baseUnitId ?? null, item.baseUnitCode, requested)) {
+      return {
+        factor: "1",
+        unitId: Number(item.baseUnitId),
+        unitCode: requested,
+        baseUnitId: Number(item.baseUnitId),
+        baseUnitCode: String(item.baseUnitCode),
+      };
+    }
+    if (error?.code === "LEGACY_CONFLICT") {
+      const itemName = String(item.itemName ?? "").trim() || `#${item.itemId}`;
+      const baseHint = item.baseUnitCode
+        ? ` The saved base unit "${item.baseUnitCode}" can be used safely; fix the item's unit relationships before using an alternate unit.`
+        : " Set a valid base unit on the item before using an alternate unit.";
+      throw Object.assign(
+        new Error(`Legacy unit conversion data is ambiguous for item "${itemName}" (#${item.itemId}) and unit "${requested}".${baseHint}`),
+        { status: 400, code: "LEGACY_CONFLICT", itemId: item.itemId, unitCode: requested },
+      );
+    }
     // Conversion graph failures are client data errors at manufacturing
     // boundaries (most importantly unrelated units), not server failures.
     throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
