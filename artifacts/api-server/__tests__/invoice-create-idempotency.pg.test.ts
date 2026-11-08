@@ -12,6 +12,7 @@ import {
   itemUnitPricesTable,
   itemsTable,
   pool,
+  purchaseInvoiceLinesTable,
   purchaseInvoicesTable,
   salesInvoicesTable,
   salesQuotationsTable,
@@ -49,6 +50,15 @@ async function assertOwnedTenant(when: string): Promise<void> {
 async function post(path: string, body: Record<string, unknown>) {
   const response = await fetch(`${baseUrl}${path}?companyId=${companyId}`, {
     method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json() as Record<string, unknown> };
+}
+
+async function put(path: string, body: Record<string, unknown>) {
+  const response = await fetch(`${baseUrl}${path}?companyId=${companyId}`, {
+    method: "PUT",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -239,6 +249,90 @@ test("six concurrent service-default invoice POST retries create one draft per i
   assert.equal(changedRetry.body.id, sales[0].body.id);
   assert.equal(changedRetry.body.notes, null);
   await assertOwnedTenant("after idempotency assertions");
+});
+
+test("a used item can repair a stale base marker without losing its alternate purchase unit", async () => {
+  const [alternateUnit] = await db.insert(unitsTable).values({
+    companyId,
+    code: `${TEST_TAG}-KG`,
+    nameAr: "كيلوجرام",
+    nameEn: "Kilogram",
+  }).returning({ id: unitsTable.id });
+  const [repairItem] = await db.insert(itemsTable).values({
+    companyId,
+    code: `${TEST_TAG}-MULTI-UNIT`,
+    nameAr: `${TEST_TAG} صنف بوحدتين`,
+    itemType: "stock",
+    unitId,
+  }).returning({ id: itemsTable.id });
+
+  const historyInvoice = await post("/api/purchasing/purchase-invoices", {
+    ...commonPayload(randomUUID()),
+    supplierId,
+    docNumber: `${TEST_TAG}-BASE-HISTORY`,
+    lines: [{
+      itemId: repairItem.id,
+      itemName: `${TEST_TAG} صنف بوحدتين`,
+      itemCode: `${TEST_TAG}-MULTI-UNIT`,
+      unitId,
+      unit: `${TEST_TAG}-UNIT`,
+      qty: "1",
+      unitPrice: "10",
+      vatRate: "0",
+      lineTotal: "10",
+    }],
+  });
+  assert.equal(historyInvoice.status, 201, JSON.stringify(historyInvoice.body));
+
+  const [link] = await db.insert(itemUnitPricesTable).values({
+    companyId,
+    itemId: repairItem.id,
+    unitId: alternateUnit.id,
+    referenceUnitId: unitId,
+    relationFactor: "1000.000000000000000000",
+    conversionFactor: "1000.000000000000000000",
+    isBase: true,
+    isActive: true,
+    legacyConversionConflict: true,
+  }).returning({ id: itemUnitPricesTable.id });
+
+  const repaired = await put(`/api/inventory/items/${repairItem.id}/units/${link.id}`, {
+    unitId: alternateUnit.id,
+    referenceUnitId: unitId,
+    relationFactor: "1000.000000000000000000",
+    isBase: false,
+    isActive: true,
+    decimalPlaces: 2,
+    roundingMode: "half_up",
+  });
+  assert.equal(repaired.status, 200, JSON.stringify(repaired.body));
+
+  const [savedLink] = await db.select().from(itemUnitPricesTable)
+    .where(eq(itemUnitPricesTable.id, link.id));
+  assert.equal(savedLink.isBase, false);
+  assert.equal(savedLink.legacyConversionConflict, false);
+  assert.equal(Number(savedLink.conversionFactor), 1000);
+
+  const alternateInvoice = await post("/api/purchasing/purchase-invoices", {
+    ...commonPayload(randomUUID()),
+    supplierId,
+    docNumber: `${TEST_TAG}-ALT-UNIT`,
+    lines: [{
+      itemId: repairItem.id,
+      itemName: `${TEST_TAG} صنف بوحدتين`,
+      itemCode: `${TEST_TAG}-MULTI-UNIT`,
+      unitId: alternateUnit.id,
+      unit: `${TEST_TAG}-KG`,
+      qty: "1",
+      unitPrice: "10",
+      vatRate: "0",
+      lineTotal: "10",
+    }],
+  });
+  assert.equal(alternateInvoice.status, 201, JSON.stringify(alternateInvoice.body));
+  const [alternateLine] = await db.select().from(purchaseInvoiceLinesTable)
+    .where(eq(purchaseInvoiceLinesTable.invoiceId, Number(alternateInvoice.body.id)));
+  assert.equal(Number(alternateLine.conversionFactor), 1000);
 });
 
 test("sales and purchase saves repair a sole legacy item-unit mapping inside idempotent transactions", async () => {

@@ -603,8 +603,9 @@ export function canClearLegacyConversionConflictAfterExplicitEdit(input: {
   if (!edited?.legacyConversionConflict || edited.isActive === false) return false;
 
   const candidateRows = input.rows.map((row) => ({ ...row, legacyConversionConflict: false }));
+  let candidateGraph: UnitGraphResolution;
   try {
-    resolveUnitGraph({ baseUnitId: input.baseUnitId, rows: candidateRows });
+    candidateGraph = resolveUnitGraph({ baseUnitId: input.baseUnitId, rows: candidateRows });
   } catch (error) {
     if (error instanceof UnitConversionError) return false;
     throw error;
@@ -641,6 +642,13 @@ export function canClearLegacyConversionConflictAfterExplicitEdit(input: {
       || previous.referenceUnitId !== row.referenceUnitId
       || previous.isActive !== row.isActive
       || !sameFactor(previous.relationFactor, row.relationFactor)
+    ) return false;
+
+    const resolvedFactor = candidateGraph.factors.get(row.unitId);
+    if (
+      previous.conversionFactor == null
+      || resolvedFactor == null
+      || !sameFactor(previous.conversionFactor, decimalForStorage(resolvedFactor, 18, "half_up"))
     ) return false;
 
     if (key === input.editedRowId) {

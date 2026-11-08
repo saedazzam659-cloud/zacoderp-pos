@@ -2776,14 +2776,21 @@ router.put("/items/:id/units/:upId", async (req, res) => {
       }
       const changingBase = values.isBase && (item.unitId !== unitId || !current.isBase);
       if (changingBase) await changeItemBaseUnit(tx, cid, itemId, item.unitId ?? null, unitId, [], req);
-      if (!values.isBase && current.isBase) {
+      const correctingStaleBaseMarker = current.isBase
+        && !values.isBase
+        && item.unitId != null
+        && item.unitId !== current.unitId
+        && unitId === current.unitId
+        && values.referenceUnitId != null;
+      if (!values.isBase && current.isBase && !correctingStaleBaseMarker) {
         throw new UnitConversionError("BASE_REQUIRED", "Select another base unit before disabling this base link");
       }
       if (!values.isBase && values.referenceUnitId !== null) await assertCatalogUnit(tx, cid, values.referenceUnitId);
       // Preserve the deterministic first-base repair for the old single-row
       // shape. A marker on an established graph can also be cleared, but only
-      // after an explicit edit, a no-history check, tenant validation, and a
-      // successful resolution of the entire graph.
+      // after an explicit edit, tenant validation, and successful resolution
+      // of the entire graph. Historical use only permits a marker-only repair
+      // that leaves every conversion edge and exact factor unchanged.
       let clearLegacyConflict = rows.length === 1
         && item.unitId == null
         && values.isBase
@@ -2791,26 +2798,25 @@ router.put("/items/:id/units/:upId", async (req, res) => {
         && values.referenceUnitId === null;
       if (!clearLegacyConflict && current.legacyConversionConflict && item.unitId != null) {
         const history = await inspectItemHistoricalUsage(tx, cid, itemId);
-        if (!history.hasUsage) {
-          const candidateRows = rows.map((row: any) => row.id === upId ? {
-            ...row,
-            unitId,
-            referenceUnitId: values.referenceUnitId,
-            relationFactor: values.relationFactor,
-            isBase: values.isBase,
-            isActive: values.isActive,
-          } : row);
-          try {
-            await assertItemUnitGraphTenant(tx, cid, itemId, candidateRows, item.unitId);
-            clearLegacyConflict = canClearLegacyConversionConflictAfterExplicitEdit({
-              baseUnitId: item.unitId,
-              editedRowId: upId,
-              rows: candidateRows,
-              historicalUsage: history.hasUsage,
-            });
-          } catch (error) {
-            if (!(error instanceof UnitConversionError)) throw error;
-          }
+        const candidateRows = rows.map((row: any) => row.id === upId ? {
+          ...row,
+          unitId,
+          referenceUnitId: values.referenceUnitId,
+          relationFactor: values.relationFactor,
+          isBase: values.isBase,
+          isActive: values.isActive,
+        } : row);
+        try {
+          await assertItemUnitGraphTenant(tx, cid, itemId, candidateRows, item.unitId);
+          clearLegacyConflict = canClearLegacyConversionConflictAfterExplicitEdit({
+            baseUnitId: item.unitId,
+            editedRowId: upId,
+            rows: candidateRows,
+            previousRows: rows,
+            historicalUsage: history.hasUsage,
+          });
+        } catch (error) {
+          if (!(error instanceof UnitConversionError)) throw error;
         }
       }
       const [row] = await tx.update(itemUnitPricesTable).set({

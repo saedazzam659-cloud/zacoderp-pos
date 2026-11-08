@@ -104,6 +104,63 @@ test("an explicit edit may clear a stale marker on a valid graph with no history
   }), false);
 });
 
+test("a used multi-unit item may clear a stale non-base marker without changing its conversion", () => {
+  const previousRows = [{
+    id: 91,
+    unitId: 42,
+    referenceUnitId: 50,
+    relationFactor: "1000.000000000000000000",
+    conversionFactor: "1000.000000000000000000",
+    isBase: true,
+    isActive: true,
+    legacyConversionConflict: true,
+  }];
+  const correctedRows = previousRows.map((row) => ({
+    ...row,
+    isBase: false,
+  }));
+
+  assert.equal(canClearLegacyConversionConflictAfterExplicitEdit({
+    baseUnitId: 50,
+    editedRowId: 91,
+    rows: correctedRows,
+    previousRows,
+    historicalUsage: true,
+  }), true);
+
+  assert.equal(canClearLegacyConversionConflictAfterExplicitEdit({
+    baseUnitId: 50,
+    editedRowId: 91,
+    rows: [{ ...correctedRows[0], relationFactor: "1001" }],
+    previousRows,
+    historicalUsage: true,
+  }), false, "changing the conversion factor could reinterpret historical quantities");
+
+  assert.equal(canClearLegacyConversionConflictAfterExplicitEdit({
+    baseUnitId: 50,
+    editedRowId: 91,
+    rows: [{ ...correctedRows[0], referenceUnitId: 51 }],
+    previousRows,
+    historicalUsage: true,
+  }), false, "changing the reference edge is not a marker-only repair");
+
+  assert.equal(canClearLegacyConversionConflictAfterExplicitEdit({
+    baseUnitId: 50,
+    editedRowId: 91,
+    rows: [{ ...correctedRows[0], isActive: false }],
+    previousRows,
+    historicalUsage: true,
+  }), false, "disabling the unit changes the available conversion graph");
+
+  assert.equal(canClearLegacyConversionConflictAfterExplicitEdit({
+    baseUnitId: 50,
+    editedRowId: 91,
+    rows: correctedRows,
+    previousRows: [{ ...previousRows[0], conversionFactor: "999" }],
+    historicalUsage: true,
+  }), false, "a stale cached factor cannot be silently reconciled over historical use");
+});
+
 test("one explicit edit can clear migration markers from a valid graph, but not when used", () => {
   const rows = [
     { id: 76, unitId: 46, referenceUnitId: null, relationFactor: "1", isBase: true,
