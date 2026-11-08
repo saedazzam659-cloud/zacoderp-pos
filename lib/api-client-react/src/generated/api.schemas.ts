@@ -1714,6 +1714,197 @@ export interface ManufacturingPendingSourceSettlement {
   reason: string;
 }
 
+export type EstimatedManufacturingCostPoolInputAllocationBasis = typeof EstimatedManufacturingCostPoolInputAllocationBasis[keyof typeof EstimatedManufacturingCostPoolInputAllocationBasis];
+
+
+export const EstimatedManufacturingCostPoolInputAllocationBasis = {
+  machine_hours: 'machine_hours',
+  labor_hours: 'labor_hours',
+  production_quantity: 'production_quantity',
+  area: 'area',
+  percentage: 'percentage',
+  equal: 'equal',
+  manual: 'manual',
+} as const;
+
+export type EstimatedManufacturingCostPoolInputScopeType = typeof EstimatedManufacturingCostPoolInputScopeType[keyof typeof EstimatedManufacturingCostPoolInputScopeType];
+
+
+export const EstimatedManufacturingCostPoolInputScopeType = {
+  company: 'company',
+  branch: 'branch',
+} as const;
+
+export interface EstimatedManufacturingCostPoolInput {
+  /** @pattern ^\d{4}-\d{2}$ */
+  period: string;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  branchId?: number | null;
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  code: string;
+  /**
+     * @minLength 1
+     * @maxLength 160
+     */
+  nameAr: string;
+  /** @exclusiveMinimum 0 */
+  estimatedAmount: number;
+  allocationBasis: EstimatedManufacturingCostPoolInputAllocationBasis;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  monthlyDenominator?: number | null;
+  scopeType: EstimatedManufacturingCostPoolInputScopeType;
+  /** @minimum 1 */
+  actualExpenseAccountId: number;
+  /** @minimum 1 */
+  absorbedAccountId: number;
+  /** @minimum 1 */
+  varianceAccountId: number;
+}
+
+export type EstimatedManufacturingCostPoolStatus = typeof EstimatedManufacturingCostPoolStatus[keyof typeof EstimatedManufacturingCostPoolStatus];
+
+
+export const EstimatedManufacturingCostPoolStatus = {
+  open: 'open',
+  actual_entered: 'actual_entered',
+  closed: 'closed',
+} as const;
+
+export interface EstimatedManufacturingCostPool {
+  id: number;
+  companyId: number;
+  /** @nullable */
+  branchId?: number | null;
+  periodStart: string;
+  periodEnd: string;
+  code: string;
+  nameAr: string;
+  estimatedAmount: string;
+  /** @nullable */
+  actualAmount?: string | null;
+  /** @nullable */
+  actualSourceReference?: string | null;
+  actualPostedConfirmed?: boolean;
+  allocationBasis: string;
+  /** @nullable */
+  monthlyDenominator?: string | null;
+  scopeType?: string;
+  /** @nullable */
+  scopeKey?: string | null;
+  actualExpenseAccountId?: number;
+  absorbedAccountId?: number;
+  varianceAccountId?: number;
+  status: EstimatedManufacturingCostPoolStatus;
+  appliedAmount?: number;
+  usedDriver?: number;
+  usedSharePct?: number;
+  orderCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface EstimatedManufacturingCostPoolList {
+  pools: EstimatedManufacturingCostPool[];
+}
+
+export type EstimatedManufacturingOrderAllocationsInputAllocationsItem = {
+  /** @minimum 1 */
+  poolId: number;
+  /** @exclusiveMinimum 0 */
+  driverValue: number;
+};
+
+export interface EstimatedManufacturingOrderAllocationsInput {
+  /** @minItems 1 */
+  allocations: EstimatedManufacturingOrderAllocationsInputAllocationsItem[];
+}
+
+export type EstimatedManufacturingOrderAllocationsResultOrder = { [key: string]: unknown };
+
+export type EstimatedManufacturingOrderAllocationsResultAllocationsItem = { [key: string]: unknown };
+
+export interface EstimatedManufacturingOrderAllocationsResult {
+  order: EstimatedManufacturingOrderAllocationsResultOrder;
+  allocations: EstimatedManufacturingOrderAllocationsResultAllocationsItem[];
+}
+
+export interface EstimatedManufacturingPoolActualInput {
+  /** @minimum 0 */
+  actualAmount: number;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  sourceReference: string;
+  confirmAlreadyPosted: true;
+}
+
+export type EstimatedManufacturingCostClosureStatus = typeof EstimatedManufacturingCostClosureStatus[keyof typeof EstimatedManufacturingCostClosureStatus];
+
+
+export const EstimatedManufacturingCostClosureStatus = {
+  draft: 'draft',
+  posted: 'posted',
+  reversed: 'reversed',
+  superseded: 'superseded',
+} as const;
+
+export type EstimatedManufacturingCostClosureSourceSnapshotItem = { [key: string]: unknown };
+
+export interface EstimatedManufacturingCostClosure {
+  id: number;
+  companyId: number;
+  /** @nullable */
+  branchId?: number | null;
+  periodStart: string;
+  periodEnd: string;
+  correctionDate: string;
+  sourceKey: string;
+  status: EstimatedManufacturingCostClosureStatus;
+  actualAmount: string;
+  appliedAmount: string;
+  varianceAmount: string;
+  sourceSnapshot: EstimatedManufacturingCostClosureSourceSnapshotItem[];
+  /** @nullable */
+  journalEntryId?: number | null;
+  /** @nullable */
+  reversalJournalEntryId?: number | null;
+  /** @nullable */
+  postedAt?: string | null;
+  /** @nullable */
+  reversedAt?: string | null;
+  createdAt?: string;
+}
+
+export interface EstimatedManufacturingPoolActualResult {
+  pool: EstimatedManufacturingCostPool;
+  closure: EstimatedManufacturingCostClosure | null;
+  /** @nullable */
+  readiness: string | null;
+}
+
+export interface EstimatedManufacturingCostClosureList {
+  closures: EstimatedManufacturingCostClosure[];
+}
+
+export interface EstimatedManufacturingCostClosureActionResult {
+  closure: EstimatedManufacturingCostClosure;
+  idempotent: boolean;
+}
+
+export interface EstimatedManufacturingCostClosureReverseInput {
+  reversalDate?: string;
+}
+
 export interface InternalDeliveryPostResult {
   ok: boolean;
   /** @nullable */
@@ -3857,6 +4048,32 @@ export type GetInventoryReportBrandOptionsParams = {
  * @minimum 1
  */
 companyId?: number;
+};
+
+export type ListEstimatedManufacturingCostPoolsParams = {
+/**
+ * @pattern ^\d{4}-\d{2}$
+ */
+period: string;
+/**
+ * @minimum 1
+ */
+branchId?: number;
+};
+
+export type CreateEstimatedManufacturingCostPool201 = {
+  pool: EstimatedManufacturingCostPool;
+};
+
+export type ListEstimatedManufacturingCostClosuresParams = {
+/**
+ * @pattern ^\d{4}-\d{2}$
+ */
+period: string;
+/**
+ * @minimum 1
+ */
+branchId?: number;
 };
 
 export type ListSecurityActiveCompaniesParams = {

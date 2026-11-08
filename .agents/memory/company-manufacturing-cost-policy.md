@@ -17,6 +17,12 @@ For date-filled maamoul production, recipe ingredients such as flour, oil, sugar
 
 **How to apply:** Enforce the policy server-side across every order-creation path. The UI may reflect the setting, but backend creation remains authoritative.
 
+Estimated costing is opt-in; Standard remains the default, and each order keeps the method selected when it was created. Monthly pool denominators and issued-order allocations are frozen snapshots. Actual pool costs must already be posted to their normal expense accounts and require a user confirmation plus source reference. Month-end settlement creates a reviewable draft only; posting requires authorized human review and must never create a second expense.
+
+**Why:** Standard orders and their accounting must remain unchanged, while estimated allocations need a stable denominator and an auditable actual-cost source. Automatic posting could duplicate expenses or change inventory valuation without review.
+
+**How to apply:** Keep pool setup and draft creation separate from posting. Reconcile actual differences into the affected WIP, finished-goods, COGS, or variance accounts; do not re-post the source expense.
+
 Employee cost category is owned by HR as employee master data; payroll snapshots freeze it for the period. Manufacturing execution records which employees worked each stage, and stage costs retain the direct/indirect split. Production supervisors are indirect labor by default and should be charged to stages/orders only when assigned there; use actual supervision time when available, otherwise a company-approved driver.
 
 The factory's annual rent advance is part of the same lease as the monthly installments. The user confirmed that each monthly cash-expense voucher records only the remaining rent after the prepaid portion is deducted. Recognize the contract's rent once per month by combining the posted prepaid amortization with that remaining direct expense. Rent is indirect manufacturing overhead.

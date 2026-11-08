@@ -15,6 +15,7 @@ import type { Catalog, Order } from "./simple-manufacturing/types";
 import { SimpleOrderList } from "./simple-manufacturing/SimpleList";
 import { SimpleWizard } from "./simple-manufacturing/SimpleWizard";
 import { SimpleSetup } from "./simple-manufacturing/SimpleSetup";
+import { EstimatedCostPoolsPanel } from "./simple-manufacturing/EstimatedCostPoolsPanel";
 import { SimpleReports } from "./simple-manufacturing/SimpleReports";
 import { ProductionStageExecution } from "@/components/ProductionStageExecution";
 import { useListManufacturingPendingSourceSettlements } from "@workspace/api-client-react";
@@ -287,13 +288,20 @@ export default function SimpleManufacturing() {
           method: "PATCH",
           body: JSON.stringify(payload),
         });
+        const savedEdited = Array.isArray(payload.estimatedCostAllocations) &&
+          payload.estimatedCostAllocations.length
+          ? await request(`/api/simple-manufacturing/estimated-costing/orders/${Number(payload.editOrderId)}/allocations`, {
+              method: "PUT",
+              body: JSON.stringify({ allocations: payload.estimatedCostAllocations }),
+            })
+          : edited;
         if (submissionScope !== tenantScopeRef.current) return;
         await load();
         if (submissionScope !== tenantScopeRef.current) return;
         setEditingOrder(null);
         setTab("orders");
         toast({ title: "تم تحديث إعدادات الأمر ونسخ المواد والمراحل" });
-        await openOrder(edited);
+        await openOrder(savedEdited.order ?? savedEdited);
         return;
       }
       const j = await request("/api/simple-manufacturing/orders/wizard", {
@@ -302,6 +310,17 @@ export default function SimpleManufacturing() {
       });
       submittedOrderId = Number.isInteger(Number(j?.id)) ? Number(j.id) : null;
       let finalOrder = j;
+      if (submittedOrderId && Array.isArray(payload.estimatedCostAllocations) &&
+          payload.estimatedCostAllocations.length) {
+        const saved = await request(
+          `/api/simple-manufacturing/estimated-costing/orders/${submittedOrderId}/allocations`,
+          {
+            method: "PUT",
+            body: JSON.stringify({ allocations: payload.estimatedCostAllocations }),
+          },
+        );
+        finalOrder = saved.order ?? saved;
+      }
 
       if (mode === "execute") {
         let status = j.status;
@@ -613,6 +632,11 @@ export default function SimpleManufacturing() {
             onSaveTemplate={handleSaveTemplate}
             onSaveWarehouse={handleSaveWarehouse}
             onSaveAccounting={handleSaveAccounting}
+          />
+          <EstimatedCostPoolsPanel
+            accounts={(catalog.accounting as any)?.accounts ?? []}
+            canManageCompanyPools={user?.viewAllBranches === true}
+            request={request}
           />
         </TabsContent>
 

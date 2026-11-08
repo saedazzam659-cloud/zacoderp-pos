@@ -65,6 +65,7 @@ import {
   commercialLifecycleRouter,
   productionExecutionRouter,
   productionOverheadClosureRouter,
+  productionEstimatedCostingRouter,
   getCostSources,
   getBomTemplates,
   getBomTemplate,
@@ -89,6 +90,7 @@ router.use(moduleAudit("simple_manufacturing"));
 router.use(commercialLifecycleRouter);
 router.use(productionExecutionRouter);
 router.use(productionOverheadClosureRouter);
+router.use(productionEstimatedCostingRouter);
 
 function companyId(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
@@ -121,6 +123,7 @@ router.get("/", view, (_req, res) => {
       "/orders/:id/stages", "/orders/:id/stages/:stageId/start",
       "/orders/:id/stages/:stageId/complete", "/orders/:id/waste-records",
       "/overhead-closures", "/overhead-closures/:id/reopen",
+      "/estimated-costing/pools", "/estimated-costing/closures",
     ],
   });
 });

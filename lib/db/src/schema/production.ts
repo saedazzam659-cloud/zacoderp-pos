@@ -295,8 +295,8 @@ export const productionCostAllocationsTable = pgTable(
     orderId: integer("order_id").notNull().references(() => productionOrdersTable.id, { onDelete: "restrict" }),
     sourceType: text("source_type").notNull(), // payroll | fixed_asset_depreciation | prepaid_amortization | purchase line | internal_transport
     sourceRecordId: integer("source_record_id").notNull(),
-    periodStart: date("period_start").notNull(),
-    periodEnd: date("period_end").notNull(),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
     basis: text("basis").notNull(),
     sourceAmount: numeric("source_amount", { precision: 18, scale: 2 }).notNull(),
     sharePct: numeric("share_pct", { precision: 9, scale: 6 }).notNull(),
@@ -386,8 +386,8 @@ export const productionPendingSourceSettlementsTable = pgTable(
     stageResourceCostId: integer("stage_resource_cost_id").notNull().references(() => productionStageResourceCostsTable.id, { onDelete: "restrict" }),
     sourceType: text("source_type").notNull(), // payroll | fixed_asset_depreciation
     sourceRecordId: integer("source_record_id").notNull(),
-    periodStart: date("period_start").notNull(),
-    periodEnd: date("period_end").notNull(),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
     attempt: integer("attempt").notNull().default(1),
     accruedAmount: numeric("accrued_amount", { precision: 18, scale: 2 }).notNull(),
     actualAmount: numeric("actual_amount", { precision: 18, scale: 2 }).notNull(),
@@ -605,9 +605,9 @@ export const productionOverheadClosuresTable = pgTable(
     id: serial("id").primaryKey(),
     companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
     branchId: integer("branch_id").references(() => branchesTable.id, { onDelete: "set null" }),
-    periodStart: date("period_start").notNull(),
-    periodEnd: date("period_end").notNull(),
-    correctionDate: date("correction_date").notNull(),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    correctionDate: date("correction_date", { mode: "string" }).notNull(),
     sourceKey: text("source_key").notNull(),
     varianceAccountId: integer("variance_account_id").notNull().references(() => accountsTable.id),
     status: text("status").notNull().default("draft"), // draft | posted | reversed
@@ -732,6 +732,125 @@ export type ProductionResource = typeof productionResourcesTable.$inferSelect;
 export type ProductionOrder = typeof productionOrdersTable.$inferSelect;
 export type ProductionOrderItem =
   typeof productionOrderItemsTable.$inferSelect;
+
+// Monthly estimated manufacturing-cost pools are independent from posted
+// source allocations. They store the manually entered monthly estimate,
+// denominator, actual amount, and the accounting accounts used at close.
+export const productionEstimatedCostPoolsTable = pgTable(
+  "production_estimated_cost_pools",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    branchId: integer("branch_id").references(() => branchesTable.id, { onDelete: "set null" }),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    code: text("code").notNull(),
+    nameAr: text("name_ar").notNull(),
+    estimatedAmount: numeric("estimated_amount", { precision: 18, scale: 2 }).notNull(),
+    actualAmount: numeric("actual_amount", { precision: 18, scale: 2 }),
+    actualSourceReference: text("actual_source_reference"),
+    actualPostedConfirmed: boolean("actual_posted_confirmed").notNull().default(false),
+    allocationBasis: text("allocation_basis").notNull(),
+    monthlyDenominator: numeric("monthly_denominator", { precision: 18, scale: 6 }),
+    scopeType: text("scope_type").notNull().default("company"),
+    scopeKey: text("scope_key"),
+    actualExpenseAccountId: integer("actual_expense_account_id")
+      .notNull().references(() => accountsTable.id, { onDelete: "restrict" }),
+    absorbedAccountId: integer("absorbed_account_id")
+      .notNull().references(() => accountsTable.id, { onDelete: "restrict" }),
+    varianceAccountId: integer("variance_account_id")
+      .notNull().references(() => accountsTable.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("open"),
+    actualEnteredBy: integer("actual_entered_by").references(() => usersTable.id, { onDelete: "set null" }),
+    actualEnteredAt: timestamp("actual_entered_at"),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    periodCodeUnique: uniqueIndex("prod_est_cost_pool_period_code_uniq")
+      .on(t.companyId, t.periodStart, t.code),
+    byPeriod: index("prod_est_cost_pool_period_idx")
+      .on(t.companyId, t.periodStart, t.periodEnd, t.status),
+  }),
+);
+
+export type ProductionEstimatedCostPool =
+  typeof productionEstimatedCostPoolsTable.$inferSelect;
+
+// The first issue of an Estimated order creates a frozen allocation. Only the
+// reversal columns are mutable; the pool amount, driver, denominator, share,
+// and allocated amount remain a permanent cost snapshot.
+export const productionEstimatedCostAllocationsTable = pgTable(
+  "production_estimated_cost_allocations",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    poolId: integer("pool_id").notNull()
+      .references(() => productionEstimatedCostPoolsTable.id, { onDelete: "restrict" }),
+    orderId: integer("order_id").notNull()
+      .references(() => productionOrdersTable.id, { onDelete: "restrict" }),
+    basis: text("basis").notNull(),
+    driverValue: numeric("driver_value", { precision: 18, scale: 6 }).notNull(),
+    denominatorSnapshot: numeric("denominator_snapshot", { precision: 18, scale: 6 }),
+    sharePct: numeric("share_pct", { precision: 9, scale: 6 }).notNull(),
+    allocatedAmount: numeric("allocated_amount", { precision: 18, scale: 2 }).notNull(),
+    poolAmountSnapshot: numeric("pool_amount_snapshot", { precision: 18, scale: 2 }).notNull(),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    snapshotMeta: jsonb("snapshot_meta").$type<Record<string, unknown>>().notNull().default({}),
+    reversalJournalEntryId: integer("reversal_journal_entry_id"),
+    reversedAt: timestamp("reversed_at"),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    poolOrderUnique: uniqueIndex("prod_est_cost_alloc_pool_order_uniq").on(t.poolId, t.orderId),
+    byOrder: index("prod_est_cost_alloc_order_idx").on(t.companyId, t.orderId),
+    byPool: index("prod_est_cost_alloc_pool_idx").on(t.companyId, t.poolId),
+  }),
+);
+
+export type ProductionEstimatedCostAllocation =
+  typeof productionEstimatedCostAllocationsTable.$inferSelect;
+
+export const productionEstimatedCostClosuresTable = pgTable(
+  "production_estimated_cost_closures",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    branchId: integer("branch_id").references(() => branchesTable.id, { onDelete: "set null" }),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    correctionDate: date("correction_date").notNull(),
+    sourceKey: text("source_key").notNull(),
+    status: text("status").notNull().default("draft"),
+    actualAmount: numeric("actual_amount", { precision: 18, scale: 2 }).notNull(),
+    appliedAmount: numeric("applied_amount", { precision: 18, scale: 2 }).notNull(),
+    varianceAmount: numeric("variance_amount", { precision: 18, scale: 2 }).notNull(),
+    sourceSnapshot: jsonb("source_snapshot")
+      .$type<Array<Record<string, unknown>>>().notNull().default([]),
+    journalEntryId: integer("journal_entry_id"),
+    reversalJournalEntryId: integer("reversal_journal_entry_id"),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    postedBy: integer("posted_by").references(() => usersTable.id, { onDelete: "set null" }),
+    postedAt: timestamp("posted_at"),
+    reversedBy: integer("reversed_by").references(() => usersTable.id, { onDelete: "set null" }),
+    reversedAt: timestamp("reversed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    sourceKeyUnique: uniqueIndex("prod_est_cost_closure_source_key_uniq")
+      .on(t.companyId, t.sourceKey),
+    byPeriod: index("prod_est_cost_closure_period_idx")
+      .on(t.companyId, t.periodStart, t.periodEnd),
+  }),
+);
+
 export type ProductionEvent = typeof productionEventsTable.$inferSelect;
 export type InsertProductionResource = z.infer<
   typeof insertProductionResourceSchema

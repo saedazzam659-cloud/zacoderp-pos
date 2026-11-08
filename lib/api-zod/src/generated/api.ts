@@ -1961,6 +1961,321 @@ export const ListManufacturingPendingSourceSettlementsResponse = zod.array(ListM
 
 
 /**
+ * @summary List monthly estimated manufacturing cost pools
+ */
+export const listEstimatedManufacturingCostPoolsQueryPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+
+
+export const ListEstimatedManufacturingCostPoolsQueryParams = zod.object({
+  "period": zod.coerce.string().regex(listEstimatedManufacturingCostPoolsQueryPeriodRegExp),
+  "branchId": zod.coerce.number().min(1).optional()
+})
+
+export const ListEstimatedManufacturingCostPoolsResponse = zod.object({
+  "pools": zod.array(zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "branchId": zod.number().nullish(),
+  "periodStart": zod.coerce.date(),
+  "periodEnd": zod.coerce.date(),
+  "code": zod.string(),
+  "nameAr": zod.string(),
+  "estimatedAmount": zod.string(),
+  "actualAmount": zod.string().nullish(),
+  "actualSourceReference": zod.string().nullish(),
+  "actualPostedConfirmed": zod.boolean().optional(),
+  "allocationBasis": zod.string(),
+  "monthlyDenominator": zod.string().nullish(),
+  "scopeType": zod.string().optional(),
+  "scopeKey": zod.string().nullish(),
+  "actualExpenseAccountId": zod.number().optional(),
+  "absorbedAccountId": zod.number().optional(),
+  "varianceAccountId": zod.number().optional(),
+  "status": zod.enum(['open', 'actual_entered', 'closed']),
+  "appliedAmount": zod.number().optional(),
+  "usedDriver": zod.number().optional(),
+  "usedSharePct": zod.number().optional(),
+  "orderCount": zod.number().optional(),
+  "createdAt": zod.coerce.date().optional(),
+  "updatedAt": zod.coerce.date().optional()
+}))
+})
+
+
+/**
+ * @summary Create a monthly estimated manufacturing cost pool
+ */
+export const createEstimatedManufacturingCostPoolBodyPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+export const createEstimatedManufacturingCostPoolBodyCodeMax = 64;
+
+export const createEstimatedManufacturingCostPoolBodyNameArMax = 160;
+
+export const createEstimatedManufacturingCostPoolBodyEstimatedAmountExclusiveMin = 0;
+
+export const createEstimatedManufacturingCostPoolBodyMonthlyDenominatorExclusiveMin = 0;
+
+
+
+
+
+
+export const CreateEstimatedManufacturingCostPoolBody = zod.object({
+  "period": zod.string().regex(createEstimatedManufacturingCostPoolBodyPeriodRegExp),
+  "branchId": zod.number().min(1).nullish(),
+  "code": zod.string().min(1).max(createEstimatedManufacturingCostPoolBodyCodeMax),
+  "nameAr": zod.string().min(1).max(createEstimatedManufacturingCostPoolBodyNameArMax),
+  "estimatedAmount": zod.number().gt(createEstimatedManufacturingCostPoolBodyEstimatedAmountExclusiveMin),
+  "allocationBasis": zod.enum(['machine_hours', 'labor_hours', 'production_quantity', 'area', 'percentage', 'equal', 'manual']),
+  "monthlyDenominator": zod.number().gt(createEstimatedManufacturingCostPoolBodyMonthlyDenominatorExclusiveMin).nullish(),
+  "scopeType": zod.enum(['company', 'branch']),
+  "actualExpenseAccountId": zod.number().min(1),
+  "absorbedAccountId": zod.number().min(1),
+  "varianceAccountId": zod.number().min(1)
+})
+
+export const CreateEstimatedManufacturingCostPoolResponse = zod.object({
+  "pool": zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "branchId": zod.number().nullish(),
+  "periodStart": zod.coerce.date(),
+  "periodEnd": zod.coerce.date(),
+  "code": zod.string(),
+  "nameAr": zod.string(),
+  "estimatedAmount": zod.string(),
+  "actualAmount": zod.string().nullish(),
+  "actualSourceReference": zod.string().nullish(),
+  "actualPostedConfirmed": zod.boolean().optional(),
+  "allocationBasis": zod.string(),
+  "monthlyDenominator": zod.string().nullish(),
+  "scopeType": zod.string().optional(),
+  "scopeKey": zod.string().nullish(),
+  "actualExpenseAccountId": zod.number().optional(),
+  "absorbedAccountId": zod.number().optional(),
+  "varianceAccountId": zod.number().optional(),
+  "status": zod.enum(['open', 'actual_entered', 'closed']),
+  "appliedAmount": zod.number().optional(),
+  "usedDriver": zod.number().optional(),
+  "usedSharePct": zod.number().optional(),
+  "orderCount": zod.number().optional(),
+  "createdAt": zod.coerce.date().optional(),
+  "updatedAt": zod.coerce.date().optional()
+})
+})
+
+
+/**
+ * @summary Save an editable order allocation before production starts
+ */
+
+
+
+export const SaveEstimatedManufacturingOrderAllocationsParams = zod.object({
+  "id": zod.coerce.number().min(1)
+})
+
+
+export const saveEstimatedManufacturingOrderAllocationsBodyAllocationsItemDriverValueExclusiveMin = 0;
+
+
+
+
+export const SaveEstimatedManufacturingOrderAllocationsBody = zod.object({
+  "allocations": zod.array(zod.object({
+  "poolId": zod.number().min(1),
+  "driverValue": zod.number().gt(saveEstimatedManufacturingOrderAllocationsBodyAllocationsItemDriverValueExclusiveMin)
+})).min(1)
+})
+
+export const SaveEstimatedManufacturingOrderAllocationsResponse = zod.object({
+  "order": zod.record(zod.string(), zod.unknown()),
+  "allocations": zod.array(zod.record(zod.string(), zod.unknown()))
+})
+
+
+/**
+ * @summary Record an actual cost already posted to its normal expense account
+ */
+
+
+
+export const RecordEstimatedManufacturingPoolActualParams = zod.object({
+  "id": zod.coerce.number().min(1)
+})
+
+export const recordEstimatedManufacturingPoolActualBodyActualAmountMin = 0;
+
+export const recordEstimatedManufacturingPoolActualBodySourceReferenceMax = 200;
+
+
+
+export const RecordEstimatedManufacturingPoolActualBody = zod.object({
+  "actualAmount": zod.number().min(recordEstimatedManufacturingPoolActualBodyActualAmountMin),
+  "sourceReference": zod.string().min(1).max(recordEstimatedManufacturingPoolActualBodySourceReferenceMax),
+  "confirmAlreadyPosted": zod.literal(true)
+})
+
+export const RecordEstimatedManufacturingPoolActualResponse = zod.object({
+  "pool": zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "branchId": zod.number().nullish(),
+  "periodStart": zod.coerce.date(),
+  "periodEnd": zod.coerce.date(),
+  "code": zod.string(),
+  "nameAr": zod.string(),
+  "estimatedAmount": zod.string(),
+  "actualAmount": zod.string().nullish(),
+  "actualSourceReference": zod.string().nullish(),
+  "actualPostedConfirmed": zod.boolean().optional(),
+  "allocationBasis": zod.string(),
+  "monthlyDenominator": zod.string().nullish(),
+  "scopeType": zod.string().optional(),
+  "scopeKey": zod.string().nullish(),
+  "actualExpenseAccountId": zod.number().optional(),
+  "absorbedAccountId": zod.number().optional(),
+  "varianceAccountId": zod.number().optional(),
+  "status": zod.enum(['open', 'actual_entered', 'closed']),
+  "appliedAmount": zod.number().optional(),
+  "usedDriver": zod.number().optional(),
+  "usedSharePct": zod.number().optional(),
+  "orderCount": zod.number().optional(),
+  "createdAt": zod.coerce.date().optional(),
+  "updatedAt": zod.coerce.date().optional()
+}),
+  "closure": zod.union([zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "branchId": zod.number().nullish(),
+  "periodStart": zod.coerce.date(),
+  "periodEnd": zod.coerce.date(),
+  "correctionDate": zod.coerce.date(),
+  "sourceKey": zod.string(),
+  "status": zod.enum(['draft', 'posted', 'reversed', 'superseded']),
+  "actualAmount": zod.string(),
+  "appliedAmount": zod.string(),
+  "varianceAmount": zod.string(),
+  "sourceSnapshot": zod.array(zod.record(zod.string(), zod.unknown())),
+  "journalEntryId": zod.number().nullish(),
+  "reversalJournalEntryId": zod.number().nullish(),
+  "postedAt": zod.coerce.date().nullish(),
+  "reversedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date().optional()
+}),zod.null()]),
+  "readiness": zod.string().nullable()
+})
+
+
+/**
+ * @summary List month-end estimated cost settlement drafts and postings
+ */
+export const listEstimatedManufacturingCostClosuresQueryPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
+
+
+
+export const ListEstimatedManufacturingCostClosuresQueryParams = zod.object({
+  "period": zod.coerce.string().regex(listEstimatedManufacturingCostClosuresQueryPeriodRegExp),
+  "branchId": zod.coerce.number().min(1).optional()
+})
+
+export const ListEstimatedManufacturingCostClosuresResponse = zod.object({
+  "closures": zod.array(zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "branchId": zod.number().nullish(),
+  "periodStart": zod.coerce.date(),
+  "periodEnd": zod.coerce.date(),
+  "correctionDate": zod.coerce.date(),
+  "sourceKey": zod.string(),
+  "status": zod.enum(['draft', 'posted', 'reversed', 'superseded']),
+  "actualAmount": zod.string(),
+  "appliedAmount": zod.string(),
+  "varianceAmount": zod.string(),
+  "sourceSnapshot": zod.array(zod.record(zod.string(), zod.unknown())),
+  "journalEntryId": zod.number().nullish(),
+  "reversalJournalEntryId": zod.number().nullish(),
+  "postedAt": zod.coerce.date().nullish(),
+  "reversedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date().optional()
+}))
+})
+
+
+/**
+ * @summary Review and post an estimated manufacturing cost settlement
+ */
+
+
+
+export const PostEstimatedManufacturingCostClosureParams = zod.object({
+  "id": zod.coerce.number().min(1)
+})
+
+export const PostEstimatedManufacturingCostClosureResponse = zod.object({
+  "closure": zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "branchId": zod.number().nullish(),
+  "periodStart": zod.coerce.date(),
+  "periodEnd": zod.coerce.date(),
+  "correctionDate": zod.coerce.date(),
+  "sourceKey": zod.string(),
+  "status": zod.enum(['draft', 'posted', 'reversed', 'superseded']),
+  "actualAmount": zod.string(),
+  "appliedAmount": zod.string(),
+  "varianceAmount": zod.string(),
+  "sourceSnapshot": zod.array(zod.record(zod.string(), zod.unknown())),
+  "journalEntryId": zod.number().nullish(),
+  "reversalJournalEntryId": zod.number().nullish(),
+  "postedAt": zod.coerce.date().nullish(),
+  "reversedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date().optional()
+}),
+  "idempotent": zod.boolean()
+})
+
+
+/**
+ * @summary Reverse a draft or posted estimated manufacturing cost settlement
+ */
+
+
+
+export const ReverseEstimatedManufacturingCostClosureParams = zod.object({
+  "id": zod.coerce.number().min(1)
+})
+
+export const ReverseEstimatedManufacturingCostClosureBody = zod.object({
+  "reversalDate": zod.coerce.date().optional()
+})
+
+export const ReverseEstimatedManufacturingCostClosureResponse = zod.object({
+  "closure": zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "branchId": zod.number().nullish(),
+  "periodStart": zod.coerce.date(),
+  "periodEnd": zod.coerce.date(),
+  "correctionDate": zod.coerce.date(),
+  "sourceKey": zod.string(),
+  "status": zod.enum(['draft', 'posted', 'reversed', 'superseded']),
+  "actualAmount": zod.string(),
+  "appliedAmount": zod.string(),
+  "varianceAmount": zod.string(),
+  "sourceSnapshot": zod.array(zod.record(zod.string(), zod.unknown())),
+  "journalEntryId": zod.number().nullish(),
+  "reversalJournalEntryId": zod.number().nullish(),
+  "postedAt": zod.coerce.date().nullish(),
+  "reversedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date().optional()
+}),
+  "idempotent": zod.boolean()
+})
+
+
+/**
  * @summary Add multiple bundle components atomically
  */
 

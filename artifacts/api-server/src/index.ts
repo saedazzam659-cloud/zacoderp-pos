@@ -427,6 +427,9 @@ async function bootstrap() {
      import("./routes/production.js").then(m => m.startPendingResourceSettlementScheduler?.()).catch(err =>
        logger.error({ err }, "production source-settlement scheduler failed to start"),
      );
+      import("./routes/production.js").then(m => m.startEstimatedCostDraftScheduler?.()).catch(err =>
+        logger.error({ err }, "estimated manufacturing cost draft scheduler failed to start"),
+      );
     // Auto-generate monthly accounting-adjustment JEs (prepaid/accrued) at
     // month end for adjustments flagged auto_generate=true.
     import("./lib/adjustmentScheduler.js").then(m => m.startAdjustmentScheduler?.()).catch(() => {});

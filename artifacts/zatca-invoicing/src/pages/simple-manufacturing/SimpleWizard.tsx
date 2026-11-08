@@ -95,6 +95,14 @@ export function SimpleWizard({
   const [materialStageAssignments, setMaterialStageAssignments] = useState<Record<string, string>>({});
   const [previewLoading, setPreviewLoading] = useState(false);
   const [costSources, setCostSources] = useState<any[]>([]);
+  const [estimatedPools, setEstimatedPools] = useState<any[]>([]);
+  const [estimatedPoolsState, setEstimatedPoolsState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
+  const [estimatedPoolsError, setEstimatedPoolsError] = useState<string | null>(null);
+  const [estimatedPoolDrivers, setEstimatedPoolDrivers] = useState<Record<string, string>>(() => {
+    const saved = Array.isArray(initialOrder?.meta?.estimatedCostAllocations)
+      ? initialOrder.meta.estimatedCostAllocations : [];
+    return Object.fromEntries(saved.map((row: any) => [String(row.poolId), String(row.driverValue ?? "")]));
+  });
   const [allocations, setAllocations] = useState<Record<string, string>>({});
   const [sourceTreatments, setSourceTreatments] = useState<Record<string, string>>({});
   const [costModes, setCostModes] = useState<Record<ManufacturingCostCategory, ManufacturingCostMode>>(() => {
@@ -113,6 +121,7 @@ export function SimpleWizard({
     loading: true, ready: false, reason: null,
   });
   const [costSourcesRefreshKey, setCostSourcesRefreshKey] = useState(0);
+  const [estimatedPoolsRefreshKey, setEstimatedPoolsRefreshKey] = useState(0);
   const [costPrefsHydratedKey, setCostPrefsHydratedKey] = useState<string | null>(null);
   const [costPrefsSaveState, setCostPrefsSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [costPrefsAutosaveRevision, setCostPrefsAutosaveRevision] = useState(0);
@@ -121,6 +130,8 @@ export function SimpleWizard({
   const costPrefsHydratedKeyRef = useRef<string | null>(null);
   const costPrefsSerializedRef = useRef<string | null>(null);
   const costPrefsSaveInFlightRef = useRef<string | null>(null);
+  const isEstimatedCosting = (initialOrder?.manufacturingCostingMethod
+    ?? catalog.accounting?.settings?.costingMethod) === "estimated";
   const costPrefsOperationRef = useRef(0);
   const [manualCosts, setManualCosts] = useState<ManufacturingCostConfiguration>(() => {
     const saved = initialOrder?.meta?.costConfiguration;
@@ -670,6 +681,42 @@ export function SimpleWizard({
     return () => controller.abort();
   }, [request, token, form.costPeriod, costSourcesRefreshKey, toast]);
 
+  useEffect(() => {
+    if (!isEstimatedCosting) {
+      setEstimatedPools([]);
+      setEstimatedPoolsState("idle");
+      setEstimatedPoolsError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setEstimatedPoolsState("loading");
+    setEstimatedPoolsError(null);
+    void request(
+      `/api/simple-manufacturing/estimated-costing/pools?period=${encodeURIComponent(form.costPeriod)}`,
+      { signal: controller.signal },
+    ).then((data) => {
+      if (!Array.isArray(data?.pools)) throw new Error("استجابة مجمعات التكلفة غير صالحة");
+      if (controller.signal.aborted) return;
+      setEstimatedPools(data.pools);
+      setEstimatedPoolDrivers((current) => {
+        const next = { ...current };
+        for (const pool of data.pools) {
+          if (next[String(pool.id)] == null && pool.allocationBasis === "equal") {
+            next[String(pool.id)] = "1";
+          }
+        }
+        return next;
+      });
+      setEstimatedPoolsState("loaded");
+    }).catch((e: any) => {
+      if (e?.name === "AbortError" || controller.signal.aborted) return;
+      setEstimatedPools([]);
+      setEstimatedPoolsError(e?.message || "تعذر تحميل مجمعات التكلفة");
+      setEstimatedPoolsState("error");
+    });
+    return () => controller.abort();
+  }, [request, form.costPeriod, estimatedPoolsRefreshKey, isEstimatedCosting]);
+
   const handleCreateBom = async () => {
     if (initialOrder) {
       toast({
@@ -823,6 +870,29 @@ export function SimpleWizard({
       setTab("resources");
       return;
     }
+    const selectedEstimatedAllocations = isEstimatedCosting
+      ? estimatedPools.flatMap((pool: any) => {
+          const raw = estimatedPoolDrivers[String(pool.id)] ??
+            (pool.allocationBasis === "equal" ? "1" : "");
+          const driverValue = Number(raw);
+          return pool.status === "open" && pool.actualAmount == null &&
+            Number.isFinite(driverValue) && driverValue > 0
+            ? [{ poolId: Number(pool.id), driverValue }]
+            : [];
+        })
+      : [];
+    if (isEstimatedCosting &&
+        (estimatedPoolsState !== "loaded" || selectedEstimatedAllocations.length === 0)) {
+      toast({
+        title: "توزيع التكلفة التقديرية مطلوب",
+        description: estimatedPoolsState !== "loaded"
+          ? "انتظر تحميل مجمعات الشهر أو حدّثها قبل حفظ الأمر."
+          : "أدخل أساس توزيع موجباً لمجمع واحد على الأقل.",
+        variant: "destructive",
+      });
+      setTab("costs");
+      return;
+    }
     if (mode === "execute" &&
         (!accountSettings.defaultWipAccountId || !accountSettings.defaultRawInventoryAccountId)) {
       toast({
@@ -886,6 +956,7 @@ export function SimpleWizard({
         resourceCostingVersion: 1,
       } : {}),
       costPeriod: form.costPeriod,
+      estimatedCostAllocations: selectedEstimatedAllocations,
       templateId: form.templateId ? Number(form.templateId) : null,
       materialStageAssignments,
       costPolicy: form.costPolicy,
@@ -1729,6 +1800,117 @@ export function SimpleWizard({
 
           {tab === "costs" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+              {isEstimatedCosting && (
+                <div className="space-y-4 rounded-xl border border-teal-200 bg-teal-50/50 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h4 className="font-semibold text-teal-950">توزيع مجمعات التكلفة التقديرية</h4>
+                      <p className="mt-1 max-w-3xl text-xs leading-6 text-teal-900">
+                        تُحفظ حصة هذا الأمر عند بدء الإنتاج ولا يعاد احتسابها عند إضافة أوامر لاحقة. يجب استكمال المقام أو نسبة 100% في نهاية الشهر.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setEstimatedPoolsRefreshKey((value) => value + 1)}
+                      disabled={estimatedPoolsState === "loading" || !form.costPeriod}
+                      className="border-teal-300 bg-white text-teal-900 hover:bg-teal-100"
+                    >
+                      <RefreshCw className={`ml-2 h-4 w-4 ${estimatedPoolsState === "loading" ? "animate-spin" : ""}`} />
+                      تحديث المجمعات
+                    </Button>
+                  </div>
+                  {estimatedPoolsState === "loading" && (
+                    <p className="rounded-md border border-teal-200 bg-white p-3 text-sm text-teal-900">
+                      جاري تحميل مجمعات الفترة {form.costPeriod}...
+                    </p>
+                  )}
+                  {estimatedPoolsState === "error" && (
+                    <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+                      {estimatedPoolsError || "تعذر تحميل مجمعات التكلفة"}
+                    </p>
+                  )}
+                  {estimatedPoolsState === "loaded" && estimatedPools.length === 0 && (
+                    <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                      لا توجد مجمعات مفتوحة لهذه الفترة. أنشئ المجمع من لوحة مجمعات التكلفة في تبويب الإعدادات.
+                    </p>
+                  )}
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {estimatedPools.map((pool: any) => {
+                      const key = String(pool.id);
+                      const driverValue = Number(estimatedPoolDrivers[key] ?? "");
+                      const estimate = Number(pool.estimatedAmount ?? 0);
+                      const denominator = Number(pool.monthlyDenominator ?? 0);
+                      const usedDriver = Number(pool.usedDriver ?? 0);
+                      const usedShare = Number(pool.usedSharePct ?? 0);
+                      const usedAmount = Number(pool.appliedAmount ?? 0);
+                      const basis = String(pool.allocationBasis);
+                      const preview = Number.isFinite(driverValue) && driverValue > 0
+                        ? basis === "percentage" ? estimate * driverValue / 100
+                          : basis === "manual" ? driverValue
+                            : denominator > 0 ? estimate * driverValue / denominator : 0
+                        : 0;
+                      const remaining = basis === "percentage"
+                        ? `${Math.max(0, 100 - usedShare).toFixed(2)}%`
+                        : basis === "manual"
+                          ? `${Math.max(0, estimate - usedAmount).toFixed(2)}`
+                          : `${Math.max(0, denominator - usedDriver).toFixed(3)}`;
+                      const basisLabel: Record<string, string> = {
+                        machine_hours: "ساعات تشغيل الآلات",
+                        labor_hours: "ساعات العمل",
+                        production_quantity: "كمية الإنتاج",
+                        area: "المساحة",
+                        percentage: "نسبة من المجمع",
+                        equal: "توزيع متساوٍ",
+                        manual: "مبلغ يدوي",
+                      };
+                      const unavailable = pool.status !== "open" || pool.actualAmount != null;
+                      return (
+                        <div key={pool.id} className="space-y-3 rounded-lg border border-teal-200 bg-white p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-slate-900">{pool.nameAr}</p>
+                              <p className="text-xs text-slate-500">{pool.code} · {basisLabel[basis] || basis}</p>
+                            </div>
+                            <span className="text-sm font-semibold text-teal-900">
+                              {estimate.toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs">قيمة أساس هذا الأمر</Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                step={basis === "percentage" ? "0.01" : "0.0001"}
+                                value={estimatedPoolDrivers[key] ?? (basis === "equal" ? "1" : "")}
+                                disabled={unavailable || (initialOrder && !["draft", "approved"].includes(String(initialOrder.status)))}
+                                onChange={(event) => setEstimatedPoolDrivers((current) => ({
+                                  ...current, [key]: event.target.value,
+                                }))}
+                                className="bg-white"
+                              />
+                            </div>
+                            <div className="flex flex-col justify-end text-xs text-slate-600">
+                              <span>المتبقي قبل هذا الأمر: {remaining}{basis === "manual" ? " ر.س" : ""}</span>
+                              <span className="mt-1 font-semibold text-teal-900">
+                                حصة تقديرية لهذا الأمر: {preview.toLocaleString("ar-EG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ر.س
+                              </span>
+                            </div>
+                          </div>
+                          {unavailable && (
+                            <p className="text-xs text-amber-800">هذا المجمع أُغلق أو سُجل فعليه، ولا يقبل أوامر جديدة.</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] leading-5 text-teal-900">
+                    لا تضف المصروف مرة ثانية هنا. أدخل الفعلي لاحقاً من لوحة الإعدادات بعد ترحيله في حساب المصروف المعتاد.
+                  </p>
+                </div>
+              )}
               <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
                 <h4 className="font-semibold text-amber-950">النقل الداخلي إلى التصنيع</h4>
                 <p className="mt-1 text-xs leading-6 text-amber-900">

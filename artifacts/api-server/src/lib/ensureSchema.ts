@@ -1685,6 +1685,142 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     ALTER TABLE production_cost_allocations DROP CONSTRAINT IF EXISTS production_cost_allocations_share_pct_check;
     ALTER TABLE production_cost_allocations ADD CONSTRAINT production_cost_allocations_share_pct_check
       CHECK (share_pct >= 0 AND share_pct <= 100);` },
+  { label: "estimated manufacturing cost pools and order snapshots",
+    sql: `CREATE TABLE IF NOT EXISTS production_estimated_cost_pools (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      code TEXT NOT NULL,
+      name_ar TEXT NOT NULL,
+      estimated_amount NUMERIC(18,2) NOT NULL,
+      actual_amount NUMERIC(18,2),
+      actual_source_reference TEXT,
+      actual_posted_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+      allocation_basis TEXT NOT NULL,
+      monthly_denominator NUMERIC(18,6),
+      scope_type TEXT NOT NULL DEFAULT 'company',
+      scope_key TEXT,
+      actual_expense_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      absorbed_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      variance_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      status TEXT NOT NULL DEFAULT 'open',
+      actual_entered_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actual_entered_at TIMESTAMP,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT prod_est_cost_pool_period_code_uniq UNIQUE(company_id, period_start, code)
+    );
+    CREATE INDEX IF NOT EXISTS prod_est_cost_pool_period_idx
+      ON production_estimated_cost_pools(company_id, period_start, period_end, status);
+    ALTER TABLE production_estimated_cost_pools
+      ADD COLUMN IF NOT EXISTS actual_source_reference TEXT;
+    ALTER TABLE production_estimated_cost_pools
+      ADD COLUMN IF NOT EXISTS actual_posted_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
+    CREATE TABLE IF NOT EXISTS production_estimated_cost_allocations (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      pool_id INTEGER NOT NULL REFERENCES production_estimated_cost_pools(id) ON DELETE RESTRICT,
+      order_id INTEGER NOT NULL REFERENCES production_orders(id) ON DELETE RESTRICT,
+      basis TEXT NOT NULL,
+      driver_value NUMERIC(18,6) NOT NULL,
+      denominator_snapshot NUMERIC(18,6),
+      share_pct NUMERIC(9,6) NOT NULL,
+      allocated_amount NUMERIC(18,2) NOT NULL,
+      pool_amount_snapshot NUMERIC(18,2) NOT NULL,
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      snapshot_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+      reversal_journal_entry_id INTEGER,
+      reversed_at TIMESTAMP,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT prod_est_cost_alloc_pool_order_uniq UNIQUE(pool_id, order_id)
+    );
+    CREATE INDEX IF NOT EXISTS prod_est_cost_alloc_order_idx
+      ON production_estimated_cost_allocations(company_id, order_id);
+    CREATE INDEX IF NOT EXISTS prod_est_cost_alloc_pool_idx
+      ON production_estimated_cost_allocations(company_id, pool_id);
+    CREATE OR REPLACE FUNCTION reject_production_estimated_cost_allocation_mutation() RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'estimated manufacturing allocation snapshots cannot be deleted';
+      END IF;
+      IF NEW.company_id IS DISTINCT FROM OLD.company_id
+        OR NEW.pool_id IS DISTINCT FROM OLD.pool_id
+        OR NEW.order_id IS DISTINCT FROM OLD.order_id
+        OR NEW.basis IS DISTINCT FROM OLD.basis
+        OR NEW.driver_value IS DISTINCT FROM OLD.driver_value
+        OR NEW.denominator_snapshot IS DISTINCT FROM OLD.denominator_snapshot
+        OR NEW.share_pct IS DISTINCT FROM OLD.share_pct
+        OR NEW.allocated_amount IS DISTINCT FROM OLD.allocated_amount
+        OR NEW.pool_amount_snapshot IS DISTINCT FROM OLD.pool_amount_snapshot
+        OR NEW.period_start IS DISTINCT FROM OLD.period_start
+        OR NEW.period_end IS DISTINCT FROM OLD.period_end
+        OR NEW.snapshot_meta IS DISTINCT FROM OLD.snapshot_meta
+        OR NEW.created_by IS DISTINCT FROM OLD.created_by
+        OR NEW.created_at IS DISTINCT FROM OLD.created_at
+      THEN RAISE EXCEPTION 'estimated manufacturing allocation snapshots are immutable'; END IF;
+      RETURN NEW;
+    END; $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS production_estimated_cost_allocations_snapshot_no_mutation
+      ON production_estimated_cost_allocations;
+    CREATE TRIGGER production_estimated_cost_allocations_snapshot_no_mutation
+      BEFORE UPDATE OR DELETE ON production_estimated_cost_allocations
+      FOR EACH ROW EXECUTE FUNCTION reject_production_estimated_cost_allocation_mutation();
+    CREATE TABLE IF NOT EXISTS production_estimated_cost_closures (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      correction_date DATE NOT NULL,
+      source_key TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      actual_amount NUMERIC(18,2) NOT NULL,
+      applied_amount NUMERIC(18,2) NOT NULL,
+      variance_amount NUMERIC(18,2) NOT NULL,
+      source_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+      journal_entry_id INTEGER,
+      reversal_journal_entry_id INTEGER,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      posted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      posted_at TIMESTAMP,
+      reversed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reversed_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT prod_est_cost_closure_source_key_uniq UNIQUE(company_id, source_key)
+    );
+    CREATE INDEX IF NOT EXISTS prod_est_cost_closure_period_idx
+      ON production_estimated_cost_closures(company_id, period_start, period_end);
+    CREATE OR REPLACE FUNCTION reject_production_estimated_cost_closure_snapshot_mutation() RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'estimated manufacturing closure snapshots cannot be deleted';
+      END IF;
+      IF NEW.company_id IS DISTINCT FROM OLD.company_id
+        OR NEW.branch_id IS DISTINCT FROM OLD.branch_id
+        OR NEW.period_start IS DISTINCT FROM OLD.period_start
+        OR NEW.period_end IS DISTINCT FROM OLD.period_end
+        OR NEW.correction_date IS DISTINCT FROM OLD.correction_date
+        OR NEW.source_key IS DISTINCT FROM OLD.source_key
+        OR NEW.actual_amount IS DISTINCT FROM OLD.actual_amount
+        OR NEW.applied_amount IS DISTINCT FROM OLD.applied_amount
+        OR NEW.variance_amount IS DISTINCT FROM OLD.variance_amount
+        OR NEW.source_snapshot IS DISTINCT FROM OLD.source_snapshot
+        OR NEW.created_by IS DISTINCT FROM OLD.created_by
+        OR NEW.created_at IS DISTINCT FROM OLD.created_at
+      THEN RAISE EXCEPTION 'estimated manufacturing closure snapshots are immutable'; END IF;
+      RETURN NEW;
+    END; $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS production_estimated_cost_closures_snapshot_no_mutation
+      ON production_estimated_cost_closures;
+    CREATE TRIGGER production_estimated_cost_closures_snapshot_no_mutation
+      BEFORE UPDATE OR DELETE ON production_estimated_cost_closures
+      FOR EACH ROW EXECUTE FUNCTION reject_production_estimated_cost_closure_snapshot_mutation();` },
   // Frozen calculation evidence only. This deliberately has no journal entry:
   // the linked payroll/asset source allocation owns capitalization and its
   // delta/reversal lifecycle.

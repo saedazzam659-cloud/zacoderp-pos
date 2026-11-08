@@ -6,6 +6,25 @@ import { Router } from "express";
 import { postedProvisionOffsets, netProvisionSourceAmount } from "../lib/employeeProvisionManufacturing.js";
 import { TransactionFailure, transactionFailureResponse } from "../lib/transactionFailure.js";
 import { db } from "@workspace/db";
+import {
+  CreateEstimatedManufacturingCostPoolBody,
+  CreateEstimatedManufacturingCostPoolResponse,
+  ListEstimatedManufacturingCostPoolsQueryParams,
+  ListEstimatedManufacturingCostPoolsResponse,
+  SaveEstimatedManufacturingOrderAllocationsBody,
+  SaveEstimatedManufacturingOrderAllocationsParams,
+  SaveEstimatedManufacturingOrderAllocationsResponse,
+  RecordEstimatedManufacturingPoolActualBody,
+  RecordEstimatedManufacturingPoolActualParams,
+  RecordEstimatedManufacturingPoolActualResponse,
+  ListEstimatedManufacturingCostClosuresQueryParams,
+  ListEstimatedManufacturingCostClosuresResponse,
+  PostEstimatedManufacturingCostClosureParams,
+  PostEstimatedManufacturingCostClosureResponse,
+  ReverseEstimatedManufacturingCostClosureParams,
+  ReverseEstimatedManufacturingCostClosureBody,
+  ReverseEstimatedManufacturingCostClosureResponse,
+} from "@workspace/api-zod";
 import { resolvePostingStatus } from "../lib/postingStatus.js";
 import { fullAuditFor } from "../lib/journalAudit.js";
 import { getContextModuleKey, setContextModuleKey } from "../lib/requestContext.js";
@@ -29,6 +48,9 @@ import {
   productionPendingSourceSettlementsTable,
   productionDriverReconciliationsTable,
   productionOverheadClosuresTable,
+  productionEstimatedCostPoolsTable,
+  productionEstimatedCostAllocationsTable,
+  productionEstimatedCostClosuresTable,
   productionCommercialAccrualsTable,
   packagingSpecificationsTable,
   packagingSpecificationVersionsTable,
@@ -123,6 +145,10 @@ import {
 } from "../lib/stockHelpers.js";
 import { assertWritableForDate } from "../lib/periodGuard.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
+import {
+  allocateEstimatedManufacturingPool,
+  type EstimatedManufacturingBasis,
+} from "../lib/estimatedManufacturingCosting.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
 import { logAiUsage, requireAiFeature } from "../middleware/requireAiFeature.js";
 import {
@@ -922,6 +948,7 @@ async function validateItem(cid: number, id: number | null | undefined) {
 }
 
 const router = Router();
+export const productionEstimatedCostingRouter = Router();
 // Lifecycle actions are also exposed by the compact manufacturing facade.
 // This narrow router is mounted by both facades; it must never include the
 // rest of the advanced production routes.
@@ -8305,6 +8332,14 @@ export async function productionStatusHandler(req: any, res: any) {
         }
       }
 
+      if (order.manufacturingCostingMethod === "estimated") {
+        const poolBranches = await freezeEstimatedCostAllocations(tx, cid, order, req);
+        const costPeriod = String((order.meta as any)?.costPeriod ?? "");
+        for (const branchId of poolBranches)
+          await maybeCreateEstimatedCostClosureDraft(
+            tx, cid, costPeriod, branchId, req.authUser?.id ?? null,
+          );
+      }
       const internalTransportCost = transportSnapshots.reduce((sum, x) => sum + num(x.allocatedAmount), 0);
        const deferredStageSourceAmount = frozenCosts.filter((row) =>
          deferredStageSourceAllocationIds.has(Number(row.id)),
@@ -17721,5 +17756,1316 @@ router.get("/cost-rollup", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+function estimatedCostBasis(value: unknown): value is EstimatedManufacturingBasis {
+  return ["machine_hours", "labor_hours", "production_quantity", "area", "percentage", "equal", "manual"]
+    .includes(String(value));
+}
+
+function estimatedTimestamp(value: unknown): string | null {
+  if (value == null) return null;
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function serializeEstimatedCostPool(pool: any): any {
+  return {
+    ...pool,
+    periodStart: String(pool.periodStart).slice(0, 10),
+    periodEnd: String(pool.periodEnd).slice(0, 10),
+    createdAt: estimatedTimestamp(pool.createdAt),
+    updatedAt: estimatedTimestamp(pool.updatedAt),
+    actualEnteredAt: estimatedTimestamp(pool.actualEnteredAt),
+  };
+}
+
+function serializeEstimatedCostClosure(closure: any): any {
+  return {
+    ...closure,
+    periodStart: String(closure.periodStart).slice(0, 10),
+    periodEnd: String(closure.periodEnd).slice(0, 10),
+    correctionDate: String(closure.correctionDate).slice(0, 10),
+    createdAt: estimatedTimestamp(closure.createdAt),
+    updatedAt: estimatedTimestamp(closure.updatedAt),
+    postedAt: estimatedTimestamp(closure.postedAt),
+    reversedAt: estimatedTimestamp(closure.reversedAt),
+  };
+}
+
+productionEstimatedCostingRouter.get("/estimated-costing/pools",
+  requirePermission("simple_manufacturing", "view"), async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    const parsedQuery = ListEstimatedManufacturingCostPoolsQueryParams.safeParse(req.query);
+    if (!parsedQuery.success)
+      return void res.status(400).json({ error: parsedQuery.error.message });
+    const period = parsedQuery.data.period;
+    const range = closurePeriod(period);
+    if (!range) return void res.status(400).json({ error: "الفترة مطلوبة بصيغة YYYY-MM" });
+    const branchResult = effectiveBranchCondition(
+      req, productionEstimatedCostPoolsTable.branchId, parsedQuery.data.branchId,
+    );
+    if ("deny" in branchResult)
+      return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    try {
+      const pools = await db.select().from(productionEstimatedCostPoolsTable).where(and(
+        eq(productionEstimatedCostPoolsTable.companyId, cid),
+        eq(productionEstimatedCostPoolsTable.periodStart, range.start),
+        eq(productionEstimatedCostPoolsTable.periodEnd, range.end),
+        branchResult.cond,
+      )).orderBy(asc(productionEstimatedCostPoolsTable.code));
+      const poolIds = pools.map((row) => row.id);
+      const allocated = poolIds.length
+        ? await db.select({
+            poolId: productionEstimatedCostAllocationsTable.poolId,
+            amount: sql<string>`coalesce(sum(${productionEstimatedCostAllocationsTable.allocatedAmount}), 0)`,
+            driver: sql<string>`coalesce(sum(${productionEstimatedCostAllocationsTable.driverValue}), 0)`,
+            share: sql<string>`coalesce(sum(${productionEstimatedCostAllocationsTable.sharePct}), 0)`,
+            orders: sql<number>`count(*)::int`,
+          }).from(productionEstimatedCostAllocationsTable).where(and(
+            eq(productionEstimatedCostAllocationsTable.companyId, cid),
+            inArray(productionEstimatedCostAllocationsTable.poolId, poolIds),
+          )).groupBy(productionEstimatedCostAllocationsTable.poolId)
+        : [];
+      const byPool = new Map(allocated.map((row) => [row.poolId, row]));
+      const response = {
+        pools: pools.map((rawPool) => {
+          const pool = serializeEstimatedCostPool(rawPool);
+          const totals = byPool.get(pool.id);
+          return {
+            ...pool,
+            appliedAmount: Number(totals?.amount ?? 0),
+            usedDriver: Number(totals?.driver ?? 0),
+            usedSharePct: Number(totals?.share ?? 0),
+            orderCount: Number(totals?.orders ?? 0),
+          };
+        }),
+      };
+      res.json(ListEstimatedManufacturingCostPoolsResponse.parse(response));
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  });
+
+productionEstimatedCostingRouter.post("/estimated-costing/pools",
+  requirePermission("simple_manufacturing", "edit"), async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    const parsedBody = CreateEstimatedManufacturingCostPoolBody.safeParse(req.body);
+    if (!parsedBody.success)
+      return void res.status(400).json({ error: parsedBody.error.message });
+    const body = parsedBody.data;
+    const range = closurePeriod(String(body.period ?? ""));
+    if (!range) return void res.status(400).json({ error: "الفترة مطلوبة بصيغة YYYY-MM" });
+    const branchId = body.branchId == null ? null : Number(body.branchId);
+    if (branchId != null && (!Number.isInteger(branchId) || branchId <= 0 || !rowInScope(req, branchId)))
+      return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    if (branchId == null && req.authUser?.viewAllBranches !== true)
+      return void res.status(403).json({ error: "إنشاء مجمع على مستوى الشركة يتطلب صلاحية جميع الفروع" });
+    if ((body.scopeType === "branch") !== (branchId != null))
+      return void res.status(400).json({ error: "نطاق الشركة لا يحدد فرعاً، ونطاق الفرع يتطلب فرعاً محدداً" });
+    if (!estimatedCostBasis(body.allocationBasis))
+      return void res.status(400).json({ error: "أساس توزيع التكلفة غير مدعوم" });
+    if (!["company", "branch"].includes(String(body.scopeType ?? "company")))
+      return void res.status(400).json({ error: "النطاق المتاح حالياً هو الشركة أو الفرع" });
+    if (body.scopeType === "branch" && branchId == null)
+      return void res.status(400).json({ error: "نطاق الفرع يتطلب تحديد الفرع" });
+    const estimatedAmount = Number(body.estimatedAmount);
+    const denominator = body.monthlyDenominator == null ? null : Number(body.monthlyDenominator);
+    if (!Number.isFinite(estimatedAmount) || estimatedAmount <= 0)
+      return void res.status(400).json({ error: "مبلغ التكلفة التقديرية يجب أن يكون أكبر من صفر" });
+    if (!["percentage", "manual"].includes(body.allocationBasis) &&
+        (!Number.isFinite(denominator) || Number(denominator) <= 0))
+      return void res.status(400).json({ error: "أدخل المقام الشهري اليدوي الموجب لأساس التوزيع" });
+    if (["percentage", "manual"].includes(body.allocationBasis) && denominator != null)
+      return void res.status(400).json({ error: "هذا الأساس لا يستخدم مقاماً شهرياً" });
+    const code = String(body.code ?? "").trim();
+    const nameAr = String(body.nameAr ?? "").trim();
+    if (!code || code.length > 64 || !nameAr || nameAr.length > 160)
+      return void res.status(400).json({ error: "رمز وبند التكلفة مطلوبان" });
+    const accountIds = [
+      Number(body.actualExpenseAccountId),
+      Number(body.absorbedAccountId),
+      Number(body.varianceAccountId),
+    ];
+    if (accountIds.some((id) => !Number.isInteger(id) || id <= 0) ||
+        new Set(accountIds).size !== 3)
+      return void res.status(400).json({ error: "يجب اختيار ثلاثة حسابات مختلفة وصالحة" });
+    try {
+      const [row] = await db.transaction(async (tx) => {
+        const accountRows = await tx.select({
+          id: accountsTable.id,
+          accountType: accountsTable.accountType,
+          isActive: accountsTable.isActive,
+          isPosting: accountsTable.isPosting,
+        }).from(accountsTable).where(and(
+          eq(accountsTable.companyId, cid),
+          inArray(accountsTable.id, accountIds),
+        ));
+        const byId = new Map(accountRows.map((account) => [account.id, account]));
+        const actualExpense = byId.get(accountIds[0]);
+        const absorbed = byId.get(accountIds[1]);
+        const variance = byId.get(accountIds[2]);
+        if (accountRows.length !== 3 ||
+            accountRows.some((account) => !account.isActive || !account.isPosting) ||
+            actualExpense?.accountType !== "expense" ||
+            absorbed?.accountType !== "liability" ||
+            variance?.accountType !== "expense") {
+          throw Object.assign(new Error(
+            "الحسابات يجب أن تكون من الشركة نفسها ونشطة وقابلة للترحيل: المصروف والفروق مصروفان والامتصاص التزام",
+          ), { status: 400 });
+        }
+        const result = await tx.insert(productionEstimatedCostPoolsTable).values({
+          companyId: cid,
+          branchId,
+          periodStart: range.start,
+          periodEnd: range.end,
+          code,
+          nameAr,
+          estimatedAmount: String(estimatedAmount.toFixed(2)),
+          allocationBasis: body.allocationBasis,
+          monthlyDenominator: denominator == null ? null : String(denominator),
+          scopeType: String(body.scopeType ?? "company"),
+          scopeKey: null,
+          actualExpenseAccountId: accountIds[0],
+          absorbedAccountId: accountIds[1],
+          varianceAccountId: accountIds[2],
+          status: "open",
+          createdBy: req.authUser?.id ?? null,
+          updatedAt: new Date(),
+        }).returning();
+        return result;
+      });
+      res.status(201).json(CreateEstimatedManufacturingCostPoolResponse.parse({
+        pool: row ? serializeEstimatedCostPool(row) : null,
+      }));
+    } catch (e: any) {
+      const message = String(e.message ?? "");
+      res.status(e.status ?? (message.includes("prod_est_cost_pool_period_code_uniq") ? 409 : 500))
+        .json({ error: message.includes("prod_est_cost_pool_period_code_uniq")
+          ? "يوجد بند آخر بالرمز نفسه في هذه الفترة" : message });
+    }
+  });
+
+productionEstimatedCostingRouter.put("/estimated-costing/orders/:id/allocations",
+  requirePermission("simple_manufacturing", "edit"), async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    const parsedParams = SaveEstimatedManufacturingOrderAllocationsParams.safeParse(req.params);
+    const parsedBody = SaveEstimatedManufacturingOrderAllocationsBody.safeParse(req.body);
+    if (!parsedParams.success) return void res.status(400).json({ error: parsedParams.error.message });
+    if (!parsedBody.success) return void res.status(400).json({ error: parsedBody.error.message });
+    const orderId = parsedParams.data.id;
+    const rawAllocations = parsedBody.data.allocations;
+    try {
+      const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${orderId})`);
+        const [order] = await tx.select().from(productionOrdersTable).where(and(
+          eq(productionOrdersTable.id, orderId),
+          eq(productionOrdersTable.companyId, cid),
+        )).for("update").limit(1);
+        if (!order || !rowInScope(req, order.branchId))
+          throw Object.assign(new Error("أمر الإنتاج غير موجود"), { status: 404 });
+        if (!["draft", "approved"].includes(String(order.status)) || order.issueJournalEntryId)
+          throw Object.assign(new Error("لا يمكن تعديل أساس التكلفة بعد بدء الإنتاج"), { status: 409 });
+        if (order.manufacturingCostingMethod !== "estimated")
+          throw Object.assign(new Error("الأمر محفوظ بطريقة التكلفة القياسية ولا يقبل مجمعات تقديرية"), { status: 409 });
+        const meta = (order.meta ?? {}) as Record<string, any>;
+        const period = String(meta.costPeriod ?? "");
+        const range = closurePeriod(period);
+        if (!range) throw Object.assign(new Error("فترة التكلفة المحفوظة في الأمر غير صالحة"), { status: 409 });
+        const poolIds = rawAllocations.map((row: any) => Number(row?.poolId));
+        if (poolIds.some((id: number) => !Number.isInteger(id) || id <= 0) ||
+            new Set(poolIds).size !== poolIds.length)
+          throw Object.assign(new Error("مجمعات التكلفة غير صالحة أو مكررة"), { status: 400 });
+        const pools = await tx.select().from(productionEstimatedCostPoolsTable).where(and(
+          eq(productionEstimatedCostPoolsTable.companyId, cid),
+          eq(productionEstimatedCostPoolsTable.periodStart, range.start),
+          eq(productionEstimatedCostPoolsTable.periodEnd, range.end),
+          inArray(productionEstimatedCostPoolsTable.id, poolIds),
+          eq(productionEstimatedCostPoolsTable.status, "open"),
+          isNull(productionEstimatedCostPoolsTable.actualAmount),
+        )).for("update");
+        if (pools.length !== poolIds.length)
+          throw Object.assign(new Error("يجب أن تنتمي كل المجمعات إلى فترة الأمر وأن تكون مفتوحة"), { status: 409 });
+        const previous = Array.isArray(meta.estimatedCostAllocations)
+          ? meta.estimatedCostAllocations as Array<Record<string, any>> : [];
+        const previousByPool = new Map(previous.map((row) => [Number(row.poolId), row]));
+        const snapshots: Array<Record<string, unknown>> = [];
+        for (const raw of rawAllocations as Array<Record<string, unknown>>) {
+          const poolId = Number(raw.poolId);
+          const pool = pools.find((row) => row.id === poolId)!;
+          if (pool.branchId != null && Number(pool.branchId) !== Number(order.branchId))
+            throw Object.assign(new Error(`مجمع التكلفة ${pool.code} يخص فرعاً آخر`), { status: 409 });
+          const driverValue = Number(raw.driverValue);
+          if (!Number.isFinite(driverValue) || driverValue <= 0)
+            throw Object.assign(new Error(`قيمة أساس التوزيع لمجمع ${pool.code} يجب أن تكون موجبة`), { status: 400 });
+          const basis = pool.allocationBasis as EstimatedManufacturingBasis;
+          if (!estimatedCostBasis(basis))
+            throw Object.assign(new Error(`أساس التوزيع المحفوظ لمجمع ${pool.code} غير مدعوم`), { status: 409 });
+          if (basis === "percentage" && driverValue > 100)
+            throw Object.assign(new Error("نسبة التوزيع لا يمكن أن تتجاوز 100%"), { status: 400 });
+          if (basis === "equal" && Math.abs(driverValue - 1) > 0.0001)
+            throw Object.assign(new Error("التوزيع المتساوي يستخدم قيمة واحدة لكل أمر"), { status: 400 });
+          const savedIntent = previousByPool.get(poolId);
+          const existingRows = await tx.select({
+            driverValue: productionEstimatedCostAllocationsTable.driverValue,
+            allocatedAmount: productionEstimatedCostAllocationsTable.allocatedAmount,
+            sharePct: productionEstimatedCostAllocationsTable.sharePct,
+          }).from(productionEstimatedCostAllocationsTable).where(and(
+            eq(productionEstimatedCostAllocationsTable.companyId, cid),
+            eq(productionEstimatedCostAllocationsTable.poolId, poolId),
+          ));
+          let usedDriver = existingRows.reduce((sum, row) => sum + Number(row.driverValue), 0);
+          let usedAmount = existingRows.reduce((sum, row) => sum + Number(row.allocatedAmount), 0);
+          let usedShare = existingRows.reduce((sum, row) => sum + Number(row.sharePct), 0);
+          if (savedIntent) {
+            usedDriver -= Number(savedIntent.driverValue ?? 0);
+            usedAmount -= Number(savedIntent.allocatedAmount ?? 0);
+            usedShare -= Number(savedIntent.sharePct ?? 0);
+          }
+          const estimatedAmount = Number(pool.estimatedAmount);
+          const denominator = pool.monthlyDenominator == null ? null : Number(pool.monthlyDenominator);
+          let sharePct: number;
+          let allocatedAmount: number;
+          if (basis === "percentage") {
+            if (usedShare + driverValue > 100.0001)
+              throw Object.assign(new Error(`مجموع نسب أوامر مجمع ${pool.code} سيتجاوز 100%`), { status: 409 });
+            sharePct = driverValue;
+            const completes = Math.abs(usedShare + driverValue - 100) <= 0.0001;
+            allocatedAmount = completes
+              ? Number((estimatedAmount - usedAmount).toFixed(2))
+              : Number((estimatedAmount * driverValue / 100).toFixed(2));
+          } else if (basis === "manual") {
+            if (usedAmount + driverValue > estimatedAmount + 0.005)
+              throw Object.assign(new Error(`مجموع التوزيعات اليدوية لمجمع ${pool.code} سيتجاوز المبلغ التقديري`), { status: 409 });
+            sharePct = Number((driverValue / estimatedAmount * 100).toFixed(6));
+            const completes = Math.abs(usedAmount + driverValue - estimatedAmount) <= 0.005;
+            allocatedAmount = completes
+              ? Number((estimatedAmount - usedAmount).toFixed(2))
+              : Number(driverValue.toFixed(2));
+          } else {
+            if (!denominator || denominator <= 0 || usedDriver + driverValue > denominator + Math.max(0.0001, denominator * 0.000001))
+              throw Object.assign(new Error(`أساس مجمع ${pool.code} سيتجاوز المقام الشهري المحفوظ`), { status: 409 });
+            sharePct = Number((driverValue / denominator * 100).toFixed(6));
+            const completes = Math.abs(usedDriver + driverValue - denominator) <= Math.max(0.0001, denominator * 0.000001);
+            allocatedAmount = completes
+              ? Number((estimatedAmount - usedAmount).toFixed(2))
+              : Number((estimatedAmount * driverValue / denominator).toFixed(2));
+          }
+          if (!(allocatedAmount > 0) || allocatedAmount > estimatedAmount + 0.005)
+            throw Object.assign(new Error(`المبلغ الناتج من مجمع ${pool.code} غير صالح`), { status: 422 });
+          snapshots.push({
+            poolId,
+            code: pool.code,
+            nameAr: pool.nameAr,
+            basis,
+            driverValue,
+            denominatorSnapshot: denominator,
+            sharePct,
+            allocatedAmount,
+            poolAmountSnapshot: estimatedAmount,
+            periodStart: range.start,
+            periodEnd: range.end,
+          });
+        }
+        const oldTotal = previous.reduce((sum, row) => sum + Number(row.allocatedAmount ?? 0), 0);
+        const newTotal = snapshots.reduce((sum, row) => sum + Number(row.allocatedAmount ?? 0), 0);
+        const currentOverhead = Number(order.overheadCost ?? 0);
+        const currentEstimated = Number(order.estimatedCost ?? 0);
+        const delta = Number((newTotal - oldTotal).toFixed(2));
+        const nextMeta = { ...meta, estimatedCostAllocations: snapshots };
+        const [updated] = await tx.update(productionOrdersTable).set({
+          meta: nextMeta,
+          overheadCost: String(Number((currentOverhead + delta).toFixed(2))),
+          estimatedCost: String(Number((currentEstimated + delta).toFixed(2))),
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionOrdersTable.id, orderId),
+          eq(productionOrdersTable.companyId, cid),
+        )).returning();
+        return { order: updated, allocations: snapshots };
+      });
+      res.json(SaveEstimatedManufacturingOrderAllocationsResponse.parse(result));
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  });
+
+async function freezeEstimatedCostAllocations(
+  tx: any,
+  cid: number,
+  order: any,
+  req: any,
+): Promise<Array<number | null>> {
+  const meta = (order.meta ?? {}) as Record<string, any>;
+  const intents = Array.isArray(meta.estimatedCostAllocations)
+    ? meta.estimatedCostAllocations as Array<Record<string, any>> : [];
+  if (!intents.length)
+    throw Object.assign(new Error("الأمر بطريقة التكلفة التقديرية يتطلب توزيعات شهرية قبل بدء الإنتاج"), { status: 409 });
+  const period = String(meta.costPeriod ?? "");
+  const range = closurePeriod(period);
+  if (!range) throw Object.assign(new Error("فترة التكلفة التقديرية للأمر غير صالحة"), { status: 409 });
+  const poolIds = intents.map((row) => Number(row.poolId));
+  if (poolIds.some((id) => !Number.isInteger(id) || id <= 0) ||
+      new Set(poolIds).size !== poolIds.length)
+    throw Object.assign(new Error("لقطات مجمعات التكلفة في الأمر غير صالحة أو مكررة"), { status: 409 });
+
+  const existing = await tx.select().from(productionEstimatedCostAllocationsTable).where(and(
+    eq(productionEstimatedCostAllocationsTable.companyId, cid),
+    eq(productionEstimatedCostAllocationsTable.orderId, Number(order.id)),
+  )).orderBy(asc(productionEstimatedCostAllocationsTable.id)).for("update");
+  if (existing.length) {
+    const same = existing.length === intents.length && intents.every((intent) => {
+      const row = existing.find((entry: any) => Number(entry.poolId) === Number(intent.poolId)) as any;
+      return row &&
+        Math.abs(num(row.driverValue) - num(intent.driverValue)) < 0.000001 &&
+        Math.abs(num(row.allocatedAmount) - num(intent.allocatedAmount)) < 0.01 &&
+        Math.abs(num(row.sharePct) - num(intent.sharePct)) < 0.0001;
+    });
+    if (!same)
+      throw Object.assign(new Error("لقطات التكلفة المحفوظة للأمر تختلف عن التوزيعات الحالية"), { status: 409 });
+    return [...new Set<number | null>(existing.map((row: any) => row.snapshotMeta?.branchId ?? null))];
+  }
+
+  const branches = new Set<number | null>();
+  for (const intent of intents) {
+    const poolId = Number(intent.poolId);
+    const [pool] = await tx.select().from(productionEstimatedCostPoolsTable).where(and(
+      eq(productionEstimatedCostPoolsTable.companyId, cid),
+      eq(productionEstimatedCostPoolsTable.id, poolId),
+      eq(productionEstimatedCostPoolsTable.periodStart, range.start),
+      eq(productionEstimatedCostPoolsTable.periodEnd, range.end),
+    )).for("update").limit(1);
+    if (!pool || !rowInScope(req, pool.branchId))
+      throw Object.assign(new Error("أحد مجمعات التكلفة غير موجود أو خارج نطاق الفرع"), { status: 404 });
+    if (pool.status !== "open" || pool.actualAmount != null)
+      throw Object.assign(new Error(`مجمع التكلفة ${pool.code} لم يعد مفتوحاً لقبول أوامر جديدة`), { status: 409 });
+    if (pool.branchId != null && Number(pool.branchId) !== Number(order.branchId))
+      throw Object.assign(new Error(`مجمع التكلفة ${pool.code} يخص فرعاً آخر`), { status: 409 });
+    const basis = pool.allocationBasis as EstimatedManufacturingBasis;
+    if (!estimatedCostBasis(basis) || String(intent.basis) !== basis ||
+        Math.abs(num(intent.poolAmountSnapshot) - num(pool.estimatedAmount)) > 0.01 ||
+        String(intent.periodStart) !== range.start || String(intent.periodEnd) !== range.end)
+      throw Object.assign(new Error(`تغيّر إعداد مجمع التكلفة ${pool.code} منذ إعداد الأمر`), { status: 409 });
+
+    const prior = await tx.select({
+      driverValue: productionEstimatedCostAllocationsTable.driverValue,
+      allocatedAmount: productionEstimatedCostAllocationsTable.allocatedAmount,
+      sharePct: productionEstimatedCostAllocationsTable.sharePct,
+    }).from(productionEstimatedCostAllocationsTable).where(and(
+      eq(productionEstimatedCostAllocationsTable.companyId, cid),
+      eq(productionEstimatedCostAllocationsTable.poolId, poolId),
+    )).for("update");
+    const usedDriver = prior.reduce((sum: number, row: any) => sum + num(row.driverValue), 0);
+    const usedAmount = prior.reduce((sum: number, row: any) => sum + num(row.allocatedAmount), 0);
+    const usedShare = prior.reduce((sum: number, row: any) => sum + num(row.sharePct), 0);
+    const driverValue = num(intent.driverValue);
+    const denominator = pool.monthlyDenominator == null ? null : num(pool.monthlyDenominator);
+    const poolAmount = num(pool.estimatedAmount);
+    if (!(driverValue > 0))
+      throw Object.assign(new Error(`قيمة أساس التوزيع لمجمع ${pool.code} غير موجبة`), { status: 409 });
+
+    let expectedAmount = 0;
+    let expectedShare = 0;
+    if (basis === "percentage") {
+      if (usedShare + driverValue > 100.0001)
+        throw Object.assign(new Error(`اكتملت نسب مجمع ${pool.code} بأوامر أخرى بعد إعداد هذا الأمر`), { status: 409 });
+      expectedShare = driverValue;
+      expectedAmount = Math.abs(usedShare + driverValue - 100) <= 0.0001
+        ? round2(poolAmount - usedAmount)
+        : round2(poolAmount * driverValue / 100);
+    } else if (basis === "manual") {
+      if (usedAmount + driverValue > poolAmount + 0.005)
+        throw Object.assign(new Error(`اكتمل مبلغ مجمع ${pool.code} بأوامر أخرى بعد إعداد هذا الأمر`), { status: 409 });
+      expectedShare = Number((driverValue / poolAmount * 100).toFixed(6));
+      expectedAmount = Math.abs(usedAmount + driverValue - poolAmount) <= 0.005
+        ? round2(poolAmount - usedAmount)
+        : round2(driverValue);
+    } else {
+      if (!denominator || denominator <= 0 ||
+          usedDriver + driverValue > denominator + Math.max(0.0001, denominator * 0.000001))
+        throw Object.assign(new Error(`تجاوز المقام الشهري لمجمع ${pool.code} بأوامر أخرى`), { status: 409 });
+      expectedShare = Number((driverValue / denominator * 100).toFixed(6));
+      expectedAmount = Math.abs(usedDriver + driverValue - denominator) <= Math.max(0.0001, denominator * 0.000001)
+        ? round2(poolAmount - usedAmount)
+        : round2(poolAmount * driverValue / denominator);
+    }
+    if (Math.abs(expectedAmount - num(intent.allocatedAmount)) > 0.01 ||
+        Math.abs(expectedShare - num(intent.sharePct)) > 0.0001)
+      throw Object.assign(new Error(`تغيّر المقام أو المبلغ المتبقي لمجمع ${pool.code}؛ أعد حفظ توزيعات الأمر`), { status: 409 });
+
+    await tx.insert(productionEstimatedCostAllocationsTable).values({
+      companyId: cid,
+      poolId,
+      orderId: Number(order.id),
+      basis,
+      driverValue: String(driverValue),
+      denominatorSnapshot: denominator == null ? null : String(denominator),
+      sharePct: String(expectedShare),
+      allocatedAmount: String(expectedAmount.toFixed(2)),
+      poolAmountSnapshot: String(poolAmount.toFixed(2)),
+      periodStart: range.start,
+      periodEnd: range.end,
+      snapshotMeta: {
+        code: pool.code,
+        nameAr: pool.nameAr,
+        branchId: pool.branchId ?? null,
+        scopeType: pool.scopeType,
+        actualExpenseAccountId: pool.actualExpenseAccountId,
+        absorbedAccountId: pool.absorbedAccountId,
+        varianceAccountId: pool.varianceAccountId,
+      },
+      createdBy: req.authUser?.id ?? null,
+    });
+    branches.add(pool.branchId ?? null);
+  }
+  await tx.update(productionOrdersTable).set({
+    meta: { ...meta, estimatedCostAllocationsFrozen: true },
+    updatedAt: new Date(),
+  }).where(and(
+    eq(productionOrdersTable.id, Number(order.id)),
+    eq(productionOrdersTable.companyId, cid),
+  ));
+  return [...branches];
+}
+
+type EstimatedAccountingLine = {
+  accountId: number;
+  amount: number; // positive debit, negative credit
+  description: string;
+  orderId?: number;
+  costCenter?: string | null;
+};
+
+type EstimatedInventoryAdjustment = {
+  orderId: number;
+  itemId: number;
+  warehouseId: number;
+  batchNumber: string;
+  amount: number;
+  expectedQty: number;
+  expectedAverageCost: number;
+  newAverageCost: number;
+};
+
+type EstimatedCostClosureSnapshot = {
+  version: 1;
+  pools: Array<{
+    poolId: number;
+    code: string;
+    actualAmount: number;
+    appliedAmount: number;
+    varianceAmount: number;
+    actualExpenseAccountId: number;
+    absorbedAccountId: number;
+    varianceAccountId: number;
+  }>;
+  accountingLines: EstimatedAccountingLine[];
+  inventoryAdjustments: EstimatedInventoryAdjustment[];
+};
+
+function estimatedClosureSourcePrefix(cid: number, branchId: number | null, period: string): string {
+  return `production_estimated_cost_closure:${cid}:${branchId ?? 0}:${period}:attempt:`;
+}
+
+async function buildEstimatedCostClosureSnapshot(
+  tx: any,
+  cid: number,
+  period: string,
+  branchId: number | null,
+): Promise<{
+  range: { start: string; end: string };
+  actualAmount: number;
+  appliedAmount: number;
+  varianceAmount: number;
+  snapshot: EstimatedCostClosureSnapshot;
+}> {
+  const range = closurePeriod(period);
+  if (!range) throw Object.assign(new Error("الفترة غير صالحة"), { status: 400 });
+  const today = new Date().toISOString().slice(0, 10);
+  if (range.end >= today)
+    throw Object.assign(new Error("لا ينشأ إقفال الشهر قبل انتهاء الفترة"), { status: 409 });
+  const pools = await tx.select().from(productionEstimatedCostPoolsTable).where(and(
+    eq(productionEstimatedCostPoolsTable.companyId, cid),
+    eq(productionEstimatedCostPoolsTable.periodStart, range.start),
+    eq(productionEstimatedCostPoolsTable.periodEnd, range.end),
+    branchId == null
+      ? isNull(productionEstimatedCostPoolsTable.branchId)
+      : eq(productionEstimatedCostPoolsTable.branchId, branchId),
+  )).orderBy(asc(productionEstimatedCostPoolsTable.id)).for("update");
+  if (!pools.length)
+    throw Object.assign(new Error("لا توجد مجمعات تكلفة تقديرية للفترة والفرع المحددين"), { status: 409 });
+  if (pools.some((pool: any) =>
+    pool.actualAmount == null || pool.actualPostedConfirmed !== true ||
+    !String(pool.actualSourceReference ?? "").trim(),
+  )) {
+    throw Object.assign(new Error("أدخل الفعلي ومرجع المصروف المرحّل لكل مجمع قبل إنشاء المسودة"), { status: 409 });
+  }
+
+  const accountingLines: EstimatedAccountingLine[] = [];
+  const inventoryAdjustments: EstimatedInventoryAdjustment[] = [];
+  const poolSummaries: EstimatedCostClosureSnapshot["pools"] = [];
+  let totalActual = 0;
+  let totalApplied = 0;
+
+  const addLine = (
+    accountId: number | null | undefined,
+    amount: number,
+    description: string,
+    order?: any,
+  ) => {
+    const rounded = round2(amount);
+    if (Math.abs(rounded) < 0.01) return;
+    if (!Number.isInteger(Number(accountId)) || Number(accountId) <= 0)
+      throw Object.assign(new Error(`حساب التوزيع غير مضبوط: ${description}`), { status: 409 });
+    accountingLines.push({
+      accountId: Number(accountId),
+      amount: rounded,
+      description,
+      ...(order?.id ? { orderId: Number(order.id) } : {}),
+      costCenter: order?.costCenter ?? null,
+    });
+  };
+
+  for (const pool of pools as any[]) {
+    const actual = round2(num(pool.actualAmount));
+    const allocations = await tx.select().from(productionEstimatedCostAllocationsTable).where(and(
+      eq(productionEstimatedCostAllocationsTable.companyId, cid),
+      eq(productionEstimatedCostAllocationsTable.poolId, pool.id),
+    )).orderBy(asc(productionEstimatedCostAllocationsTable.id)).for("update");
+    if (!allocations.length)
+      throw Object.assign(new Error(`مجمع ${pool.code} لا يحتوي على توزيعات أوامر محفوظة`), { status: 409 });
+    const recalculated = allocateEstimatedManufacturingPool({
+      estimatedAmount: num(pool.estimatedAmount),
+      basis: pool.allocationBasis as EstimatedManufacturingBasis,
+      denominator: pool.monthlyDenominator == null ? null : num(pool.monthlyDenominator),
+      allocations: allocations.map((row: any) => ({
+        orderId: Number(row.orderId),
+        driverValue: num(row.driverValue),
+      })),
+    });
+    if (recalculated.some((row, index) =>
+      Math.abs(round2(row.allocatedAmount) - round2(num(allocations[index].allocatedAmount))) > 0.01 ||
+      Math.abs(round2(row.sharePct) - round2(num(allocations[index].sharePct))) > 0.01,
+    )) {
+      throw Object.assign(new Error(`توزيعات مجمع ${pool.code} لا تطابق لقطات الأوامر المحفوظة`), { status: 409 });
+    }
+    const allocatedTotal = round2(allocations.reduce((sum: number, row: any) =>
+      sum + num(row.allocatedAmount), 0));
+    if (Math.abs(allocatedTotal - num(pool.estimatedAmount)) > 0.01)
+      throw Object.assign(new Error(`لم يكتمل توزيع كامل مبلغ مجمع ${pool.code}`), { status: 409 });
+
+    const orderIds: number[] = Array.from(new Set<number>(
+      allocations.map((row: any) => Number(row.orderId)),
+    ));
+    const orderRows = await tx.select().from(productionOrdersTable).where(and(
+      eq(productionOrdersTable.companyId, cid),
+      inArray(productionOrdersTable.id, orderIds),
+    )).for("update");
+    const orderById = new Map<number, any>(
+      orderRows.map((order: any) => [Number(order.id), order] as const),
+    );
+    if (orderById.size !== orderIds.length)
+      throw Object.assign(new Error(`أحد أوامر مجمع ${pool.code} لم يعد موجوداً`), { status: 409 });
+    for (const order of orderRows as any[]) {
+      if (pool.branchId != null && Number(order.branchId) !== Number(pool.branchId))
+        throw Object.assign(new Error(`الأمر ${order.orderNumber} لا يطابق فرع مجمع ${pool.code}`), { status: 409 });
+    }
+
+    const active: Array<{ allocation: any; order: any }> = [];
+    const reversed: Array<{ allocation: any; order: any }> = [];
+    for (const allocation of allocations as any[]) {
+      const order = orderById.get(Number(allocation.orderId));
+      if (!order) continue;
+      if (["cancelled", "reversed"].includes(String(order.status))) {
+        reversed.push({ allocation, order });
+        continue;
+      }
+      if (!["in_production", "paused", "quality_check", "completed"].includes(String(order.status)) ||
+          !order.issueJournalEntryId) {
+        throw Object.assign(
+          new Error(`الأمر ${order.orderNumber} لم يبدأ بقيد صرف مرحّل ولا يمكن إغلاق تكلفته التقديرية`),
+          { status: 409 },
+        );
+      }
+      const [issue] = await tx.select({
+        id: journalEntriesTable.id,
+        status: journalEntriesTable.status,
+      }).from(journalEntriesTable).where(and(
+        eq(journalEntriesTable.id, order.issueJournalEntryId),
+        eq(journalEntriesTable.companyId, cid),
+      )).limit(1).for("update");
+      if (!issue || issue.status !== "posted")
+        throw Object.assign(new Error(`قيد صرف الأمر ${order.orderNumber} غير مرحّل`), { status: 409 });
+      if (order.status === "completed") {
+        if (!order.receiptJournalEntryId || !order.finishedGoodsAccountId ||
+            !order.productItemId || !order.batchNumber || !(num(order.producedQty) > 0)) {
+          throw Object.assign(new Error(`بيانات استلام مخزون الأمر ${order.orderNumber} غير مكتملة`), { status: 409 });
+        }
+        const [receipt] = await tx.select({
+          id: journalEntriesTable.id,
+          status: journalEntriesTable.status,
+        }).from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, order.receiptJournalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+        )).limit(1).for("update");
+        if (!receipt || receipt.status !== "posted")
+          throw Object.assign(new Error(`قيد استلام الأمر ${order.orderNumber} غير مرحّل`), { status: 409 });
+      } else if (!order.wipAccountId) {
+        throw Object.assign(new Error(`حساب الإنتاج تحت التشغيل غير مضبوط للأمر ${order.orderNumber}`), { status: 409 });
+      }
+      active.push({ allocation, order });
+    }
+
+    const activeApplied = round2(active.reduce((sum, row) =>
+      sum + num(row.allocation.allocatedAmount), 0));
+    const allEstimate = allocatedTotal;
+    const activeActual = allEstimate > 0
+      ? round2(actual * activeApplied / allEstimate)
+      : 0;
+    const canceledActual = round2(actual - activeActual);
+    let activeAllocated = 0;
+
+    addLine(pool.absorbedAccountId, activeApplied, `إقفال امتصاص مجمع ${pool.code}`);
+    addLine(pool.actualExpenseAccountId, -actual, `إعادة تصنيف المصروف الفعلي لمجمع ${pool.code}`);
+    if (canceledActual > 0)
+      addLine(pool.varianceAccountId, canceledActual, `مصروف أوامر ملغاة — مجمع ${pool.code}`);
+
+    for (let index = 0; index < active.length; index++) {
+      const { allocation, order } = active[index];
+      const estimate = num(allocation.allocatedAmount);
+      const actualShare = index === active.length - 1
+        ? round2(activeActual - activeAllocated)
+        : activeApplied > 0
+          ? round2(activeActual * estimate / activeApplied)
+          : 0;
+      activeAllocated = round2(activeAllocated + actualShare);
+      const delta = round2(actualShare - estimate);
+      if (Math.abs(delta) < 0.01) continue;
+      if (order.status !== "completed") {
+        addLine(order.wipAccountId, delta,
+          `تسوية تكلفة تقديرية — ${pool.code} — ${order.orderNumber}`, order);
+        continue;
+      }
+
+      const producedQty = num(order.producedQty);
+      const stockRows = await tx.select({
+        warehouseId: stockLedgerTable.warehouseId,
+        qty: sql<string>`coalesce(sum(${stockLedgerTable.qty}), 0)`,
+      }).from(stockLedgerTable).where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.itemId, order.productItemId),
+        eq(stockLedgerTable.batchNumber, order.batchNumber),
+      )).groupBy(stockLedgerTable.warehouseId).having(sql`sum(${stockLedgerTable.qty}) > 0`);
+      const remainingQty = stockRows.reduce((sum: number, row: any) => sum + num(row.qty), 0);
+      if (remainingQty > producedQty + 0.0001 || remainingQty < 0)
+        throw Object.assign(new Error(`رصيد تشغيلة الأمر ${order.orderNumber} غير متسق مع الكمية المنتجة`), { status: 409 });
+      const soldQty = Math.max(0, producedQty - remainingQty);
+      const fgDelta = producedQty > 0 ? round2(delta * remainingQty / producedQty) : 0;
+      const cogsDelta = round2(delta - fgDelta);
+      if (Math.abs(fgDelta) >= 0.01) {
+        if (!(remainingQty > 0) || !stockRows.length)
+          throw Object.assign(new Error(`لا يمكن تحديد رصيد البضاعة التامة للأمر ${order.orderNumber}`), { status: 409 });
+        const locations = stockRows.map((row: any) => ({
+          warehouseId: Number(row.warehouseId),
+          batchQty: num(row.qty),
+        }));
+        await lockStockBalances(locations.map((row: { warehouseId: number; batchQty: number }) => ({
+          companyId: cid, itemId: Number(order.productItemId), warehouseId: row.warehouseId,
+        })), tx);
+        let allocatedFgDelta = 0;
+        for (let locationIndex = 0; locationIndex < locations.length; locationIndex++) {
+          const location = locations[locationIndex];
+          const [balance] = await tx.select().from(stockBalanceTable).where(and(
+            eq(stockBalanceTable.companyId, cid),
+            eq(stockBalanceTable.itemId, Number(order.productItemId)),
+            eq(stockBalanceTable.warehouseId, location.warehouseId),
+          )).for("update").limit(1);
+          if (!balance || !(num(balance.qty) > 0) || location.batchQty > num(balance.qty) + 0.0001)
+            throw Object.assign(new Error(`رصيد المخزون لا يطابق تشغيلة الأمر ${order.orderNumber}`), { status: 409 });
+          const amount = locationIndex === locations.length - 1
+            ? round2(fgDelta - allocatedFgDelta)
+            : round2(fgDelta * location.batchQty / remainingQty);
+          allocatedFgDelta = round2(allocatedFgDelta + amount);
+          const oldAverage = num(balance.avgCost);
+          const newAverage = (oldAverage * num(balance.qty) + amount) / num(balance.qty);
+          if (!Number.isFinite(newAverage) || newAverage < -0.0001)
+            throw Object.assign(new Error(`تسوية الأمر ${order.orderNumber} ستجعل تكلفة المخزون سالبة`), { status: 409 });
+          inventoryAdjustments.push({
+            orderId: Number(order.id),
+            itemId: Number(order.productItemId),
+            warehouseId: location.warehouseId,
+            batchNumber: String(order.batchNumber),
+            amount,
+            expectedQty: num(balance.qty),
+            expectedAverageCost: oldAverage,
+            newAverageCost: Number(Math.max(0, newAverage).toFixed(4)),
+          });
+          addLine(order.finishedGoodsAccountId, amount,
+            `تسوية بضاعة تامة — ${pool.code} — ${order.orderNumber}`, order);
+        }
+      }
+      if (Math.abs(cogsDelta) >= 0.01) {
+        const saleRows = await tx.select({
+          accountId: salesInvoicesTable.cogsAccountId,
+          quantity: salesLineProductionCostAttributionsTable.quantity,
+        }).from(salesLineProductionCostAttributionsTable)
+          .innerJoin(salesInvoicesTable, and(
+            eq(salesInvoicesTable.id, salesLineProductionCostAttributionsTable.documentId),
+            eq(salesInvoicesTable.companyId, cid),
+            eq(salesInvoicesTable.status, "posted"),
+          )).where(and(
+            eq(salesLineProductionCostAttributionsTable.companyId, cid),
+            eq(salesLineProductionCostAttributionsTable.productionOrderId, Number(order.id)),
+            eq(salesLineProductionCostAttributionsTable.documentType, "sales_invoice"),
+            eq(salesLineProductionCostAttributionsTable.status, "complete"),
+          ));
+        const returnRows = await tx.select({
+          accountId: salesReturnsTable.cogsAccountId,
+          quantity: salesLineProductionCostAttributionsTable.quantity,
+        }).from(salesLineProductionCostAttributionsTable)
+          .innerJoin(salesReturnsTable, and(
+            eq(salesReturnsTable.id, salesLineProductionCostAttributionsTable.documentId),
+            eq(salesReturnsTable.companyId, cid),
+            eq(salesReturnsTable.status, "posted"),
+          )).where(and(
+            eq(salesLineProductionCostAttributionsTable.companyId, cid),
+            eq(salesLineProductionCostAttributionsTable.productionOrderId, Number(order.id)),
+            eq(salesLineProductionCostAttributionsTable.documentType, "sales_return"),
+            eq(salesLineProductionCostAttributionsTable.status, "complete"),
+          ));
+        const netByAccount = new Map<number, number>();
+        for (const row of saleRows as any[]) {
+          const accountId = Number(row.accountId);
+          if (!Number.isInteger(accountId) || accountId <= 0)
+            throw Object.assign(new Error(`فاتورة بيع من تشغيلة ${order.orderNumber} لا تحتوي حساب تكلفة مبيعات`), { status: 409 });
+          netByAccount.set(accountId, (netByAccount.get(accountId) ?? 0) + num(row.quantity));
+        }
+        for (const row of returnRows as any[]) {
+          const accountId = Number(row.accountId);
+          if (!Number.isInteger(accountId) || accountId <= 0)
+            throw Object.assign(new Error(`مرتجع من تشغيلة ${order.orderNumber} لا يحتوي حساب تكلفة مبيعات`), { status: 409 });
+          netByAccount.set(accountId, (netByAccount.get(accountId) ?? 0) - num(row.quantity));
+        }
+        const cogsQuantity = [...netByAccount.values()].reduce((sum, value) => sum + value, 0);
+        if (!(soldQty > 0) || Math.abs(cogsQuantity - soldQty) > 0.01)
+          throw Object.assign(new Error(`لا يمكن مطابقة الكمية المباعة مع إسناد تكلفة المبيعات لتشغيلة ${order.orderNumber}`), { status: 409 });
+        const cogsAccounts = [...netByAccount.entries()].filter(([, quantity]) => quantity > 0);
+        let assigned = 0;
+        for (let accountIndex = 0; accountIndex < cogsAccounts.length; accountIndex++) {
+          const [accountId, quantity] = cogsAccounts[accountIndex];
+          const amount = accountIndex === cogsAccounts.length - 1
+            ? round2(cogsDelta - assigned)
+            : round2(cogsDelta * quantity / cogsQuantity);
+          assigned = round2(assigned + amount);
+          addLine(accountId, amount,
+            `تسوية تكلفة مبيعات — ${pool.code} — ${order.orderNumber}`, order);
+        }
+      }
+    }
+    const variance = round2(actual - activeApplied);
+    poolSummaries.push({
+      poolId: Number(pool.id),
+      code: String(pool.code),
+      actualAmount: actual,
+      appliedAmount: activeApplied,
+      varianceAmount: variance,
+      actualExpenseAccountId: Number(pool.actualExpenseAccountId),
+      absorbedAccountId: Number(pool.absorbedAccountId),
+      varianceAccountId: Number(pool.varianceAccountId),
+    });
+    totalActual = round2(totalActual + actual);
+    totalApplied = round2(totalApplied + activeApplied);
+  }
+
+  const accountTotals = new Map<number, number>();
+  for (const line of accountingLines)
+    accountTotals.set(line.accountId, round2((accountTotals.get(line.accountId) ?? 0) + line.amount));
+  const journalBalance = round2([...accountTotals.values()].reduce((sum, amount) => sum + amount, 0));
+  if (!accountingLines.length || Math.abs(journalBalance) > 0.01)
+    throw Object.assign(new Error(`مسودة إقفال التكلفة التقديرية غير متوازنة (${journalBalance.toFixed(2)})`), { status: 409 });
+
+  return {
+    range,
+    actualAmount: totalActual,
+    appliedAmount: totalApplied,
+    varianceAmount: round2(totalActual - totalApplied),
+    snapshot: { version: 1, pools: poolSummaries, accountingLines, inventoryAdjustments },
+  };
+}
+
+async function maybeCreateEstimatedCostClosureDraft(
+  tx: any,
+  cid: number,
+  period: string,
+  branchId: number | null,
+  userId: number | null,
+): Promise<{ closure: any | null; readiness: string | null }> {
+  const prefix = estimatedClosureSourcePrefix(cid, branchId, period);
+  await tx.execute(sql`select pg_advisory_xact_lock(${cid}, hashtext(${prefix}))`);
+  const existingRows = await tx.select().from(productionEstimatedCostClosuresTable).where(and(
+    eq(productionEstimatedCostClosuresTable.companyId, cid),
+    sql`${productionEstimatedCostClosuresTable.sourceKey} like ${prefix + "%"}`,
+  )).orderBy(desc(productionEstimatedCostClosuresTable.createdAt)).for("update");
+  const current = existingRows.find((row: any) => ["draft", "posted"].includes(String(row.status)));
+  if (current) return { closure: current, readiness: null };
+  try {
+    const built = await buildEstimatedCostClosureSnapshot(tx, cid, period, branchId);
+    const attempt = existingRows.length + 1;
+    const [closure] = await tx.insert(productionEstimatedCostClosuresTable).values({
+      companyId: cid,
+      branchId,
+      periodStart: built.range.start,
+      periodEnd: built.range.end,
+      correctionDate: new Date().toISOString().slice(0, 10),
+      sourceKey: `${prefix}${attempt}`,
+      status: "draft",
+      actualAmount: String(built.actualAmount.toFixed(2)),
+      appliedAmount: String(built.appliedAmount.toFixed(2)),
+      varianceAmount: String(built.varianceAmount.toFixed(2)),
+      sourceSnapshot: [built.snapshot] as any,
+      createdBy: userId,
+      updatedAt: new Date(),
+    }).returning();
+    return { closure, readiness: null };
+  } catch (e: any) {
+    if ([400, 409, 422].includes(Number(e.status)))
+      return { closure: null, readiness: e.message };
+    throw e;
+  }
+}
+
+const ESTIMATED_COST_DRAFT_SWEEP_MS = 15 * 60_000;
+let estimatedCostDraftTimer: NodeJS.Timeout | null = null;
+
+export async function runEstimatedCostDraftSweep(): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  const candidates = await db.select({
+    companyId: productionEstimatedCostPoolsTable.companyId,
+    branchId: productionEstimatedCostPoolsTable.branchId,
+    periodStart: productionEstimatedCostPoolsTable.periodStart,
+  }).from(productionEstimatedCostPoolsTable).where(and(
+    eq(productionEstimatedCostPoolsTable.status, "actual_entered"),
+    sql`${productionEstimatedCostPoolsTable.actualAmount} IS NOT NULL`,
+    eq(productionEstimatedCostPoolsTable.actualPostedConfirmed, true),
+    sql`${productionEstimatedCostPoolsTable.periodEnd} < ${today}`,
+  )).groupBy(
+    productionEstimatedCostPoolsTable.companyId,
+    productionEstimatedCostPoolsTable.branchId,
+    productionEstimatedCostPoolsTable.periodStart,
+  ).orderBy(
+    asc(productionEstimatedCostPoolsTable.companyId),
+    asc(productionEstimatedCostPoolsTable.periodStart),
+  ).limit(500);
+  for (const candidate of candidates) {
+    try {
+      await db.transaction(async (tx) => {
+        await maybeCreateEstimatedCostClosureDraft(
+          tx,
+          candidate.companyId,
+          String(candidate.periodStart).slice(0, 7),
+          candidate.branchId ?? null,
+          null,
+        );
+      });
+    } catch (err) {
+      logger.error({
+        err,
+        companyId: candidate.companyId,
+        periodStart: candidate.periodStart,
+        branchId: candidate.branchId,
+      }, "estimated manufacturing cost draft deferred");
+    }
+  }
+  return candidates.length;
+}
+
+export function startEstimatedCostDraftScheduler(): void {
+  if (estimatedCostDraftTimer) return;
+  void runEstimatedCostDraftSweep().catch((err) =>
+    logger.error({ err }, "estimated manufacturing cost draft sweep failed"),
+  );
+  estimatedCostDraftTimer = setInterval(() => {
+    void runEstimatedCostDraftSweep().catch((err) =>
+      logger.error({ err }, "estimated manufacturing cost draft sweep failed"),
+    );
+  }, ESTIMATED_COST_DRAFT_SWEEP_MS);
+  estimatedCostDraftTimer.unref?.();
+}
+
+productionEstimatedCostingRouter.put("/estimated-costing/pools/:id/actual",
+  requirePermission("simple_manufacturing", "edit"), async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    const parsedParams = RecordEstimatedManufacturingPoolActualParams.safeParse(req.params);
+    const parsedBody = RecordEstimatedManufacturingPoolActualBody.safeParse(req.body);
+    if (!parsedParams.success) return void res.status(400).json({ error: parsedParams.error.message });
+    if (!parsedBody.success) return void res.status(400).json({ error: parsedBody.error.message });
+    const poolId = parsedParams.data.id;
+    const amount = parsedBody.data.actualAmount;
+    const sourceReference = parsedBody.data.sourceReference.trim();
+    try {
+      const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${poolId})`);
+        const [pool] = await tx.select().from(productionEstimatedCostPoolsTable).where(and(
+          eq(productionEstimatedCostPoolsTable.id, poolId),
+          eq(productionEstimatedCostPoolsTable.companyId, cid),
+        )).for("update").limit(1);
+        if (!pool || !rowInScope(req, pool.branchId))
+          throw Object.assign(new Error("مجمع التكلفة غير موجود"), { status: 404 });
+        if (pool.branchId == null && req.authUser?.viewAllBranches !== true)
+          throw Object.assign(new Error("إدخال الفعلي لمجمع الشركة يتطلب صلاحية جميع الفروع"), { status: 403 });
+        const today = new Date().toISOString().slice(0, 10);
+        if (pool.periodEnd >= today)
+          throw Object.assign(new Error("لا يمكن إدخال الفعلي قبل انتهاء الشهر"), { status: 409 });
+        const closures = await tx.select({ id: productionEstimatedCostClosuresTable.id, status: productionEstimatedCostClosuresTable.status })
+          .from(productionEstimatedCostClosuresTable).where(and(
+            eq(productionEstimatedCostClosuresTable.companyId, cid),
+            eq(productionEstimatedCostClosuresTable.periodStart, pool.periodStart),
+            eq(productionEstimatedCostClosuresTable.periodEnd, pool.periodEnd),
+            pool.branchId == null
+              ? isNull(productionEstimatedCostClosuresTable.branchId)
+              : eq(productionEstimatedCostClosuresTable.branchId, pool.branchId),
+          ));
+        if (closures.some((row) => row.status === "posted" || row.status === "draft"))
+          throw Object.assign(new Error("توجد مسودة أو تسوية مرحّلة؛ اعكس المسودة أو القيد قبل تعديل الفعلي"), { status: 409 });
+        const [updated] = await tx.update(productionEstimatedCostPoolsTable).set({
+          actualAmount: String(amount.toFixed(2)),
+          actualSourceReference: sourceReference,
+          actualPostedConfirmed: true,
+          actualEnteredBy: req.authUser?.id ?? null,
+          actualEnteredAt: new Date(),
+          status: "actual_entered",
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionEstimatedCostPoolsTable.id, poolId),
+          eq(productionEstimatedCostPoolsTable.companyId, cid),
+        )).returning();
+        const period = String(pool.periodStart).slice(0, 7);
+        const generated = await maybeCreateEstimatedCostClosureDraft(
+          tx, cid, period, pool.branchId ?? null, req.authUser?.id ?? null,
+        );
+        return { pool: updated, closure: generated.closure, readiness: generated.readiness };
+      });
+      res.json(RecordEstimatedManufacturingPoolActualResponse.parse({
+        ...result,
+        pool: serializeEstimatedCostPool(result.pool),
+        closure: result.closure ? serializeEstimatedCostClosure(result.closure) : null,
+      }));
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  });
+
+productionEstimatedCostingRouter.get("/estimated-costing/closures",
+  requirePermission("simple_manufacturing", "view"), async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    const parsedQuery = ListEstimatedManufacturingCostClosuresQueryParams.safeParse(req.query);
+    if (!parsedQuery.success)
+      return void res.status(400).json({ error: parsedQuery.error.message });
+    const period = parsedQuery.data.period;
+    const range = closurePeriod(period);
+    if (!range) return void res.status(400).json({ error: "الفترة مطلوبة بصيغة YYYY-MM" });
+    const branchResult = effectiveBranchCondition(
+      req, productionEstimatedCostClosuresTable.branchId, parsedQuery.data.branchId,
+    );
+    if ("deny" in branchResult)
+      return void res.status(403).json({ error: "لا يمكنك العمل على هذا الفرع" });
+    try {
+      const closures = await db.select().from(productionEstimatedCostClosuresTable).where(and(
+        eq(productionEstimatedCostClosuresTable.companyId, cid),
+        eq(productionEstimatedCostClosuresTable.periodStart, range.start),
+        eq(productionEstimatedCostClosuresTable.periodEnd, range.end),
+        branchResult.cond,
+      )).orderBy(desc(productionEstimatedCostClosuresTable.createdAt));
+      res.json(ListEstimatedManufacturingCostClosuresResponse.parse({
+        closures: closures.map(serializeEstimatedCostClosure),
+      }));
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  });
+
+productionEstimatedCostingRouter.post("/estimated-costing/closures/:id/post",
+  closureActionPermission("post"), requireCommercialPostRight, async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    const parsedParams = PostEstimatedManufacturingCostClosureParams.safeParse(req.params);
+    if (!parsedParams.success)
+      return void res.status(400).json({ error: parsedParams.error.message });
+    const id = parsedParams.data.id;
+    try {
+      const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${id})`);
+        const [closure] = await tx.select().from(productionEstimatedCostClosuresTable).where(and(
+          eq(productionEstimatedCostClosuresTable.id, id),
+          eq(productionEstimatedCostClosuresTable.companyId, cid),
+        )).for("update").limit(1);
+        if (!closure || !rowInScope(req, closure.branchId))
+          throw Object.assign(new Error("مسودة الإقفال غير موجودة"), { status: 404 });
+        if (closure.branchId == null && req.authUser?.viewAllBranches !== true)
+          throw Object.assign(new Error("ترحيل إقفال الشركة يتطلب صلاحية جميع الفروع"), { status: 403 });
+        if (closure.status === "posted") {
+          const [journal] = await tx.select({
+            status: journalEntriesTable.status,
+            entryType: journalEntriesTable.entryType,
+          }).from(journalEntriesTable).where(and(
+            eq(journalEntriesTable.id, Number(closure.journalEntryId)),
+            eq(journalEntriesTable.companyId, cid),
+          )).limit(1);
+          if (!journal || journal.status !== "posted" || journal.entryType !== "production_estimated_cost_closure")
+            throw Object.assign(new Error("القيد المرتبط بالإقفال غير صالح"), { status: 409 });
+          return { closure, idempotent: true };
+        }
+        if (closure.status !== "draft" || closure.journalEntryId)
+          throw Object.assign(new Error("لا يمكن ترحيل هذه المسودة"), { status: 409 });
+        const period = String(closure.periodStart).slice(0, 7);
+        const built = await buildEstimatedCostClosureSnapshot(tx, cid, period, closure.branchId ?? null);
+        const savedSnapshot = Array.isArray(closure.sourceSnapshot) ? closure.sourceSnapshot[0] : null;
+        if (JSON.stringify(savedSnapshot) !== JSON.stringify(built.snapshot) ||
+            round2(num(closure.actualAmount)) !== built.actualAmount ||
+            round2(num(closure.appliedAmount)) !== built.appliedAmount ||
+            round2(num(closure.varianceAmount)) !== built.varianceAmount) {
+          throw Object.assign(new Error("تغيّرت بيانات المخزون أو التكلفة بعد إنشاء المسودة؛ أعد توليدها"), { status: 409 });
+        }
+        for (const adjustment of built.snapshot.inventoryAdjustments) {
+          await lockStockBalances([{
+            companyId: cid, itemId: adjustment.itemId, warehouseId: adjustment.warehouseId,
+          }], tx);
+          const [balance] = await tx.select().from(stockBalanceTable).where(and(
+            eq(stockBalanceTable.companyId, cid),
+            eq(stockBalanceTable.itemId, adjustment.itemId),
+            eq(stockBalanceTable.warehouseId, adjustment.warehouseId),
+          )).for("update").limit(1);
+          if (!balance || Math.abs(num(balance.qty) - adjustment.expectedQty) > 0.0001 ||
+              Math.abs(num(balance.avgCost) - adjustment.expectedAverageCost) > 0.0001)
+            throw Object.assign(new Error("تغيّر رصيد أو متوسط تكلفة المخزون بعد إنشاء المسودة"), { status: 409 });
+          await tx.update(stockBalanceTable).set({
+            avgCost: adjustment.newAverageCost.toFixed(4),
+            updatedAt: new Date(),
+          }).where(eq(stockBalanceTable.id, balance.id));
+          await refreshItemCost(cid, adjustment.itemId, tx);
+          await addStockLedgerEntry({
+            companyId: cid,
+            itemId: adjustment.itemId,
+            warehouseId: adjustment.warehouseId,
+            txDate: closure.correctionDate,
+            txType: "production_receipt",
+            qty: "0",
+            costPrice: adjustment.newAverageCost.toFixed(4),
+            totalCost: adjustment.amount.toFixed(2),
+            balanceQty: String(balance.qty),
+            refId: closure.id,
+            refType: "production_estimated_cost_closure",
+            batchNumber: adjustment.batchNumber,
+            notes: `تسوية تكلفة تقديرية لإقفال ${period}`,
+          }, tx);
+        }
+        const lines: JLine[] = built.snapshot.accountingLines.map((line) => ({
+          accountId: line.accountId,
+          debit: line.amount > 0 ? line.amount : 0,
+          credit: line.amount < 0 ? Math.abs(line.amount) : 0,
+          description: line.description,
+          costCenter: line.costCenter ?? null,
+        }));
+        const journalId = await createJournalEntry({
+          companyId: cid,
+          branchId: closure.branchId,
+          date: String(closure.correctionDate),
+          description: `إقفال فروق التكلفة التقديرية (${closure.periodStart} — ${closure.periodEnd})`,
+          entryType: "production_estimated_cost_closure",
+          status: "posted",
+          audit: { req },
+          lines,
+          dx: tx,
+        });
+        await tx.update(productionEstimatedCostClosuresTable).set({
+          status: "posted",
+          journalEntryId: journalId,
+          postedBy: req.authUser?.id ?? null,
+          postedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionEstimatedCostClosuresTable.id, id),
+          eq(productionEstimatedCostClosuresTable.companyId, cid),
+        ));
+        await tx.update(productionEstimatedCostPoolsTable).set({
+          status: "closed",
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionEstimatedCostPoolsTable.companyId, cid),
+          eq(productionEstimatedCostPoolsTable.periodStart, closure.periodStart),
+          eq(productionEstimatedCostPoolsTable.periodEnd, closure.periodEnd),
+          closure.branchId == null
+            ? isNull(productionEstimatedCostPoolsTable.branchId)
+            : eq(productionEstimatedCostPoolsTable.branchId, closure.branchId),
+        ));
+        await writeEvent(cid, null, "estimated_cost_closure_posted", {
+          closureId: id,
+          journalEntryId: journalId,
+          actualAmount: built.actualAmount,
+          appliedAmount: built.appliedAmount,
+          varianceAmount: built.varianceAmount,
+        }, req.authUser?.id ?? null, false, tx);
+        return { closure: { ...closure, status: "posted", journalEntryId: journalId }, idempotent: false };
+      });
+      res.json(PostEstimatedManufacturingCostClosureResponse.parse({
+        ...result,
+        closure: serializeEstimatedCostClosure(result.closure),
+      }));
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  });
+
+productionEstimatedCostingRouter.post("/estimated-costing/closures/:id/reverse",
+  requirePermission("simple_manufacturing", "unpost"), requireCommercialUnpostRight, async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    const parsedParams = ReverseEstimatedManufacturingCostClosureParams.safeParse(req.params);
+    const parsedBody = ReverseEstimatedManufacturingCostClosureBody.safeParse(req.body);
+    if (!parsedParams.success) return void res.status(400).json({ error: parsedParams.error.message });
+    if (!parsedBody.success) return void res.status(400).json({ error: parsedBody.error.message });
+    const id = parsedParams.data.id;
+    const reversalDate = String(parsedBody.data.reversalDate ?? new Date().toISOString().slice(0, 10));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(reversalDate))
+      return void res.status(400).json({ error: "تاريخ العكس غير صالح" });
+    try {
+      const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${id})`);
+        const [closure] = await tx.select().from(productionEstimatedCostClosuresTable).where(and(
+          eq(productionEstimatedCostClosuresTable.id, id),
+          eq(productionEstimatedCostClosuresTable.companyId, cid),
+        )).for("update").limit(1);
+        if (!closure || !rowInScope(req, closure.branchId))
+          throw Object.assign(new Error("الإقفال غير موجود"), { status: 404 });
+        if (closure.branchId == null && req.authUser?.viewAllBranches !== true)
+          throw Object.assign(new Error("عكس إقفال الشركة يتطلب صلاحية جميع الفروع"), { status: 403 });
+        if (closure.status === "reversed")
+          return { closure, idempotent: true };
+        if (closure.status === "draft") {
+          await tx.update(productionEstimatedCostClosuresTable).set({
+            status: "reversed",
+            reversedBy: req.authUser?.id ?? null,
+            reversedAt: new Date(),
+            updatedAt: new Date(),
+          }).where(eq(productionEstimatedCostClosuresTable.id, id));
+          await tx.update(productionEstimatedCostPoolsTable).set({
+            status: "open",
+            updatedAt: new Date(),
+          }).where(and(
+            eq(productionEstimatedCostPoolsTable.companyId, cid),
+            eq(productionEstimatedCostPoolsTable.periodStart, closure.periodStart),
+            eq(productionEstimatedCostPoolsTable.periodEnd, closure.periodEnd),
+            closure.branchId == null
+              ? isNull(productionEstimatedCostPoolsTable.branchId)
+              : eq(productionEstimatedCostPoolsTable.branchId, closure.branchId),
+          ));
+          return { closure: { ...closure, status: "reversed" }, idempotent: false };
+        }
+        if (closure.status !== "posted" || !closure.journalEntryId)
+          throw Object.assign(new Error("لا يمكن عكس إقفال غير مرحّل"), { status: 409 });
+        const [original] = await tx.select().from(journalEntriesTable).where(and(
+          eq(journalEntriesTable.id, closure.journalEntryId),
+          eq(journalEntriesTable.companyId, cid),
+          eq(journalEntriesTable.entryType, "production_estimated_cost_closure"),
+        )).for("update").limit(1);
+        if (!original || original.status !== "posted")
+          throw Object.assign(new Error("القيد الأصلي غير مرحّل أو غير صالح"), { status: 409 });
+        const savedSnapshot = Array.isArray(closure.sourceSnapshot) ? closure.sourceSnapshot[0] : null;
+        const inventoryAdjustments = Array.isArray(savedSnapshot?.inventoryAdjustments)
+          ? savedSnapshot.inventoryAdjustments as EstimatedInventoryAdjustment[] : [];
+        for (const adjustment of inventoryAdjustments) {
+          const latest = await tx.select({
+            id: stockLedgerTable.id,
+            refId: stockLedgerTable.refId,
+            refType: stockLedgerTable.refType,
+            qty: stockLedgerTable.qty,
+          }).from(stockLedgerTable).where(and(
+            eq(stockLedgerTable.companyId, cid),
+            eq(stockLedgerTable.itemId, adjustment.itemId),
+            eq(stockLedgerTable.warehouseId, adjustment.warehouseId),
+          )).orderBy(desc(stockLedgerTable.id)).limit(1);
+          if (!latest[0] || Number(latest[0].refId) !== id ||
+              latest[0].refType !== "production_estimated_cost_closure" ||
+              Math.abs(num(latest[0].qty)) > 0.0001)
+            throw Object.assign(new Error("حدثت حركة مخزون بعد الإقفال؛ لا يمكن عكسه بأمان"), { status: 409 });
+          await lockStockBalances([{
+            companyId: cid, itemId: adjustment.itemId, warehouseId: adjustment.warehouseId,
+          }], tx);
+          const [balance] = await tx.select().from(stockBalanceTable).where(and(
+            eq(stockBalanceTable.companyId, cid),
+            eq(stockBalanceTable.itemId, adjustment.itemId),
+            eq(stockBalanceTable.warehouseId, adjustment.warehouseId),
+          )).for("update").limit(1);
+          if (!balance || Math.abs(num(balance.qty) - adjustment.expectedQty) > 0.0001 ||
+              Math.abs(num(balance.avgCost) - adjustment.newAverageCost) > 0.0001)
+            throw Object.assign(new Error("تغيّر رصيد أو متوسط تكلفة المخزون؛ لا يمكن عكس الإقفال بأمان"), { status: 409 });
+          await tx.update(stockBalanceTable).set({
+            avgCost: adjustment.expectedAverageCost.toFixed(4),
+            updatedAt: new Date(),
+          }).where(eq(stockBalanceTable.id, balance.id));
+          await refreshItemCost(cid, adjustment.itemId, tx);
+          await addStockLedgerEntry({
+            companyId: cid,
+            itemId: adjustment.itemId,
+            warehouseId: adjustment.warehouseId,
+            txDate: reversalDate,
+            txType: "production_receipt",
+            qty: "0",
+            costPrice: adjustment.expectedAverageCost.toFixed(4),
+            totalCost: (-adjustment.amount).toFixed(2),
+            balanceQty: String(balance.qty),
+            refId: id,
+            refType: "production_estimated_cost_closure_reversal",
+            batchNumber: adjustment.batchNumber,
+            notes: `عكس تسوية تكلفة تقديرية لإقفال ${String(closure.periodStart).slice(0, 7)}`,
+          }, tx);
+        }
+        const originalLines = await tx.select().from(journalEntryLinesTable)
+          .where(eq(journalEntryLinesTable.entryId, closure.journalEntryId))
+          .orderBy(asc(journalEntryLinesTable.sortOrder));
+        const reversalJournalEntryId = await createJournalEntry({
+          companyId: cid,
+          branchId: closure.branchId,
+          date: reversalDate,
+          description: `عكس إقفال التكلفة التقديرية — ${closure.periodStart}`,
+          entryType: "production_estimated_cost_closure_reversal",
+          status: original.status,
+          audit: { req },
+          lines: originalLines.map((line) => ({
+            accountId: line.accountId,
+            debit: num(line.credit),
+            credit: num(line.debit),
+            description: `عكس إقفال التكلفة التقديرية — ${closure.periodStart}`,
+            costCenter: line.costCenter,
+          })),
+          dx: tx,
+        });
+        await tx.update(productionEstimatedCostClosuresTable).set({
+          status: "reversed",
+          reversalJournalEntryId,
+          reversedBy: req.authUser?.id ?? null,
+          reversedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(productionEstimatedCostClosuresTable.id, id));
+        await tx.update(productionEstimatedCostPoolsTable).set({
+          status: "open",
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionEstimatedCostPoolsTable.companyId, cid),
+          eq(productionEstimatedCostPoolsTable.periodStart, closure.periodStart),
+          eq(productionEstimatedCostPoolsTable.periodEnd, closure.periodEnd),
+          closure.branchId == null
+            ? isNull(productionEstimatedCostPoolsTable.branchId)
+            : eq(productionEstimatedCostPoolsTable.branchId, closure.branchId),
+        ));
+        return {
+          closure: { ...closure, status: "reversed", reversalJournalEntryId },
+          idempotent: false,
+        };
+      });
+      res.json(ReverseEstimatedManufacturingCostClosureResponse.parse({
+        ...result,
+        closure: serializeEstimatedCostClosure(result.closure),
+      }));
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  });
 
 export default router;
