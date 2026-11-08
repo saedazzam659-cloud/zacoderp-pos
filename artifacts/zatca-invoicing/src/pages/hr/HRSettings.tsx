@@ -47,6 +47,7 @@ export default function HRSettings() {
   const pickName = (ar?: string, en?: string) => localizedName(ar, en, isRtl ? "ar" : "en");
 
   const { data, isLoading } = useQuery<any>({ queryKey: ["hr-settings"], queryFn: () => employeesApi.hrSettings() });
+  const provisionSettlementsReady = data?.provisionSettlementsReady === true;
   const [mapping, setMapping] = useState<any>({});
   const [alertThresholds, setAlertThresholds] = useState<any>({});
   const [monthlyProvisionsEnabled, setMonthlyProvisionsEnabled] = useState(false);
@@ -129,10 +130,17 @@ export default function HRSettings() {
         <div>
           <div className="text-sm font-semibold">{tr("monthlyProvisionsTitle")}</div>
           <div className="text-xs text-muted-foreground">{tr("monthlyProvisionsHint")}</div>
+          {!provisionSettlementsReady && !monthlyProvisionsEnabled && (
+            <div id="monthly-provisions-blocked" className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900" role="status">
+              {tr("monthlyProvisionsBlocked")}
+            </div>
+          )}
         </div>
         <Switch
           checked={monthlyProvisionsEnabled}
           onCheckedChange={setMonthlyProvisionsEnabled}
+          disabled={!provisionSettlementsReady && !monthlyProvisionsEnabled}
+          aria-describedby={!provisionSettlementsReady && !monthlyProvisionsEnabled ? "monthly-provisions-blocked" : undefined}
           aria-label={tr("monthlyProvisionsTitle")}
           data-testid="switch-hr-monthly-provisions"
         />

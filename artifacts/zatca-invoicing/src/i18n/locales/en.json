@@ -8842,6 +8842,7 @@
       "fldTravelTicketLiabilityHint": "Accumulated travel ticket liability credit — default 22023",
       "monthlyProvisionsTitle": "Calculate monthly provisions",
       "monthlyProvisionsHint": "When enabled, payroll adds these provisions: end of service uses hire date and basic, housing, and transport pay; leave uses basic pay and annual vacation days in the contract; tickets use the annual entitlement on the employee profile. Review account mappings before enabling.",
+      "monthlyProvisionsBlocked": "New activation is currently blocked by the system, not by employee data or account mappings. The payroll journal, settlement and reversal lifecycle, employee balances, and manufacturing cost allocation must be verified first. The server will reject activation until that verification is approved.",
       "accChooseAccount": "— Select an account —",
       "accSearchPlaceholder": "Search by code or name…",
       "defaultsTitle": "Default disbursement settings (for loans and end-of-service)",
