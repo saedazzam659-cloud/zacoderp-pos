@@ -2748,7 +2748,7 @@ router.put("/items/:id/units/:upId", async (req, res) => {
   const itemId = Number(req.params.id);
   const upId = Number(req.params.upId);
   try {
-    await db.transaction(async (tx) => {
+    const updatedRow = await db.transaction(async (tx) => {
       await lockItemUnitGraph(tx, cid, itemId);
       const item = await getItemForUnitEdit(tx, cid, itemId);
       const [current] = await tx.select().from(itemUnitPricesTable).where(and(
@@ -2847,8 +2847,9 @@ router.put("/items/:id/units/:upId", async (req, res) => {
       }
       await recomputeCachedItemFactors(tx, cid, itemId);
       auditSubEntity(req, "item_unit_prices", upId, "edit", current, row);
-      res.json(row);
+      return row;
     });
+    res.json(updatedRow);
   } catch (error) {
     unitErrorResponse(res, error);
   }
