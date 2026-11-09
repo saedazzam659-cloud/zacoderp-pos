@@ -4,6 +4,7 @@ import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { journalEntriesApi } from "@/lib/journalEntriesApi";
+import { resolveJournalEntryRouteIds } from "@/lib/journalEntryRoute";
 import { contractingOptionsKey, fetchContractingProjectOptions } from "@/lib/contractingProjectOptions";
 import { companyExplicitlyEnablesModule } from "@/lib/companyModuleGate";
 import { JournalRecoverySummary } from "@/components/JournalRecoverySummary";
@@ -174,18 +175,17 @@ export default function JournalEntryForm() {
   const [matchNew] = useRoute("/accounting/journals/new");
   const [matchEdit, params] = useRoute("/accounting/journals/:id");
   const isNew    = !!matchNew;
-  const editId   = matchEdit ? Number((params as any).id) : null;
   // "Duplicate" support: `/new?from=123` loads entry #123 and copies it
   // into a brand-new draft. isNew stays true → save POSTs to create a
   // fresh entry with a freshly-issued doc number.
-  const fromId = (() => {
-    if (!isNew) return null;
-    const q = typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("from")
-      : null;
-    return q && /^\d+$/.test(q) ? Number(q) : null;
-  })();
-  const sourceId = editId ?? fromId;
+  const fromParam = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("from")
+    : null;
+  const { editId, fromId, sourceId } = resolveJournalEntryRouteIds({
+    isNew,
+    routeId: matchEdit ? (params as any)?.id : null,
+    fromParam,
+  });
   const qc       = useQueryClient();
   const { toast } = useToast();
   const { t }     = useTranslation();
@@ -319,7 +319,12 @@ export default function JournalEntryForm() {
     setExchangeRate("1");
   }, [isNew, defaultCurrency?.code]);
 
-  const { data: existing, isLoading: loadingEdit } = useQuery({
+  const {
+    data: existing,
+    isLoading: loadingEdit,
+    isError: sourceLoadFailed,
+    error: sourceLoadError,
+  } = useQuery({
     queryKey: ["journal-entry", sourceId],
     queryFn:  () => journalEntriesApi.get(sourceId!, cid),
     enabled:  !!sourceId,
@@ -1830,8 +1835,43 @@ ${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:
     w.document.open(); w.document.write(html); w.document.close();
   };
 
-  if (!isNew && loadingEdit) {
-    return <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">جارٍ التحميل...</div>;
+  if (sourceId && loadingEdit) {
+    return (
+      <div
+        className="flex items-center justify-center h-64 text-muted-foreground text-sm"
+        data-testid="status-journal-entry-source-loading"
+      >
+        {fromId ? "جارٍ تحميل القيد لنسخه..." : "جارٍ تحميل القيد..."}
+      </div>
+    );
+  }
+  if (sourceId && sourceLoadFailed) {
+    const message = sourceLoadError instanceof Error
+      ? sourceLoadError.message
+      : "تعذر تحميل بيانات القيد من الخادم.";
+    return (
+      <div className="p-6" dir="rtl">
+        <Card>
+          <CardContent className="flex flex-col items-start gap-3 py-6">
+            <div className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <span data-testid="status-journal-entry-source-error">
+                {fromId ? "تعذر تحميل القيد المراد نسخه." : "تعذر تحميل القيد."}
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground">{message}</p>
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="button-back-to-journals"
+              onClick={() => navigate("/accounting/journals")}
+            >
+              العودة إلى القيود
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (
