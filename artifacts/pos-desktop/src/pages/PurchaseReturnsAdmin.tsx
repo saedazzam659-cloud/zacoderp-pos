@@ -23,6 +23,7 @@ import {
   type DiscType, type DiscFields,
 } from "../lib/discount";
 import { takePurchaseReturnPrefill, type PurchaseReturnPrefill } from "../lib/returnPrefill";
+import { localizeStaticUiText, useUiLanguage } from "../lib/appSettings";
 
 type FLine = PurchaseLine & DiscFields;
 
@@ -32,6 +33,7 @@ const RETURN_REASONS = [
 ] as const;
 
 export default function PurchaseReturnsAdmin() {
+  const language = useUiLanguage();
   const [rows, setRows] = useState<PurchaseReturn[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<PurchaseReturn | null>(null);
@@ -135,13 +137,14 @@ export default function PurchaseReturnsAdmin() {
 }
 
 function ReturnDetail({ r }: { r: PurchaseReturn }) {
+  const language = useUiLanguage();
   const disc = getDocDiscount("purchase_return", r.id);
   const discTotal = disc ? (disc.lineDiscountTotal + disc.headerDiscountValue) : 0;
   return (
     <div style={{ padding: 12 }}>
       {(r.reason || r.purchaseId) && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 10, fontSize: 13, color: "#475569" }}>
-          {r.reason && <span>سبب الإرجاع: <b style={{ color: "#0f172a" }}>{r.reason}</b></span>}
+          {r.reason && <span>سبب الإرجاع: <b style={{ color: "#0f172a" }}>{localizeStaticUiText(r.reason, language)}</b></span>}
           {r.purchaseId && <span>فاتورة الشراء المرتبطة: <b style={{ color: "#0f172a" }}>#{r.purchaseId}</b></span>}
         </div>
       )}
@@ -168,6 +171,7 @@ function ReturnDetail({ r }: { r: PurchaseReturn }) {
 }
 
 function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Supplier[]; items: LocalItem[]; warehouses: Warehouse[] }; initial?: PurchaseReturnPrefill | null; onCancel: () => void; onDone: () => void }) {
+  const language = useUiLanguage();
   const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [supplierId, setSupplierId] = useState<number>(initial?.supplierId ?? deps.suppliers[0]?.id ?? 0);
   const [date, setDate] = useState(todayStr());
@@ -396,7 +400,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: { deps: { suppliers: Su
             style={input}
             options={[
               { value: "", label: "— بدون —" },
-              ...RETURN_REASONS.map((rr) => ({ value: rr, label: rr })),
+              ...RETURN_REASONS.map((rr) => ({ value: rr, label: localizeStaticUiText(rr, language) })),
             ]}
           />
         </Field>

@@ -17,6 +17,7 @@ import { useCurrencySymbol, getCountryIso, setCountryIso, countryByIso, ARAB_COU
 import { SearchCombobox } from "./_adminUi";
 import { TAURI_MODE, type CashierContext } from "../lib/tauri-shim";
 import NumberSystemControl from "./NumberSystemControl";
+import LanguageControl from "../components/LanguageControl";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 import PeripheralsSettings from "./PeripheralsSettings";
 import SalesScreen from "./SalesScreen";
@@ -1074,7 +1075,7 @@ export default function PosShell({
   );
 
   return (
-    <div dir={language === "en" ? "ltr" : "rtl"} style={S.shell}>
+    <div data-pos-shell-root dir={language === "en" ? "ltr" : "rtl"} style={S.shell}>
 
       {/* ─── Main column ───────────────────────────────────── */}
       <div style={S.main}>
@@ -1169,9 +1170,18 @@ export default function PosShell({
           {/* Right-side controls (moved here from the old white top bar) */}
           <div style={S.topnavControls}>
             <NumberSystemControl compact />
-            <button onClick={() => setShowPeripherals(true)} style={S.periphBtn} title="الأجهزة الطرفية">🖨️</button>
+            <LanguageControl compact />
+            <button
+              onClick={() => setShowPeripherals(true)}
+              style={S.periphBtn}
+              title={uiText("الأجهزة الطرفية", "Peripherals", language)}
+            >🖨️</button>
             {cashierContext && !standalone && (
-              <div style={S.cashierChip} title={`جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`}>
+              <div style={S.cashierChip} title={uiText(
+                `جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`,
+                `Session #${cashierContext.posSessionId} — open since ${new Date(cashierContext.openedAt).toLocaleString("en-GB")}`,
+                language,
+              )}>
                 <span style={S.cashierIcon}>👤</span>
                 <div style={S.cashierInfo}>
                   <div style={S.cashierName}>{cashierContext.nameAr || cashierContext.username}</div>
@@ -1183,23 +1193,29 @@ export default function PosShell({
               </div>
             )}
             {standalone && standaloneSession && (
-              <div style={S.cashierChip} title={`مستخدم محلي — دخل في ${new Date(standaloneSession.signedInAt).toLocaleString("ar-SA")}`}>
+              <div style={S.cashierChip} title={uiText(
+                `مستخدم محلي — دخل في ${new Date(standaloneSession.signedInAt).toLocaleString("ar-SA")}`,
+                `Local user — signed in at ${new Date(standaloneSession.signedInAt).toLocaleString("en-GB")}`,
+                language,
+              )}>
                 <span style={S.cashierIcon}>👤</span>
                 <div style={S.cashierInfo}>
                   <div style={S.cashierName}>{standaloneSession.displayName || standaloneSession.username}</div>
                   <div style={S.cashierMeta}>
-                    {standaloneSession.role === "admin" ? "مسؤول" : "كاشير"} · مستقل
+                    {uiText(standaloneSession.role === "admin" ? "مسؤول" : "كاشير", standaloneSession.role === "admin" ? "Administrator" : "Cashier", language)} · {uiText("مستقل", "Standalone", language)}
                   </div>
                 </div>
               </div>
             )}
             {!standalone && <SyncIndicator status={status} heartbeatErr={heartbeatErr} />}
-            {!standalone && <div style={S.deviceChip}>جهاز #{deviceId || "—"}</div>}
-            {standalone && <div style={S.deviceChip} title={standaloneLicense?.licenseKey}>🔐 ترخيص مستقل</div>}
+            {!standalone && <div style={S.deviceChip}>{uiText("جهاز", "Device", language)} #{deviceId || "—"}</div>}
+            {standalone && <div style={S.deviceChip} title={standaloneLicense?.licenseKey}>🔐 {uiText("ترخيص مستقل", "Standalone license", language)}</div>}
             {onLogoutCashier && (
               <button onClick={doLogoutCashier} disabled={loggingOut} style={S.logoutBtn}
-                      title={standalone ? "تسجيل خروج المستخدم" : "تسجيل خروج الكاشير وإغلاق الوردية"}>
-                {loggingOut ? "..." : "🚪 خروج"}
+                      title={standalone
+                        ? uiText("تسجيل خروج المستخدم", "Sign out user", language)
+                        : uiText("تسجيل خروج الكاشير وإغلاق الوردية", "Sign out cashier and close shift", language)}>
+                {loggingOut ? "..." : `🚪 ${uiText("خروج", "Sign out", language)}`}
               </button>
             )}
           </div>
@@ -1209,7 +1225,7 @@ export default function PosShell({
         {/* Subscription-expiry warning — its OWN slim full-width row directly
             below the nav so it never squeezes the menu bar (the menus keep
             their order). Message text is SuperAdmin-editable. */}
-        <ExpiryBanner expiresAt={expiresAt ?? null} renewalMessage={renewalMessage} />
+        <ExpiryBanner expiresAt={expiresAt ?? null} renewalMessage={renewalMessage} language={language} />
 
         {/* New-version notification banner (Task #187). Cloud-only. */}
         {!standalone && updateAvailable && latestRelease && !updateDismissed && (
@@ -1224,7 +1240,7 @@ export default function PosShell({
           <div style={S.autoImportBanner}>
             <span style={{ fontSize: 18 }}>📥</span>
             <span style={{ flex: 1 }}>{autoImportToast}</span>
-            <button onClick={() => setAutoImportToast(null)} style={S.autoImportClose}>إغلاق</button>
+            <button onClick={() => setAutoImportToast(null)} style={S.autoImportClose}>{uiText("إغلاق", "Close", language)}</button>
           </div>
         )}
 
@@ -1385,21 +1401,21 @@ function UpdateBanner({
 // menu bar). Shows countdown (color-coded by urgency) + exact date + the
 // SuperAdmin-editable renewal message + WhatsApp/phone shortcuts. Only appears
 // in the last 7 days before expiry.
-function ExpiryBanner({ expiresAt, renewalMessage }: { expiresAt: string | null; renewalMessage?: string }) {
+function ExpiryBanner({ expiresAt, renewalMessage, language }: { expiresAt: string | null; renewalMessage?: string; language: "ar" | "en" }) {
   if (!expiresAt) return null;
   const ms = new Date(expiresAt).getTime() - Date.now();
   if (!Number.isFinite(ms) || ms <= 0) return null;
   const days = Math.ceil(ms / 86_400_000);
   if (days > 7) return null;
-  const dateStr = new Date(expiresAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" });
+  const dateStr = new Date(expiresAt).toLocaleDateString(language === "en" ? "en-GB" : "ar-SA", { year: "numeric", month: "long", day: "numeric" });
   const urgent = days <= 3;
   const renewal = (renewalMessage && renewalMessage.trim()) || "للتجديد تواصل مع م/ كرم عزام";
   return (
     <div style={urgent ? S.expiryRowUrgent : S.expiryRow}>
       <span style={{ fontSize: 15 }}>{urgent ? "🔴" : "⚠️"}</span>
       <span style={S.expiryRowText}>
-        ينتهي اشتراك هذا الجهاز خلال <strong>{days}</strong> {days === 1 ? "يوم" : "أيام"}
-        <span style={S.expiryRowDate}> (بتاريخ {dateStr})</span>
+        {uiText("ينتهي اشتراك هذا الجهاز خلال", "This device subscription expires in", language)} <strong>{days}</strong> {language === "en" ? (days === 1 ? "day" : "days") : (days === 1 ? "يوم" : "أيام")}
+        <span style={S.expiryRowDate}> ({uiText("بتاريخ", "on", language)} {dateStr})</span>
         <span style={S.expiryRowSep}>—</span>
         {renewal}
       </span>
@@ -1408,22 +1424,23 @@ function ExpiryBanner({ expiresAt, renewalMessage }: { expiresAt: string | null;
         target="_blank"
         rel="noreferrer"
         style={S.pillWhatsapp}
-        title="فتح واتساب — 00201000903159"
+        title={uiText("فتح واتساب — 00201000903159", "Open WhatsApp — 00201000903159", language)}
       >
-        💬 واتساب
+        💬 {uiText("واتساب", "WhatsApp", language)}
       </a>
       <a
         href="tel:01000903159"
         style={S.pillPhone}
-        title="01000903159 داخل مصر · 00201000903159 خارج مصر"
+        title={uiText("01000903159 داخل مصر · 00201000903159 خارج مصر", "01000903159 within Egypt · 00201000903159 outside Egypt", language)}
       >
-        📞 اتصال
+        📞 {uiText("اتصال", "Call", language)}
       </a>
     </div>
   );
 }
 
 function SyncIndicator({ status, heartbeatErr }: { status: SyncStatus | null; heartbeatErr: string | null }) {
+  const language = useUiLanguage();
   const ok = !heartbeatErr && status?.status === "active";
   return (
     <div style={ok ? S.syncOk : S.syncDown} title={status?.lastHeartbeatAt ?? "—"}>
@@ -1432,7 +1449,7 @@ function SyncIndicator({ status, heartbeatErr }: { status: SyncStatus | null; he
         background: ok ? "#16a34a" : "#dc2626",
         boxShadow: `0 0 0 3px ${ok ? "rgba(22,163,74,.2)" : "rgba(220,38,38,.2)"}`,
       }} />
-      {ok ? "متصل" : "غير متصل"}
+      {ok ? uiText("متصل", "Connected", language) : uiText("غير متصل", "Offline", language)}
     </div>
   );
 }
@@ -1452,23 +1469,25 @@ type DashboardProps = {
 };
 
 function DashboardView({ deviceId, status, baseUrl, busy, pulled, actionErr, heartbeatErr, onPull, onPush, pushSummary, onDeactivate }: DashboardProps) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   return (
     <div style={{ width: "100%", maxWidth: "none", minWidth: 0 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 16 }}>
-        <Tile icon="🪪" label="معرّف الجهاز" value={String(deviceId || "—")} />
-        <Tile icon="🟢" label="الحالة" value={status?.status ?? "..."} accent={status?.status === "active" ? "#16a34a" : undefined} />
-        <Tile icon="💓" label="آخر نبضة" value={status?.lastHeartbeatAt ? new Date(status.lastHeartbeatAt).toLocaleString("ar-SA") : "—"} small />
-        <Tile icon="🔄" label="آخر مزامنة" value={status?.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString("ar-SA") : "—"} small />
+        <Tile icon="🪪" label={text("معرّف الجهاز", "Device ID")} value={String(deviceId || "—")} />
+        <Tile icon="🟢" label={text("الحالة", "Status")} value={status?.status ?? "..."} accent={status?.status === "active" ? "#16a34a" : undefined} />
+        <Tile icon="💓" label={text("آخر نبضة", "Last heartbeat")} value={status?.lastHeartbeatAt ? new Date(status.lastHeartbeatAt).toLocaleString(language === "en" ? "en-GB" : "ar-SA") : "—"} small />
+        <Tile icon="🔄" label={text("آخر مزامنة", "Last sync")} value={status?.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString(language === "en" ? "en-GB" : "ar-SA") : "—"} small />
       </div>
 
       <section style={S.card}>
-        <h2 style={S.h2}>إجراءات المزامنة</h2>
+        <h2 style={S.h2}>{text("إجراءات المزامنة", "Sync actions")}</h2>
         <div style={S.btnRow}>
           <button onClick={onPull} disabled={busy === "pull"} style={S.btnPrimary}>
-            {busy === "pull" ? "جارٍ السحب..." : "⬇️ سحب البيانات (Pull)"}
+            {busy === "pull" ? text("جارٍ السحب...", "Pulling…") : `⬇️ ${text("سحب البيانات", "Pull data")} (Pull)`}
           </button>
           <button onClick={onPush} disabled={busy === "push"} style={S.btnPrimary}>
-            {busy === "push" ? "جارٍ الرفع..." : "⬆️ رفع الفواتير المعلّقة (Push)"}
+            {busy === "push" ? text("جارٍ الرفع...", "Pushing…") : `⬆️ ${text("رفع الفواتير المعلّقة", "Push pending invoices")} (Push)`}
           </button>
           <button onClick={onDeactivate} disabled={busy === "deactivate"} style={S.btnDanger}>
             {busy === "deactivate" ? "جارٍ الإلغاء..." : "إلغاء تفعيل الجهاز"}

@@ -16,17 +16,20 @@ import {
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { getTaxRate } from "../lib/taxSettings";
 import { getDefaultTax } from "../lib/taxes";
-import { getCompanyProfile, safeLogoSrc, type CompanyProfile } from "../lib/appSettings";
+import {
+  formatUiDate, getCompanyProfile, getUiLanguage, safeLogoSrc, uiText, useUiLanguage,
+  type CompanyProfile,
+} from "../lib/appSettings";
 
-const ENTRY_TYPES: { value: JeEntryType; label: string }[] = [
-  { value: "general", label: "قيد عام" },
-  { value: "opening", label: "قيد افتتاحي" },
-  { value: "closing", label: "قيد إقفال" },
-  { value: "adjustment", label: "قيد تسوية" },
-  { value: "depreciation", label: "قيد إهلاك" },
+const ENTRY_TYPES: { value: JeEntryType; labelAr: string; labelEn: string }[] = [
+  { value: "general", labelAr: "قيد عام", labelEn: "General journal entry" },
+  { value: "opening", labelAr: "قيد افتتاحي", labelEn: "Opening entry" },
+  { value: "closing", labelAr: "قيد إقفال", labelEn: "Closing entry" },
+  { value: "adjustment", labelAr: "قيد تسوية", labelEn: "Adjustment entry" },
+  { value: "depreciation", labelAr: "قيد إهلاك", labelEn: "Depreciation entry" },
 ];
-const ENTRY_TYPE_LABEL: Record<string, string> =
-  Object.fromEntries(ENTRY_TYPES.map((t) => [t.value, t.label]));
+const ENTRY_TYPE_LABEL: Record<string, [string, string]> =
+  Object.fromEntries(ENTRY_TYPES.map((t) => [t.value, [t.labelAr, t.labelEn]]));
 
 const VAT_IN_CODE = "1400";   // ضريبة القيمة المضافة - مدخلات (أصل)
 const VAT_OUT_CODE = "2200";  // ضريبة القيمة المضافة - مخرجات (التزام)
@@ -67,6 +70,7 @@ function isManual(e: { sourceType: string | null }): boolean {
 }
 
 export default function JournalEntries() {
+  const language = useUiLanguage();
   const [rows, setRows] = useState<JournalEntry[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -375,8 +379,10 @@ export default function JournalEntries() {
                           ) : null}
                         </Td>
                         <Td mono style={{ fontWeight: 600 }}>{e.entryNo}</Td>
-                        <Td>{e.entryDate}</Td>
-                        <Td>{ENTRY_TYPE_LABEL[e.entryType] ?? e.entryType}</Td>
+                        <Td>{formatUiDate(e.entryDate, language)}</Td>
+                        <Td>{ENTRY_TYPE_LABEL[e.entryType]
+                          ? uiText(...ENTRY_TYPE_LABEL[e.entryType], language)
+                          : e.entryType}</Td>
                         <Td>{e.description ?? "—"}</Td>
                         <Td><SourceTag source={e.sourceType} /></Td>
                         <Td><StatusTag status={e.status} /></Td>
@@ -456,6 +462,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
   accounts: Account[]; state: FormState; navIds?: number[];
   onNavigate?: (id: number) => void; onCancel: () => void; onDone: () => void;
 }) {
+  const language = useUiLanguage();
   const { branches, costCenters } = useDimensions();
   const init = state.initial;
   const isEdit = state.kind === "edit";
@@ -748,7 +755,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="نوع القيد">
           <select value={entryType} onChange={(e) => setEntryType(e.target.value as JeEntryType)} style={input}>
-            {ENTRY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            {ENTRY_TYPES.map((t) => <option key={t.value} value={t.value}>{uiText(t.labelAr, t.labelEn, language)}</option>)}
           </select>
         </Field>
         <Field label={isEdit ? "رقم القيد" : `رقم القيد (اتركه فارغاً للترقيم التلقائي${suggestedNo ? ` — المقترح: ${suggestedNo}` : ""})`}>
@@ -854,11 +861,15 @@ const jeEscapeHtml = (s: unknown): string =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
 function buildJePrintHtml(data: ManualJeDetail, company: CompanyProfile): string {
-  const statusLabel = data.status === "posted" ? "مرحَّل" : "مسودة";
+  const language = getUiLanguage();
+  const isEnglish = language === "en";
+  const statusLabel = uiText(data.status === "posted" ? "مرحَّل" : "مسودة", data.status === "posted" ? "Posted" : "Draft", language);
   const statusBg = data.status === "posted" ? "#dcfce7" : "#fef9c3";
   const statusColor = data.status === "posted" ? "#166534" : "#854d0e";
-  const printedAt = new Date().toLocaleString("ar-SA");
-  const typeLabel = ENTRY_TYPE_LABEL[data.entryType] ?? data.entryType;
+  const printedAt = new Date().toLocaleString(isEnglish ? "en-GB" : "ar-SA");
+  const typeLabel = ENTRY_TYPE_LABEL[data.entryType]
+    ? uiText(...ENTRY_TYPE_LABEL[data.entryType], language)
+    : data.entryType;
   const logo = safeLogoSrc(company.logo);
   const rows = data.lines.map((l, i) => `
         <tr>
@@ -869,21 +880,21 @@ function buildJePrintHtml(data: ManualJeDetail, company: CompanyProfile): string
           <td class="je-num">${l.credit ? jeEscapeHtml(fmt(l.credit)) : ""}</td>
         </tr>`).join("");
   const metaParts: string[] = [];
-  if (company.cr) metaParts.push(`<span>س.ت: ${jeEscapeHtml(company.cr)}</span>`);
+  if (company.cr) metaParts.push(`<span>${uiText("س.ت:", "CR:", language)} ${jeEscapeHtml(company.cr)}</span>`);
   if (company.cr && company.vat) metaParts.push(`<span> • </span>`);
-  if (company.vat) metaParts.push(`<span>الرقم الضريبي: ${jeEscapeHtml(company.vat)}</span>`);
-  return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
-<title>قيد يومية — ${jeEscapeHtml(data.entryNo)}</title>
+  if (company.vat) metaParts.push(`<span>${uiText("الرقم الضريبي:", "VAT number:", language)} ${jeEscapeHtml(company.vat)}</span>`);
+  return `<!DOCTYPE html><html dir="${isEnglish ? "ltr" : "rtl"}" lang="${language}"><head><meta charset="utf-8">
+<title>${uiText("قيد يومية", "Journal entry", language)} — ${jeEscapeHtml(data.entryNo)}</title>
 <style>
 @page { size: A4; margin: 14mm; }
 * { box-sizing: border-box; }
-body { direction: rtl; font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#0f172a; margin:0; padding:0; }
+body { direction: ${isEnglish ? "ltr" : "rtl"}; font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#0f172a; margin:0; padding:0; }
 .je-head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #1e293b; padding-bottom:12px; }
 .je-head-r { display:flex; gap:14px; align-items:center; }
 .je-logo { max-height:70px; max-width:160px; object-fit:contain; }
 .je-co-name { font-size:20px; font-weight:800; margin:0; }
 .je-co-meta { font-size:12px; color:#475569; margin-top:4px; }
-.je-print-meta { font-size:11px; color:#64748b; text-align:left; }
+.je-print-meta { font-size:11px; color:#64748b; text-align:${isEnglish ? "right" : "left"}; }
 .je-banner { display:flex; justify-content:space-between; align-items:center; background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:10px 14px; margin-top:16px; }
 .je-docno { font-size:16px; }
 .je-docmeta { font-size:12px; color:#475569; margin-top:4px; }
@@ -891,7 +902,7 @@ body { direction: rtl; font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-s
 .je-desc { font-size:13px; margin-top:12px; }
 .je-print-table { width:100%; border-collapse:collapse; margin-top:14px; }
 .je-print-table th, .je-print-table td { border:1px solid #94a3b8; padding:7px 10px; font-size:12.5px; }
-.je-print-table th { background:#f1f5f9; text-align:right; }
+.je-print-table th { background:#f1f5f9; text-align:${isEnglish ? "left" : "right"}; }
 .je-print-table tfoot td { background:#f8fafc; font-weight:800; }
 .je-num { text-align:left; font-variant-numeric:tabular-nums; }
 .je-signs { display:flex; justify-content:space-between; gap:24px; margin-top:56px; }
@@ -903,38 +914,38 @@ body { direction: rtl; font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-s
     <div class="je-head-r">
       ${logo ? `<img class="je-logo" src="${jeEscapeHtml(logo)}" alt="" />` : ""}
       <div>
-        <h1 class="je-co-name">${jeEscapeHtml(company.name || "قيد يومية")}</h1>
+        <h1 class="je-co-name">${jeEscapeHtml(company.name || uiText("قيد يومية", "Journal entry", language))}</h1>
         <div class="je-co-meta">${metaParts.join("")}</div>
       </div>
     </div>
-    <div class="je-print-meta"><div>تاريخ الطباعة</div><div>${jeEscapeHtml(printedAt)}</div></div>
+    <div class="je-print-meta"><div>${uiText("تاريخ الطباعة", "Printed at", language)}</div><div>${jeEscapeHtml(printedAt)}</div></div>
   </div>
 
   <div class="je-banner">
     <div>
-      <div class="je-docno">قيد رقم: <b>${jeEscapeHtml(data.entryNo)}</b></div>
-      <div class="je-docmeta">التاريخ: ${jeEscapeHtml(data.entryDate)} • النوع: ${jeEscapeHtml(typeLabel)}</div>
+      <div class="je-docno">${uiText("قيد رقم:", "Entry no.:", language)} <b>${jeEscapeHtml(data.entryNo)}</b></div>
+      <div class="je-docmeta">${uiText("التاريخ:", "Date:", language)} ${jeEscapeHtml(formatUiDate(data.entryDate, language))} • ${uiText("النوع:", "Type:", language)} ${jeEscapeHtml(typeLabel)}</div>
     </div>
     <div class="je-status">${statusLabel}</div>
   </div>
 
-  ${data.description ? `<div class="je-desc"><b>البيان:</b> ${jeEscapeHtml(data.description)}</div>` : ""}
+  ${data.description ? `<div class="je-desc"><b>${uiText("البيان:", "Description:", language)}</b> ${jeEscapeHtml(data.description)}</div>` : ""}
 
   <table class="je-print-table">
     <thead>
       <tr>
-        <th style="width:38px">م</th>
-        <th>الحساب</th>
-        <th>الوصف</th>
-        <th style="width:110px">مدين</th>
-        <th style="width:110px">دائن</th>
+        <th style="width:38px">${uiText("م", "#", language)}</th>
+        <th>${uiText("الحساب", "Account", language)}</th>
+        <th>${uiText("الوصف", "Description", language)}</th>
+        <th style="width:110px">${uiText("مدين", "Debit", language)}</th>
+        <th style="width:110px">${uiText("دائن", "Credit", language)}</th>
       </tr>
     </thead>
     <tbody>${rows}
     </tbody>
     <tfoot>
       <tr>
-        <td colspan="3">الإجمالي</td>
+        <td colspan="3">${uiText("الإجمالي", "Total", language)}</td>
         <td class="je-num">${jeEscapeHtml(fmt(data.totalDebit))}</td>
         <td class="je-num">${jeEscapeHtml(fmt(data.totalCredit))}</td>
       </tr>
@@ -942,9 +953,9 @@ body { direction: rtl; font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-s
   </table>
 
   <div class="je-signs">
-    <div class="je-sign"><div class="je-sign-line"></div><div class="je-sign-label">المحاسب / المُعدّ</div></div>
-    <div class="je-sign"><div class="je-sign-line"></div><div class="je-sign-label">المراجع</div></div>
-    <div class="je-sign"><div class="je-sign-line"></div><div class="je-sign-label">المدير المالي / الاعتماد</div></div>
+    <div class="je-sign"><div class="je-sign-line"></div><div class="je-sign-label">${uiText("المحاسب / المُعدّ", "Accountant / Prepared by", language)}</div></div>
+    <div class="je-sign"><div class="je-sign-line"></div><div class="je-sign-label">${uiText("المراجع", "Reviewer", language)}</div></div>
+    <div class="je-sign"><div class="je-sign-line"></div><div class="je-sign-label">${uiText("المدير المالي / الاعتماد", "Finance manager / Approval", language)}</div></div>
   </div>
 </body></html>`;
 }

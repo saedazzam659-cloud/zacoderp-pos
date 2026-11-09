@@ -9,8 +9,11 @@
 
 import { useMemo, useState } from "react";
 import { ARAB_COUNTRIES, setCountryIso, type CountryInfo } from "../lib/currency";
+import { uiText, useUiLanguage } from "../lib/appSettings";
 
 export default function CountrySelector({ onChosen }: { onChosen: (iso: string) => void }) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -21,6 +24,7 @@ export default function CountrySelector({ onChosen }: { onChosen: (iso: string) 
     return ARAB_COUNTRIES.filter(
       (c) =>
         c.nameAr.includes(t) ||
+        c.nameEn.toLowerCase().includes(t.toLowerCase()) ||
         c.currencySymbol.includes(t) ||
         c.currencyCode.toLowerCase().includes(t.toLowerCase()) ||
         c.iso.toLowerCase().includes(t.toLowerCase()),
@@ -39,19 +43,21 @@ export default function CountrySelector({ onChosen }: { onChosen: (iso: string) 
   }
 
   return (
-    <div dir="rtl" style={S.wrap}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={S.wrap}>
       <div style={S.card}>
-        <h1 style={S.title}>اختر دولتك</h1>
+        <h1 style={S.title}>{text("اختر دولتك", "Choose your country")}</h1>
         <p style={S.sub}>
-          سيتم ضبط العملة الافتراضية ونسبة الضريبة حسب دولتك — مثال: اختيار مصر
-          يجعل العملة بالجنيه (ج.م) في نقاط البيع. تقدر تغيّرها لاحقًا من الإعدادات.
+          {text(
+            "سيتم ضبط العملة الافتراضية ونسبة الضريبة حسب دولتك — مثال: اختيار مصر يجعل العملة بالجنيه (ج.م) في نقاط البيع. تقدر تغيّرها لاحقًا من الإعدادات.",
+            "The default currency and tax rate will match your country. For example, choosing Egypt sets the POS currency to Egyptian pounds (EGP). You can change this later in Settings.",
+          )}
         </p>
 
         <input
           autoFocus
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="ابحث باسم الدولة أو العملة…"
+          placeholder={text("ابحث باسم الدولة أو العملة…", "Search by country or currency…")}
           style={S.search}
         />
 
@@ -68,16 +74,16 @@ export default function CountrySelector({ onChosen }: { onChosen: (iso: string) 
               }}
             >
               <div style={S.flag}>{c.flag}</div>
-              <div style={S.name}>{c.nameAr}</div>
+              <div style={S.name}>{language === "en" ? c.nameEn : c.nameAr}</div>
               <div style={S.cur}>
                 {c.currencySymbol} <span style={S.curCode}>({c.currencyCode})</span>
               </div>
             </button>
           ))}
-          {filtered.length === 0 && <div style={S.empty}>لا توجد نتائج مطابقة</div>}
+          {filtered.length === 0 && <div style={S.empty}>{text("لا توجد نتائج مطابقة", "No matching results")}</div>}
         </div>
 
-        {saving && <div style={S.savingMsg}>جاري الحفظ...</div>}
+        {saving && <div style={S.savingMsg}>{text("جاري الحفظ...", "Saving…")}</div>}
       </div>
     </div>
   );

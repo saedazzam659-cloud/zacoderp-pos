@@ -28,6 +28,7 @@ const EVT = "pos-desktop-tax-changed";    // shared event — country drives bot
 export type CountryInfo = {
   iso: string;            // ISO-3166-1 alpha-2
   nameAr: string;
+  nameEn: string;
   flag: string;           // emoji
   currencyCode: string;   // ISO-4217
   currencySymbol: string; // Arabic display symbol
@@ -36,28 +37,28 @@ export type CountryInfo = {
 
 // The 22 Arab League states. Symbols use the common Arabic abbreviations.
 export const ARAB_COUNTRIES: CountryInfo[] = [
-  { iso: "SA", nameAr: "السعودية", flag: "🇸🇦", currencyCode: "SAR", currencySymbol: "ر.س", decimals: 2 },
-  { iso: "EG", nameAr: "مصر", flag: "🇪🇬", currencyCode: "EGP", currencySymbol: "ج.م", decimals: 2 },
-  { iso: "AE", nameAr: "الإمارات", flag: "🇦🇪", currencyCode: "AED", currencySymbol: "د.إ", decimals: 2 },
-  { iso: "KW", nameAr: "الكويت", flag: "🇰🇼", currencyCode: "KWD", currencySymbol: "د.ك", decimals: 3 },
-  { iso: "QA", nameAr: "قطر", flag: "🇶🇦", currencyCode: "QAR", currencySymbol: "ر.ق", decimals: 2 },
-  { iso: "BH", nameAr: "البحرين", flag: "🇧🇭", currencyCode: "BHD", currencySymbol: "د.ب", decimals: 3 },
-  { iso: "OM", nameAr: "عُمان", flag: "🇴🇲", currencyCode: "OMR", currencySymbol: "ر.ع", decimals: 3 },
-  { iso: "JO", nameAr: "الأردن", flag: "🇯🇴", currencyCode: "JOD", currencySymbol: "د.أ", decimals: 3 },
-  { iso: "LB", nameAr: "لبنان", flag: "🇱🇧", currencyCode: "LBP", currencySymbol: "ل.ل", decimals: 2 },
-  { iso: "IQ", nameAr: "العراق", flag: "🇮🇶", currencyCode: "IQD", currencySymbol: "د.ع", decimals: 2 },
-  { iso: "YE", nameAr: "اليمن", flag: "🇾🇪", currencyCode: "YER", currencySymbol: "ر.ي", decimals: 2 },
-  { iso: "PS", nameAr: "فلسطين", flag: "🇵🇸", currencyCode: "ILS", currencySymbol: "₪", decimals: 2 },
-  { iso: "SY", nameAr: "سوريا", flag: "🇸🇾", currencyCode: "SYP", currencySymbol: "ل.س", decimals: 2 },
-  { iso: "DZ", nameAr: "الجزائر", flag: "🇩🇿", currencyCode: "DZD", currencySymbol: "د.ج", decimals: 2 },
-  { iso: "TN", nameAr: "تونس", flag: "🇹🇳", currencyCode: "TND", currencySymbol: "د.ت", decimals: 3 },
-  { iso: "MA", nameAr: "المغرب", flag: "🇲🇦", currencyCode: "MAD", currencySymbol: "د.م", decimals: 2 },
-  { iso: "LY", nameAr: "ليبيا", flag: "🇱🇾", currencyCode: "LYD", currencySymbol: "د.ل", decimals: 3 },
-  { iso: "SD", nameAr: "السودان", flag: "🇸🇩", currencyCode: "SDG", currencySymbol: "ج.س", decimals: 2 },
-  { iso: "MR", nameAr: "موريتانيا", flag: "🇲🇷", currencyCode: "MRU", currencySymbol: "أوقية", decimals: 2 },
-  { iso: "SO", nameAr: "الصومال", flag: "🇸🇴", currencyCode: "SOS", currencySymbol: "ش.ص", decimals: 2 },
-  { iso: "DJ", nameAr: "جيبوتي", flag: "🇩🇯", currencyCode: "DJF", currencySymbol: "ف.ج", decimals: 2 },
-  { iso: "KM", nameAr: "جزر القمر", flag: "🇰🇲", currencyCode: "KMF", currencySymbol: "ف.ق", decimals: 2 },
+  { iso: "SA", nameAr: "السعودية", nameEn: "Saudi Arabia", flag: "🇸🇦", currencyCode: "SAR", currencySymbol: "ر.س", decimals: 2 },
+  { iso: "EG", nameAr: "مصر", nameEn: "Egypt", flag: "🇪🇬", currencyCode: "EGP", currencySymbol: "ج.م", decimals: 2 },
+  { iso: "AE", nameAr: "الإمارات", nameEn: "United Arab Emirates", flag: "🇦🇪", currencyCode: "AED", currencySymbol: "د.إ", decimals: 2 },
+  { iso: "KW", nameAr: "الكويت", nameEn: "Kuwait", flag: "🇰🇼", currencyCode: "KWD", currencySymbol: "د.ك", decimals: 3 },
+  { iso: "QA", nameAr: "قطر", nameEn: "Qatar", flag: "🇶🇦", currencyCode: "QAR", currencySymbol: "ر.ق", decimals: 2 },
+  { iso: "BH", nameAr: "البحرين", nameEn: "Bahrain", flag: "🇧🇭", currencyCode: "BHD", currencySymbol: "د.ب", decimals: 3 },
+  { iso: "OM", nameAr: "عُمان", nameEn: "Oman", flag: "🇴🇲", currencyCode: "OMR", currencySymbol: "ر.ع", decimals: 3 },
+  { iso: "JO", nameAr: "الأردن", nameEn: "Jordan", flag: "🇯🇴", currencyCode: "JOD", currencySymbol: "د.أ", decimals: 3 },
+  { iso: "LB", nameAr: "لبنان", nameEn: "Lebanon", flag: "🇱🇧", currencyCode: "LBP", currencySymbol: "ل.ل", decimals: 2 },
+  { iso: "IQ", nameAr: "العراق", nameEn: "Iraq", flag: "🇮🇶", currencyCode: "IQD", currencySymbol: "د.ع", decimals: 2 },
+  { iso: "YE", nameAr: "اليمن", nameEn: "Yemen", flag: "🇾🇪", currencyCode: "YER", currencySymbol: "ر.ي", decimals: 2 },
+  { iso: "PS", nameAr: "فلسطين", nameEn: "Palestine", flag: "🇵🇸", currencyCode: "ILS", currencySymbol: "₪", decimals: 2 },
+  { iso: "SY", nameAr: "سوريا", nameEn: "Syria", flag: "🇸🇾", currencyCode: "SYP", currencySymbol: "ل.س", decimals: 2 },
+  { iso: "DZ", nameAr: "الجزائر", nameEn: "Algeria", flag: "🇩🇿", currencyCode: "DZD", currencySymbol: "د.ج", decimals: 2 },
+  { iso: "TN", nameAr: "تونس", nameEn: "Tunisia", flag: "🇹🇳", currencyCode: "TND", currencySymbol: "د.ت", decimals: 3 },
+  { iso: "MA", nameAr: "المغرب", nameEn: "Morocco", flag: "🇲🇦", currencyCode: "MAD", currencySymbol: "د.م", decimals: 2 },
+  { iso: "LY", nameAr: "ليبيا", nameEn: "Libya", flag: "🇱🇾", currencyCode: "LYD", currencySymbol: "د.ل", decimals: 3 },
+  { iso: "SD", nameAr: "السودان", nameEn: "Sudan", flag: "🇸🇩", currencyCode: "SDG", currencySymbol: "ج.س", decimals: 2 },
+  { iso: "MR", nameAr: "موريتانيا", nameEn: "Mauritania", flag: "🇲🇷", currencyCode: "MRU", currencySymbol: "أوقية", decimals: 2 },
+  { iso: "SO", nameAr: "الصومال", nameEn: "Somalia", flag: "🇸🇴", currencyCode: "SOS", currencySymbol: "ش.ص", decimals: 2 },
+  { iso: "DJ", nameAr: "جيبوتي", nameEn: "Djibouti", flag: "🇩🇯", currencyCode: "DJF", currencySymbol: "ف.ج", decimals: 2 },
+  { iso: "KM", nameAr: "جزر القمر", nameEn: "Comoros", flag: "🇰🇲", currencyCode: "KMF", currencySymbol: "ف.ق", decimals: 2 },
 ];
 
 const BY_ISO: Record<string, CountryInfo> =
