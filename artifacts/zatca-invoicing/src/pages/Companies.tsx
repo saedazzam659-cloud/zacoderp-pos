@@ -128,6 +128,9 @@ export default function Companies() {
   const [replacementJournalNumber, setReplacementJournalNumber] = useState("");
   const [sequenceLoading, setSequenceLoading] = useState(false);
   const [sequenceSaving, setSequenceSaving] = useState(false);
+  const [gapFillNumbers, setGapFillNumbers] = useState("");
+  const [gapFillDate, setGapFillDate] = useState("");
+  const [gapFillSaving, setGapFillSaving] = useState(false);
   const [invoiceRepairTarget, setInvoiceRepairTarget] = useState<{ id: number; name: string; agent?: number } | null>(null);
   const [invoiceRepairScan, setInvoiceRepairScan] = useState<any>(null);
   const [invoiceRepairKind, setInvoiceRepairKind] = useState<"all_documents" | "sales" | "purchase" | "sales_return" | "purchase_return">("all_documents");
@@ -373,6 +376,8 @@ export default function Companies() {
     setSequenceSummary(null);
     setCurrentJournalNumber("");
     setReplacementJournalNumber("");
+    setGapFillNumbers("");
+    setGapFillDate("");
     setSequenceLoading(true);
     try {
       const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -416,6 +421,50 @@ export default function Companies() {
       toast({ title: "لم يتم تعديل التسلسل", description: e?.message ?? "حاول مرة أخرى.", variant: "destructive" });
     } finally {
       setSequenceSaving(false);
+    }
+  };
+
+  const restoreJournalGaps = async () => {
+    if (!sequenceTarget || gapFillSaving) return;
+    const docNumbers = gapFillNumbers
+      .split(/[\n,;]+/)
+      .map((number) => number.trim())
+      .filter(Boolean);
+    if (docNumbers.length === 0 || !gapFillDate) {
+      toast({
+        title: "بيانات الاسترجاع ناقصة",
+        description: "أدخل رقم كل فجوة وتاريخ المسودات الفارغة.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setGapFillSaving(true);
+    try {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const qs = sequenceTarget.agent ? `?agent=${sequenceTarget.agent}` : "";
+      const r = await fetch(
+        `${BASE}/api/admin/companies/${sequenceTarget.id}/journal-sequence-control/gap-fill${qs}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ docNumbers, entryDate: gapFillDate }),
+        },
+      );
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.error || "تعذر استرجاع الأرقام المفقودة");
+      toast({
+        title: "تم استرجاع الأرقام كمسودات فارغة",
+        description: `${body.entries?.map((entry: any) => entry.docNumber).join("، ") || docNumbers.join("، ")} — لم يتغير العداد، وسيظل الرقم العادي التالي بعد أعلى قيد.`,
+      });
+      setGapFillNumbers("");
+    } catch (e: any) {
+      toast({
+        title: "لم يتم استرجاع الأرقام",
+        description: e?.message ?? "حاول مرة أخرى.",
+        variant: "destructive",
+      });
+    } finally {
+      setGapFillSaving(false);
     }
   };
 
@@ -1305,15 +1354,15 @@ export default function Companies() {
       />}
 
       {/* ── Journal sequence repair (SuperAdmin) ── */}
-      <AlertDialog open={!!sequenceTarget} onOpenChange={open => !open && !sequenceSaving && setSequenceTarget(null)}>
+      <AlertDialog open={!!sequenceTarget} onOpenChange={open => !open && !sequenceSaving && !gapFillSaving && setSequenceTarget(null)}>
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <ListOrdered className="h-5 w-5 text-primary" />تصحيح تسلسل القيود
             </AlertDialogTitle>
             <AlertDialogDescription className="text-right">
-              شركة <strong className="text-foreground">"{sequenceTarget?.name}"</strong>. تعدّل هذه الأداة رقم قيد واحد موجود،
-              ثم تجعل كل القيود الجديدة تكمل بعده دون تغيير البادئة أو منطق الشهر.
+              شركة <strong className="text-foreground">"{sequenceTarget?.name}"</strong>. تصحيح الرقم الموجود يظل للقيود الخاطئة فقط.
+              لاستعادة فجوة، أنشئ مسودة فارغة بالرقم المفقود دون تغيير رقم أي قيد قائم.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -1356,14 +1405,57 @@ export default function Companies() {
                   يجب أن ينتهي الرقم باللاحقة التالية مباشرة. لن تتغير أي مبالغ أو حسابات أو حالة ترحيل.
                 </p>
               </div>
+              <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">استرجاع الأرقام المفقودة</h3>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    اكتب كل رقم في سطر أو افصل بينها بفاصلة. تُنشأ مسودات عامة فارغة فقط؛ لا تُرحّل ولا تغيّر القيود الحالية أو العداد.
+                    سيظل رقم القيد العادي التالي بعد أعلى رقم موجود.
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">الأرقام المفقودة</label>
+                  <textarea
+                    value={gapFillNumbers}
+                    onChange={(event) => setGapFillNumbers(event.target.value)}
+                    placeholder={"QYD/10/3178\nQYD/10/3179"}
+                    dir="ltr"
+                    rows={3}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-left font-mono text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    data-testid="input-journal-gap-numbers"
+                  />
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="space-y-1.5">
+                    <label htmlFor="journal-gap-entry-date" className="text-sm font-medium">تاريخ المسودات</label>
+                    <Input
+                      id="journal-gap-entry-date"
+                      type="date"
+                      value={gapFillDate}
+                      onChange={(event) => setGapFillDate(event.target.value)}
+                      className="w-44"
+                      data-testid="input-journal-gap-date"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={restoreJournalGaps}
+                    disabled={sequenceLoading || sequenceSaving || gapFillSaving || !gapFillNumbers.trim() || !gapFillDate}
+                    data-testid="button-restore-journal-gaps"
+                  >
+                    {gapFillSaving ? "جاري الاسترجاع..." : "إنشاء المسودات الفارغة"}
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
 
           <AlertDialogFooter className="flex-row-reverse gap-2">
-            <AlertDialogCancel disabled={sequenceSaving}>إلغاء</AlertDialogCancel>
+            <AlertDialogCancel disabled={sequenceSaving || gapFillSaving}>إلغاء</AlertDialogCancel>
             <AlertDialogAction
               onClick={e => { e.preventDefault(); confirmSequenceRepair(); }}
-              disabled={sequenceLoading || sequenceSaving || !currentJournalNumber.trim() || !replacementJournalNumber.trim()}
+              disabled={sequenceLoading || sequenceSaving || gapFillSaving || !currentJournalNumber.trim() || !replacementJournalNumber.trim()}
               className="gap-2"
               data-testid="button-confirm-journal-sequence"
             >

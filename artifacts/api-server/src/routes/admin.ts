@@ -81,6 +81,7 @@ import {
   ensureJournalNumberClaimsTable, subTypeFor, foreignSubTypeFor,
   resolveSequencePeriodMatch, periodMatchWhereSql, periodMatchRankSql,
 } from "../lib/sequences.js";
+import { assertWritableForDate } from "../lib/periodGuard.js";
 import { setCompanySequenceProtectionEnabled } from "../lib/sequenceProtection.js";
 import { previewCompanyReset, resetCompanyOperationalData } from "../lib/companyReset.js";
 
@@ -3398,6 +3399,145 @@ router.post("/companies/:id/invoice-numbering-repair/batch", requireSuperAdmin, 
       res.status(Number(e?.status) || 500).json({
         error: Number(e?.status) ? String(e.message) : "تعذر إعادة ترتيب المسودات",
         ...(e?.code ? { code: String(e.code) } : {}),
+      });
+    }
+  });
+});
+
+// POST /api/admin/companies/:id/journal-sequence-control/gap-fill
+// Restores missing JE numbers as empty drafts without renumbering existing
+// entries or rewinding/advancing the active sequence counter.
+router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmin, async (req, res) => {
+  const { runWithAgentScope } = await import("../lib/agentScope.js");
+  await runWithAgentScope(req, res, async () => {
+    const companyId = Number(req.params.id);
+    const entryDate = String(req.body?.entryDate ?? "").trim();
+    const rawDocNumbers = req.body?.docNumbers;
+    if (!Number.isInteger(companyId) || companyId <= 0 || !Array.isArray(rawDocNumbers)
+      || rawDocNumbers.length === 0 || rawDocNumbers.length > 50) {
+      res.status(400).json({ error: "أدخل من رقم واحد إلى 50 رقماً مفقوداً" });
+      return;
+    }
+    const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(entryDate) ? new Date(`${entryDate}T00:00:00.000Z`) : null;
+    if (!parsedDate || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== entryDate) {
+      res.status(400).json({ error: "تاريخ القيد غير صحيح" });
+      return;
+    }
+
+    const docNumbers = rawDocNumbers.map((value: unknown) => String(value ?? "").trim());
+    if (docNumbers.some((number: string) => {
+      const match = /^(.+?)(\d+)$/.exec(number);
+      const suffix = match ? Number(match[2]) : NaN;
+      return !match || match[2].length > 8 || !Number.isSafeInteger(suffix) || suffix <= 0;
+    })) {
+      res.status(400).json({ error: "تأكد أن كل رقم ينتهي بتسلسل صحيح لا يتجاوز 8 خانات" });
+      return;
+    }
+    if (new Set(docNumbers).size !== docNumbers.length) {
+      res.status(400).json({ error: "لا تكرر الرقم نفسه في القائمة" });
+      return;
+    }
+
+    try {
+      const createdEntries = await db.transaction(async (tx) => {
+        const companyRows = await tx.select({ id: companiesTable.id })
+          .from(companiesTable)
+          .where(eq(companiesTable.id, companyId))
+          .limit(1);
+        if (!companyRows[0]) {
+          const error: any = new Error("الشركة غير موجودة");
+          error.status = 404;
+          throw error;
+        }
+
+        const writability = await assertWritableForDate(companyId, entryDate, tx);
+        if (!writability.ok) {
+          const error: any = new Error(writability.reason);
+          error.status = 423;
+          throw error;
+        }
+
+        // Match the existing gap-fill lock and number-claim registry so
+        // concurrent restores and normal JE issuance cannot claim a number
+        // twice. All numbers in this request commit or roll back together.
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${companyId}, 1001)`);
+        await ensureJournalNumberClaimsTable(tx);
+        const created: Array<{ id: number; docNumber: string }> = [];
+        for (const docNumber of docNumbers) {
+          const existing = await tx.select({ id: journalEntriesTable.id })
+            .from(journalEntriesTable)
+            .where(and(
+              eq(journalEntriesTable.companyId, companyId),
+              eq(journalEntriesTable.docNumber, docNumber),
+            ))
+            .limit(1);
+          if (existing[0]) {
+            const error: any = new Error(`رقم القيد ${docNumber} مستخدم بالفعل`);
+            error.status = 409;
+            throw error;
+          }
+
+          const claim = await tx.execute<{ doc_number: string }>(sql`
+            INSERT INTO journal_number_claims (company_id, doc_number, ref_table, ref_id)
+            VALUES (${companyId}, ${docNumber}, 'journal_entries', 'gap_fill')
+            ON CONFLICT (company_id, doc_number) DO NOTHING
+            RETURNING doc_number
+          `);
+          if (!claim.rows?.[0]) {
+            const error: any = new Error(`رقم القيد ${docNumber} مستخدم أو محجوز بالفعل`);
+            error.status = 409;
+            throw error;
+          }
+
+          const [entry] = await tx.insert(journalEntriesTable).values({
+            companyId,
+            docNumber,
+            entryDate,
+            currency: "SAR",
+            exchangeRate: "1",
+            description: "مسودة فارغة لاستعادة رقم تسلسلي مفقود",
+            entryType: "general",
+            branchId: null,
+            periodId: writability.period?.id ?? null,
+            status: "draft",
+          }).returning({
+            id: journalEntriesTable.id,
+            docNumber: journalEntriesTable.docNumber,
+          });
+          created.push({ id: Number(entry.id), docNumber: String(entry.docNumber ?? docNumber) });
+        }
+        return created;
+      });
+
+      await writeAudit({
+        userId: req.adminUser?.id ?? null,
+        username: req.adminUser?.username ?? null,
+        role: req.adminUser?.role ?? null,
+        companyId,
+        module: "journal_entries",
+        action: "superadmin_sequence_gap_fill",
+        method: req.method,
+        path: req.originalUrl,
+        entityType: "journal_entry",
+        entityId: createdEntries.map((entry) => String(entry.id)).join(","),
+        statusCode: 201,
+        metadata: {
+          docNumbers: createdEntries.map((entry) => entry.docNumber),
+          entryDate,
+          status: "draft",
+          sequenceCounterChanged: false,
+        },
+      });
+      res.status(201).json({
+        ok: true,
+        entries: createdEntries,
+        entryDate,
+        sequenceCounterChanged: false,
+      });
+    } catch (error: any) {
+      const status = Number(error?.status);
+      res.status(status || 500).json({
+        error: status ? String(error.message) : "تعذر استرجاع الأرقام المفقودة",
       });
     }
   });
