@@ -71,6 +71,9 @@ import type {
   EstimatedManufacturingCostClosureReverseInput,
   EstimatedManufacturingCostPoolInput,
   EstimatedManufacturingCostPoolList,
+  EstimatedManufacturingCostPoolTemplateInput,
+  EstimatedManufacturingCostPoolTemplateList,
+  EstimatedManufacturingCostPoolTemplateResult,
   EstimatedManufacturingOrderAllocationsInput,
   EstimatedManufacturingOrderAllocationsResult,
   EstimatedManufacturingPoolActualInput,
@@ -4578,6 +4581,297 @@ export function useListManufacturingPendingSourceSettlements<TData = Awaited<Ret
 
 
 
+
+export const getListEstimatedManufacturingCostPoolTemplatesUrl = () => {
+
+
+
+
+  return `/api/simple-manufacturing/estimated-costing/pool-templates`
+}
+
+/**
+ * @summary List company-owned estimated manufacturing cost pool templates
+ */
+export const listEstimatedManufacturingCostPoolTemplates = async ( options?: RequestInit): Promise<EstimatedManufacturingCostPoolTemplateList> => {
+
+  return customFetch<EstimatedManufacturingCostPoolTemplateList>(getListEstimatedManufacturingCostPoolTemplatesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListEstimatedManufacturingCostPoolTemplatesQueryKey = () => {
+    return [
+    `/api/simple-manufacturing/estimated-costing/pool-templates`
+    ] as const;
+    }
+
+
+export const getListEstimatedManufacturingCostPoolTemplatesQueryOptions = <TData = Awaited<ReturnType<typeof listEstimatedManufacturingCostPoolTemplates>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEstimatedManufacturingCostPoolTemplates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListEstimatedManufacturingCostPoolTemplatesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEstimatedManufacturingCostPoolTemplates>>> = ({ signal }) => listEstimatedManufacturingCostPoolTemplates({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEstimatedManufacturingCostPoolTemplates>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListEstimatedManufacturingCostPoolTemplatesQueryResult = NonNullable<Awaited<ReturnType<typeof listEstimatedManufacturingCostPoolTemplates>>>
+export type ListEstimatedManufacturingCostPoolTemplatesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List company-owned estimated manufacturing cost pool templates
+ */
+
+export function useListEstimatedManufacturingCostPoolTemplates<TData = Awaited<ReturnType<typeof listEstimatedManufacturingCostPoolTemplates>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEstimatedManufacturingCostPoolTemplates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListEstimatedManufacturingCostPoolTemplatesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateEstimatedManufacturingCostPoolTemplateUrl = () => {
+
+
+
+
+  return `/api/simple-manufacturing/estimated-costing/pool-templates`
+}
+
+/**
+ * @summary Create a company-owned estimated manufacturing cost pool template
+ */
+export const createEstimatedManufacturingCostPoolTemplate = async (estimatedManufacturingCostPoolTemplateInput: EstimatedManufacturingCostPoolTemplateInput, options?: RequestInit): Promise<EstimatedManufacturingCostPoolTemplateResult> => {
+
+  return customFetch<EstimatedManufacturingCostPoolTemplateResult>(getCreateEstimatedManufacturingCostPoolTemplateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(estimatedManufacturingCostPoolTemplateInput)
+  }
+);}
+
+
+
+
+
+export const getCreateEstimatedManufacturingCostPoolTemplateMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEstimatedManufacturingCostPoolTemplate>>, TError,{data: BodyType<EstimatedManufacturingCostPoolTemplateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createEstimatedManufacturingCostPoolTemplate>>, TError,{data: BodyType<EstimatedManufacturingCostPoolTemplateInput>}, TContext> => {
+
+const mutationKey = ['createEstimatedManufacturingCostPoolTemplate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createEstimatedManufacturingCostPoolTemplate>>, {data: BodyType<EstimatedManufacturingCostPoolTemplateInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createEstimatedManufacturingCostPoolTemplate(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateEstimatedManufacturingCostPoolTemplateMutationResult = NonNullable<Awaited<ReturnType<typeof createEstimatedManufacturingCostPoolTemplate>>>
+    export type CreateEstimatedManufacturingCostPoolTemplateMutationBody = BodyType<EstimatedManufacturingCostPoolTemplateInput>
+    export type CreateEstimatedManufacturingCostPoolTemplateMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a company-owned estimated manufacturing cost pool template
+ */
+export const useCreateEstimatedManufacturingCostPoolTemplate = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEstimatedManufacturingCostPoolTemplate>>, TError,{data: BodyType<EstimatedManufacturingCostPoolTemplateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createEstimatedManufacturingCostPoolTemplate>>,
+        TError,
+        {data: BodyType<EstimatedManufacturingCostPoolTemplateInput>},
+        TContext
+      > => {
+      return useMutation(getCreateEstimatedManufacturingCostPoolTemplateMutationOptions(options));
+    }
+
+export const getUpdateEstimatedManufacturingCostPoolTemplateUrl = (id: number,) => {
+
+
+
+
+  return `/api/simple-manufacturing/estimated-costing/pool-templates/${id}`
+}
+
+/**
+ * @summary Update a company-owned estimated manufacturing cost pool template
+ */
+export const updateEstimatedManufacturingCostPoolTemplate = async (id: number,
+    estimatedManufacturingCostPoolTemplateInput: EstimatedManufacturingCostPoolTemplateInput, options?: RequestInit): Promise<EstimatedManufacturingCostPoolTemplateResult> => {
+
+  return customFetch<EstimatedManufacturingCostPoolTemplateResult>(getUpdateEstimatedManufacturingCostPoolTemplateUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(estimatedManufacturingCostPoolTemplateInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateEstimatedManufacturingCostPoolTemplateMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateEstimatedManufacturingCostPoolTemplate>>, TError,{id: number;data: BodyType<EstimatedManufacturingCostPoolTemplateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateEstimatedManufacturingCostPoolTemplate>>, TError,{id: number;data: BodyType<EstimatedManufacturingCostPoolTemplateInput>}, TContext> => {
+
+const mutationKey = ['updateEstimatedManufacturingCostPoolTemplate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateEstimatedManufacturingCostPoolTemplate>>, {id: number;data: BodyType<EstimatedManufacturingCostPoolTemplateInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateEstimatedManufacturingCostPoolTemplate(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateEstimatedManufacturingCostPoolTemplateMutationResult = NonNullable<Awaited<ReturnType<typeof updateEstimatedManufacturingCostPoolTemplate>>>
+    export type UpdateEstimatedManufacturingCostPoolTemplateMutationBody = BodyType<EstimatedManufacturingCostPoolTemplateInput>
+    export type UpdateEstimatedManufacturingCostPoolTemplateMutationError = ErrorType<void>
+
+    /**
+ * @summary Update a company-owned estimated manufacturing cost pool template
+ */
+export const useUpdateEstimatedManufacturingCostPoolTemplate = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateEstimatedManufacturingCostPoolTemplate>>, TError,{id: number;data: BodyType<EstimatedManufacturingCostPoolTemplateInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateEstimatedManufacturingCostPoolTemplate>>,
+        TError,
+        {id: number;data: BodyType<EstimatedManufacturingCostPoolTemplateInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateEstimatedManufacturingCostPoolTemplateMutationOptions(options));
+    }
+
+export const getDeleteEstimatedManufacturingCostPoolTemplateUrl = (id: number,) => {
+
+
+
+
+  return `/api/simple-manufacturing/estimated-costing/pool-templates/${id}`
+}
+
+/**
+ * @summary Delete a company-owned estimated manufacturing cost pool template
+ */
+export const deleteEstimatedManufacturingCostPoolTemplate = async (id: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getDeleteEstimatedManufacturingCostPoolTemplateUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteEstimatedManufacturingCostPoolTemplateMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEstimatedManufacturingCostPoolTemplate>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteEstimatedManufacturingCostPoolTemplate>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['deleteEstimatedManufacturingCostPoolTemplate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteEstimatedManufacturingCostPoolTemplate>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteEstimatedManufacturingCostPoolTemplate(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteEstimatedManufacturingCostPoolTemplateMutationResult = NonNullable<Awaited<ReturnType<typeof deleteEstimatedManufacturingCostPoolTemplate>>>
+
+    export type DeleteEstimatedManufacturingCostPoolTemplateMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete a company-owned estimated manufacturing cost pool template
+ */
+export const useDeleteEstimatedManufacturingCostPoolTemplate = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEstimatedManufacturingCostPoolTemplate>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteEstimatedManufacturingCostPoolTemplate>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getDeleteEstimatedManufacturingCostPoolTemplateMutationOptions(options));
+    }
 
 export const getListEstimatedManufacturingCostPoolsUrl = (params: ListEstimatedManufacturingCostPoolsParams,) => {
   const normalizedParams = new URLSearchParams();

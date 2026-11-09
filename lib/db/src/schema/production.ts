@@ -779,6 +779,39 @@ export const productionEstimatedCostPoolsTable = pgTable(
 export type ProductionEstimatedCostPool =
   typeof productionEstimatedCostPoolsTable.$inferSelect;
 
+// Company-owned reusable settings for new monthly cost pools. Creating or
+// changing a template never mutates an already-created monthly pool.
+export const productionEstimatedCostPoolTemplatesTable = pgTable(
+  "production_estimated_cost_pool_templates",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    code: text("code").notNull(),
+    nameAr: text("name_ar").notNull(),
+    description: text("description").notNull().default(""),
+    allocationBasis: text("allocation_basis").notNull(),
+    actualExpenseAccountId: integer("actual_expense_account_id")
+      .notNull().references(() => accountsTable.id, { onDelete: "restrict" }),
+    absorbedAccountId: integer("absorbed_account_id")
+      .notNull().references(() => accountsTable.id, { onDelete: "restrict" }),
+    varianceAccountId: integer("variance_account_id")
+      .notNull().references(() => accountsTable.id, { onDelete: "restrict" }),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    companyCodeUnique: uniqueIndex("prod_est_cost_pool_template_company_code_uniq")
+      .on(t.companyId, t.code),
+    byCompanyName: index("prod_est_cost_pool_template_company_name_idx")
+      .on(t.companyId, t.nameAr),
+  }),
+);
+
+export type ProductionEstimatedCostPoolTemplate =
+  typeof productionEstimatedCostPoolTemplatesTable.$inferSelect;
+
 // The first issue of an Estimated order creates a frozen allocation. Only the
 // reversal columns are mutable; the pool amount, driver, denominator, share,
 // and allocated amount remain a permanent cost snapshot.

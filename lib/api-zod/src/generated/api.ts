@@ -2032,6 +2032,132 @@ export const ListManufacturingPendingSourceSettlementsResponse = zod.array(ListM
 
 
 /**
+ * @summary List company-owned estimated manufacturing cost pool templates
+ */
+export const ListEstimatedManufacturingCostPoolTemplatesResponse = zod.object({
+  "templates": zod.array(zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "code": zod.string(),
+  "nameAr": zod.string(),
+  "description": zod.string(),
+  "allocationBasis": zod.enum(['machine_hours', 'labor_hours', 'production_quantity', 'area', 'percentage', 'equal', 'manual']),
+  "actualExpenseAccountId": zod.number(),
+  "absorbedAccountId": zod.number(),
+  "varianceAccountId": zod.number(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Create a company-owned estimated manufacturing cost pool template
+ */
+export const createEstimatedManufacturingCostPoolTemplateBodyCodeMax = 64;
+
+
+export const createEstimatedManufacturingCostPoolTemplateBodyCodeRegExp = new RegExp('^[A-Z][A-Z0-9_-]*$');
+export const createEstimatedManufacturingCostPoolTemplateBodyNameArMax = 160;
+
+export const createEstimatedManufacturingCostPoolTemplateBodyDescriptionMax = 500;
+
+
+
+
+
+
+export const CreateEstimatedManufacturingCostPoolTemplateBody = zod.object({
+  "code": zod.string().min(1).max(createEstimatedManufacturingCostPoolTemplateBodyCodeMax).regex(createEstimatedManufacturingCostPoolTemplateBodyCodeRegExp),
+  "nameAr": zod.string().min(1).max(createEstimatedManufacturingCostPoolTemplateBodyNameArMax),
+  "description": zod.string().max(createEstimatedManufacturingCostPoolTemplateBodyDescriptionMax).optional(),
+  "allocationBasis": zod.enum(['machine_hours', 'labor_hours', 'production_quantity', 'area', 'percentage', 'equal', 'manual']),
+  "actualExpenseAccountId": zod.number().min(1),
+  "absorbedAccountId": zod.number().min(1),
+  "varianceAccountId": zod.number().min(1)
+})
+
+export const CreateEstimatedManufacturingCostPoolTemplateResponse = zod.object({
+  "template": zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "code": zod.string(),
+  "nameAr": zod.string(),
+  "description": zod.string(),
+  "allocationBasis": zod.enum(['machine_hours', 'labor_hours', 'production_quantity', 'area', 'percentage', 'equal', 'manual']),
+  "actualExpenseAccountId": zod.number(),
+  "absorbedAccountId": zod.number(),
+  "varianceAccountId": zod.number(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+})
+
+
+/**
+ * @summary Update a company-owned estimated manufacturing cost pool template
+ */
+
+
+
+export const UpdateEstimatedManufacturingCostPoolTemplateParams = zod.object({
+  "id": zod.coerce.number().min(1)
+})
+
+export const updateEstimatedManufacturingCostPoolTemplateBodyCodeMax = 64;
+
+
+export const updateEstimatedManufacturingCostPoolTemplateBodyCodeRegExp = new RegExp('^[A-Z][A-Z0-9_-]*$');
+export const updateEstimatedManufacturingCostPoolTemplateBodyNameArMax = 160;
+
+export const updateEstimatedManufacturingCostPoolTemplateBodyDescriptionMax = 500;
+
+
+
+
+
+
+export const UpdateEstimatedManufacturingCostPoolTemplateBody = zod.object({
+  "code": zod.string().min(1).max(updateEstimatedManufacturingCostPoolTemplateBodyCodeMax).regex(updateEstimatedManufacturingCostPoolTemplateBodyCodeRegExp),
+  "nameAr": zod.string().min(1).max(updateEstimatedManufacturingCostPoolTemplateBodyNameArMax),
+  "description": zod.string().max(updateEstimatedManufacturingCostPoolTemplateBodyDescriptionMax).optional(),
+  "allocationBasis": zod.enum(['machine_hours', 'labor_hours', 'production_quantity', 'area', 'percentage', 'equal', 'manual']),
+  "actualExpenseAccountId": zod.number().min(1),
+  "absorbedAccountId": zod.number().min(1),
+  "varianceAccountId": zod.number().min(1)
+})
+
+export const UpdateEstimatedManufacturingCostPoolTemplateResponse = zod.object({
+  "template": zod.object({
+  "id": zod.number(),
+  "companyId": zod.number(),
+  "code": zod.string(),
+  "nameAr": zod.string(),
+  "description": zod.string(),
+  "allocationBasis": zod.enum(['machine_hours', 'labor_hours', 'production_quantity', 'area', 'percentage', 'equal', 'manual']),
+  "actualExpenseAccountId": zod.number(),
+  "absorbedAccountId": zod.number(),
+  "varianceAccountId": zod.number(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+})
+
+
+/**
+ * @summary Delete a company-owned estimated manufacturing cost pool template
+ */
+
+
+
+export const DeleteEstimatedManufacturingCostPoolTemplateParams = zod.object({
+  "id": zod.coerce.number().min(1)
+})
+
+export const DeleteEstimatedManufacturingCostPoolTemplateResponse = zod.void()
+
+
+/**
  * @summary List monthly estimated manufacturing cost pools
  */
 export const listEstimatedManufacturingCostPoolsQueryPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');

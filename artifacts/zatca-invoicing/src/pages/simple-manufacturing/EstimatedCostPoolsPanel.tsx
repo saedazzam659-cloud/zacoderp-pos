@@ -3,6 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 
 type Account = {
@@ -71,6 +79,39 @@ type PoolPreset = {
   nameAr: string;
   allocationBasis: (typeof BASIS_OPTIONS)[number]["value"];
   description: string;
+};
+
+type PoolTemplate = {
+  id: number;
+  code: string;
+  nameAr: string;
+  description: string;
+  allocationBasis: PoolPreset["allocationBasis"];
+  actualExpenseAccountId: number;
+  absorbedAccountId: number;
+  varianceAccountId: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type PoolTemplateForm = {
+  code: string;
+  nameAr: string;
+  description: string;
+  allocationBasis: PoolPreset["allocationBasis"];
+  actualExpenseAccountId: string;
+  absorbedAccountId: string;
+  varianceAccountId: string;
+};
+
+const EMPTY_TEMPLATE_FORM: PoolTemplateForm = {
+  code: "",
+  nameAr: "",
+  description: "",
+  allocationBasis: "machine_hours",
+  actualExpenseAccountId: "",
+  absorbedAccountId: "",
+  varianceAccountId: "",
 };
 
 const COMMON_POOL_PRESETS: PoolPreset[] = [
@@ -155,6 +196,13 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
   const [saving, setSaving] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [previousPools, setPreviousPools] = useState<any[]>([]);
+  const [poolTemplates, setPoolTemplates] = useState<PoolTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<number | null>(null);
+  const [templateForm, setTemplateForm] = useState<PoolTemplateForm>(EMPTY_TEMPLATE_FORM);
+  const [deleteTemplateTarget, setDeleteTemplateTarget] = useState<PoolTemplate | null>(null);
   const [templateValue, setTemplateValue] = useState("");
   const [poolInputs, setPoolInputs] = useState<Record<number, {
     actualAmount: string;
@@ -198,6 +246,15 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
     disabled: String(account.id) === excludedId,
     disabledReason: String(account.id) === excludedId ? "اختر حساباً مختلفاً لهذا الدور" : undefined,
   }));
+  const templateAccountsReady = new Set([
+    templateForm.actualExpenseAccountId,
+    templateForm.absorbedAccountId,
+    templateForm.varianceAccountId,
+  ]).size === 3 &&
+    expenseAccounts.some((account) => String(account.id) === templateForm.actualExpenseAccountId) &&
+    liabilityAccounts.some((account) => String(account.id) === templateForm.absorbedAccountId) &&
+    expenseAccounts.some((account) => String(account.id) === templateForm.varianceAccountId);
+  const templateCodeValid = /^[A-Z][A-Z0-9_-]*$/.test(templateForm.code.trim().toUpperCase());
   const templateItems = useMemo(() => [
     ...COMMON_POOL_PRESETS.map((preset) => ({
       value: `preset:${preset.id}`,
@@ -206,6 +263,13 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
       description: preset.description,
       group: "بنود جاهزة",
     })),
+    ...poolTemplates.map((template) => ({
+      value: `custom:${template.id}`,
+      code: template.code,
+      label: template.nameAr,
+      description: template.description || "قالب مخصص لهذه الشركة",
+      group: "قوالب الشركة",
+    })),
     ...previousPools.map((pool) => ({
       value: `previous:${pool.id}`,
       code: String(pool.code ?? ""),
@@ -213,7 +277,31 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
       description: `نسخ أساس التوزيع والمقام والحسابات من ${previousMonth(period) ?? "الشهر السابق"}.`,
       group: "إعدادات الشهر السابق",
     })),
-  ], [period, previousPools]);
+  ], [period, poolTemplates, previousPools]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setTemplatesLoading(true);
+    void request("/api/simple-manufacturing/estimated-costing/pool-templates", {
+      signal: controller.signal,
+    }).then((result) => {
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(result?.templates))
+        throw new Error("استجابة قوالب مجمعات التكلفة غير صالحة");
+      setPoolTemplates(result.templates);
+    }).catch((error: any) => {
+      if (error?.name !== "AbortError" && !controller.signal.aborted) {
+        toast({
+          title: "تعذر تحميل قوالب المجمع",
+          description: error?.message || "حدث خطأ أثناء قراءة قوالب الشركة.",
+          variant: "destructive",
+        });
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setTemplatesLoading(false);
+    });
+    return () => controller.abort();
+  }, [request, toast]);
 
   useEffect(() => {
     const sourcePeriod = previousMonth(period);
@@ -358,6 +446,38 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
       return;
     }
 
+    if (value.startsWith("custom:")) {
+      const templateId = Number(value.slice("custom:".length));
+      const template = poolTemplates.find((row) => Number(row.id) === templateId);
+      if (!template) return;
+      const activeExpenseIds = new Set(expenseAccounts.map((account) => String(account.id)));
+      const activeLiabilityIds = new Set(liabilityAccounts.map((account) => String(account.id)));
+      const actualExpenseAccountId = String(template.actualExpenseAccountId);
+      const absorbedAccountId = String(template.absorbedAccountId);
+      const varianceAccountId = String(template.varianceAccountId);
+      const accountsReady = activeExpenseIds.has(actualExpenseAccountId) &&
+        activeLiabilityIds.has(absorbedAccountId) &&
+        activeExpenseIds.has(varianceAccountId);
+      setForm((current) => ({
+        ...current,
+        code: template.code,
+        nameAr: template.nameAr,
+        allocationBasis: template.allocationBasis,
+        monthlyDenominator: "",
+        actualExpenseAccountId: activeExpenseIds.has(actualExpenseAccountId) ? actualExpenseAccountId : "",
+        absorbedAccountId: activeLiabilityIds.has(absorbedAccountId) ? absorbedAccountId : "",
+        varianceAccountId: activeExpenseIds.has(varianceAccountId) ? varianceAccountId : "",
+      }));
+      if (!accountsReady) {
+        toast({
+          title: "حساب في القالب لم يعد صالحاً",
+          description: "تم تطبيق بيانات القالب؛ راجع الحسابات واختر حسابات نشطة قبل إنشاء المجمع.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
+
     const poolId = Number(value.slice("previous:".length));
     const pool = previousPools.find((row) => Number(row.id) === poolId);
     if (!pool) return;
@@ -383,6 +503,126 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
       title: "تم نسخ إعداد الشهر السابق",
       description: "راجع المقام والحسابات، ثم أدخل المبلغ التقديري الجديد.",
     });
+  };
+
+  const openTemplateManager = () => {
+    setEditingTemplateId(null);
+    setTemplateForm(EMPTY_TEMPLATE_FORM);
+    setTemplateManagerOpen(true);
+  };
+
+  const startNewTemplate = () => {
+    setEditingTemplateId(null);
+    setTemplateForm({
+      code: form.code.trim().toUpperCase(),
+      nameAr: form.nameAr.trim(),
+      description: "",
+      allocationBasis: form.allocationBasis as PoolPreset["allocationBasis"],
+      actualExpenseAccountId: form.actualExpenseAccountId,
+      absorbedAccountId: form.absorbedAccountId,
+      varianceAccountId: form.varianceAccountId,
+    });
+  };
+
+  const startEditingTemplate = (template: PoolTemplate) => {
+    setEditingTemplateId(template.id);
+    setTemplateForm({
+      code: template.code,
+      nameAr: template.nameAr,
+      description: template.description ?? "",
+      allocationBasis: template.allocationBasis,
+      actualExpenseAccountId: String(template.actualExpenseAccountId),
+      absorbedAccountId: String(template.absorbedAccountId),
+      varianceAccountId: String(template.varianceAccountId),
+    });
+  };
+
+  const saveTemplate = async (event: FormEvent) => {
+    event.preventDefault();
+    const code = templateForm.code.trim().toUpperCase();
+    const nameAr = templateForm.nameAr.trim();
+    const accountIds = [
+      templateForm.actualExpenseAccountId,
+      templateForm.absorbedAccountId,
+      templateForm.varianceAccountId,
+    ];
+    if (!code || !nameAr || !templateCodeValid) {
+      toast({
+        title: "بيانات القالب ناقصة",
+        description: "أدخل اسماً، واجعل رمز القالب يبدأ بحرف إنجليزي ويحتوي على حروف أو أرقام أو شرطة.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (accountIds.some((id) => !id) || new Set(accountIds).size !== 3 || !templateAccountsReady) {
+      toast({
+        title: "حسابات القالب غير مكتملة",
+        description: "اختر حسابات نشطة من الشركة: المصروف والفروق مصروفان، والامتصاص التزام، وكلها مختلفة.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setTemplateSaving(true);
+    try {
+      const isEditing = editingTemplateId != null;
+      const result = await request(
+        isEditing
+          ? `/api/simple-manufacturing/estimated-costing/pool-templates/${editingTemplateId}`
+          : "/api/simple-manufacturing/estimated-costing/pool-templates",
+        {
+          method: isEditing ? "PUT" : "POST",
+          body: JSON.stringify({
+            code,
+            nameAr,
+            description: templateForm.description.trim(),
+            allocationBasis: templateForm.allocationBasis,
+            actualExpenseAccountId: Number(templateForm.actualExpenseAccountId),
+            absorbedAccountId: Number(templateForm.absorbedAccountId),
+            varianceAccountId: Number(templateForm.varianceAccountId),
+          }),
+        },
+      );
+      const savedTemplate = result?.template as PoolTemplate | undefined;
+      if (!savedTemplate) throw new Error("لم تُرجع الخدمة القالب المحفوظ");
+      setPoolTemplates((current) => {
+        const next = isEditing
+          ? current.map((template) => template.id === savedTemplate.id ? savedTemplate : template)
+          : [...current, savedTemplate];
+        return next.sort((a, b) => a.nameAr.localeCompare(b.nameAr, "ar"));
+      });
+      setTemplateValue(`custom:${savedTemplate.id}`);
+      setEditingTemplateId(null);
+      setTemplateForm(EMPTY_TEMPLATE_FORM);
+      toast({ title: isEditing ? "تم تعديل القالب" : "تم إنشاء القالب" });
+    } catch (error: any) {
+      toast({ title: error?.message || "تعذر حفظ القالب", variant: "destructive" });
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
+  const deleteTemplate = async () => {
+    if (!deleteTemplateTarget) return;
+    const template = deleteTemplateTarget;
+    setTemplateSaving(true);
+    try {
+      await request(
+        `/api/simple-manufacturing/estimated-costing/pool-templates/${template.id}`,
+        { method: "DELETE" },
+      );
+      setPoolTemplates((current) => current.filter((row) => row.id !== template.id));
+      if (templateValue === `custom:${template.id}`) setTemplateValue("");
+      if (editingTemplateId === template.id) {
+        setEditingTemplateId(null);
+        setTemplateForm(EMPTY_TEMPLATE_FORM);
+      }
+      setDeleteTemplateTarget(null);
+      toast({ title: "تم حذف القالب", description: "المجمعات الشهرية المنشأة سابقاً لم تتغير." });
+    } catch (error: any) {
+      toast({ title: error?.message || "تعذر حذف القالب", variant: "destructive" });
+    } finally {
+      setTemplateSaving(false);
+    }
   };
 
   const saveActual = async (pool: any) => {
@@ -512,13 +752,20 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
       <form onSubmit={savePool}>
        <fieldset disabled={!canManageCompanyPools || saving} className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-2 xl:grid-cols-4">
          <div className="space-y-1 xl:col-span-4">
-           <Label>قالب إعداد المجمع</Label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label>قالب إعداد المجمع</Label>
+              {canManageCompanyPools && (
+                <Button type="button" size="sm" variant="outline" onClick={openTemplateManager}>
+                  إدارة القوالب
+                </Button>
+              )}
+            </div>
            <SearchCombobox
              value={templateValue}
              onValueChange={applyTemplate}
              items={templateItems}
              grouped
-             placeholder="اختر بنداً جاهزاً أو انسخ إعداد الشهر السابق"
+              placeholder="اختر قالباً جاهزاً أو مخصصاً أو إعداد الشهر السابق"
              searchPlaceholder="ابحث باسم البند أو رمزه..."
              emptyText="لا توجد قوالب مطابقة"
              className="h-10 bg-white"
@@ -526,7 +773,7 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
              testId="estimated-pool-template"
            />
            <p className="text-[11px] leading-4 text-slate-500">
-             القالب يملأ بيانات البداية فقط ولا ينشئ المجمع. اختر حسابات شركتك عند أول استخدام؛ نسخ الشهر السابق ينقل الحسابات المتاحة وأساس التوزيع والمقام.
+              القالب يملأ بيانات البداية ولا ينشئ المجمع. المبلغ والمقام خاصان بالشهر؛ والقوالب المخصصة تحفظ حسابات الشركة المختارة.
            </p>
          </div>
         <div className="space-y-1">
@@ -790,6 +1037,234 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
           </article>
         ))}
       </div>
+
+      <Dialog
+        open={templateManagerOpen}
+        onOpenChange={(open) => {
+          setTemplateManagerOpen(open);
+          if (!open) {
+            setEditingTemplateId(null);
+            setTemplateForm(EMPTY_TEMPLATE_FORM);
+          }
+        }}
+      >
+        <DialogContent dir="rtl" className="max-h-[90vh] max-w-5xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>إدارة قوالب مجمعات التكلفة</DialogTitle>
+            <DialogDescription>
+              أنشئ قوالب خاصة بالشركة وعدّلها أو احذفها. القوالب الجاهزة ثابتة، والتغييرات لا تعدّل المجمعات الشهرية المنشأة سابقاً.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-semibold">قوالب الشركة</h3>
+                <Button type="button" size="sm" variant="outline" onClick={startNewTemplate} disabled={templateSaving}>
+                  قالب جديد
+                </Button>
+              </div>
+              {templatesLoading && <p className="text-sm text-slate-500">جاري تحميل القوالب...</p>}
+              {!templatesLoading && poolTemplates.length === 0 && (
+                <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+                  لا توجد قوالب مخصصة بعد. ابدأ بإنشاء قالب جديد.
+                </p>
+              )}
+              <div className="max-h-[420px] space-y-2 overflow-y-auto">
+                {poolTemplates.map((template) => (
+                  <article key={template.id} className="rounded-lg border border-slate-200 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900">{template.nameAr}</p>
+                        <p className="mt-1 font-mono text-xs text-slate-500">{template.code}</p>
+                        <p className="mt-1 text-xs text-slate-600">
+                          {BASIS_OPTIONS.find((basis) => basis.value === template.allocationBasis)?.label ?? template.allocationBasis}
+                        </p>
+                        {template.description && (
+                          <p className="mt-1 text-xs leading-5 text-slate-500">{template.description}</p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={templateSaving}
+                          onClick={() => startEditingTemplate(template)}
+                        >
+                          تعديل
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          disabled={templateSaving}
+                          onClick={() => setDeleteTemplateTarget(template)}
+                        >
+                          حذف
+                        </Button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <form onSubmit={saveTemplate} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div>
+                <h3 className="font-semibold">
+                  {editingTemplateId == null ? "إنشاء قالب" : "تعديل القالب"}
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  يحفظ القالب الرمز والاسم وطريقة التوزيع وحسابات الشركة. أدخل المبلغ والمقام لكل شهر عند إنشاء المجمع.
+                </p>
+              </div>
+              <fieldset disabled={templateSaving} className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>رمز القالب</Label>
+                  <Input
+                    value={templateForm.code}
+                    onChange={(event) => setTemplateForm((current) => ({
+                      ...current,
+                      code: event.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ""),
+                    }))}
+                    maxLength={64}
+                    placeholder="مثال: FACTORY_RENT"
+                    required
+                  />
+                  <p className="text-[11px] leading-4 text-slate-500">يبدأ الرمز بحرف إنجليزي، ثم حروف أو أرقام أو شرطة.</p>
+                </div>
+                <div className="space-y-1">
+                  <Label>اسم بند التكلفة</Label>
+                  <Input
+                    value={templateForm.nameAr}
+                    onChange={(event) => setTemplateForm((current) => ({ ...current, nameAr: event.target.value }))}
+                    maxLength={160}
+                    required
+                  />
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label>وصف أو ملاحظة</Label>
+                  <Textarea
+                    value={templateForm.description}
+                    onChange={(event) => setTemplateForm((current) => ({ ...current, description: event.target.value }))}
+                    maxLength={500}
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label>أساس التوزيع</Label>
+                  <SearchCombobox
+                    value={templateForm.allocationBasis}
+                    onValueChange={(value) => setTemplateForm((current) => ({
+                      ...current,
+                      allocationBasis: value as PoolPreset["allocationBasis"],
+                    }))}
+                    items={basisItems}
+                    placeholder="اختر أساس التوزيع"
+                    searchPlaceholder="ابحث عن طريقة التوزيع..."
+                    emptyText="لا توجد طريقة مطابقة"
+                    className="h-10 bg-white"
+                    openOnFocus={false}
+                  />
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label>حساب المصروف الفعلي</Label>
+                  <SearchCombobox
+                    value={templateForm.actualExpenseAccountId}
+                    onValueChange={(value) => setTemplateForm((current) => ({ ...current, actualExpenseAccountId: value }))}
+                    items={accountItems(expenseAccounts, templateForm.varianceAccountId)}
+                    placeholder="اختر حساب المصروف المرحّل"
+                    searchPlaceholder="ابحث بالكود أو اسم الحساب..."
+                    emptyText="لا توجد حسابات مصروف مطابقة"
+                    className="h-10 bg-white"
+                    openOnFocus={false}
+                  />
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label>حساب امتصاص التكلفة</Label>
+                  <SearchCombobox
+                    value={templateForm.absorbedAccountId}
+                    onValueChange={(value) => setTemplateForm((current) => ({ ...current, absorbedAccountId: value }))}
+                    items={accountItems(liabilityAccounts)}
+                    placeholder="اختر حساب التزام"
+                    searchPlaceholder="ابحث بالكود أو اسم الحساب..."
+                    emptyText="لا توجد حسابات التزام مطابقة"
+                    className="h-10 bg-white"
+                    openOnFocus={false}
+                  />
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label>حساب فروق التصنيع</Label>
+                  <SearchCombobox
+                    value={templateForm.varianceAccountId}
+                    onValueChange={(value) => setTemplateForm((current) => ({ ...current, varianceAccountId: value }))}
+                    items={accountItems(expenseAccounts, templateForm.actualExpenseAccountId)}
+                    placeholder="اختر حساب فروق مستقل"
+                    searchPlaceholder="ابحث بالكود أو اسم الحساب..."
+                    emptyText="لا توجد حسابات مصروف مطابقة"
+                    className="h-10 bg-white"
+                    openOnFocus={false}
+                  />
+                </div>
+                {!templateAccountsReady && (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-900 sm:col-span-2">
+                    اختر حسابات نشطة وقابلة للترحيل من الشركة، وبالأنواع الصحيحة، قبل حفظ القالب.
+                  </p>
+                )}
+              </fieldset>
+              <DialogFooter className="gap-2 sm:justify-start">
+                {editingTemplateId != null && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={templateSaving}
+                    onClick={() => {
+                      setEditingTemplateId(null);
+                      setTemplateForm(EMPTY_TEMPLATE_FORM);
+                    }}
+                  >
+                    إلغاء التعديل
+                  </Button>
+                )}
+                <Button
+                  type="submit"
+                  disabled={templateSaving || !canManageCompanyPools ||
+                    !templateCodeValid || !templateForm.nameAr.trim() || !templateAccountsReady}
+                >
+                  {templateSaving ? "جاري الحفظ..." : editingTemplateId == null ? "حفظ القالب" : "حفظ التعديلات"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={!!deleteTemplateTarget}
+        onOpenChange={(open) => !open && setDeleteTemplateTarget(null)}
+      >
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>حذف قالب التكلفة؟</AlertDialogTitle>
+            <AlertDialogDescription>
+              سيُحذف قالب «{deleteTemplateTarget?.nameAr}» من قوالب الشركة فقط. المجمعات الشهرية المنشأة سابقاً ستبقى كما هي.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={templateSaving}>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={templateSaving}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void deleteTemplate();
+              }}
+            >
+              حذف القالب
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

@@ -1225,6 +1225,69 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ManufacturingPendingSourceSettlement"
+  /simple-manufacturing/estimated-costing/pool-templates:
+    get:
+      operationId: listEstimatedManufacturingCostPoolTemplates
+      tags: [simple-manufacturing]
+      summary: List company-owned estimated manufacturing cost pool templates
+      responses:
+        "200":
+          description: Reusable company templates for future monthly pools
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EstimatedManufacturingCostPoolTemplateList"
+    post:
+      operationId: createEstimatedManufacturingCostPoolTemplate
+      tags: [simple-manufacturing]
+      summary: Create a company-owned estimated manufacturing cost pool template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EstimatedManufacturingCostPoolTemplateInput"
+      responses:
+        "201":
+          description: Reusable template created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EstimatedManufacturingCostPoolTemplateResult"
+        "400": { description: Invalid template or account mapping }
+        "409": { description: Template code already exists }
+  /simple-manufacturing/estimated-costing/pool-templates/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    put:
+      operationId: updateEstimatedManufacturingCostPoolTemplate
+      tags: [simple-manufacturing]
+      summary: Update a company-owned estimated manufacturing cost pool template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EstimatedManufacturingCostPoolTemplateInput"
+      responses:
+        "200":
+          description: Template updated for future pools only
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EstimatedManufacturingCostPoolTemplateResult"
+        "404": { description: Template not found }
+        "409": { description: Template code already exists }
+    delete:
+      operationId: deleteEstimatedManufacturingCostPoolTemplate
+      tags: [simple-manufacturing]
+      summary: Delete a company-owned estimated manufacturing cost pool template
+      responses:
+        "204": { description: Template deleted; existing monthly pools are unchanged }
+        "404": { description: Template not found }
   /simple-manufacturing/estimated-costing/pools:
     get:
       operationId: listEstimatedManufacturingCostPools
@@ -5388,6 +5451,48 @@ components:
         actualExpenseAccountId: { type: integer, minimum: 1 }
         absorbedAccountId: { type: integer, minimum: 1 }
         varianceAccountId: { type: integer, minimum: 1 }
+    EstimatedManufacturingCostPoolTemplateInput:
+      type: object
+      required: [code, nameAr, allocationBasis, actualExpenseAccountId, absorbedAccountId, varianceAccountId]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Z][A-Z0-9_-]*$' }
+        nameAr: { type: string, minLength: 1, maxLength: 160 }
+        description: { type: string, maxLength: 500 }
+        allocationBasis:
+          type: string
+          enum: [machine_hours, labor_hours, production_quantity, area, percentage, equal, manual]
+        actualExpenseAccountId: { type: integer, minimum: 1 }
+        absorbedAccountId: { type: integer, minimum: 1 }
+        varianceAccountId: { type: integer, minimum: 1 }
+    EstimatedManufacturingCostPoolTemplate:
+      type: object
+      required: [id, companyId, code, nameAr, description, allocationBasis, actualExpenseAccountId, absorbedAccountId, varianceAccountId, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        companyId: { type: integer }
+        code: { type: string }
+        nameAr: { type: string }
+        description: { type: string }
+        allocationBasis: { type: string, enum: [machine_hours, labor_hours, production_quantity, area, percentage, equal, manual] }
+        actualExpenseAccountId: { type: integer }
+        absorbedAccountId: { type: integer }
+        varianceAccountId: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    EstimatedManufacturingCostPoolTemplateList:
+      type: object
+      required: [templates]
+      properties:
+        templates:
+          type: array
+          items:
+            $ref: "#/components/schemas/EstimatedManufacturingCostPoolTemplate"
+    EstimatedManufacturingCostPoolTemplateResult:
+      type: object
+      required: [template]
+      properties:
+        template:
+          $ref: "#/components/schemas/EstimatedManufacturingCostPoolTemplate"
     EstimatedManufacturingCostPool:
       type: object
       required: [id, companyId, periodStart, periodEnd, code, nameAr, estimatedAmount, allocationBasis, status]

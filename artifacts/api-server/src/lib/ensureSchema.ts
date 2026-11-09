@@ -1715,6 +1715,23 @@ const PAYROLL_ALLOCATION_SCHEMA_STMTS: { label: string; sql: string }[] = [
     );
     CREATE INDEX IF NOT EXISTS prod_est_cost_pool_period_idx
       ON production_estimated_cost_pools(company_id, period_start, period_end, status);
+    CREATE TABLE IF NOT EXISTS production_estimated_cost_pool_templates (
+      id SERIAL PRIMARY KEY,
+      company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      code TEXT NOT NULL,
+      name_ar TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      allocation_basis TEXT NOT NULL,
+      actual_expense_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      absorbed_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      variance_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT prod_est_cost_pool_template_company_code_uniq UNIQUE(company_id, code)
+    );
+    CREATE INDEX IF NOT EXISTS prod_est_cost_pool_template_company_name_idx
+      ON production_estimated_cost_pool_templates(company_id, name_ar);
     ALTER TABLE production_estimated_cost_pools
       ADD COLUMN IF NOT EXISTS actual_source_reference TEXT;
     ALTER TABLE production_estimated_cost_pools

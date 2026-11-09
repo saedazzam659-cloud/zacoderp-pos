@@ -1770,6 +1770,77 @@ export interface EstimatedManufacturingCostPoolInput {
   varianceAccountId: number;
 }
 
+export type EstimatedManufacturingCostPoolTemplateInputAllocationBasis = typeof EstimatedManufacturingCostPoolTemplateInputAllocationBasis[keyof typeof EstimatedManufacturingCostPoolTemplateInputAllocationBasis];
+
+
+export const EstimatedManufacturingCostPoolTemplateInputAllocationBasis = {
+  machine_hours: 'machine_hours',
+  labor_hours: 'labor_hours',
+  production_quantity: 'production_quantity',
+  area: 'area',
+  percentage: 'percentage',
+  equal: 'equal',
+  manual: 'manual',
+} as const;
+
+export interface EstimatedManufacturingCostPoolTemplateInput {
+  /**
+     * @minLength 1
+     * @maxLength 64
+     * @pattern ^[A-Z][A-Z0-9_-]*$
+     */
+  code: string;
+  /**
+     * @minLength 1
+     * @maxLength 160
+     */
+  nameAr: string;
+  /** @maxLength 500 */
+  description?: string;
+  allocationBasis: EstimatedManufacturingCostPoolTemplateInputAllocationBasis;
+  /** @minimum 1 */
+  actualExpenseAccountId: number;
+  /** @minimum 1 */
+  absorbedAccountId: number;
+  /** @minimum 1 */
+  varianceAccountId: number;
+}
+
+export type EstimatedManufacturingCostPoolTemplateAllocationBasis = typeof EstimatedManufacturingCostPoolTemplateAllocationBasis[keyof typeof EstimatedManufacturingCostPoolTemplateAllocationBasis];
+
+
+export const EstimatedManufacturingCostPoolTemplateAllocationBasis = {
+  machine_hours: 'machine_hours',
+  labor_hours: 'labor_hours',
+  production_quantity: 'production_quantity',
+  area: 'area',
+  percentage: 'percentage',
+  equal: 'equal',
+  manual: 'manual',
+} as const;
+
+export interface EstimatedManufacturingCostPoolTemplate {
+  id: number;
+  companyId: number;
+  code: string;
+  nameAr: string;
+  description: string;
+  allocationBasis: EstimatedManufacturingCostPoolTemplateAllocationBasis;
+  actualExpenseAccountId: number;
+  absorbedAccountId: number;
+  varianceAccountId: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EstimatedManufacturingCostPoolTemplateList {
+  templates: EstimatedManufacturingCostPoolTemplate[];
+}
+
+export interface EstimatedManufacturingCostPoolTemplateResult {
+  template: EstimatedManufacturingCostPoolTemplate;
+}
+
 export type EstimatedManufacturingCostPoolStatus = typeof EstimatedManufacturingCostPoolStatus[keyof typeof EstimatedManufacturingCostPoolStatus];
 
 

@@ -9,6 +9,13 @@ import { db } from "@workspace/db";
 import {
   CreateEstimatedManufacturingCostPoolBody,
   CreateEstimatedManufacturingCostPoolResponse,
+  ListEstimatedManufacturingCostPoolTemplatesResponse,
+  CreateEstimatedManufacturingCostPoolTemplateBody,
+  CreateEstimatedManufacturingCostPoolTemplateResponse,
+  UpdateEstimatedManufacturingCostPoolTemplateParams,
+  UpdateEstimatedManufacturingCostPoolTemplateBody,
+  UpdateEstimatedManufacturingCostPoolTemplateResponse,
+  DeleteEstimatedManufacturingCostPoolTemplateParams,
   ListEstimatedManufacturingCostPoolsQueryParams,
   ListEstimatedManufacturingCostPoolsResponse,
   SaveEstimatedManufacturingOrderAllocationsBody,
@@ -49,6 +56,7 @@ import {
   productionDriverReconciliationsTable,
   productionOverheadClosuresTable,
   productionEstimatedCostPoolsTable,
+  productionEstimatedCostPoolTemplatesTable,
   productionEstimatedCostAllocationsTable,
   productionEstimatedCostClosuresTable,
   productionCommercialAccrualsTable,
@@ -17778,6 +17786,62 @@ function serializeEstimatedCostPool(pool: any): any {
   };
 }
 
+function serializeEstimatedCostPoolTemplate(template: any): any {
+  return {
+    ...template,
+    createdAt: estimatedTimestamp(template.createdAt),
+    updatedAt: estimatedTimestamp(template.updatedAt),
+  };
+}
+
+async function validateEstimatedCostPoolTemplateAccounts(
+  tx: any,
+  companyId: number,
+  input: {
+    actualExpenseAccountId: number;
+    absorbedAccountId: number;
+    varianceAccountId: number;
+  },
+): Promise<[number, number, number]> {
+  const accountIds = [
+    Number(input.actualExpenseAccountId),
+    Number(input.absorbedAccountId),
+    Number(input.varianceAccountId),
+  ] as [number, number, number];
+  if (accountIds.some((id) => !Number.isInteger(id) || id <= 0) ||
+      new Set(accountIds).size !== 3) {
+    throw Object.assign(new Error("يجب اختيار ثلاثة حسابات مختلفة وصالحة"), { status: 400 });
+  }
+  const rows = await tx.select({
+    id: accountsTable.id,
+    accountType: accountsTable.accountType,
+    isActive: accountsTable.isActive,
+    isPosting: accountsTable.isPosting,
+  }).from(accountsTable).where(and(
+    eq(accountsTable.companyId, companyId),
+    inArray(accountsTable.id, accountIds),
+  ));
+  const byId = new Map<number, {
+    id: number;
+    accountType: string;
+    isActive: boolean;
+    isPosting: boolean;
+  }>(rows.map((account: any) => [Number(account.id), account]));
+  const actualExpense = byId.get(accountIds[0]);
+  const absorbed = byId.get(accountIds[1]);
+  const variance = byId.get(accountIds[2]);
+  if (rows.length !== 3 ||
+      rows.some((account: any) => !account.isActive || !account.isPosting) ||
+      actualExpense?.accountType !== "expense" ||
+      absorbed?.accountType !== "liability" ||
+      variance?.accountType !== "expense") {
+    throw Object.assign(new Error(
+      "الحسابات يجب أن تكون من الشركة نفسها ونشطة وقابلة للترحيل: المصروف والفروق مصروفان والامتصاص التزام",
+    ), { status: 400 });
+  }
+  return accountIds;
+}
+
 function serializeEstimatedCostClosure(closure: any): any {
   return {
     ...closure,
@@ -17849,6 +17913,136 @@ productionEstimatedCostingRouter.get("/estimated-costing/pools",
         }),
       };
       res.json(ListEstimatedManufacturingCostPoolsResponse.parse(response));
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  });
+
+productionEstimatedCostingRouter.get("/estimated-costing/pool-templates",
+  requirePermission("simple_manufacturing", "view"), async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    try {
+      const templates = await db.select().from(productionEstimatedCostPoolTemplatesTable)
+        .where(eq(productionEstimatedCostPoolTemplatesTable.companyId, cid))
+        .orderBy(asc(productionEstimatedCostPoolTemplatesTable.nameAr),
+          asc(productionEstimatedCostPoolTemplatesTable.code));
+      res.json(ListEstimatedManufacturingCostPoolTemplatesResponse.parse({
+        templates: templates.map(serializeEstimatedCostPoolTemplate),
+      }));
+    } catch (e: any) {
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  });
+
+productionEstimatedCostingRouter.post("/estimated-costing/pool-templates",
+  requirePermission("simple_manufacturing", "edit"), async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    if (req.authUser?.viewAllBranches !== true)
+      return void res.status(403).json({ error: "إدارة قوالب مجمعات الشركة تتطلب صلاحية جميع الفروع" });
+    const parsedBody = CreateEstimatedManufacturingCostPoolTemplateBody.safeParse(req.body);
+    if (!parsedBody.success)
+      return void res.status(400).json({ error: parsedBody.error.message });
+    const body = parsedBody.data;
+    const code = body.code.trim();
+    const nameAr = body.nameAr.trim();
+    if (!code || !nameAr)
+      return void res.status(400).json({ error: "رمز القالب واسم بند التكلفة مطلوبان" });
+    try {
+      const [template] = await db.transaction(async (tx) => {
+        const accountIds = await validateEstimatedCostPoolTemplateAccounts(tx, cid, body);
+        return tx.insert(productionEstimatedCostPoolTemplatesTable).values({
+          companyId: cid,
+          code,
+          nameAr,
+          description: String(body.description ?? "").trim(),
+          allocationBasis: body.allocationBasis,
+          actualExpenseAccountId: accountIds[0],
+          absorbedAccountId: accountIds[1],
+          varianceAccountId: accountIds[2],
+          createdBy: req.authUser?.id ?? null,
+          updatedAt: new Date(),
+        }).returning();
+      });
+      res.status(201).json(CreateEstimatedManufacturingCostPoolTemplateResponse.parse({
+        template: serializeEstimatedCostPoolTemplate(template),
+      }));
+    } catch (e: any) {
+      const message = String(e.message ?? "");
+      const conflict = message.includes("prod_est_cost_pool_template_company_code_uniq");
+      res.status(e.status ?? (conflict ? 409 : 500)).json({
+        error: conflict ? "يوجد قالب آخر بالرمز نفسه" : message,
+      });
+    }
+  });
+
+productionEstimatedCostingRouter.put("/estimated-costing/pool-templates/:id",
+  requirePermission("simple_manufacturing", "edit"), async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    if (req.authUser?.viewAllBranches !== true)
+      return void res.status(403).json({ error: "إدارة قوالب مجمعات الشركة تتطلب صلاحية جميع الفروع" });
+    const parsedParams = UpdateEstimatedManufacturingCostPoolTemplateParams.safeParse(req.params);
+    const parsedBody = UpdateEstimatedManufacturingCostPoolTemplateBody.safeParse(req.body);
+    if (!parsedParams.success)
+      return void res.status(400).json({ error: parsedParams.error.message });
+    if (!parsedBody.success)
+      return void res.status(400).json({ error: parsedBody.error.message });
+    const id = parsedParams.data.id;
+    const body = parsedBody.data;
+    const code = body.code.trim();
+    const nameAr = body.nameAr.trim();
+    if (!code || !nameAr)
+      return void res.status(400).json({ error: "رمز القالب واسم بند التكلفة مطلوبان" });
+    try {
+      const [template] = await db.transaction(async (tx) => {
+        const [existing] = await tx.select({ id: productionEstimatedCostPoolTemplatesTable.id })
+          .from(productionEstimatedCostPoolTemplatesTable).where(and(
+            eq(productionEstimatedCostPoolTemplatesTable.id, id),
+            eq(productionEstimatedCostPoolTemplatesTable.companyId, cid),
+          )).limit(1).for("update");
+        if (!existing)
+          throw Object.assign(new Error("قالب التكلفة غير موجود"), { status: 404 });
+        const accountIds = await validateEstimatedCostPoolTemplateAccounts(tx, cid, body);
+        return tx.update(productionEstimatedCostPoolTemplatesTable).set({
+          code,
+          nameAr,
+          description: String(body.description ?? "").trim(),
+          allocationBasis: body.allocationBasis,
+          actualExpenseAccountId: accountIds[0],
+          absorbedAccountId: accountIds[1],
+          varianceAccountId: accountIds[2],
+          updatedAt: new Date(),
+        }).where(and(
+          eq(productionEstimatedCostPoolTemplatesTable.id, id),
+          eq(productionEstimatedCostPoolTemplatesTable.companyId, cid),
+        )).returning();
+      });
+      res.json(UpdateEstimatedManufacturingCostPoolTemplateResponse.parse({
+        template: serializeEstimatedCostPoolTemplate(template),
+      }));
+    } catch (e: any) {
+      const message = String(e.message ?? "");
+      const conflict = message.includes("prod_est_cost_pool_template_company_code_uniq");
+      res.status(e.status ?? (conflict ? 409 : 500)).json({
+        error: conflict ? "يوجد قالب آخر بالرمز نفسه" : message,
+      });
+    }
+  });
+
+productionEstimatedCostingRouter.delete("/estimated-costing/pool-templates/:id",
+  requirePermission("simple_manufacturing", "edit"), async (req, res) => {
+    const cid = guard(req, res); if (!cid) return;
+    if (req.authUser?.viewAllBranches !== true)
+      return void res.status(403).json({ error: "إدارة قوالب مجمعات الشركة تتطلب صلاحية جميع الفروع" });
+    const parsedParams = DeleteEstimatedManufacturingCostPoolTemplateParams.safeParse(req.params);
+    if (!parsedParams.success)
+      return void res.status(400).json({ error: parsedParams.error.message });
+    try {
+      const [deleted] = await db.delete(productionEstimatedCostPoolTemplatesTable).where(and(
+        eq(productionEstimatedCostPoolTemplatesTable.id, parsedParams.data.id),
+        eq(productionEstimatedCostPoolTemplatesTable.companyId, cid),
+      )).returning({ id: productionEstimatedCostPoolTemplatesTable.id });
+      if (!deleted) return void res.status(404).json({ error: "قالب التكلفة غير موجود" });
+      res.status(204).end();
     } catch (e: any) {
       res.status(e.status ?? 500).json({ error: e.message });
     }

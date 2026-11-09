@@ -48,3 +48,9 @@ The manufacturing modules may seed dedicated expense, absorption-liability, and 
 **Why:** Dedicated chart entries make manufacturing cost pools easier to configure, but companies may already post each actual source to different expense accounts.
 
 **How to apply:** Create the optional accounts on module activation and backfill them for enabled companies without changing existing account mappings, pool settings, or journal entries.
+
+Keep built-in estimated-cost presets fixed. Company-owned custom templates may be created, edited, and deleted; they can store the pool code, label, description, allocation basis, and that company's three account IDs, but not month-specific amount or denominator. Template changes affect future monthly pools only.
+
+**Why:** The user chose to protect the standard presets while making company setup dynamic. Existing monthly pools must remain independent snapshots, and account mappings are company-specific.
+
+**How to apply:** Keep system presets read-only, scope custom template CRUD to the current company, validate referenced accounts on save and use, and never link template edits or deletion to existing monthly pools.
