@@ -741,7 +741,7 @@ const UNIT_ROUNDING_LABELS: Record<string, string> = {
 // expands this tab. Self-contained so the surrounding loop stays clean.
 function ItemAnalyticsPanel({ itemId, unitCode }: { itemId: number; unitCode: string }) {
   const { t, i18n } = useTranslation();
-  const { fmt, fmtQty, fmtCost } = useFmt();
+  const { fmt, fmtQty } = useFmt();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["item-analytics", itemId],
     queryFn: () => inventoryApi.getItemAnalytics(itemId),
@@ -1580,7 +1580,7 @@ export default function Items() {
   const isRtl = i18n.language === "ar";
   const pickName = (ar?: string | null, en?: string | null) => localizedName(ar, en, isRtl ? "ar" : "en");
   const { user, actingCompanyId } = useAuth();
-  const { fmt, fmtQty } = useFmt();
+  const { fmt, fmtQty, fmtCost } = useFmt();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const subgroupCompanyId = actingCompanyId ?? cid;
   const qc = useQueryClient();
