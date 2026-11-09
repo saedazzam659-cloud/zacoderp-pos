@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import securityAutomationRouter from "./admin-security-automation.js";
+import annualSequenceResetAdminRouter from "./admin-sequence-reset.js";
 import { db, centralDb } from "@workspace/db";
 import { sequenceProtectionErrorResponse } from "../lib/sequenceProtectionErrors.js";
 import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, reportEmailInvitationsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable, userVisitsTable, trackingZonesTable, documentArchivesTable } from "@workspace/db";
@@ -163,6 +164,7 @@ async function requireSuperAdmin(req: Request, res: Response, next: NextFunction
 
 // GET /api/admin/requests — all registration requests
 router.use("/security/automation", requireSuperAdmin, securityAutomationRouter);
+router.use("/annual-sequence-reset", requireSuperAdmin, annualSequenceResetAdminRouter);
 
 router.get("/requests", requireSuperAdmin, async (req, res) => {
   const { status } = req.query as any;

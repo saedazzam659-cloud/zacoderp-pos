@@ -182,6 +182,77 @@ export const DeleteAdminModuleShowcaseImageResponse = zod.unknown()
 
 
 /**
+ * @summary Preview disabling annual sequence resets across configured databases
+ */
+export const PreviewAnnualSequenceResetDisableAllResponse = zod.object({
+  "canApply": zod.boolean(),
+  "locations": zod.array(zod.object({
+  "type": zod.enum(['central', 'agent']),
+  "agentId": zod.number().nullable(),
+  "name": zod.string(),
+  "eligibleCount": zod.number(),
+  "blockedCount": zod.number(),
+  "resetPoliciesPreserved": zod.number(),
+  "blocked": zod.array(zod.object({
+  "companyId": zod.number(),
+  "companyName": zod.string(),
+  "sequenceId": zod.number(),
+  "sequenceCode": zod.string(),
+  "nextNumber": zod.number(),
+  "endNumber": zod.number()
+}))
+})),
+  "totalEligible": zod.number(),
+  "totalBlocked": zod.number(),
+  "totalResetPoliciesPreserved": zod.number()
+})
+
+
+/**
+ * @summary Disable annual resets on existing sequences across configured databases
+ */
+export const DisableAllAnnualSequenceResetsResponse = zod.object({
+  "complete": zod.boolean(),
+  "totalUpdated": zod.number(),
+  "totalBlocked": zod.number(),
+  "totalResetPoliciesPreserved": zod.number(),
+  "preflight": zod.array(zod.object({
+  "type": zod.enum(['central', 'agent']),
+  "agentId": zod.number().nullable(),
+  "name": zod.string(),
+  "eligibleCount": zod.number(),
+  "blockedCount": zod.number(),
+  "resetPoliciesPreserved": zod.number(),
+  "blocked": zod.array(zod.object({
+  "companyId": zod.number(),
+  "companyName": zod.string(),
+  "sequenceId": zod.number(),
+  "sequenceCode": zod.string(),
+  "nextNumber": zod.number(),
+  "endNumber": zod.number()
+}))
+})),
+  "locations": zod.array(zod.object({
+  "type": zod.enum(['central', 'agent']),
+  "agentId": zod.number().nullable(),
+  "name": zod.string(),
+  "updatedCount": zod.number(),
+  "blockedCount": zod.number(),
+  "blocked": zod.array(zod.object({
+  "companyId": zod.number(),
+  "companyName": zod.string(),
+  "sequenceId": zod.number(),
+  "sequenceCode": zod.string(),
+  "nextNumber": zod.number(),
+  "endNumber": zod.number()
+})),
+  "resetPoliciesPreserved": zod.number(),
+  "error": zod.string().nullable()
+}))
+})
+
+
+/**
  * @summary Sign a guardian into the ZacodeHR family portal
  */
 export const guardianPortalLoginBodyCompanyCodeMax = 80;

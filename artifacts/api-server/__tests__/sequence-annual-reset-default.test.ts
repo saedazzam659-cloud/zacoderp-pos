@@ -7,6 +7,7 @@ import { carryForwardAnnualSequenceNumber } from "../src/lib/sequences.js";
 const root = resolve(import.meta.dirname, "../../..");
 const sequenceApi = readFileSync(resolve(root, "artifacts/api-server/src/routes/sequences.ts"), "utf8");
 const sequenceLibrary = readFileSync(resolve(root, "artifacts/api-server/src/lib/sequences.ts"), "utf8");
+const adminSequenceReset = readFileSync(resolve(root, "artifacts/api-server/src/routes/admin-sequence-reset.ts"), "utf8");
 const companyDefaults = readFileSync(resolve(root, "artifacts/api-server/src/lib/newCompanyDefaults.ts"), "utf8");
 const companyTemplate = readFileSync(resolve(root, "artifacts/api-server/src/lib/companyTemplate.ts"), "utf8");
 const sequenceSchema = readFileSync(resolve(root, "lib/db/src/schema/sequences.ts"), "utf8");
@@ -33,4 +34,17 @@ test("turning annual reset off carries forward the highest saved number", () => 
   assert.match(sequenceApi, /hasAnnualSequenceCounters\(db, seq\.id\)/);
   assert.match(sequenceLibrary, /counterBranchKey = 0/);
   assert.match(sequenceApi, /counterBranchKey = 0/);
+});
+
+test("bulk disable previews every configured database and preserves unsafe cases", () => {
+  assert.match(adminSequenceReset, /agentInstancesTable\.dbStatus/);
+  assert.match(adminSequenceReset, /runWithExternalDb\(context/);
+  assert.match(adminSequenceReset, /WHERE s\.annual_reset = TRUE/);
+  assert.match(adminSequenceReset, /c\.deleted_at IS NULL/);
+  assert.match(adminSequenceReset, /FOR UPDATE OF s/);
+  assert.match(adminSequenceReset, /candidate\.nextNumber > candidate\.endNumber/);
+  assert.match(adminSequenceReset, /SET annual_reset = FALSE/);
+  assert.match(adminSequenceReset, /current_number = \$\{nextNumber\}/);
+  assert.match(adminSequenceReset, /fiscal_year_sequence_policy:%/);
+  assert.match(adminSequenceReset, /Preflight every database before the first write/);
 });

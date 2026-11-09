@@ -35,6 +35,8 @@ tags:
     description: Authenticated mobile location tracking
   - name: moduleShowcase
     description: Public ERP module screenshots managed by SuperAdmin
+  - name: sequenceAdministration
+    description: SuperAdmin sequence maintenance
 paths:
   /sales/sales-invoices/item-party-history:
     get:
@@ -196,6 +198,40 @@ paths:
           description: Screenshot removed
         "404":
           description: Screenshot not found
+  /admin/annual-sequence-reset/preview:
+    get:
+      operationId: previewAnnualSequenceResetDisableAll
+      tags: [sequenceAdministration]
+      summary: Preview disabling annual sequence resets across configured databases
+      responses:
+        "200":
+          description: Sequences that can be changed and sequences blocked by their configured limits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnnualSequenceResetPreview"
+        "503":
+          description: One or more configured databases could not be checked
+  /admin/annual-sequence-reset/disable-all:
+    post:
+      operationId: disableAllAnnualSequenceResets
+      tags: [sequenceAdministration]
+      summary: Disable annual resets on existing sequences across configured databases
+      responses:
+        "200":
+          description: Every reachable database was updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnnualSequenceResetApplyResponse"
+        "207":
+          description: Some databases could not be updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnnualSequenceResetApplyResponse"
+        "503":
+          description: A configured database could not be preflighted
   /hr-portal/guardian/login:
     post:
       operationId: guardianPortalLogin
@@ -7437,3 +7473,65 @@ components:
         entries:
           type: array
           items: { $ref: "#/components/schemas/ItemPartyHistoryEntry" }
+    AnnualSequenceResetBlockedSequence:
+      type: object
+      required: [companyId, companyName, sequenceId, sequenceCode, nextNumber, endNumber]
+      properties:
+        companyId: { type: integer }
+        companyName: { type: string }
+        sequenceId: { type: integer }
+        sequenceCode: { type: string }
+        nextNumber: { type: integer }
+        endNumber: { type: integer }
+    AnnualSequenceResetPreviewLocation:
+      type: object
+      required: [type, agentId, name, eligibleCount, blockedCount, resetPoliciesPreserved, blocked]
+      properties:
+        type: { type: string, enum: [central, agent] }
+        agentId: { type: ["integer", "null"] }
+        name: { type: string }
+        eligibleCount: { type: integer }
+        blockedCount: { type: integer }
+        resetPoliciesPreserved: { type: integer }
+        blocked:
+          type: array
+          items: { $ref: "#/components/schemas/AnnualSequenceResetBlockedSequence" }
+    AnnualSequenceResetPreview:
+      type: object
+      required: [canApply, locations, totalEligible, totalBlocked, totalResetPoliciesPreserved]
+      properties:
+        canApply: { type: boolean }
+        locations:
+          type: array
+          items: { $ref: "#/components/schemas/AnnualSequenceResetPreviewLocation" }
+        totalEligible: { type: integer }
+        totalBlocked: { type: integer }
+        totalResetPoliciesPreserved: { type: integer }
+    AnnualSequenceResetApplyLocation:
+      type: object
+      required: [type, agentId, name, updatedCount, blockedCount, blocked, resetPoliciesPreserved, error]
+      properties:
+        type: { type: string, enum: [central, agent] }
+        agentId: { type: ["integer", "null"] }
+        name: { type: string }
+        updatedCount: { type: integer }
+        blockedCount: { type: integer }
+        blocked:
+          type: array
+          items: { $ref: "#/components/schemas/AnnualSequenceResetBlockedSequence" }
+        resetPoliciesPreserved: { type: integer }
+        error: { type: ["string", "null"] }
+    AnnualSequenceResetApplyResponse:
+      type: object
+      required: [complete, totalUpdated, totalBlocked, totalResetPoliciesPreserved, preflight, locations]
+      properties:
+        complete: { type: boolean }
+        totalUpdated: { type: integer }
+        totalBlocked: { type: integer }
+        totalResetPoliciesPreserved: { type: integer }
+        preflight:
+          type: array
+          items: { $ref: "#/components/schemas/AnnualSequenceResetPreviewLocation" }
+        locations:
+          type: array
+          items: { $ref: "#/components/schemas/AnnualSequenceResetApplyLocation" }

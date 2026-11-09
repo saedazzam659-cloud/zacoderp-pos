@@ -164,6 +164,12 @@ export default function Companies() {
   const [customerConflictPreview, setCustomerConflictPreview] = useState<any>(null);
   const [customerConflictDecisions, setCustomerConflictDecisions] = useState<Record<number, any>>({});
   const [customerConflictLoading, setCustomerConflictLoading] = useState(false);
+  const [annualResetDialogOpen, setAnnualResetDialogOpen] = useState(false);
+  const [annualResetPreviewLoading, setAnnualResetPreviewLoading] = useState(false);
+  const [annualResetApplyBusy, setAnnualResetApplyBusy] = useState(false);
+  const [annualResetPreview, setAnnualResetPreview] = useState<any>(null);
+  const [annualResetApplyResult, setAnnualResetApplyResult] = useState<any>(null);
+  const [annualResetError, setAnnualResetError] = useState("");
   const invoiceRepairKindLabel = (kind: string) => ({
     sales: "فاتورة مبيعات",
     purchase: "فاتورة مشتريات",
@@ -195,6 +201,61 @@ export default function Companies() {
     setMasterCopyProgress({ completed: [], counts: {} });
     setCustomerConflictPreview(null);
     setCustomerConflictDecisions({});
+  };
+
+  const openAnnualResetBulkDialog = async () => {
+    setAnnualResetDialogOpen(true);
+    setAnnualResetPreview(null);
+    setAnnualResetApplyResult(null);
+    setAnnualResetError("");
+    setAnnualResetPreviewLoading(true);
+    try {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const response = await fetch(`${BASE}/api/admin/annual-sequence-reset/preview`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const unavailable = Array.isArray(body.unavailableAgents)
+          ? ` الوكلاء غير المتاحين: ${body.unavailableAgents.map((agent: any) => `${agent.name} (#${agent.id})`).join("، ")}`
+          : "";
+        throw new Error(`${body.error || "تعذر فحص المسلسلات"}${unavailable}`);
+      }
+      setAnnualResetPreview(body);
+    } catch (error: any) {
+      setAnnualResetError(error?.message || "تعذر فحص المسلسلات.");
+    } finally {
+      setAnnualResetPreviewLoading(false);
+    }
+  };
+
+  const applyAnnualResetBulkDisable = async () => {
+    if (!annualResetPreview?.canApply || !annualResetPreview.totalEligible || annualResetApplyBusy) return;
+    setAnnualResetApplyBusy(true);
+    setAnnualResetError("");
+    try {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const response = await fetch(`${BASE}/api/admin/annual-sequence-reset/disable-all`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok && response.status !== 207) {
+        throw new Error(body.error || "تعذر تعطيل إعادة البدء السنوي.");
+      }
+      setAnnualResetApplyResult(body);
+      await queryClient.invalidateQueries({ queryKey: ["companies"] });
+      toast({
+        title: body.complete ? "اكتمل تحديث المسلسلات" : "اكتمل التحديث جزئيًا",
+        description: `تم تعطيل إعادة البدء في ${body.totalUpdated ?? 0} مسلسل. بقي ${body.totalBlocked ?? 0} مسلسل دون تغيير بسبب حدّه الأعلى.`,
+        variant: body.complete ? "default" : "destructive",
+      });
+    } catch (error: any) {
+      setAnnualResetError(error?.message || "تعذر تعطيل إعادة البدء السنوي.");
+    } finally {
+      setAnnualResetApplyBusy(false);
+    }
   };
 
   const previewMasterDataCopy = async () => {
@@ -644,6 +705,17 @@ export default function Companies() {
           <p className="text-sm text-muted-foreground mt-1">إدارة الشركات المسجّلة في نظام الفاتورة الإلكترونية</p>
         </div>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          {isSuperAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void openAnnualResetBulkDialog()}
+              className="gap-2"
+              data-testid="button-preview-disable-annual-sequence-reset"
+            >
+              <ListOrdered className="h-3.5 w-3.5" />مراجعة البدء السنوي للشركات
+            </Button>
+          )}
           <Button asChild size="sm" className="order-first w-full gap-2 sm:order-last sm:w-auto" data-testid="link-add-company">
             <Link href="/companies/new">
               <Plus className="h-3.5 w-3.5" />إضافة شركة
@@ -1597,6 +1669,96 @@ export default function Companies() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog open={annualResetDialogOpen} onOpenChange={(open) => {
+        if (!annualResetApplyBusy) setAnnualResetDialogOpen(open);
+      }}>
+        <DialogContent className="max-w-2xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>تعطيل إعادة البدء السنوي للشركات</DialogTitle>
+            <DialogDescription>
+              معاينة قواعد المركز والوكلاء أولًا. سيستمر الرقم بعد أعلى رقم محفوظ، مع إبقاء السجلات والعدادات التاريخية.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            {annualResetPreviewLoading && (
+              <p role="status" data-testid="status-annual-reset-preview-loading" className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />جارٍ فحص قواعد البيانات والمسلسلات…
+              </p>
+            )}
+            {annualResetError && (
+              <p role="alert" data-testid="status-annual-reset-error" className="rounded border border-red-200 bg-red-50 p-3 text-red-800">
+                {annualResetError}
+              </p>
+            )}
+            {annualResetPreview && (
+              <>
+                <div role="status" data-testid="status-annual-reset-preview" className="rounded border bg-muted/30 p-3">
+                  <p>مسلسلات يمكن تعطيلها: <strong>{annualResetPreview.totalEligible}</strong></p>
+                  <p>مسلسلات ستبقى دون تغيير لتجاوزها الحد الأعلى: <strong>{annualResetPreview.totalBlocked}</strong></p>
+                  <p>سياسات إقفال سنة صريحة ستبقى كما هي: <strong>{annualResetPreview.totalResetPoliciesPreserved}</strong></p>
+                </div>
+                <div className="max-h-64 space-y-2 overflow-y-auto">
+                  {(annualResetPreview.locations ?? []).map((location: any) => (
+                    <div key={`${location.type}:${location.agentId ?? "central"}`} className="rounded border p-3">
+                      <p className="font-medium">{location.name}</p>
+                      <p className="text-muted-foreground">
+                        {location.eligibleCount} مسلسل قابل للتحديث · {location.blockedCount} متجاوز للحد · {location.resetPoliciesPreserved} سياسة سنة صريحة ستبقى
+                      </p>
+                      {(location.blocked ?? []).length > 0 && (
+                        <ul className="mt-2 list-disc space-y-1 ps-5 text-amber-800">
+                          {location.blocked.map((item: any) => (
+                            <li key={`${location.type}:${location.agentId ?? "central"}:${item.sequenceId}`}>
+                              {item.companyName} — {item.sequenceCode}: الرقم التالي {item.nextNumber} أكبر من الحد {item.endNumber}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {annualResetPreview.totalResetPoliciesPreserved > 0 && (
+                  <p className="rounded border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                    سياسات إعادة البدء التي اختيرت صراحةً عند إقفال السنة ليست جزءًا من إعداد المسلسل، ولن تتغير بهذه العملية.
+                  </p>
+                )}
+              </>
+            )}
+            {annualResetApplyResult && (
+              <div
+                role={annualResetApplyResult.complete ? "status" : "alert"}
+                data-testid="status-annual-reset-apply-result"
+                className={cn(
+                  "rounded border p-3",
+                  annualResetApplyResult.complete ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-950",
+                )}
+              >
+                تم تحديث {annualResetApplyResult.totalUpdated} مسلسل. بقي {annualResetApplyResult.totalBlocked} دون تغيير بسبب الحد الأعلى.
+                {!annualResetApplyResult.complete && " لم تكتمل بعض قواعد البيانات؛ راجع النتيجة لكل قاعدة قبل إعادة المحاولة."}
+                {(annualResetApplyResult.locations ?? []).filter((item: any) => item.error).map((item: any) => (
+                  <p key={`${item.type}:${item.agentId ?? "central"}`}>{item.name}: {item.error}</p>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="flex-row-reverse gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setAnnualResetDialogOpen(false)}
+              disabled={annualResetApplyBusy}
+              data-testid="button-close-annual-reset-dialog"
+            >
+              إغلاق
+            </Button>
+            <Button
+              onClick={() => void applyAnnualResetBulkDisable()}
+              disabled={!annualResetPreview?.canApply || annualResetPreview.totalEligible <= 0 || annualResetPreviewLoading || annualResetApplyBusy}
+              data-testid="button-apply-disable-annual-sequence-reset"
+            >
+              {annualResetApplyBusy ? <><Loader2 className="h-4 w-4 animate-spin" />جارٍ التحديث…</> : `تعطيل ${annualResetPreview?.totalEligible ?? 0} مسلسل`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

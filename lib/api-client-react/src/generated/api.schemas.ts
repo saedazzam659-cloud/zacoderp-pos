@@ -3839,6 +3839,72 @@ export interface ItemPartyHistoryResponse {
   entries: ItemPartyHistoryEntry[];
 }
 
+export interface AnnualSequenceResetBlockedSequence {
+  companyId: number;
+  companyName: string;
+  sequenceId: number;
+  sequenceCode: string;
+  nextNumber: number;
+  endNumber: number;
+}
+
+export type AnnualSequenceResetPreviewLocationType = typeof AnnualSequenceResetPreviewLocationType[keyof typeof AnnualSequenceResetPreviewLocationType];
+
+
+export const AnnualSequenceResetPreviewLocationType = {
+  central: 'central',
+  agent: 'agent',
+} as const;
+
+export interface AnnualSequenceResetPreviewLocation {
+  type: AnnualSequenceResetPreviewLocationType;
+  /** @nullable */
+  agentId: number | null;
+  name: string;
+  eligibleCount: number;
+  blockedCount: number;
+  resetPoliciesPreserved: number;
+  blocked: AnnualSequenceResetBlockedSequence[];
+}
+
+export interface AnnualSequenceResetPreview {
+  canApply: boolean;
+  locations: AnnualSequenceResetPreviewLocation[];
+  totalEligible: number;
+  totalBlocked: number;
+  totalResetPoliciesPreserved: number;
+}
+
+export type AnnualSequenceResetApplyLocationType = typeof AnnualSequenceResetApplyLocationType[keyof typeof AnnualSequenceResetApplyLocationType];
+
+
+export const AnnualSequenceResetApplyLocationType = {
+  central: 'central',
+  agent: 'agent',
+} as const;
+
+export interface AnnualSequenceResetApplyLocation {
+  type: AnnualSequenceResetApplyLocationType;
+  /** @nullable */
+  agentId: number | null;
+  name: string;
+  updatedCount: number;
+  blockedCount: number;
+  blocked: AnnualSequenceResetBlockedSequence[];
+  resetPoliciesPreserved: number;
+  /** @nullable */
+  error: string | null;
+}
+
+export interface AnnualSequenceResetApplyResponse {
+  complete: boolean;
+  totalUpdated: number;
+  totalBlocked: number;
+  totalResetPoliciesPreserved: number;
+  preflight: AnnualSequenceResetPreviewLocation[];
+  locations: AnnualSequenceResetApplyLocation[];
+}
+
 export type GetSalesItemPartyHistoryParams = {
 /**
  * @minimum 1

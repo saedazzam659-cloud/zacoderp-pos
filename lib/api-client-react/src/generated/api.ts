@@ -23,6 +23,8 @@ import type {
   AdditionalAccountingReport,
   AdditionalPurchaseReport,
   AdditionalSalesReport,
+  AnnualSequenceResetApplyResponse,
+  AnnualSequenceResetPreview,
   BundleComponentRecord,
   BundleComponentsInput,
   CashExpense,
@@ -884,6 +886,154 @@ export const useDeleteAdminModuleShowcaseImage = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getDeleteAdminModuleShowcaseImageMutationOptions(options));
+    }
+
+export const getPreviewAnnualSequenceResetDisableAllUrl = () => {
+
+
+
+
+  return `/api/admin/annual-sequence-reset/preview`
+}
+
+/**
+ * @summary Preview disabling annual sequence resets across configured databases
+ */
+export const previewAnnualSequenceResetDisableAll = async ( options?: RequestInit): Promise<AnnualSequenceResetPreview> => {
+
+  return customFetch<AnnualSequenceResetPreview>(getPreviewAnnualSequenceResetDisableAllUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getPreviewAnnualSequenceResetDisableAllQueryKey = () => {
+    return [
+    `/api/admin/annual-sequence-reset/preview`
+    ] as const;
+    }
+
+
+export const getPreviewAnnualSequenceResetDisableAllQueryOptions = <TData = Awaited<ReturnType<typeof previewAnnualSequenceResetDisableAll>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof previewAnnualSequenceResetDisableAll>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPreviewAnnualSequenceResetDisableAllQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof previewAnnualSequenceResetDisableAll>>> = ({ signal }) => previewAnnualSequenceResetDisableAll({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof previewAnnualSequenceResetDisableAll>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type PreviewAnnualSequenceResetDisableAllQueryResult = NonNullable<Awaited<ReturnType<typeof previewAnnualSequenceResetDisableAll>>>
+export type PreviewAnnualSequenceResetDisableAllQueryError = ErrorType<void>
+
+
+/**
+ * @summary Preview disabling annual sequence resets across configured databases
+ */
+
+export function usePreviewAnnualSequenceResetDisableAll<TData = Awaited<ReturnType<typeof previewAnnualSequenceResetDisableAll>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof previewAnnualSequenceResetDisableAll>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getPreviewAnnualSequenceResetDisableAllQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDisableAllAnnualSequenceResetsUrl = () => {
+
+
+
+
+  return `/api/admin/annual-sequence-reset/disable-all`
+}
+
+/**
+ * @summary Disable annual resets on existing sequences across configured databases
+ */
+export const disableAllAnnualSequenceResets = async ( options?: RequestInit): Promise<AnnualSequenceResetApplyResponse> => {
+
+  return customFetch<AnnualSequenceResetApplyResponse>(getDisableAllAnnualSequenceResetsUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getDisableAllAnnualSequenceResetsMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableAllAnnualSequenceResets>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof disableAllAnnualSequenceResets>>, TError,void, TContext> => {
+
+const mutationKey = ['disableAllAnnualSequenceResets'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof disableAllAnnualSequenceResets>>, void> = () => {
+
+
+          return  disableAllAnnualSequenceResets(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DisableAllAnnualSequenceResetsMutationResult = NonNullable<Awaited<ReturnType<typeof disableAllAnnualSequenceResets>>>
+
+    export type DisableAllAnnualSequenceResetsMutationError = ErrorType<void>
+
+    /**
+ * @summary Disable annual resets on existing sequences across configured databases
+ */
+export const useDisableAllAnnualSequenceResets = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof disableAllAnnualSequenceResets>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof disableAllAnnualSequenceResets>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDisableAllAnnualSequenceResetsMutationOptions(options));
     }
 
 export const getGuardianPortalLoginUrl = () => {
