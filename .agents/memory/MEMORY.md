@@ -21,6 +21,7 @@
 - [Drizzle JSONB column defaults](ensure-schema-jsonb-defaults.md) — avoid startup DDL; tolerate legacy nullable JSONB and use the supported schema flow.
 
 - [POS Desktop index](pos-desktop-index.md) — POS Desktop shell, local data, fiscal, inventory, printing, licensing, and offline/ZATCA implementation notes.
+- [POS Desktop release mechanism](pos-desktop-release-mechanism.md) — a POS version tag triggers Windows MSI builds and a draft release; verify the remote and push only the intended tag.
 - [POS employee meal boundary](pos-employee-meal-boundary.md) — fixed meal cost uses expense/clearing accounts; never reduce POS cash or stock, and prevent duplicate daily issues.
 - [POS Desktop full-width UI](pos-desktop-full-width-ui.md) — back-office views should use available width, neutral form edges, and readable spreadsheet-like grids without changing workflows.
 - [POS Desktop update packages](pos-desktop-update-packages.md) — keep the small in-app/web MSI and large offline `/install` MSI on separate release channels.

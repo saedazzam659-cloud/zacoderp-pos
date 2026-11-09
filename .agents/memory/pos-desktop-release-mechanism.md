@@ -1,32 +1,29 @@
 ---
 name: POS Desktop release mechanism
-description: How POS Desktop MSI releases are cut, and why the Replit main agent cannot do it itself
+description: How POS Desktop tags trigger Windows MSI builds and draft releases
 ---
 
 # POS Desktop release / GitHub tagging
 
-POS Desktop MSI releases are produced by `.github/workflows/pos-desktop-build.yml`, which
-builds the Windows MSI and creates a **draft GitHub Release** when a tag matching
-`pos-desktop-v*` is pushed to the GitHub repo (`saedazzam659-cloud/zacoderp-pos`).
+The Windows workflow starts when a `pos-desktop-v*` tag is pushed. It builds the online and
+offline MSI variants and creates a **draft GitHub Release**; the draft is not published
+automatically.
 
-## The Replit main agent CANNOT cut a release itself
-- The sandbox blocks **all** git write operations for the main agent — commit, `git tag`,
-  `git fetch`, anything writing under `.git/`. Error seen:
-  "Destructive git operations are not allowed in the main agent."
-- `git push` is *attempted* (not sandbox-blocked) but the GitHub creds stored in the repo's
-  `origin` remote are a stale PAT → "Invalid username or token. Password authentication is not
-  supported." No GitHub integration/connection is configured either (`listConnections('github')`
-  → 401).
+## Recheck the current push path
+The prior stale-credential / user-only push assumption is outdated. On 2026-11-09, a
+tag-only push through the current Replit internal `origin` succeeded and launched the Windows
+workflow. Check the current remote and tag state each session rather than assuming either the
+GitHub integration or Git pane is required.
 
-## So cutting a release is a USER-driven operation
-1. Agent bumps the version in 3 files and lets the platform auto-commit:
-   `artifacts/pos-desktop/package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`.
-2. User pushes `main` to GitHub via the Replit **Git pane** (re-authorizing GitHub if prompted).
-3. User creates + **publishes** a release on GitHub with the EXACT tag `pos-desktop-vX.Y.Z`
-   targeting `main`. Publishing is what actually creates/pushes the tag — "Save draft" does
-   NOT create the tag, so the workflow won't fire. The build workflow then attaches the MSI to
-   that release.
+## Keep divergent history out of the release
+When workspace `main` is substantially ahead of the latest POS Desktop tag, do not push it just
+to trigger a Windows build. Base a release commit on the latest POS Desktop tag, port only the
+required POS Desktop changes, and push only the new version tag. Do not publish the draft unless
+the user asks.
 
-**Why:** keeps GitHub push credentials with the user; the agent has no valid push path. The tag
-must point at a commit that already contains both the version bump and whatever feature/fix the
-release is meant to ship, so always push `main` BEFORE creating the tag.
+**Why:** a tag-only build can run without exposing unrelated monorepo history or generated files;
+the workflow produces a draft, so build verification does not change the live download channels.
+
+**How to apply:** keep `package.json`, `Cargo.toml`, and `tauri.conf.json` versions aligned; verify
+the frontend build and manually review Rust column/parameter mappings because Cargo is available
+only in Windows CI; confirm the Actions result before claiming an MSI exists.
