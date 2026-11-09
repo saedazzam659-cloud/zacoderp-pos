@@ -85,7 +85,10 @@ function posDesktopLocalization(): Plugin {
       );
       const edits: Array<{ start: number; end: number; text: string }> = [];
       let needsUiText = false;
+      let needsUiTemplate = false;
       let needsLanguage = false;
+      const handledLiterals = new Set<ts.StringLiteral | ts.NoSubstitutionTemplateLiteral>();
+      const handledTemplates = new Set<ts.TemplateExpression>();
 
       const localizedCall = (arabic: string): string | null => {
         const key = normalizeUiText(arabic);
@@ -98,9 +101,11 @@ function posDesktopLocalization(): Plugin {
         node: ts.StringLiteral | ts.NoSubstitutionTemplateLiteral,
         jsxAttribute = false,
       ) => {
+        if (handledLiterals.has(node)) return;
         if (!/[\u0600-\u06ff]/.test(node.text)) return;
         const expression = localizedCall(node.text);
         if (!expression) return;
+        handledLiterals.add(node);
         edits.push({
           start: node.getStart(sourceFile),
           end: node.getEnd(),
@@ -108,7 +113,40 @@ function posDesktopLocalization(): Plugin {
         });
       };
 
+      const editLocalizedTemplate = (node: ts.TemplateExpression): boolean => {
+        const parts = [node.head.text];
+        const values = node.templateSpans.map((span) => {
+          parts.push(span.literal.text);
+          return span.expression.getText(sourceFile);
+        });
+        if (!parts.some((part) => /[\u0600-\u06ff]/.test(part))) return false;
+        const key = normalizeUiText(parts.map((part, index) =>
+          part + (index < values.length ? `{{${index}}}` : ""),
+        ).join(""));
+        const english = enUiTranslations[key];
+        if (!english) return false;
+        const expected = [...key.matchAll(/\{\{\d+\}\}/g)].map((match) => match[0]).sort();
+        const actual = [...english.matchAll(/\{\{\d+\}\}/g)].map((match) => match[0]).sort();
+        if (JSON.stringify(expected) !== JSON.stringify(actual)) return false;
+        needsUiTemplate = true;
+        handledTemplates.add(node);
+        edits.push({
+          start: node.getStart(sourceFile),
+          end: node.getEnd(),
+          text: `__posUiTemplate(${JSON.stringify(parts)}, ${JSON.stringify(english)}, [${values.join(", ")}])`,
+        });
+        return true;
+      };
+
       const translatePresentationValue = (node: ts.Node): void => {
+        if (ts.isTemplateExpression(node)) {
+          if (handledTemplates.has(node)) return;
+          if (!editLocalizedTemplate(node)) {
+            handledTemplates.add(node);
+            node.templateSpans.forEach((span) => translatePresentationValue(span.expression));
+          }
+          return;
+        }
         if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
           editLocalizedLiteral(node);
           return;
@@ -136,7 +174,7 @@ function posDesktopLocalization(): Plugin {
         }
       };
 
-      function visit(node: ts.Node, insideFunction = false) {
+      function visit(node: ts.Node, insideFunction = false, insideBilingualCall = false) {
         const inFunction = insideFunction
           || ts.isFunctionDeclaration(node)
           || ts.isFunctionExpression(node)
@@ -145,6 +183,23 @@ function posDesktopLocalization(): Plugin {
           || ts.isGetAccessor(node)
           || ts.isSetAccessor(node)
           || ts.isConstructorDeclaration(node);
+        const callName = ts.isCallExpression(node)
+          ? ts.isIdentifier(node.expression)
+            ? node.expression.text
+            : ts.isPropertyAccessExpression(node.expression)
+              ? node.expression.name.text
+              : ""
+          : "";
+        const inBilingualCall = insideBilingualCall
+          || (ts.isCallExpression(node) && (callName === "uiText" || callName === "text"));
+
+        if (ts.isTemplateExpression(node) && handledTemplates.has(node)) return;
+        if (inFunction && !inBilingualCall && ts.isTemplateExpression(node)) {
+          if (editLocalizedTemplate(node)) return;
+          handledTemplates.add(node);
+          node.templateSpans.forEach((span) => translatePresentationValue(span.expression));
+          return;
+        }
 
         if (inFunction && ts.isJsxText(node) && /[\u0600-\u06ff]/.test(node.getText(sourceFile))) {
           const raw = node.getText(sourceFile);
@@ -287,7 +342,7 @@ function posDesktopLocalization(): Plugin {
           }
         }
 
-        ts.forEachChild(node, (child) => visit(child, inFunction));
+        ts.forEachChild(node, (child) => visit(child, inFunction, inBilingualCall));
       }
       visit(sourceFile);
 
@@ -302,6 +357,7 @@ function posDesktopLocalization(): Plugin {
       const settingsImport = relativeSettings.startsWith(".") ? relativeSettings : `./${relativeSettings}`;
       const names = [
         needsUiText ? "uiText as __posUiText" : "",
+        needsUiTemplate ? "uiTemplate as __posUiTemplate" : "",
         needsLanguage ? "getUiLanguage as __posGetUiLanguage" : "",
       ].filter(Boolean).join(", ");
       return {

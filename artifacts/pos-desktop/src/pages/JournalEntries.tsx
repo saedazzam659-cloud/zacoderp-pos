@@ -17,7 +17,7 @@ import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_
 import { getTaxRate } from "../lib/taxSettings";
 import { getDefaultTax } from "../lib/taxes";
 import {
-  formatUiDate, getCompanyProfile, getUiLanguage, safeLogoSrc, uiText, useUiLanguage,
+  formatUiDate, getCompanyProfile, getUiLanguage, localizeStaticUiText, safeLogoSrc, uiText, useUiLanguage,
   type CompanyProfile,
 } from "../lib/appSettings";
 
@@ -275,7 +275,7 @@ export default function JournalEntries() {
             {([["all", "الكل"], ["posted", "مرحَّل"], ["draft", "مسودة"]] as const).map(([v, l]) => (
               <button key={v} type="button" onClick={() => setStatusFilter(v)}
                 style={{ ...(statusFilter === v ? btnPrimary : btnSecondary), padding: "6px 14px" }}>
-                {l}
+                {localizeStaticUiText(l, language)}
               </button>
             ))}
           </div>

@@ -9,6 +9,7 @@ import {
   Page, Card, Table, Th, Td, Empty, Modal, Field, Row, Actions, ErrorMsg,
   input, btnPrimary, btnSecondary, btnLink, fmt, SearchCombobox,
 } from "./_adminUi";
+import { localizeStaticUiText } from "../lib/appSettings";
 
 const TYPE_LABEL: Record<AccountType, string> = {
   asset: "أصول", liability: "خصوم", equity: "حقوق ملكية", revenue: "إيرادات", expense: "مصروفات",
@@ -438,7 +439,7 @@ export default function ChartOfAccounts({ onDrillToStatement }: Props) {
           <thead>
             <tr>
               {["الكود", "الاسم", "النوع", "توجيه التقرير", "طبيعة", "الحالة", "الرصيد"].map((h) => (
-                <th key={h} style={{ border: "1px solid #cbd5e1", padding: "4px 6px", textAlign: "start", background: "#f1f5f9" }}>{h}</th>
+                <th key={h} style={{ border: "1px solid #cbd5e1", padding: "4px 6px", textAlign: "start", background: "#f1f5f9" }}>{localizeStaticUiText(h)}</th>
               ))}
             </tr>
           </thead>
