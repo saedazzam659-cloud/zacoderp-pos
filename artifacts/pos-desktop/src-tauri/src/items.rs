@@ -21,8 +21,10 @@ pub struct LocalItem {
     pub name_ar: String,
     pub name_en: Option<String>,
     pub barcode: Option<String>,
+    pub cost_price: f64,
     pub sale_price: f64,
     pub vat_rate: f64,
+    pub metadata_json: Option<String>,
     pub uom_id: Option<i64>,
     // Pharmacy vertical (Task #200) — all nullable, present only when the
     // store's vertical is "pharmacy". Generic catalog rows leave these NULL.
@@ -44,9 +46,9 @@ pub struct LocalItem {
 const MAX_ROWS: i64 = 2000;
 
 const SELECT_COLS: &str =
-    "id, cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate, \
+    "id, cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate, metadata_json, \
      active_ingredient, dosage_form, strength, manufacturer, requires_prescription, \
-     controlled, expiry_date, batch_no, is_weighed, price_per_kg, plu, uom_id";
+     controlled, expiry_date, batch_no, is_weighed, price_per_kg, plu, uom_id, cost_price";
 
 fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
     Ok(LocalItem {
@@ -58,18 +60,20 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
         barcode: row.get(5)?,
         sale_price: row.get(6)?,
         vat_rate: row.get(7)?,
-        active_ingredient: row.get(8).ok().flatten(),
-        dosage_form: row.get(9).ok().flatten(),
-        strength: row.get(10).ok().flatten(),
-        manufacturer: row.get(11).ok().flatten(),
-        requires_prescription: row.get::<_, Option<i64>>(12).ok().flatten().map(|v| v != 0),
-        controlled: row.get::<_, Option<i64>>(13).ok().flatten().map(|v| v != 0),
-        expiry_date: row.get(14).ok().flatten(),
-        batch_no: row.get(15).ok().flatten(),
-        is_weighed: row.get::<_, Option<i64>>(16).ok().flatten().map(|v| v != 0),
-        price_per_kg: row.get(17).ok().flatten(),
-        plu: row.get(18).ok().flatten(),
-        uom_id: row.get(19).ok().flatten(),
+        metadata_json: row.get(8).ok().flatten(),
+        active_ingredient: row.get(9).ok().flatten(),
+        dosage_form: row.get(10).ok().flatten(),
+        strength: row.get(11).ok().flatten(),
+        manufacturer: row.get(12).ok().flatten(),
+        requires_prescription: row.get::<_, Option<i64>>(13).ok().flatten().map(|v| v != 0),
+        controlled: row.get::<_, Option<i64>>(14).ok().flatten().map(|v| v != 0),
+        expiry_date: row.get(15).ok().flatten(),
+        batch_no: row.get(16).ok().flatten(),
+        is_weighed: row.get::<_, Option<i64>>(17).ok().flatten().map(|v| v != 0),
+        price_per_kg: row.get(18).ok().flatten(),
+        plu: row.get(19).ok().flatten(),
+        uom_id: row.get(20).ok().flatten(),
+        cost_price: row.get(21)?,
     })
 }
 
@@ -77,6 +81,22 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
 /// `items_local`. `db.rs` is shared scaffolding we don't edit, so we
 /// PRAGMA-sniff and ALTER as needed on every open. SQLite ALTER ADD COLUMN
 /// is idempotent only via this sniff (there's no IF NOT EXISTS form).
+pub(crate) fn ensure_cost_price_column(conn: &rusqlite::Connection) -> Result<()> {
+    let exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(items_local)")?;
+        stmt.query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|column| column.ok())
+            .any(|column| column == "cost_price")
+    };
+    if !exists {
+        conn.execute(
+            "ALTER TABLE items_local ADD COLUMN cost_price REAL NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
     let existing: std::collections::HashSet<String> = conn
         .prepare("PRAGMA table_info(items_local)")?
@@ -85,6 +105,7 @@ fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
         .collect();
     let want: &[(&str, &str)] = &[
         ("uom_id", "INTEGER"),
+        ("metadata_json", "TEXT"),
         ("active_ingredient", "TEXT"),
         ("dosage_form", "TEXT"),
         ("strength", "TEXT"),
@@ -103,6 +124,7 @@ fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
             conn.execute(&format!("ALTER TABLE items_local ADD COLUMN {col} {ty}"), [])?;
         }
     }
+    ensure_cost_price_column(conn)?;
     // PLU uniqueness (Task #201 review round 3). A partial unique index
     // means duplicate PLUs raise a clear SQLITE_CONSTRAINT at write time
     // instead of letting `find_item_by_plu` silently resolve to whichever
@@ -296,6 +318,8 @@ pub fn insert_local_item(
     barcode: Option<String>,
     sale_price: f64,
     vat_rate: f64,
+    cost_price: Option<f64>,
+    metadata_json: Option<String>,
     uom_id: Option<i64>,
     active_ingredient: Option<String>,
     dosage_form: Option<String>,
@@ -318,13 +342,13 @@ pub fn insert_local_item(
     let barcode = norm_opt(barcode);
     conn.execute(
         "INSERT INTO items_local
-           (code, name_ar, name_en, barcode, sale_price, vat_rate, uom_id,
+           (code, name_ar, name_en, barcode, sale_price, vat_rate, cost_price, metadata_json, uom_id,
             active_ingredient, dosage_form, strength, manufacturer,
             requires_prescription, controlled, expiry_date, batch_no,
             is_weighed, price_per_kg, plu, updated_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,CURRENT_TIMESTAMP)",
+         VALUES (?1,?2,?3,?4,?5,?6,COALESCE(?7,0),?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,CURRENT_TIMESTAMP)",
         rusqlite::params![
-            code, name_ar, name_en, barcode, sale_price, vat_rate, uom_id,
+            code, name_ar, name_en, barcode, sale_price, vat_rate, cost_price, metadata_json, uom_id,
             active_ingredient, dosage_form, strength, manufacturer,
             requires_prescription.map(|b| if b { 1_i64 } else { 0_i64 }),
             controlled.map(|b| if b { 1_i64 } else { 0_i64 }),
@@ -351,6 +375,8 @@ pub fn update_local_item(
     barcode: Option<String>,
     sale_price: f64,
     vat_rate: f64,
+    cost_price: f64,
+    metadata_json: Option<String>,
     uom_id: Option<i64>,
 ) -> Result<u64, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
@@ -362,10 +388,11 @@ pub fn update_local_item(
     let n = conn.execute(
         "UPDATE items_local SET
            code = ?1, name_ar = ?2, name_en = ?3, barcode = ?4,
-           sale_price = ?5, vat_rate = ?6, uom_id = ?7,
+           sale_price = ?5, vat_rate = ?6, cost_price = ?7,
+           metadata_json = ?8, uom_id = ?9,
            updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?8",
-        rusqlite::params![code, name_ar, name_en, barcode, sale_price, vat_rate, uom_id, id],
+         WHERE id = ?10",
+        rusqlite::params![code, name_ar, name_en, barcode, sale_price, vat_rate, cost_price, metadata_json, uom_id, id],
     ).map_err(map_item_write_err)?;
     Ok(n as u64)
 }

@@ -12,6 +12,7 @@
 // while the sales screen kept reporting "لا توجد أصناف".
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { createApi, type SyncStatus } from "../lib/api";
 import { useCurrencySymbol, getCountryIso, setCountryIso, countryByIso, ARAB_COUNTRIES } from "../lib/currency";
 import { SearchCombobox } from "./_adminUi";
@@ -427,6 +428,7 @@ export default function PosShell({
   const [openGroup, setOpenGroup] = useState<string | null>(
     () => VIEW_TO_GROUP[view] ?? null,
   );
+  const [openGroupPosition, setOpenGroupPosition] = useState({ top: 0, left: 0 });
   // NOTE: the sidebar accordion is now controlled SOLELY by explicit clicks on
   // group headers. We intentionally do NOT auto-open the active view's group on
   // every `view` change — switching tabs (clicking a tab chip) used to re-open
@@ -1086,7 +1088,24 @@ export default function PosShell({
           <div style={S.topnavBrand} title={`ZACOD POS v${APP_VERSION}`}>
             <span style={S.topnavBrandIcon}>Z</span>
           </div>
-          <div style={S.topnavItems}>
+          <div
+            style={{
+              ...S.topnavItems,
+              ...(language === "en" ? {
+                flexWrap: "nowrap" as const,
+                overflowX: "auto" as const,
+                overflowY: "hidden" as const,
+                minWidth: 0,
+                scrollbarWidth: "thin" as const,
+              } : {}),
+            }}
+            onScroll={() => { if (openGroup) setOpenGroup(null); }}
+            onWheel={(event) => {
+              if (language === "en" && event.currentTarget.scrollWidth > event.currentTarget.clientWidth && event.deltaY !== 0) {
+                event.currentTarget.scrollLeft += event.deltaY;
+              }
+            }}
+          >
             {(() => {
               const renderTopLeaf = (it: { id: View; icon: string; label: string; badge?: number }) => {
                 const active = view === it.id;
@@ -1124,6 +1143,27 @@ export default function PosShell({
                     const isOpen = openGroup === g.key;
                     const hasActive = children.some((c) => c.id === view);
                     const badgeTotal = children.reduce((sum, c) => sum + (c.badge ?? 0), 0);
+                    const dropdownPanel = (
+                      <div style={language === "en"
+                        ? { ...S.dropdownPanel, position: "fixed", top: openGroupPosition.top, left: openGroupPosition.left }
+                        : S.dropdownPanel}>
+                        {children.map((it) => {
+                          const sub = g.subHeaders?.[it.id];
+                          const active = view === it.id;
+                          return (
+                            <Fragment key={it.id}>
+                              {sub && <div style={S.dropdownSub}>{uiText(sub, "Financial reports", language)}</div>}
+                              <button onClick={() => { setView(it.id); setOpenGroup(null); }}
+                                style={active ? S.dropdownItemActive : S.dropdownItem}>
+                                <span style={{ fontSize: 14, width: 22, textAlign: "center" }}>{it.icon}</span>
+                                <span style={{ flex: 1 }}>{navLabel(it.id, it.label, language)}</span>
+                                {it.badge !== undefined && <span style={S.topBadge}>{it.badge}</span>}
+                              </button>
+                            </Fragment>
+                          );
+                        })}
+                      </div>
+                    );
                     const groupLabel = uiText(g.label, ({
                       pos: "Point of sale", inventory: "Inventory", selling: "Sales and customers",
                       purchasing: "Purchasing and suppliers", cash_banks: "Cash and banks",
@@ -1131,7 +1171,12 @@ export default function PosShell({
                     } as Record<string, string>)[g.key] ?? g.label, language);
                     return (
                       <div key={g.key} style={{ position: "relative" }}>
-                        <button onClick={() => setOpenGroup((prev) => (prev === g.key ? null : g.key))}
+                        <button onClick={(event) => {
+                          if (isOpen) { setOpenGroup(null); return; }
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          setOpenGroupPosition({ top: rect.bottom + 6, left: rect.left });
+                          setOpenGroup(g.key);
+                        }}
                           style={(isOpen || hasActive) ? S.topGroupActive : S.topGroup}
                           aria-expanded={isOpen} title={groupLabel}>
                           <span style={{ fontSize: 13 }}>{g.icon}</span>
@@ -1139,25 +1184,7 @@ export default function PosShell({
                           {!isOpen && badgeTotal > 0 && <span style={S.topBadge}>{badgeTotal}</span>}
                           <span style={{ fontSize: 9, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▾</span>
                         </button>
-                        {isOpen && (
-                          <div style={S.dropdownPanel}>
-                            {children.map((it) => {
-                              const sub = g.subHeaders?.[it.id];
-                              const active = view === it.id;
-                              return (
-                                <Fragment key={it.id}>
-                                  {sub && <div style={S.dropdownSub}>{uiText(sub, "Financial reports", language)}</div>}
-                                  <button onClick={() => { setView(it.id); setOpenGroup(null); }}
-                                    style={active ? S.dropdownItemActive : S.dropdownItem}>
-                                    <span style={{ fontSize: 14, width: 22, textAlign: "center" }}>{it.icon}</span>
-                                    <span style={{ flex: 1 }}>{navLabel(it.id, it.label, language)}</span>
-                                    {it.badge !== undefined && <span style={S.topBadge}>{it.badge}</span>}
-                                  </button>
-                                </Fragment>
-                              );
-                            })}
-                          </div>
-                        )}
+                        {isOpen && (language === "en" ? createPortal(dropdownPanel, document.body) : dropdownPanel)}
                       </div>
                     );
                   })}

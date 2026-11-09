@@ -41,7 +41,7 @@ interface ItemMeta {
   units?: ItemUnit[] | null;
   groupId?: number | null;
   nature?: "service" | "stock" | null;
-  itemType?: "finished" | "semi" | "raw" | "other" | null;
+  itemType?: ItemBusinessNature | "other" | null;
 }
 function readMeta(): Record<number, ItemMeta> {
   return lsRead<Record<number, ItemMeta>>(LS_KEYS.itemMeta, {});
@@ -99,6 +99,7 @@ async function migrateLegacyItems(): Promise<void> {
       const id = await tauriInvoke<number>("insert_local_item", {
         code: r.code ?? null, nameAr: r.nameAr, nameEn: r.nameEn ?? null,
         barcode: r.barcode ?? null, salePrice: r.salePrice, vatRate: r.vatRate,
+        costPrice: r.costPrice ?? 0, metadataJson: JSON.stringify(r.metadata ?? {}),
         uomId: r.uomId ?? null,
         activeIngredient: r.activeIngredient ?? null, dosageForm: r.dosageForm ?? null,
         strength: r.strength ?? null, manufacturer: r.manufacturer ?? null,
@@ -137,6 +138,88 @@ export interface ItemUnit {
   barcode?: string | null;
 }
 
+export type ItemBusinessType = "stock" | "service" | "fixed_asset" | "prepaid_expense";
+export type ItemBusinessNature = "raw" | "semi" | "finished" | "consumable" | "merchandise" | "other";
+export type ItemCostMethod = "weighted_avg" | "last_cost";
+export type ItemDiscountType = "none" | "percent" | "amount";
+export type ItemBatchTrackingMode = "none" | "fifo" | "fefo";
+export type ItemUsageMode = "allowed" | "hidden" | "readonly" | "requires_approval" | "requires_permission";
+
+export interface ItemSalePriceOption {
+  id: string;
+  nameAr: string;
+  nameEn: string;
+  salePrice: number;
+}
+
+export interface RestaurantModifierOption {
+  id: string;
+  itemId: number;
+  extraPrice: number;
+  consumptionQtyPerSelection: number;
+}
+
+export interface RestaurantModifierGroup {
+  id: string;
+  nameAr: string;
+  nameEn?: string | null;
+  required: boolean;
+  selectionMode: "single" | "multiple";
+  minSelect: number;
+  maxSelect: number;
+  options: RestaurantModifierOption[];
+}
+
+export interface ItemUsageRule {
+  screenKey: string;
+  mode: ItemUsageMode;
+  reason?: string | null;
+}
+
+export interface ItemAuditChange {
+  field: string;
+  before: string;
+  after: string;
+}
+
+export interface ItemAuditEntry {
+  id: string;
+  action: "create" | "edit" | "delete";
+  occurredAt: string;
+  changes: ItemAuditChange[];
+}
+
+/** Additional web item-editor data persisted with each local catalog row. */
+export interface ItemWebProfile {
+  businessType?: ItemBusinessType;
+  businessNature?: ItemBusinessNature;
+  subgroupName?: string;
+  posGroupName?: string;
+  posSubgroupName?: string;
+  reorderLevel?: number;
+  maxLevel?: number | null;
+  costMethod?: ItemCostMethod;
+  discountType?: ItemDiscountType;
+  discountValue?: number;
+  status?: "active" | "inactive";
+  costAccountId?: number | null;
+  revenueAccountId?: number | null;
+  description?: string;
+  imageUrl?: string;
+  tags?: string;
+  isBundle?: boolean;
+  showInPos?: boolean;
+  batchTrackingMode?: ItemBatchTrackingMode;
+  salePriceOptions?: ItemSalePriceOption[];
+  restaurantModifierGroups?: RestaurantModifierGroup[];
+  usageControls?: ItemUsageRule[];
+  auditHistory?: ItemAuditEntry[];
+  retailEnabled?: boolean;
+  retailCategory?: string;
+  retailColor?: string;
+  retailSize?: string;
+}
+
 export interface LocalItem {
   id: number;
   cloudId?: number | null;
@@ -156,7 +239,7 @@ export interface LocalItem {
   /** طبيعة الصنف: "service" = خدمي، "stock" = مخزني. */
   nature?: "service" | "stock" | null;
   /** نوع الصنف: تام / نصف مصنع / مواد خام / أخرى. */
-  itemType?: "finished" | "semi" | "raw" | "other" | null;
+  itemType?: ItemBusinessNature | "other" | null;
   // Pharmacy vertical (Task #200) — populated when the store's vertical is
   // "pharmacy". Mapped from snake_case Rust columns by fromRust().
   activeIngredient?: string | null;
@@ -177,6 +260,7 @@ export interface LocalItem {
    * stored in the LS overlay, never written to SQLite/cloud. The item's own
    * salePrice/barcode are the BASE unit (factor 1); these are ADDITIONAL units. */
   units?: ItemUnit[] | null;
+  metadata?: ItemWebProfile;
 }
 
 interface RustItem {
@@ -188,6 +272,7 @@ interface RustItem {
   barcode: string | null;
   sale_price: number;
   vat_rate: number;
+  metadata_json?: string | null;
   uom_id?: number | null;
   active_ingredient?: string | null;
   dosage_form?: string | null;
@@ -203,6 +288,14 @@ interface RustItem {
 }
 
 function fromRust(r: RustItem): LocalItem {
+  let metadata: ItemWebProfile | undefined;
+  if (r.metadata_json) {
+    const parsed: unknown = JSON.parse(r.metadata_json);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`Invalid item metadata for local item ${r.id}.`);
+    }
+    metadata = parsed as ItemWebProfile;
+  }
   return {
     id: r.id,
     cloudId: r.cloud_id,
@@ -212,6 +305,7 @@ function fromRust(r: RustItem): LocalItem {
     barcode: r.barcode,
     salePrice: r.sale_price,
     vatRate: r.vat_rate,
+    metadata,
     uomId: r.uom_id ?? null,
     activeIngredient: r.active_ingredient ?? null,
     dosageForm: r.dosage_form ?? null,
@@ -443,7 +537,9 @@ export interface CreateItemInput {
   barcode?: string | null;
   salePrice: number;
   vatRate: number;
+  costPrice?: number;
   uomId?: number | null;
+  metadata?: ItemWebProfile;
   // Pharmacy extension (Task #200) — always optional. Generic-vertical
   // catalogs simply leave them undefined.
   activeIngredient?: string | null;
@@ -463,7 +559,7 @@ export interface CreateItemInput {
   // Classification — LOCAL-ONLY (LS overlay).
   groupId?: number | null;
   nature?: "service" | "stock" | null;
-  itemType?: "finished" | "semi" | "raw" | "other" | null;
+  itemType?: ItemBusinessNature | null;
 }
 
 export async function createItem(input: CreateItemInput): Promise<LocalItem> {
@@ -494,6 +590,7 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     const id = await tauriInvoke<number>("insert_local_item", {
       code: input.code ?? null, nameAr: input.nameAr, nameEn: input.nameEn ?? null,
       barcode: input.barcode ?? null, salePrice: input.salePrice, vatRate: input.vatRate,
+      costPrice: input.costPrice ?? 0, metadataJson: JSON.stringify(input.metadata ?? {}),
       uomId: input.uomId ?? null,
       activeIngredient: input.activeIngredient ?? null, dosageForm: input.dosageForm ?? null,
       strength: input.strength ?? null, manufacturer: input.manufacturer ?? null,
@@ -507,6 +604,7 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
       id, cloudId: null,
       code: input.code ?? null, nameAr: input.nameAr, nameEn: input.nameEn ?? null,
       barcode: input.barcode ?? null, salePrice: input.salePrice, vatRate: input.vatRate,
+      costPrice: input.costPrice ?? 0, metadata: input.metadata ?? {},
       uomId: input.uomId ?? null,
       activeIngredient: input.activeIngredient ?? null, dosageForm: input.dosageForm ?? null,
       strength: input.strength ?? null, manufacturer: input.manufacturer ?? null,
@@ -530,6 +628,7 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     barcode: input.barcode ?? null,
     salePrice: input.salePrice,
     vatRate: input.vatRate,
+    costPrice: input.costPrice ?? 0,
     uomId: input.uomId ?? null,
     activeIngredient: input.activeIngredient ?? null,
     dosageForm: input.dosageForm ?? null,
@@ -546,6 +645,7 @@ export async function createItem(input: CreateItemInput): Promise<LocalItem> {
     groupId: input.groupId ?? null,
     nature: input.nature ?? null,
     itemType: input.itemType ?? null,
+    metadata: input.metadata ?? {},
     updatedAt: new Date().toISOString(),
   };
   all.push(row);
@@ -592,6 +692,8 @@ export async function bulkImportLocalItems(
           barcode: r.barcode ?? null,
           salePrice: r.salePrice,
           vatRate: r.vatRate,
+          costPrice: r.costPrice ?? 0,
+          metadataJson: JSON.stringify(r.metadata ?? {}),
           activeIngredient: r.activeIngredient ?? null,
           dosageForm: r.dosageForm ?? null,
           strength: r.strength ?? null,
@@ -778,6 +880,7 @@ export async function updateItem(id: number, patch: Partial<CreateItemInput>): P
       id,
       code: merged.code ?? null, nameAr: merged.nameAr, nameEn: merged.nameEn ?? null,
       barcode: merged.barcode ?? null, salePrice: merged.salePrice, vatRate: merged.vatRate,
+      costPrice: merged.costPrice ?? 0, metadataJson: JSON.stringify(merged.metadata ?? {}),
       uomId: merged.uomId ?? null,
     });
     writeMetaFor(id, metaFrom(merged));
