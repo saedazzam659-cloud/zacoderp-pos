@@ -3,13 +3,16 @@ import { saveText } from "../lib/saveFile";
 // Uses lib/items.ts + lib/uom.ts.
 
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import QRCode from "qrcode";
 import {
   listItems, createItem, updateItem, deleteItem, bulkImportLocalItems, updateItemExtended, updateItemWeighed,
-  type LocalItem, type CreateItemInput, type ItemUnit,
+  type LocalItem, type CreateItemInput, type ItemUnit, type ItemWebProfile, type ItemAuditEntry,
+  type ItemUsageMode, type RestaurantModifierGroup,
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
 import { listItemGroups } from "../lib/itemGroups";
 import { listBrands, listItemBrandLinks, setItemBrands, dropItemBrands, type ItemBrandLink } from "../lib/brands";
+import { listAccounts, type Account } from "../lib/accounting";
 import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { currencySymbol } from "../lib/currency";
@@ -543,6 +546,7 @@ export default function ItemsAdmin() {
         <ItemForm
           initial={editing}
           isPharmacy={isPharmacy}
+          canRetailVariants={vertical === "retail"}
           onClose={() => setShowForm(false)}
           onSaved={async (msg) => { setShowForm(false); setToast({ kind: "ok", text: msg }); await refresh(); }}
         />
@@ -1053,9 +1057,10 @@ function ImportCsvModal({
   );
 }
 
-function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
+function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: {
   initial: LocalItem | null;
   isPharmacy: boolean;
+  canRetailVariants: boolean;
   onClose: () => void;
   onSaved: (msg: string) => void;
 }) {
@@ -1069,6 +1074,7 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
     nameAr: initial?.nameAr ?? "",
     nameEn: initial?.nameEn ?? "",
     barcode: initial?.barcode ?? "",
+    costPrice: initial?.costPrice ?? 0,
     salePrice: initial?.salePrice ?? 0,
     vatRate: initial?.vatRate ?? (isPharmacy ? 14 : 0),
     uomId: initial?.uomId ?? getDefaultUom()?.id ?? null,
@@ -1091,6 +1097,73 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"basic" | "pricing" | "units" | "accounts" | "inventory" | "restaurant-modifiers" | "additional" | "usage" | "notes" | "retail">("basic");
+  const [profile, setProfile] = useState<ItemWebProfile>(() => {
+    const saved = initial?.metadata ?? {};
+    const oldNature = initial?.itemType;
+    const businessNature = saved.businessNature
+      ?? (oldNature === "raw" || oldNature === "semi" || oldNature === "finished" ? oldNature : "merchandise");
+    return {
+      businessType: saved.businessType ?? (initial?.nature === "service" ? "service" : "stock"),
+      businessNature,
+      subgroupName: saved.subgroupName ?? "",
+      posGroupName: saved.posGroupName ?? "",
+      posSubgroupName: saved.posSubgroupName ?? "",
+      reorderLevel: saved.reorderLevel ?? 0,
+      maxLevel: saved.maxLevel ?? null,
+      costMethod: saved.costMethod ?? "weighted_avg",
+      discountType: saved.discountType ?? "none",
+      discountValue: saved.discountValue ?? 0,
+      status: saved.status ?? "active",
+      costAccountId: saved.costAccountId ?? null,
+      revenueAccountId: saved.revenueAccountId ?? null,
+      description: saved.description ?? "",
+      imageUrl: saved.imageUrl ?? "",
+      tags: saved.tags ?? "",
+      isBundle: saved.isBundle ?? false,
+      showInPos: saved.showInPos ?? true,
+      batchTrackingMode: saved.batchTrackingMode ?? "none",
+      salePriceOptions: saved.salePriceOptions ?? [],
+      restaurantModifierGroups: saved.restaurantModifierGroups ?? [],
+      usageControls: saved.usageControls ?? [],
+      retailEnabled: saved.retailEnabled ?? false,
+      retailCategory: saved.retailCategory ?? "apparel",
+      retailColor: saved.retailColor ?? "",
+      retailSize: saved.retailSize ?? "",
+      auditHistory: saved.auditHistory ?? [],
+    };
+  });
+  const [showQr, setShowQr] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [availableItems, setAvailableItems] = useState<LocalItem[]>([]);
+  const [usageModes, setUsageModes] = useState<Record<string, { mode: ItemUsageMode; reason: string }>>(
+    () => Object.fromEntries((initial?.metadata?.usageControls ?? []).map((rule) => [rule.screenKey, { mode: rule.mode, reason: rule.reason ?? "" }])),
+  );
+  useEffect(() => {
+    let active = true;
+    Promise.all([listAccounts(), listItems()])
+      .then(([accountRows, itemRows]) => {
+        if (!active) return;
+        setAccounts(accountRows);
+        setAvailableItems(itemRows);
+      })
+      .catch((e) => {
+        if (active) setErr(typeof e === "string" ? e : (e?.message ?? text("تعذر تحميل الحسابات والأصناف المرتبطة", "Could not load accounts and linked items.")));
+      });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (!showQr || !initial) { setQrDataUrl(null); return; }
+    let active = true;
+    const qrValue = String(form.barcode || form.code || initial.id);
+    QRCode.toDataURL(qrValue, { width: 220, margin: 2, errorCorrectionLevel: "M" })
+      .then((data) => { if (active) setQrDataUrl(data); })
+      .catch(() => { if (active) setErr(text("تعذر إنشاء رمز QR", "Could not generate the QR code.")); });
+    return () => { active = false; };
+  }, [showQr, form.barcode, form.code, initial?.id]);
+  const patchProfile = (patch: Partial<ItemWebProfile>) => setProfile((prev) => ({ ...prev, ...patch }));
   // Multi-unit pricing — additional sale units (نص كرتونة / كرتونة …). Stored
   // in the LS overlay only (via create/updateItem), never in SQLite.
   const [units, setUnits] = useState<ItemUnit[]>(initial?.units ?? []);
@@ -1143,6 +1216,42 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
       if (form.salePrice <= 0) { setErr(text("السعر يجب أن يكون أكبر من صفر", "Price must be greater than zero.")); return; }
     }
     if (form.vatRate < 0 || form.vatRate > 100) { setErr(text("نسبة الضريبة بين 0 و 100", "Tax rate must be between 0 and 100.")); return; }
+    if (!form.uomId) { setActiveTab("basic"); setErr(text("وحدة القياس الأساسية مطلوبة", "A base unit of measure is required.")); return; }
+    if ((profile.discountValue ?? 0) < 0 || (profile.discountType === "percent" && (profile.discountValue ?? 0) > 100)) {
+      setActiveTab("pricing"); setErr(text("قيمة الخصم غير صالحة", "The discount value is invalid.")); return;
+    }
+    if ((profile.reorderLevel ?? 0) < 0 || (profile.maxLevel != null && profile.maxLevel < 0)) {
+      setActiveTab("pricing"); setErr(text("تحقق من حد إعادة الطلب والحد الأقصى للمخزون", "Check the reorder and maximum stock levels.")); return;
+    }
+    const tags = (profile.tags ?? "").split(",").map((tag) => tag.trim()).filter(Boolean);
+    if (tags.length > 20 || tags.some((tag) => tag.length > 40)) {
+      setActiveTab("additional"); setErr(text("الحد الأقصى 20 وسمًا، وبحد أقصى 40 حرفًا للوسم الواحد.", "Use at most 20 tags, with no more than 40 characters per tag.")); return;
+    }
+    const saleOptions = profile.salePriceOptions ?? [];
+    if (saleOptions.some((option) => !option.nameAr.trim() || !Number.isFinite(option.salePrice) || option.salePrice < 0)) {
+      setActiveTab("pricing");
+      setErr(text("أكمل الاسم العربي وسعر كل خيار بيع أو احذفه", "Complete the Arabic name and price for each sales option, or remove it."));
+      return;
+    }
+    const modifierGroups = profile.restaurantModifierGroups ?? [];
+    if (modifierGroups.some((group) =>
+      !group.nameAr.trim() || group.options.length === 0
+      || group.options.some((option) => !option.itemId || !Number.isFinite(option.extraPrice) || option.extraPrice < 0
+        || !/^\d+(?:\.\d{1,4})?$/.test(String(option.consumptionQtyPerSelection).trim())
+        || !Number.isFinite(option.consumptionQtyPerSelection) || option.consumptionQtyPerSelection <= 0 || option.consumptionQtyPerSelection > 1_000_000)
+      || group.minSelect < (group.required ? 1 : 0) || group.maxSelect < 1
+      || group.minSelect > group.maxSelect || group.maxSelect > group.options.length
+      || (group.selectionMode === "single" && group.maxSelect !== 1))) {
+      setActiveTab("restaurant-modifiers");
+      setErr(text("أكمل مجموعات المطعم واربط كل اختيار بصنف صالح", "Complete each modifier group and link every option to a valid item."));
+      return;
+    }
+    if (profile.businessType === "service" && !profile.revenueAccountId) {
+      setActiveTab("accounts"); setErr(text("الحساب الإيرادي مطلوب للأصناف الخدمية", "A revenue account is required for service items.")); return;
+    }
+    if (profile.businessType === "prepaid_expense" && !profile.costAccountId) {
+      setActiveTab("accounts"); setErr(text("حساب التكلفة مطلوب للمصروفات المقدمة", "A cost account is required for prepaid expenses.")); return;
+    }
     // Multi-unit validation — only for non-weighed items (units are hidden for
     // weighed). Each unit needs a name, a factor > 0, and a price > 0.
     const cleanUnits: ItemUnit[] = form.isWeighed ? [] : units
@@ -1192,7 +1301,87 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
       let id: number;
       // Units live in the LS overlay only — they flow through create/updateItem
       // (NOT updateItemWeighed/Extended, which are SQLite-only).
-      const payload = { ...form, units: cleanUnits.length ? cleanUnits : null };
+      const savedUsageRules = Object.entries(usageModes)
+        .filter(([, value]) => value.mode !== "allowed" || value.reason.trim())
+        .map(([screenKey, value]) => ({ screenKey, mode: value.mode, reason: value.reason.trim() || null }));
+      const metadata: ItemWebProfile = {
+        ...profile,
+        salePriceOptions: saleOptions.map((option) => ({ ...option, nameAr: option.nameAr.trim(), nameEn: option.nameEn.trim() })),
+        restaurantModifierGroups: modifierGroups.map((group) => ({
+          ...group,
+          nameAr: group.nameAr.trim(),
+          nameEn: (group.nameEn ?? "").trim() || null,
+        })),
+        usageControls: savedUsageRules,
+        tags: (profile.tags ?? "").split(",").map((tag) => tag.trim()).filter(Boolean).join(", "),
+      };
+      const auditFields: { field: string; before: unknown; after: unknown }[] = initial ? [
+        { field: "nameAr", before: initial.nameAr, after: form.nameAr },
+        { field: "nameEn", before: initial.nameEn, after: form.nameEn },
+        { field: "code", before: initial.code, after: form.code },
+        { field: "barcode", before: initial.barcode, after: form.barcode },
+        { field: "costPrice", before: initial.costPrice, after: form.costPrice },
+        { field: "salePrice", before: initial.salePrice, after: form.salePrice },
+        { field: "vatRate", before: initial.vatRate, after: form.vatRate },
+        { field: "uomId", before: initial.uomId, after: form.uomId },
+        { field: "groupId", before: initial.groupId, after: form.groupId },
+        { field: "businessType", before: initial.metadata?.businessType, after: profile.businessType },
+        { field: "businessNature", before: initial.metadata?.businessNature ?? initial.itemType, after: profile.businessNature },
+        { field: "subgroupName", before: initial.metadata?.subgroupName, after: profile.subgroupName },
+        { field: "posGroupName", before: initial.metadata?.posGroupName, after: profile.posGroupName },
+        { field: "posSubgroupName", before: initial.metadata?.posSubgroupName, after: profile.posSubgroupName },
+        { field: "costMethod", before: initial.metadata?.costMethod, after: profile.costMethod },
+        { field: "discountType", before: initial.metadata?.discountType, after: profile.discountType },
+        { field: "discountValue", before: initial.metadata?.discountValue, after: profile.discountValue },
+        { field: "status", before: initial.metadata?.status, after: profile.status },
+        { field: "reorderLevel", before: initial.metadata?.reorderLevel, after: profile.reorderLevel },
+        { field: "maxLevel", before: initial.metadata?.maxLevel, after: profile.maxLevel },
+        { field: "costAccountId", before: initial.metadata?.costAccountId, after: profile.costAccountId },
+        { field: "revenueAccountId", before: initial.metadata?.revenueAccountId, after: profile.revenueAccountId },
+        { field: "salePriceOptions", before: initial.metadata?.salePriceOptions, after: metadata.salePriceOptions },
+        { field: "restaurantModifierGroups", before: initial.metadata?.restaurantModifierGroups, after: metadata.restaurantModifierGroups },
+        { field: "usageControls", before: initial.metadata?.usageControls, after: metadata.usageControls },
+        { field: "tags", before: initial.metadata?.tags, after: metadata.tags },
+        { field: "description", before: initial.metadata?.description, after: profile.description },
+        { field: "showInPos", before: initial.metadata?.showInPos, after: profile.showInPos },
+        { field: "batchTrackingMode", before: initial.metadata?.batchTrackingMode, after: profile.batchTrackingMode },
+        { field: "retailEnabled", before: initial.metadata?.retailEnabled, after: profile.retailEnabled },
+        { field: "retailCategory", before: initial.metadata?.retailCategory, after: profile.retailCategory },
+        { field: "retailColor", before: initial.metadata?.retailColor, after: profile.retailColor },
+        { field: "retailSize", before: initial.metadata?.retailSize, after: profile.retailSize },
+        { field: "expiryDate", before: initial.expiryDate, after: form.expiryDate },
+        { field: "batchNo", before: initial.batchNo, after: form.batchNo },
+        { field: "isWeighed", before: initial.isWeighed, after: form.isWeighed },
+        { field: "pricePerKg", before: initial.pricePerKg, after: form.pricePerKg },
+        { field: "plu", before: initial.plu, after: form.plu },
+      ] : [];
+      const auditValue = (value: unknown): string => {
+        if (value === undefined || value === null || value === "") return "—";
+        if (typeof value === "boolean") return value ? text("نعم", "Yes") : text("لا", "No");
+        if (typeof value === "string" && value.startsWith("data:image/")) return text("[صورة]", "[image]");
+        if (typeof value === "object") {
+          try { return JSON.stringify(value).slice(0, 180); } catch { return "[object]"; }
+        }
+        return String(value).slice(0, 180);
+      };
+      const auditChanges = auditFields
+        .filter(({ before, after }) => JSON.stringify(before) !== JSON.stringify(after))
+        .map(({ field, before, after }) => ({ field, before: auditValue(before), after: auditValue(after) }));
+      const auditEntry: ItemAuditEntry = {
+        id: newUnitId(),
+        action: initial ? "edit" : "create",
+        occurredAt: new Date().toISOString(),
+        changes: auditChanges,
+      };
+      const auditHistory = [...(initial?.metadata?.auditHistory ?? profile.auditHistory ?? []), auditEntry].slice(-100);
+      const payload: CreateItemInput = {
+        ...form,
+        costPrice: Number(form.costPrice) || 0,
+        nature: profile.businessType === "stock" ? "stock" : "service",
+        itemType: profile.businessNature ?? "merchandise",
+        metadata: { ...metadata, auditHistory },
+        units: cleanUnits.length ? cleanUnits : null,
+      };
       if (initial) {
         await updateItem(initial.id, payload);
         id = initial.id;
@@ -1209,18 +1398,16 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
         pricePerKg: form.isWeighed ? (form.pricePerKg ?? null) : null,
         plu: (form.plu ?? "").trim() || null,
       });
-      if (isPharmacy) {
-        await updateItemExtended(id, {
-          activeIngredient: form.activeIngredient || null,
-          dosageForm: form.dosageForm || null,
-          strength: form.strength || null,
-          manufacturer: form.manufacturer || null,
-          requiresPrescription: form.requiresPrescription ?? null,
-          controlled: form.controlled ?? null,
-          expiryDate: form.expiryDate || null,
-          batchNo: form.batchNo || null,
-        });
-      }
+      await updateItemExtended(id, {
+        activeIngredient: form.activeIngredient || null,
+        dosageForm: form.dosageForm || null,
+        strength: form.strength || null,
+        manufacturer: form.manufacturer || null,
+        requiresPrescription: form.requiresPrescription ?? null,
+        controlled: form.controlled ?? null,
+        expiryDate: form.expiryDate || null,
+        batchNo: form.batchNo || null,
+      });
       // Persist brand links (whole-set replace) — LS overlay only, keyed by
       // the resolved item id. Empty set clears the item's links.
       setItemBrands(id, cleanBrandLinks);
@@ -1234,245 +1421,651 @@ function ItemForm({ initial, isPharmacy, onClose, onSaved }: {
     finally { setSaving(false); }
   }
 
+  function updateModifierGroup(index: number, patch: Partial<RestaurantModifierGroup>) {
+    setProfile((prev) => ({
+      ...prev,
+      restaurantModifierGroups: (prev.restaurantModifierGroups ?? []).map((group, i) => i === index ? { ...group, ...patch } : group),
+    }));
+  }
+  function addModifierGroup() {
+    const id = newUnitId();
+    patchProfile({
+      restaurantModifierGroups: [...(profile.restaurantModifierGroups ?? []), {
+        id, nameAr: "", nameEn: "", required: false, selectionMode: "single", minSelect: 0, maxSelect: 1,
+        options: [{ id: newUnitId(), itemId: 0, extraPrice: 0, consumptionQtyPerSelection: 1 }],
+      }],
+    });
+  }
+  function updateModifierOption(groupIndex: number, optionIndex: number, patch: Partial<RestaurantModifierGroup["options"][number]>) {
+    setProfile((prev) => ({
+      ...prev,
+      restaurantModifierGroups: (prev.restaurantModifierGroups ?? []).map((group, gi) => gi !== groupIndex ? group : ({
+        ...group, options: group.options.map((option, oi) => oi === optionIndex ? { ...option, ...patch } : option),
+      })),
+    }));
+  }
+  function addSalePriceOption() {
+    const option = { id: newUnitId(), nameAr: "", nameEn: "", salePrice: Number(form.salePrice) || 0 };
+    patchProfile({ salePriceOptions: [...(profile.salePriceOptions ?? []), option] });
+  }
+  function handleImageFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setErr(text("اختر ملف صورة صالحاً", "Choose a valid image file."));
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setErr(text("حجم الصورة يجب ألا يتجاوز 2 ميجابايت", "Image size must not exceed 2 MB."));
+      event.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") patchProfile({ imageUrl: reader.result });
+    };
+    reader.onerror = () => setErr(text("تعذر قراءة الصورة", "Could not read the image."));
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  }
+  function printQr() {
+    if (!qrDataUrl) return;
+    const printWindow = window.open("", "_blank", "width=420,height=620");
+    if (!printWindow) { setErr(text("اسمح بفتح نافذة الطباعة", "Allow the print window to open.")); return; }
+    printWindow.opener = null;
+    const doc = printWindow.document;
+    doc.open();
+    doc.write("<!doctype html><html><head></head><body></body></html>");
+    doc.close();
+    const style = doc.createElement("style");
+    style.textContent = "body{font-family:system-ui,sans-serif;text-align:center;padding:20px}.sticker{display:inline-block;padding:16px;border:1px dashed #ccc;border-radius:12px}img{width:220px;height:220px}h2{font-size:16px}.code{font-family:monospace;color:#555;font-size:12px}.barcode{font-family:monospace;color:#888;font-size:11px}@media print{.sticker{border:0}}";
+    doc.head.appendChild(style);
+    const sticker = doc.createElement("div");
+    sticker.className = "sticker";
+    const image = doc.createElement("img");
+    image.src = qrDataUrl;
+    sticker.appendChild(image);
+    const title = doc.createElement("h2");
+    title.textContent = language === "en" ? form.nameEn || form.nameAr || form.code || "" : form.nameAr || form.nameEn || form.code || "";
+    sticker.appendChild(title);
+    if (form.code) { const code = doc.createElement("div"); code.className = "code"; code.textContent = form.code; sticker.appendChild(code); }
+    if (form.barcode) { const barcode = doc.createElement("div"); barcode.className = "barcode"; barcode.textContent = `🔖 ${form.barcode}`; sticker.appendChild(barcode); }
+    doc.body.appendChild(sticker);
+    image.onload = () => { printWindow.focus(); printWindow.print(); };
+  }
+  function historyFieldLabel(field: string) {
+    const labels: Record<string, [string, string]> = {
+      nameAr: ["الاسم بالعربية", "Arabic name"], nameEn: ["الاسم بالإنجليزية", "English name"],
+      code: ["الكود", "Code"], barcode: ["الباركود", "Barcode"], costPrice: ["سعر التكلفة", "Cost price"],
+      salePrice: ["سعر البيع", "Sales price"], vatRate: ["الضريبة", "Tax rate"], uomId: ["وحدة القياس", "Unit of measure"],
+      groupId: ["مجموعة الصنف", "Item group"], businessType: ["نوع الصنف", "Item type"],
+      businessNature: ["طبيعة الصنف", "Item nature"], subgroupName: ["المجموعة الفرعية", "Subgroup"],
+      posGroupName: ["مجموعة نقاط البيع", "POS group"], posSubgroupName: ["مجموعة نقاط البيع الفرعية", "POS subgroup"],
+      costMethod: ["طريقة احتساب التكلفة", "Costing method"], discountType: ["نوع الخصم", "Discount type"],
+      discountValue: ["قيمة الخصم", "Discount value"], status: ["الحالة", "Status"],
+      reorderLevel: ["حد إعادة الطلب", "Reorder level"], maxLevel: ["الحد الأقصى للمخزون", "Maximum stock"],
+      costAccountId: ["حساب التكلفة", "Cost account"], revenueAccountId: ["حساب الإيراد", "Revenue account"],
+      salePriceOptions: ["خيارات سعر البيع", "Sales price options"], restaurantModifierGroups: ["خيارات المطعم", "Restaurant modifiers"],
+      usageControls: ["قواعد الاستخدام", "Usage rules"], tags: ["الوسوم", "Tags"], description: ["الوصف", "Description"],
+      showInPos: ["الظهور في نقاط البيع", "Show in POS"], batchTrackingMode: ["تتبع التشغيلات", "Batch tracking"],
+      retailEnabled: ["متغيرات التجزئة", "Retail attributes"], retailCategory: ["تصنيف التجزئة", "Retail category"],
+      retailColor: ["اللون", "Color"], retailSize: ["المقاس", "Size"], expiryDate: ["تاريخ الصلاحية", "Expiry date"],
+      batchNo: ["رقم التشغيلة", "Batch number"], isWeighed: ["البيع بالوزن", "Sold by weight"],
+      pricePerKg: ["السعر للكيلو", "Price per kilogram"], plu: ["رقم PLU", "PLU"],
+    };
+    const pair = labels[field];
+    return pair ? text(pair[0], pair[1]) : field;
+  }
+
+  const usageScreenGroups: { key: string; ar: string; en: string; screens: [string, string, string][] }[] = [
+    { key: "purchases", ar: "المشتريات", en: "Purchases", screens: [
+      ["purchase_invoices", "فواتير المشتريات", "Purchase invoices"], ["purchase_returns", "مرتجعات المشتريات", "Purchase returns"],
+      ["purchase_orders", "أوامر الشراء", "Purchase orders"], ["purchase_requests", "طلبات الشراء", "Purchase requests"],
+      ["supplier_quotes", "عروض أسعار الموردين", "Supplier quotations"],
+    ]},
+    { key: "sales", ar: "المبيعات", en: "Sales", screens: [
+      ["sales_quotations", "عروض الأسعار", "Quotations"], ["sales_orders", "أوامر البيع", "Sales orders"],
+      ["sales_invoices", "فواتير المبيعات", "Sales invoices"], ["sales_returns", "مرتجعات المبيعات", "Sales returns"],
+      ["pos", "نقاط البيع", "POS"], ["customer_requests", "طلبات العملاء", "Customer requests"],
+    ]},
+    { key: "warehouses", ar: "المخازن", en: "Warehouses", screens: [
+      ["stock_in", "إذن إضافة", "Goods receipt"], ["stock_out", "إذن صرف", "Goods issue"],
+      ["stock_transfer", "تحويل المخازن", "Stock transfer"], ["stock_count", "الجرد", "Stock count"],
+      ["stock_adjust", "التسويات", "Adjustments"], ["assembly", "التجميع", "Assembly"], ["disassembly", "التفكيك", "Disassembly"],
+    ]},
+    { key: "manufacturing", ar: "التصنيع", en: "Manufacturing", screens: [
+      ["production_orders", "أوامر الإنتاج", "Production orders"], ["raw_consumption", "استهلاك المواد الخام", "Raw consumption"],
+      ["finished_goods", "المنتجات النهائية", "Finished goods"],
+    ]},
+    { key: "maintenance", ar: "الصيانة", en: "Maintenance", screens: [
+      ["maintenance_orders", "أوامر الصيانة", "Maintenance orders"], ["spare_parts", "قطع الغيار", "Spare parts"],
+    ]},
+    { key: "rental", ar: "التأجير", en: "Rental", screens: [
+      ["rental_contracts", "عقود التأجير", "Rental contracts"], ["rental_delivery", "تسليم الأصناف", "Item delivery"],
+      ["rental_return", "استرجاع الأصناف", "Item return"],
+    ]},
+    { key: "projects", ar: "المشاريع", en: "Projects", screens: [
+      ["project_issue", "صرف مواد المشروع", "Project issue"], ["project_return", "مرتجع المشروع", "Project return"],
+    ]},
+    { key: "ecommerce", ar: "التجارة الإلكترونية", en: "E-commerce", screens: [
+      ["online_store", "المتجر الإلكتروني", "Online store"], ["mobile_app", "تطبيق الهاتف", "Mobile app"],
+      ["online_sales", "البيع عبر الإنترنت", "Online sales"],
+    ]},
+    { key: "customer_service", ar: "خدمة العملاء", en: "Customer Service", screens: [
+      ["warranty", "الضمان", "Warranty"], ["after_sales", "خدمات ما بعد البيع", "After-sales services"],
+    ]},
+  ];
+  const usageModeOptions: { value: ItemUsageMode; ar: string; en: string }[] = [
+    { value: "allowed", ar: "مسموح", en: "Allowed" },
+    { value: "hidden", ar: "مخفي", en: "Hidden" },
+    { value: "readonly", ar: "للقراءة فقط", en: "Read-only" },
+    { value: "requires_approval", ar: "يتطلب موافقة", en: "Requires approval" },
+    { value: "requires_permission", ar: "يتطلب صلاحية خاصة", en: "Requires special permission" },
+  ];
+  const usageReasonPresets = [
+    { ar: "شراء فقط", en: "Purchase only" },
+    { ar: "بيع فقط", en: "Sale only" },
+    { ar: "مادة خام", en: "Raw material" },
+    { ar: "منتج نهائي", en: "Finished product" },
+    { ar: "موقوف مؤقتاً", en: "Temporarily suspended" },
+    { ar: "خاص بالمشروعات", en: "Projects only" },
+    { ar: "خاص بالصيانة", en: "Maintenance only" },
+  ];
+  const tabDefinitions = [
+    { id: "basic" as const, icon: "📦", ar: "البيانات الأساسية", en: "Basic data" },
+    { id: "pricing" as const, icon: "💲", ar: "الأسعار والكميات", en: "Pricing & quantities" },
+    { id: "units" as const, icon: "📏", ar: "الوحدات", en: "Units" },
+    ...(profile.businessType !== "stock" ? [{ id: "accounts" as const, icon: "📘", ar: "الربط المحاسبي", en: "Accounting links" }] : []),
+    { id: "inventory" as const, icon: "🏬", ar: "المخزون والمستودعات", en: "Inventory & warehouses" },
+    ...(profile.showInPos !== false ? [{ id: "restaurant-modifiers" as const, icon: "🍽️", ar: "إضافات وخيارات المطعم", en: "Restaurant modifiers" }] : []),
+    { id: "additional" as const, icon: "🧩", ar: "بيانات إضافية", en: "Additional data" },
+    { id: "usage" as const, icon: "⚙️", ar: "التحكم في الاستخدام", en: "Usage control" },
+    { id: "notes" as const, icon: "📝", ar: "ملاحظات", en: "Notes" },
+    ...(canRetailVariants ? [{ id: "retail" as const, icon: "🏷️", ar: "متغيرات التجزئة", en: "Retail variants" }] : []),
+  ];
+  const modifierItems = availableItems.filter((item) =>
+    item.id !== initial?.id
+    && item.metadata?.status !== "inactive"
+    && ["stock", "service"].includes(item.metadata?.businessType ?? (item.nature === "service" ? "service" : "stock")),
+  );
+  const subgroupSuggestions = Array.from(new Set(availableItems.map((item) => item.metadata?.subgroupName?.trim()).filter((value): value is string => !!value)));
+  const posGroupSuggestions = Array.from(new Set(availableItems.map((item) => item.metadata?.posGroupName?.trim()).filter((value): value is string => !!value)));
+  const posSubgroupSuggestions = Array.from(new Set(availableItems.map((item) => item.metadata?.posSubgroupName?.trim()).filter((value): value is string => !!value)));
+
   return (
     <div style={{ background: "#fff", border: "1px solid #d9e0e8", borderRadius: 10, padding: 20, marginBottom: 16 }}>
       <h3 style={{ ...S.modalTitle, color: initial ? "#1e40af" : "#15803d" }}>{initial ? `✏️ ${text("تعديل صنف", "Edit item")}` : `➕ ${text("صنف جديد", "New item")}`}</h3>
-
-        {/* Core data — 4 fields per row for a denser, tidier layout. */}
-        <div style={S.formGrid4}>
-          <Field label={text("الاسم بالعربية *", "Arabic name *")}>
-            <input value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} style={S.input} autoFocus />
-          </Field>
-          <Field label={text("الاسم بالإنجليزية", "English name")}>
-            <input value={form.nameEn ?? ""} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} style={S.input} />
-          </Field>
-          <Field label={text("الكود الداخلي", "Internal code")}>
-            <input value={form.code ?? ""} onChange={(e) => setForm({ ...form, code: e.target.value })} style={S.input} placeholder={text("مثلاً: ITEM-001", "e.g. ITEM-001")} />
-          </Field>
-          <Field label={text("الباركود", "Barcode")}>
-            <input value={form.barcode ?? ""} onChange={(e) => setForm({ ...form, barcode: e.target.value })} style={S.input} placeholder="EAN-13" />
-          </Field>
-
-          <Field label={text("مجموعة الصنف", "Item group")}>
-            <SearchCombobox
-              value={form.groupId ?? ""}
-              onChange={(v) => setForm({ ...form, groupId: v === "" ? null : Number(v) })}
-              style={S.input}
-              options={[
-                { value: "", label: text("— بدون —", "— None —") },
-                ...itemGroups.map((g) => ({
-                  value: g.id,
-                  label: `${g.nameAr}${g.code ? ` (${g.code})` : ""}`,
-                })),
-              ]}
-            />
-          </Field>
-          <Field label={text("طبيعة الصنف", "Item nature")}>
-            <select value={form.nature ?? "stock"}
-                    onChange={(e) => setForm({ ...form, nature: e.target.value as CreateItemInput["nature"] })}
-                    style={S.input}>
-              <option value="stock">{text("مخزني", "Stock item")}</option>
-              <option value="service">{text("خدمي", "Service")}</option>
-            </select>
-          </Field>
-          <Field label={text("نوع الصنف", "Item type")}>
-            <select value={form.itemType ?? "finished"}
-                    onChange={(e) => setForm({ ...form, itemType: e.target.value as CreateItemInput["itemType"] })}
-                    style={S.input}>
-              <option value="finished">{text("تام", "Finished")}</option>
-              <option value="semi">{text("نصف مصنع", "Semi-finished")}</option>
-              <option value="raw">{text("مواد خام", "Raw material")}</option>
-              <option value="other">{text("أخرى", "Other")}</option>
-            </select>
-          </Field>
-          <Field label={text("وحدة القياس", "Unit of measure")}>
-            <SearchCombobox
-              value={form.uomId ?? ""}
-              onChange={(v) => setForm({ ...form, uomId: v === "" ? null : Number(v) })}
-              style={S.input}
-              options={uoms.map((u) => ({
-                value: u.id,
-                label: `${u.nameAr}${u.shortCode ? ` (${u.shortCode})` : ""}`,
-              }))}
-            />
-          </Field>
-
-          <Field label={form.isWeighed ? text("سعر البيع (يُستبدل بـ السعر/كجم)", "Sales price (replaced by price/kg)") : text("سعر البيع *", "Sales price *")}>
-            <input type="number" step="0.01" min="0" value={blankIfZero(form.salePrice, hideZeros)}
-                   disabled={!!form.isWeighed}
-                   onChange={(e) => setForm({ ...form, salePrice: Number(e.target.value) })}
-                   style={{ ...S.input, opacity: form.isWeighed ? 0.5 : 1 }} />
-          </Field>
-          <Field label={text("نسبة الضريبة %", "Tax rate %")}>
-            <input type="number" step="0.5" min="0" max="100" value={form.vatRate || ""} placeholder="0" onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) || 0 })} style={S.input} />
-          </Field>
-        </div>
-
-        {/* Scale (Task #201) — applies to all verticals. */}
-        <div style={{ marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#1d4ed8" }}>
-          ⚖️ {text("بيانات الميزان", "Scale details")}
-        </div>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, color: "#475569" }}>
-          <input type="checkbox" checked={!!form.isWeighed}
-                 onChange={(e) => setForm({ ...form, isWeighed: e.target.checked })} />
-          {text("صنف يُباع بالوزن (يفتح نافذة وزن عند الإضافة، أو يُقرأ من باركود الميزان)", "Sold by weight (opens a weighing dialog or reads a scale barcode)")}
-        </label>
-        {form.isWeighed && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label={`${text("السعر للكيلو", "Price per kilogram")} (${currencySymbol()} / ${text("كجم", "kg")}) *`}>
-              <input type="number" step="0.01" min="0" value={blankIfZero(form.pricePerKg ?? 0, hideZeros)}
-                     onChange={(e) => setForm({ ...form, pricePerKg: Number(e.target.value) })}
-                     style={S.input} />
-            </Field>
-            <Field label={text("رقم PLU (للميزان)", "PLU number (scale)")}>
-              <input value={form.plu ?? ""} maxLength={6}
-                     onChange={(e) => setForm({ ...form, plu: e.target.value.replace(/\D/g, "") })}
-                      style={S.input} placeholder={text("مثلاً: 12345", "e.g. 12345")} />
-            </Field>
-          </div>
-        )}
-
-        {/* Multi-unit pricing — hidden for weighed items (priced per-kg). */}
-        {!form.isWeighed && (
-          <>
-            <div style={{ marginTop: 16, marginBottom: 4, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#7c3aed" }}>
-              📦 {text("وحدات بيع إضافية", "Additional sales units")}
-            </div>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
-              {text("الوحدة الأساسية = قطعة بسعر البيع أعلاه. أضف وحدات أكبر (نص كرتونة / كرتونة …) لكل منها سعر، ومعامل التحويل = عدد القطع، وباركود اختياري. المخزون يُخصم بالقطعة.", "The base unit is one piece at the sales price above. Add larger units with their own price, piece conversion factor, and optional barcode. Stock is deducted by piece.")}
-            </div>
-            {units.map((u) => (
-              <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr 0.9fr 1.2fr auto", gap: 8, marginBottom: 8, alignItems: "end" }}>
-                <Field label={text("اسم الوحدة", "Unit name")}>
-                  <input list="pos-uom-suggestions" value={u.name}
-                         onChange={(e) => updateUnit(u.id, { name: e.target.value })}
-                          style={S.input} placeholder={text("كرتونة", "Carton")} />
-                </Field>
-                <Field label={text("عدد القطع", "Number of pieces")}>
-                  <input type="number" step="1" min="1" value={u.factor}
-                         onChange={(e) => updateUnit(u.id, { factor: Number(e.target.value) })}
-                         style={S.input} />
-                </Field>
-                <Field label={text("السعر", "Price")}>
-                  <input type="number" step="0.01" min="0" value={u.price}
-                         onChange={(e) => updateUnit(u.id, { price: Number(e.target.value) })}
-                         style={S.input} />
-                </Field>
-                <Field label={text("باركود (اختياري)", "Barcode (optional)")}>
-                  <input value={u.barcode ?? ""}
-                         onChange={(e) => updateUnit(u.id, { barcode: e.target.value })}
-                         style={S.input} placeholder="EAN-13" />
-                </Field>
-                <button type="button" onClick={() => removeUnit(u.id)} style={{ ...S.btnDel, marginBottom: 12 }}>×</button>
-              </div>
-            ))}
-            <datalist id="pos-uom-suggestions">
-              {uoms.map((u) => <option key={u.id} value={u.nameAr} />)}
-            </datalist>
-            <button type="button" onClick={addUnit} style={S.btnAddCond}>+ {text("إضافة وحدة بيع", "Add sales unit")}</button>
-          </>
-        )}
-
-        {/* Brand links — additive/optional. Attach one or more brands to this
-            item, each with its own price / cost / barcode / part-number. The
-            picker only appears in back-office sales invoices at sale time. */}
-        <div style={{ marginTop: 16, marginBottom: 4, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#0d9488" }}>
-          🏷️ {text("العلامات التجارية", "Brands")}
-        </div>
-        <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
-          {text("اربط الصنف بعلامة تجارية واحدة أو أكثر، لكل علامة سعرها وتكلفتها وباركودها ورقم القطعة. يظهر منتقي العلامة في فواتير المبيعات (الخلفية) فقط، واسم العلامة للطباعة فقط ولا يدخل في فاتورة زاتكا.", "Link one or more brands to this item. Each brand can have its own price, cost, barcode, and part number. Brand selection is available only on back-office sales invoices; the brand name is for printing and is not included in ZATCA invoices.")}
-        </div>
-        {allBrands.length === 0 ? (
-          <div style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: 10, marginBottom: 8 }}>
-            {text("لا توجد علامات تجارية معرّفة بعد. أضِف العلامات من شاشة «العلامات التجارية» أولاً.", "No brands are defined. Add brands from the Brands screen first.")}
-          </div>
-        ) : (
-          <>
-            {brandLinks.map((l) => (
-              <div key={l.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 0.9fr 0.9fr auto", gap: 8, marginBottom: 8, alignItems: "end" }}>
-                <Field label={text("العلامة التجارية", "Brand")}>
-                  <SearchCombobox
-                    value={l.brandId || ""}
-                    onChange={(v) => updateBrandLink(l.id, { brandId: v === "" ? 0 : Number(v) })}
-                    style={S.input}
-                    options={[
-                      { value: "", label: text("— اختر —", "— Select —") },
-                      ...allBrands.map((b) => ({
-                        value: b.id,
-                        label: `${b.nameAr}${b.code ? ` (${b.code})` : ""}`,
-                      })),
-                    ]}
-                  />
-                </Field>
-                <Field label={text("الباركود", "Barcode")}>
-                  <input value={l.barcode ?? ""} onChange={(e) => updateBrandLink(l.id, { barcode: e.target.value })} style={S.input} placeholder="EAN-13" />
-                </Field>
-                <Field label={text("رقم القطعة", "Part number")}>
-                  <input value={l.partNumber ?? ""} onChange={(e) => updateBrandLink(l.id, { partNumber: e.target.value })} style={S.input} placeholder="Part #" />
-                </Field>
-                <Field label={text("التكلفة", "Cost")}>
-                  <input type="number" step="0.01" min="0" value={blankIfZero(l.purchaseCost ?? 0, hideZeros)}
-                         onChange={(e) => updateBrandLink(l.id, { purchaseCost: Number(e.target.value) || 0 })} style={S.input} />
-                </Field>
-                <Field label={text("سعر البيع", "Sales price")}>
-                  <input type="number" step="0.01" min="0" value={blankIfZero(l.salePrice1 ?? 0, hideZeros)}
-                         onChange={(e) => updateBrandLink(l.id, { salePrice1: Number(e.target.value) || 0 })} style={S.input} />
-                </Field>
-                <button type="button" onClick={() => removeBrandLink(l.id)} style={{ ...S.btnDel, marginBottom: 12 }}>×</button>
-              </div>
-            ))}
-            <button type="button" onClick={addBrandLink} style={S.btnAddCond}>+ {text("إضافة علامة تجارية", "Add brand")}</button>
-          </>
-        )}
-
-        {isPharmacy && (
-          <>
-            <div style={{ marginTop: 16, marginBottom: 8, paddingTop: 12, borderTop: "1px dashed #e2e8f0", fontSize: 13, fontWeight: 600, color: "#86198f" }} key="pharma-header">
-              💊 {text("بيانات الدواء (صيدلية)", "Medicine details (pharmacy)")}
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Field label={text("المادة الفعّالة", "Active ingredient")}>
-                <input value={form.activeIngredient ?? ""} onChange={(e) => setForm({ ...form, activeIngredient: e.target.value })} style={S.input} placeholder="Paracetamol" />
-              </Field>
-              <Field label={text("الشركة المصنّعة", "Manufacturer")}>
-                <input value={form.manufacturer ?? ""} onChange={(e) => setForm({ ...form, manufacturer: e.target.value })} style={S.input} />
-              </Field>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Field label={text("الشكل الصيدلي", "Dosage form")}>
-                <input value={form.dosageForm ?? ""} onChange={(e) => setForm({ ...form, dosageForm: e.target.value })} style={S.input} placeholder={text("أقراص / شراب / كبسولات", "Tablets / syrup / capsules")} />
-              </Field>
-              <Field label={text("التركيز", "Strength")}>
-                <input value={form.strength ?? ""} onChange={(e) => setForm({ ...form, strength: e.target.value })} style={S.input} placeholder={text("500 ملجم", "500 mg")} />
-              </Field>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Field label={text("تاريخ الصلاحية", "Expiry date")}>
-                <input type="date" value={form.expiryDate ?? ""} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} style={S.input} />
-              </Field>
-              <Field label={text("رقم التشغيلة", "Batch number")}>
-                <input value={form.batchNo ?? ""} onChange={(e) => setForm({ ...form, batchNo: e.target.value })} style={S.input} />
-              </Field>
-            </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, color: "#475569" }}>
-              <input type="checkbox" checked={!!form.requiresPrescription} onChange={(e) => setForm({ ...form, requiresPrescription: e.target.checked })} />
-              {text("يتطلّب وصفة طبية (روشتة)", "Prescription required")}
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13, color: "#dc2626", fontWeight: 600 }}>
-              <input type="checkbox" checked={!!form.controlled} onChange={(e) => setForm({ ...form, controlled: e.target.checked })} />
-              ⚠️ {text("دواء مخدّر / خاضع للرقابة", "Controlled substance")}
-            </label>
-          </>
-        )}
-
-        {err && <div style={S.err}>{err}</div>}
-
-        <div style={S.btnRow}>
-          <button onClick={submit} disabled={saving} style={S.btnPrimary}>
-            {saving ? "..." : initial ? `💾 ${text("حفظ التعديلات", "Save changes")}` : `✅ ${text("إضافة", "Add item")}`}
+      <div role="tablist" aria-label={text("أقسام بيانات الصنف", "Item data sections")} style={S.formTabs}>
+        {tabDefinitions.map((tab) => (
+          <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id}
+            onClick={() => setActiveTab(tab.id)} style={activeTab === tab.id ? S.formTabActive : S.formTab}>
+            <span>{tab.icon}</span> {text(tab.ar, tab.en)}
           </button>
-          <button onClick={onClose} style={S.btnGhost}>{text("إلغاء", "Cancel")}</button>
+        ))}
+      </div>
+      <div style={{ minHeight: 260, paddingTop: 16 }}>
+        {activeTab === "basic" && (
+          <>
+          <div style={S.formGrid4}>
+            <Field label={text("الاسم بالعربية *", "Arabic name *")}>
+              <input value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} style={S.input} autoFocus />
+            </Field>
+            <Field label={text("الاسم بالإنجليزية", "English name")}>
+              <input value={form.nameEn ?? ""} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} style={S.input} dir={language === "en" ? "ltr" : undefined} />
+            </Field>
+            <Field label={text("الكود الداخلي", "Internal code")}>
+              <input value={form.code ?? ""} onChange={(e) => setForm({ ...form, code: e.target.value })} style={S.input} placeholder={text("مثلاً: ITEM-001", "e.g. ITEM-001")} dir="ltr" />
+            </Field>
+            <Field label={text("الباركود", "Barcode")}>
+              <input value={form.barcode ?? ""} onChange={(e) => setForm({ ...form, barcode: e.target.value })} style={S.input} placeholder="EAN-13" dir="ltr" />
+            </Field>
+            <Field label={text("نوع الصنف", "Item type")} hint={text("يحدد ما إذا كان الصنف مخزوناً أو خدمة أو أصلاً أو مصروفاً مقدماً.", "Choose whether this is stock, a service, a fixed asset, or a prepaid expense.")}>
+              <select value={profile.businessType} style={S.input} onChange={(e) => {
+                const businessType = e.target.value as ItemWebProfile["businessType"];
+                const noStock = businessType === "service" || businessType === "prepaid_expense";
+                patchProfile({
+                  businessType,
+                  ...(noStock ? { businessNature: "merchandise", batchTrackingMode: "none", reorderLevel: 0, maxLevel: null } : {}),
+                });
+                if (noStock) setForm((prev) => ({ ...prev, expiryDate: "", batchNo: "" }));
+                setActiveTab("basic");
+              }}>
+                <option value="stock">{text("مخزني", "Stock item")}</option>
+                <option value="service">{text("خدمي", "Service")}</option>
+                <option value="fixed_asset">{text("أصل ثابت", "Fixed asset")}</option>
+                <option value="prepaid_expense">{text("مصروف مقدم", "Prepaid expense")}</option>
+              </select>
+            </Field>
+            {profile.businessType === "stock" && (
+              <Field label={text("طبيعة الصنف", "Item nature")}>
+                <select value={profile.businessNature ?? "merchandise"} style={S.input}
+                  onChange={(e) => patchProfile({ businessNature: e.target.value as ItemWebProfile["businessNature"] })}>
+                  <option value="raw">{text("مواد خام", "Raw material")}</option>
+                  <option value="semi">{text("نصف مصنع", "Semi-finished")}</option>
+                  <option value="finished">{text("تام الصنع", "Finished product")}</option>
+                  <option value="consumable">{text("مستهلك", "Consumable")}</option>
+                  <option value="merchandise">{text("بضاعة", "Merchandise")}</option>
+                  <option value="other">{text("أخرى", "Other")}</option>
+                </select>
+              </Field>
+            )}
+            <Field label={text("مجموعة الصنف", "Item group")}>
+              <SearchCombobox value={form.groupId ?? ""}
+                onChange={(v) => setForm({ ...form, groupId: v === "" ? null : Number(v) })}
+                style={S.input} options={[
+                  { value: "", label: text("— بدون —", "— None —") },
+                  ...itemGroups.map((g) => ({ value: g.id, label: `${language === "en" ? (g.nameEn || g.nameAr) : g.nameAr}${g.code ? ` (${g.code})` : ""}` })),
+                ]} />
+            </Field>
+            <Field label={text("المجموعة الفرعية", "Subgroup")}>
+              <input list="item-subgroup-suggestions" value={profile.subgroupName ?? ""} onChange={(e) => patchProfile({ subgroupName: e.target.value })} style={S.input} />
+            </Field>
+            <Field label={text("مجموعة نقاط البيع", "POS group")}>
+              <input list="item-pos-group-suggestions" value={profile.posGroupName ?? ""} onChange={(e) => patchProfile({ posGroupName: e.target.value })} style={S.input} />
+            </Field>
+            <Field label={text("المجموعة الفرعية لنقاط البيع", "POS subgroup")}>
+              <input list="item-pos-subgroup-suggestions" value={profile.posSubgroupName ?? ""} onChange={(e) => patchProfile({ posSubgroupName: e.target.value })} style={S.input} />
+            </Field>
+            <Field label={`${text("وحدة القياس الأساسية", "Base unit of measure")} *`}>
+              <SearchCombobox value={form.uomId ?? ""}
+                onChange={(v) => setForm({ ...form, uomId: v === "" ? null : Number(v) })} style={S.input}
+                options={uoms.map((u) => ({ value: u.id, label: `${language === "en" ? (u.nameEn || u.nameAr) : u.nameAr}${u.shortCode ? ` (${u.shortCode})` : ""}` }))} />
+            </Field>
+            <Field label={text("الحالة", "Status")}>
+              <select value={profile.status ?? "active"} onChange={(e) => patchProfile({ status: e.target.value as "active" | "inactive" })} style={S.input}>
+                <option value="active">{text("نشط", "Active")}</option><option value="inactive">{text("غير نشط", "Inactive")}</option>
+              </select>
+            </Field>
+          </div>
+          <datalist id="item-subgroup-suggestions">{subgroupSuggestions.map((name) => <option key={name} value={name} />)}</datalist>
+          <datalist id="item-pos-group-suggestions">{posGroupSuggestions.map((name) => <option key={name} value={name} />)}</datalist>
+          <datalist id="item-pos-subgroup-suggestions">{posSubgroupSuggestions.map((name) => <option key={name} value={name} />)}</datalist>
+          </>
+        )}
+
+        {activeTab === "pricing" && (
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={S.formGrid4}>
+              <Field label={text("سعر التكلفة", "Cost price")}>
+                <input type="number" min="0" step="any" value={form.costPrice ?? 0} onChange={(e) => setForm({ ...form, costPrice: Number(e.target.value) || 0 })} style={S.input} dir="ltr" />
+              </Field>
+              <Field label={form.isWeighed ? text("سعر البيع (يُستخدم سعر الكيلو)", "Sales price (price/kg is used)") : text("سعر البيع", "Sales price")}>
+                <input type="number" min="0" step="any" value={blankIfZero(form.salePrice, hideZeros)} disabled={!!form.isWeighed}
+                  onChange={(e) => setForm({ ...form, salePrice: Number(e.target.value) || 0 })} style={{ ...S.input, opacity: form.isWeighed ? 0.5 : 1 }} dir="ltr" />
+              </Field>
+              <Field label={text("نسبة الضريبة %", "Tax rate %")}>
+                <input type="number" min="0" max="100" step="any" value={form.vatRate ?? 0} onChange={(e) => setForm({ ...form, vatRate: Number(e.target.value) || 0 })} style={S.input} dir="ltr" />
+              </Field>
+              {profile.businessType !== "service" && profile.businessType !== "prepaid_expense" && (
+                <Field label={text("طريقة احتساب التكلفة", "Costing method")}>
+                  <select value={profile.costMethod ?? "weighted_avg"} onChange={(e) => patchProfile({ costMethod: e.target.value as ItemWebProfile["costMethod"] })} style={S.input}>
+                    <option value="weighted_avg">{text("متوسط مرجح", "Weighted average")}</option>
+                    <option value="last_cost">{text("آخر تكلفة", "Last cost")}</option>
+                  </select>
+                </Field>
+              )}
+              <Field label={text("نوع الخصم الافتراضي", "Default discount type")}>
+                <select value={profile.discountType ?? "none"} onChange={(e) => patchProfile({ discountType: e.target.value as ItemWebProfile["discountType"], discountValue: e.target.value === "none" ? 0 : profile.discountValue ?? 0 })} style={S.input}>
+                  <option value="none">{text("بدون", "None")}</option><option value="percent">{text("نسبة مئوية", "Percent")}</option><option value="amount">{text("مبلغ", "Amount")}</option>
+                </select>
+              </Field>
+              <Field label={text("قيمة الخصم الافتراضي", "Default discount value")}>
+                <input type="number" min="0" max={profile.discountType === "percent" ? 100 : undefined} step="any" disabled={!profile.discountType || profile.discountType === "none"}
+                  value={profile.discountValue ?? 0} onChange={(e) => patchProfile({ discountValue: Number(e.target.value) || 0 })} style={S.input} dir="ltr" />
+              </Field>
+              {profile.businessType !== "service" && profile.businessType !== "prepaid_expense" && (
+                <>
+                  <Field label={text("حد إعادة الطلب", "Reorder level")}>
+                    <input type="number" min="0" step="any" value={profile.reorderLevel ?? 0} onChange={(e) => patchProfile({ reorderLevel: Number(e.target.value) || 0 })} style={S.input} dir="ltr" />
+                  </Field>
+                  <Field label={text("الحد الأقصى للمخزون", "Maximum stock level")}>
+                    <input type="number" min="0" step="any" value={profile.maxLevel ?? ""} onChange={(e) => patchProfile({ maxLevel: e.target.value === "" ? null : Number(e.target.value) })} style={S.input} dir="ltr" />
+                  </Field>
+                </>
+              )}
+            </div>
+            <div style={S.sectionCard}>
+              <div style={S.sectionHead}>
+                <div><strong>{text("خيارات سعر البيع", "Sales price options")}</strong>
+                  <div style={S.muted}>{text("تتيح اختيار سعر مختلف للصنف نفسه دون تغيير مخزونه.", "Choose an alternate price without changing the item or its stock.")}</div>
+                </div>
+                <button type="button" onClick={addSalePriceOption} style={S.btnAddCond}>+ {text("إضافة خيار", "Add option")}</button>
+              </div>
+              {(profile.salePriceOptions ?? []).map((option, index) => (
+                <div key={option.id} style={S.optionGrid}>
+                  <Field label={text("الاسم بالعربية", "Arabic name")}>
+                    <input value={option.nameAr} onChange={(e) => patchProfile({ salePriceOptions: (profile.salePriceOptions ?? []).map((x, i) => i === index ? { ...x, nameAr: e.target.value } : x) })} style={S.input} />
+                  </Field>
+                  <Field label={text("الاسم بالإنجليزية", "English name")}>
+                    <input value={option.nameEn} onChange={(e) => patchProfile({ salePriceOptions: (profile.salePriceOptions ?? []).map((x, i) => i === index ? { ...x, nameEn: e.target.value } : x) })} style={S.input} dir="ltr" />
+                  </Field>
+                  <Field label={text("السعر", "Price")}>
+                    <input type="number" min="0" step="any" value={option.salePrice} onChange={(e) => patchProfile({ salePriceOptions: (profile.salePriceOptions ?? []).map((x, i) => i === index ? { ...x, salePrice: Number(e.target.value) || 0 } : x) })} style={S.input} dir="ltr" />
+                  </Field>
+                  <button type="button" onClick={() => patchProfile({ salePriceOptions: (profile.salePriceOptions ?? []).filter((_, i) => i !== index) })} style={{ ...S.btnDel, alignSelf: "end", marginBottom: 12 }} aria-label={text("حذف خيار السعر", "Remove price option")}>×</button>
+                </div>
+              ))}
+            </div>
+            <div style={S.sectionCard}>
+              <strong>⚖️ {text("بيانات الميزان", "Scale details")}</strong>
+              <label style={S.checkRow}><input type="checkbox" checked={!!form.isWeighed} onChange={(e) => setForm({ ...form, isWeighed: e.target.checked })} />{text("صنف يُباع بالوزن", "Item is sold by weight")}</label>
+              {form.isWeighed && <div style={S.formGrid4}>
+                <Field label={`${text("السعر للكيلو", "Price per kilogram")} (${currencySymbol()} / ${text("كجم", "kg")}) *`}>
+                  <input type="number" min="0" step="any" value={blankIfZero(form.pricePerKg ?? 0, hideZeros)} onChange={(e) => setForm({ ...form, pricePerKg: Number(e.target.value) || 0 })} style={S.input} dir="ltr" />
+                </Field>
+                <Field label="PLU"><input value={form.plu ?? ""} maxLength={6} onChange={(e) => setForm({ ...form, plu: e.target.value.replace(/\D/g, "") })} style={S.input} dir="ltr" /></Field>
+              </div>}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "units" && (
+          <div>
+            <div style={S.muted}>{text("الوحدة الأساسية هي وحدة القياس المحددة في البيانات الأساسية. أضف وحدات بيع إضافية بمعامل تحويل وسعر وباركود اختياري.", "The base unit is the unit selected in Basic data. Add sale units with conversion factors, prices, and optional barcodes.")}</div>
+            {!form.isWeighed ? (
+              <>
+                {(units ?? []).map((u) => (
+                  <div key={u.id} style={S.unitGrid}>
+                    <Field label={text("اسم الوحدة", "Unit name")}><input list="pos-uom-suggestions-new" value={u.name} onChange={(e) => updateUnit(u.id, { name: e.target.value })} style={S.input} /></Field>
+                    <Field label={text("عدد الوحدات الأساسية", "Base-unit factor")}><input type="number" min="1" step="any" value={u.factor} onChange={(e) => updateUnit(u.id, { factor: Number(e.target.value) })} style={S.input} dir="ltr" /></Field>
+                    <Field label={text("السعر", "Price")}><input type="number" min="0" step="any" value={u.price} onChange={(e) => updateUnit(u.id, { price: Number(e.target.value) })} style={S.input} dir="ltr" /></Field>
+                    <Field label={text("الباركود الاختياري", "Optional barcode")}><input value={u.barcode ?? ""} onChange={(e) => updateUnit(u.id, { barcode: e.target.value })} style={S.input} dir="ltr" /></Field>
+                    <button type="button" onClick={() => removeUnit(u.id)} style={{ ...S.btnDel, alignSelf: "end", marginBottom: 12 }}>{text("حذف", "Remove")}</button>
+                  </div>
+                ))}
+                <datalist id="pos-uom-suggestions-new">{uoms.map((u) => <option key={u.id} value={u.nameAr} />)}</datalist>
+                <button type="button" onClick={addUnit} style={S.btnAddCond}>+ {text("إضافة وحدة بيع", "Add sales unit")}</button>
+              </>
+            ) : <div style={S.infoBox}>{text("الوحدات الإضافية غير متاحة للصنف المباع بالوزن.", "Additional sale units are unavailable for weighed items.")}</div>}
+          </div>
+        )}
+
+        {activeTab === "accounts" && profile.businessType !== "stock" && (
+          <div style={S.formGrid4}>
+            <Field label={text("حساب التكلفة", "Cost account")} >
+              <select value={profile.costAccountId ?? ""} onChange={(e) => patchProfile({ costAccountId: e.target.value ? Number(e.target.value) : null })} style={S.input}>
+                <option value="">{text("— اختر حساباً —", "— Select an account —")}</option>
+                {accounts.filter((a) => a.isActive && a.isLeaf && (a.type === "expense" || a.type === "asset")).map((a) => (
+                  <option key={a.id} value={a.id}>{a.code} — {language === "en" ? a.nameEn || a.nameAr : a.nameAr}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={text("حساب الإيراد", "Revenue account")}>
+              <select value={profile.revenueAccountId ?? ""} onChange={(e) => patchProfile({ revenueAccountId: e.target.value ? Number(e.target.value) : null })} style={S.input}>
+                <option value="">{text("— اختر حساباً —", "— Select an account —")}</option>
+                {accounts.filter((a) => a.isActive && a.isLeaf && a.type === "revenue").map((a) => (
+                  <option key={a.id} value={a.id}>{a.code} — {language === "en" ? a.nameEn || a.nameAr : a.nameAr}</option>
+                ))}
+              </select>
+            </Field>
+            {accounts.length === 0 && <div style={S.infoBox}>{text("لا توجد حسابات محلية متاحة. أضف الحسابات من شاشة دليل الحسابات أولاً.", "No local accounts are available. Add accounts in Chart of Accounts first.")}</div>}
+            {profile.businessType === "service" && <div style={S.infoBox}>{text("يتطلب الصنف الخدمي حساب إيراد.", "Service items require a revenue account.")}</div>}
+            {profile.businessType === "prepaid_expense" && <div style={S.infoBox}>{text("يتطلب المصروف المقدم حساب تكلفة.", "Prepaid expenses require a cost account.")}</div>}
+          </div>
+        )}
+
+        {activeTab === "inventory" && (
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={S.sectionCard}>
+              <label style={S.checkRow}>
+                <input type="checkbox" checked={profile.showInPos !== false} onChange={(e) => {
+                  patchProfile({ showInPos: e.target.checked });
+                  if (!e.target.checked) setActiveTab("inventory");
+                }} />
+                <span><strong>{text("إظهار الصنف في نقاط البيع", "Show item in POS")}</strong><div style={S.muted}>{text("عند إيقافه يبقى الصنف في المخزون والمستندات لكنه لا يظهر في نقاط البيع.", "When disabled, the item remains available in inventory and documents but is hidden from POS.")}</div></span>
+              </label>
+            </div>
+            {profile.businessType !== "service" && profile.businessType !== "prepaid_expense" && (
+              <div style={S.formGrid4}>
+                <Field label={text("تاريخ الصلاحية", "Expiry date")}><input type="date" value={form.expiryDate ?? ""} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} style={S.input} dir="ltr" /></Field>
+                <Field label={text("رقم التشغيلة", "Batch number")}><input value={form.batchNo ?? ""} onChange={(e) => setForm({ ...form, batchNo: e.target.value })} style={S.input} /></Field>
+                <Field label={text("تتبع التشغيلات", "Batch tracking")}>
+                <select value={profile.batchTrackingMode ?? "none"} onChange={(e) => patchProfile({ batchTrackingMode: e.target.value as ItemWebProfile["batchTrackingMode"] })} style={S.input}>
+                  <option value="none">{text("بدون", "None")}</option><option value="fifo">FIFO</option><option value="fefo">FEFO</option>
+                </select>
+                </Field>
+              </div>
+            )}
+            {isPharmacy && (
+              <div style={S.sectionCard}>
+                <strong>💊 {text("بيانات الدواء (صيدلية)", "Medicine details (pharmacy)")}</strong>
+                <div style={{ ...S.formGrid4, marginTop: 12 }}>
+                  <Field label={text("المادة الفعّالة", "Active ingredient")}><input value={form.activeIngredient ?? ""} onChange={(e) => setForm({ ...form, activeIngredient: e.target.value })} style={S.input} /></Field>
+                  <Field label={text("الشركة المصنّعة", "Manufacturer")}><input value={form.manufacturer ?? ""} onChange={(e) => setForm({ ...form, manufacturer: e.target.value })} style={S.input} /></Field>
+                  <Field label={text("الشكل الصيدلي", "Dosage form")}><input value={form.dosageForm ?? ""} onChange={(e) => setForm({ ...form, dosageForm: e.target.value })} style={S.input} /></Field>
+                  <Field label={text("التركيز", "Strength")}><input value={form.strength ?? ""} onChange={(e) => setForm({ ...form, strength: e.target.value })} style={S.input} /></Field>
+                </div>
+                <label style={S.checkRow}><input type="checkbox" checked={!!form.requiresPrescription} onChange={(e) => setForm({ ...form, requiresPrescription: e.target.checked })} />{text("يتطلّب وصفة طبية", "Prescription required")}</label>
+                <label style={{ ...S.checkRow, color: "#b91c1c" }}><input type="checkbox" checked={!!form.controlled} onChange={(e) => setForm({ ...form, controlled: e.target.checked })} />{text("دواء مخدّر أو خاضع للرقابة", "Controlled substance")}</label>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "restaurant-modifiers" && profile.showInPos !== false && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={S.infoBox}>{text("اربط كل اختيار بصنف موجود. السعر الإضافي يضاف لسعر البيع، وتُحفظ كمية الاستهلاك لكل اختيار.", "Link each option to an existing item. The extra price is added to the sales price, and consumption quantity is saved per selection.")}</div>
+            {(profile.restaurantModifierGroups ?? []).map((group, gi) => (
+              <section key={group.id} style={S.sectionCard}>
+                <div style={S.formGrid4}>
+                  <Field label={text("اسم المجموعة بالعربية", "Group name in Arabic")}><input maxLength={100} value={group.nameAr} onChange={(e) => updateModifierGroup(gi, { nameAr: e.target.value })} style={S.input} /></Field>
+                  <Field label={text("اسم المجموعة بالإنجليزية", "Group name in English")}><input maxLength={100} value={group.nameEn ?? ""} onChange={(e) => updateModifierGroup(gi, { nameEn: e.target.value })} style={S.input} dir="ltr" /></Field>
+                  <label style={S.checkRow}><input type="checkbox" checked={group.required} onChange={(e) => updateModifierGroup(gi, { required: e.target.checked, minSelect: e.target.checked ? Math.max(1, group.minSelect) : 0 })} />{text("اختيار إجباري", "Required selection")}</label>
+                  <Field label={text("نوع الاختيار", "Selection type")}><select value={group.selectionMode} onChange={(e) => updateModifierGroup(gi, { selectionMode: e.target.value as "single" | "multiple", maxSelect: e.target.value === "single" ? 1 : Math.max(2, group.maxSelect) })} style={S.input}><option value="single">{text("اختيار واحد", "Single choice")}</option><option value="multiple">{text("اختيارات متعددة", "Multiple choices")}</option></select></Field>
+                  <Field label={text("الحد الأدنى", "Minimum selections")}><input type="number" min={group.required ? 1 : 0} max={group.maxSelect} disabled={!group.required} value={group.minSelect} onChange={(e) => updateModifierGroup(gi, { minSelect: Number(e.target.value) })} style={S.input} dir="ltr" /></Field>
+                  <Field label={text("الحد الأعلى", "Maximum selections")}><input type="number" min={1} max={group.options.length} disabled={group.selectionMode === "single"} value={group.selectionMode === "single" ? 1 : group.maxSelect} onChange={(e) => updateModifierGroup(gi, { maxSelect: Number(e.target.value) })} style={S.input} dir="ltr" /></Field>
+                </div>
+                {(group.options ?? []).map((option, oi) => (
+                  <div key={option.id} style={S.modifierGrid}>
+                    <Field label={text("الصنف المرتبط", "Linked item")}>
+                      <select value={option.itemId || ""} onChange={(e) => updateModifierOption(gi, oi, { itemId: Number(e.target.value) || 0 })} style={S.input}>
+                        <option value="">{text("— اختر صنفاً —", "— Select an item —")}</option>
+                        {modifierItems.map((item) => <option key={item.id} value={item.id}>{item.code ? `${item.code} — ` : ""}{language === "en" ? item.nameEn || item.nameAr : item.nameAr}</option>)}
+                      </select>
+                    </Field>
+                    <Field label={text("السعر الإضافي", "Extra price")}><input type="number" min="0" step="any" value={option.extraPrice} onChange={(e) => updateModifierOption(gi, oi, { extraPrice: Number(e.target.value) || 0 })} style={S.input} dir="ltr" /></Field>
+                    <Field label={text("كمية الاستهلاك لكل اختيار", "Consumption per selection")}><input type="number" min="0.0001" max="1000000" step="0.0001" value={option.consumptionQtyPerSelection} onChange={(e) => updateModifierOption(gi, oi, { consumptionQtyPerSelection: Number(e.target.value) || 0 })} style={S.input} dir="ltr" /></Field>
+                    <button type="button" onClick={() => updateModifierGroup(gi, { options: group.options.filter((_, i) => i !== oi) })} style={{ ...S.btnDel, alignSelf: "end", marginBottom: 12 }}>{text("حذف", "Remove")}</button>
+                  </div>
+                ))}
+                <div style={S.btnRow}>
+                  <button type="button" onClick={() => updateModifierGroup(gi, { options: [...group.options, { id: newUnitId(), itemId: 0, extraPrice: 0, consumptionQtyPerSelection: 1 }] })} style={S.btnAddCond}>+ {text("إضافة اختيار", "Add option")}</button>
+                  <button type="button" onClick={() => patchProfile({ restaurantModifierGroups: (profile.restaurantModifierGroups ?? []).filter((_, i) => i !== gi) })} style={S.btnGhost}>{text("حذف المجموعة", "Remove group")}</button>
+                </div>
+              </section>
+            ))}
+            <button type="button" onClick={addModifierGroup} style={S.btnAddCond}>+ {text("إضافة مجموعة خيارات", "Add modifier group")}</button>
+          </div>
+        )}
+
+        {activeTab === "additional" && (
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={S.formGrid4}>
+              <Field label={text("الوسوم", "Tags")} hint={text("افصل بين الوسوم بفواصل، بحد أقصى 20 وسمًا.", "Separate tags with commas; up to 20 tags.")}>
+                <input value={profile.tags ?? ""} onChange={(e) => patchProfile({ tags: e.target.value })} style={S.input} />
+              </Field>
+              <Field label={text("صورة الصنف", "Item image")} hint={text("ارفع صورة حتى 2 ميجابايت أو أدخل رابطًا. تُحفظ الصورة محليًا على هذا الجهاز.", "Upload an image up to 2 MB or enter a URL. Uploaded images are stored locally on this device.")}>
+                <div style={{ display: "grid", gap: 7 }}>
+                  <input type="file" accept="image/*" onChange={handleImageFile} style={S.input} />
+                  <input value={profile.imageUrl ?? ""} onChange={(e) => patchProfile({ imageUrl: e.target.value })} style={S.input} dir="ltr" placeholder="https://…" />
+                </div>
+              </Field>
+            </div>
+            {profile.imageUrl && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                <img src={profile.imageUrl} alt={text("صورة الصنف", "Item image")} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0" }} />
+                <button type="button" onClick={() => patchProfile({ imageUrl: "" })} style={S.btnGhost}>{text("إزالة الصورة", "Remove image")}</button>
+              </div>
+            )}
+            <div style={S.sectionCard}><label style={S.checkRow}><input type="checkbox" checked={!!profile.isBundle} onChange={(e) => patchProfile({ isBundle: e.target.checked })} /><span><strong>{text("صنف مركّب", "Bundle item")}</strong><div style={S.muted}>{text("يُستخدم لتمييز الأصناف التي تتكون من عدة أصناف أخرى.", "Mark items composed of multiple component items.")}</div></span></label></div>
+            <div style={S.sectionCard}>
+              <div style={S.sectionHead}><strong>🏷️ {text("العلامات التجارية", "Brands")}</strong><span style={S.muted}>{text("اربط الصنف بعلامة أو أكثر مع السعر والتكلفة والباركود.", "Link one or more brands with their price, cost, and barcode.")}</span></div>
+              {allBrands.length === 0 ? <div style={S.infoBox}>{text("لا توجد علامات تجارية معرّفة. أضفها من شاشة العلامات التجارية أولاً.", "No brands are defined. Add them in the Brands screen first.")}</div> : (
+                <>
+                  {brandLinks.map((l) => (
+                    <div key={l.id} style={S.brandGrid}>
+                      <Field label={text("العلامة التجارية", "Brand")}><SearchCombobox value={l.brandId || ""} onChange={(v) => updateBrandLink(l.id, { brandId: v === "" ? 0 : Number(v) })} style={S.input} options={[{ value: "", label: text("— اختر —", "— Select —") }, ...allBrands.map((b) => ({ value: b.id, label: `${language === "en" ? b.nameEn || b.nameAr : b.nameAr}${b.code ? ` (${b.code})` : ""}` }))]} /></Field>
+                      <Field label={text("الباركود", "Barcode")}><input value={l.barcode ?? ""} onChange={(e) => updateBrandLink(l.id, { barcode: e.target.value })} style={S.input} dir="ltr" /></Field>
+                      <Field label={text("رقم القطعة", "Part number")}><input value={l.partNumber ?? ""} onChange={(e) => updateBrandLink(l.id, { partNumber: e.target.value })} style={S.input} dir="ltr" /></Field>
+                      <Field label={text("التكلفة", "Cost")}><input type="number" min="0" step="any" value={blankIfZero(l.purchaseCost ?? 0, hideZeros)} onChange={(e) => updateBrandLink(l.id, { purchaseCost: Number(e.target.value) || 0 })} style={S.input} dir="ltr" /></Field>
+                      <Field label={text("سعر البيع", "Sales price")}><input type="number" min="0" step="any" value={blankIfZero(l.salePrice1 ?? 0, hideZeros)} onChange={(e) => updateBrandLink(l.id, { salePrice1: Number(e.target.value) || 0 })} style={S.input} dir="ltr" /></Field>
+                      <button type="button" onClick={() => removeBrandLink(l.id)} style={{ ...S.btnDel, alignSelf: "end", marginBottom: 12 }}>×</button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={addBrandLink} style={S.btnAddCond}>+ {text("إضافة علامة تجارية", "Add brand")}</button>
+                </>
+              )}
+            </div>
+            {initial && (
+              <div style={S.sectionCard}>
+                <div style={S.sectionHead}>
+                  <div><strong>{text("رمز الصنف وسجل التعديلات", "Item QR and edit history")}</strong><div style={S.muted}>{text("تعرض الأدوات الرمز الشريطي وسجل تغييرات هذا الجهاز.", "These tools show the item QR code and changes saved on this device.")}</div></div>
+                  <div style={S.btnRow}>
+                    <button type="button" onClick={() => setShowQr(true)} style={S.btnGhost}>{text("عرض رمز QR", "Show QR code")}</button>
+                    <button type="button" onClick={() => setShowHistory(true)} style={S.btnGhost}>{text("سجل التعديلات", "Edit history")}</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "usage" && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={S.sectionCard}>
+              <div style={S.sectionHead}><div><strong>{text("التحكم في استخدام الصنف", "Item usage control")}</strong><div style={S.muted}>{text("حدد الشاشات التي تسمح باستخدام الصنف أو تقيده.", "Choose where this item can be used or restricted.")}</div></div>
+                <strong>{Object.values(usageModes).filter((rule) => rule.mode !== "allowed").length} {text("قيود", "rules")}</strong>
+              </div>
+              <div style={S.btnRow}>
+                <button type="button" style={S.btnGhost} onClick={() => setUsageModes({})}>{text("السماح للجميع", "Allow all")}</button>
+                <button type="button" style={S.btnGhost} onClick={() => {
+                  const all: Record<string, { mode: ItemUsageMode; reason: string }> = {};
+                  usageScreenGroups.flatMap((group) => group.screens).forEach(([key]) => {
+                    all[key] = { mode: "hidden", reason: usageModes[key]?.reason ?? "" };
+                  });
+                  setUsageModes(all);
+                }}>{text("حظر الجميع", "Block all")}</button>
+                <button type="button" style={S.btnGhost} onClick={() => setUsageModes({})}>{text("إعادة الافتراضي", "Reset defaults")}</button>
+                <select defaultValue="" style={{ ...S.input, width: 220 }} onChange={(e) => {
+                  const presets: Record<string, { hide: string[]; ar: string; en: string }> = {
+                    purchase_only: { hide: ["sales", "ecommerce"], ar: "شراء فقط", en: "Purchase only" },
+                    sale_only: { hide: ["purchases", "manufacturing"], ar: "بيع فقط", en: "Sale only" },
+                    raw_material: { hide: ["sales", "ecommerce"], ar: "مادة خام", en: "Raw material" },
+                    finished_product: { hide: ["purchases", "manufacturing"], ar: "منتج نهائي", en: "Finished product" },
+                    maintenance: { hide: ["sales", "purchases", "ecommerce", "manufacturing", "projects", "rental"], ar: "خاص بالصيانة", en: "Maintenance only" },
+                    service: { hide: ["warehouses", "manufacturing"], ar: "صنف خدمي", en: "Service item" },
+                  };
+                  const preset = presets[e.target.value];
+                  if (!preset) return;
+                  const next: Record<string, { mode: ItemUsageMode; reason: string }> = {};
+                  usageScreenGroups.filter((group) => preset.hide.includes(group.key)).flatMap((group) => group.screens).forEach(([key]) => {
+                    next[key] = { mode: "hidden", reason: text(preset.ar, preset.en) };
+                  });
+                  setUsageModes(next);
+                  e.target.value = "";
+                }}>
+                  <option value="">{text("تطبيق قالب", "Apply template")}</option>
+                  <option value="purchase_only">{text("شراء فقط", "Purchase only")}</option><option value="sale_only">{text("بيع فقط", "Sale only")}</option>
+                  <option value="raw_material">{text("مادة خام", "Raw material")}</option><option value="finished_product">{text("منتج نهائي", "Finished product")}</option>
+                  <option value="maintenance">{text("صيانة", "Maintenance")}</option><option value="service">{text("خدمي", "Service")}</option>
+                </select>
+              </div>
+            </div>
+            {usageScreenGroups.map((group) => (
+              <section key={group.en} style={S.sectionCard}>
+                <strong>{text(group.ar, group.en)}</strong>
+                {group.screens.map(([key, ar, en]) => {
+                  const current = usageModes[key] ?? { mode: "allowed" as ItemUsageMode, reason: "" };
+                  return (
+                    <div key={key} style={S.usageRow}>
+                      <span>{text(ar, en)}</span>
+                      <select value={current.mode} onChange={(e) => setUsageModes((prev) => ({ ...prev, [key]: { ...current, mode: e.target.value as ItemUsageMode } }))} style={S.input}>
+                        {usageModeOptions.map((mode) => <option key={mode.value} value={mode.value}>{text(mode.ar, mode.en)}</option>)}
+                      </select>
+                      <input value={current.reason} disabled={current.mode === "allowed"} list="usage-reason-presets-desktop" onChange={(e) => setUsageModes((prev) => ({ ...prev, [key]: { ...current, reason: e.target.value } }))} style={S.input} placeholder={text("سبب اختياري", "Optional reason")} />
+                    </div>
+                  );
+                })}
+              </section>
+            ))}
+            <datalist id="usage-reason-presets-desktop">
+              {usageReasonPresets.map((reason) => <option key={reason.en} value={text(reason.ar, reason.en)} />)}
+            </datalist>
+          </div>
+        )}
+
+        {activeTab === "notes" && (
+          <Field label={text("وصف الصنف وملاحظاته", "Item description and notes")}>
+            <textarea value={profile.description ?? ""} onChange={(e) => patchProfile({ description: e.target.value })} style={{ ...S.input, minHeight: 150, resize: "vertical" }} placeholder={text("اكتب ملاحظات الصنف هنا…", "Enter item notes here…")} />
+          </Field>
+        )}
+
+        {activeTab === "retail" && canRetailVariants && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={S.sectionCard}><label style={S.checkRow}><input type="checkbox" checked={!!profile.retailEnabled} onChange={(e) => patchProfile({ retailEnabled: e.target.checked, retailCategory: e.target.checked ? profile.retailCategory || "apparel" : profile.retailCategory })} /><span><strong>{text("تفعيل بيانات الملابس والأحذية", "Enable clothing and footwear attributes")}</strong><div style={S.muted}>{text("أضف التصنيف واللون والمقاس لهذا الصنف.", "Set category, color, and size for this item.")}</div></span></label></div>
+            {profile.retailEnabled && <div style={S.formGrid4}>
+              <Field label={text("التصنيف", "Category")}><select value={profile.retailCategory ?? "apparel"} onChange={(e) => patchProfile({ retailCategory: e.target.value })} style={S.input}><option value="apparel">{text("ملابس", "Apparel")}</option><option value="footwear">{text("أحذية", "Footwear")}</option><option value="bags">{text("حقائب", "Bags")}</option><option value="accessories">{text("إكسسوارات", "Accessories")}</option><option value="other">{text("أخرى", "Other")}</option></select></Field>
+              <Field label={text("اللون", "Color")}><input value={profile.retailColor ?? ""} onChange={(e) => patchProfile({ retailColor: e.target.value })} style={S.input} /></Field>
+              <Field label={text("المقاس", "Size")}><input value={profile.retailSize ?? ""} onChange={(e) => patchProfile({ retailSize: e.target.value })} style={S.input} /></Field>
+            </div>}
+          </div>
+        )}
+      </div>
+      {err && <div style={S.err}>{err}</div>}
+      <div style={S.btnRow}>
+        <button onClick={submit} disabled={saving} style={S.btnPrimary}>{saving ? "..." : initial ? `💾 ${text("حفظ التعديلات", "Save changes")}` : `✅ ${text("إضافة", "Add item")}`}</button>
+        <button onClick={onClose} style={S.btnGhost}>{text("إلغاء", "Cancel")}</button>
+      </div>
+      {showQr && initial && (
+        <div role="dialog" aria-modal="true" dir={language === "en" ? "ltr" : "rtl"} style={S.modalBg} onClick={(event) => { if (event.target === event.currentTarget) setShowQr(false); }}>
+          <div style={{ ...S.modal, maxWidth: 420, textAlign: "center" }}>
+            <h3 style={S.modalTitle}>{text("رمز QR للصنف", "Item QR code")}</h3>
+            <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, display: "inline-flex", minWidth: 244, minHeight: 244, alignItems: "center", justifyContent: "center" }}>
+              {qrDataUrl ? <img src={qrDataUrl} alt={text("رمز QR", "QR code")} width={220} height={220} /> : <span style={S.muted}>{text("جارٍ إنشاء الرمز…", "Generating code…")}</span>}
+            </div>
+            <div style={{ marginTop: 10, fontWeight: 700 }}>{language === "en" ? form.nameEn || form.nameAr : form.nameAr || form.nameEn}</div>
+            {form.code && <div style={S.muted}>{form.code}</div>}
+            {form.barcode && <div style={S.muted}>🔖 {form.barcode}</div>}
+            <div style={{ ...S.btnRow, justifyContent: "center" }}>
+              <button type="button" onClick={() => setShowQr(false)} style={S.btnGhost}>{text("إغلاق", "Close")}</button>
+              <button type="button" disabled={!qrDataUrl} onClick={printQr} style={S.btnPrimary}>{text("طباعة الرمز", "Print code")}</button>
+            </div>
+          </div>
         </div>
+      )}
+      {showHistory && initial && (
+        <div role="dialog" aria-modal="true" dir={language === "en" ? "ltr" : "rtl"} style={S.modalBg} onClick={(event) => { if (event.target === event.currentTarget) setShowHistory(false); }}>
+          <div style={{ ...S.modal, maxWidth: 760, maxHeight: "85vh", overflowY: "auto" }}>
+            <h3 style={S.modalTitle}>{text("سجل تعديلات الصنف", "Item edit history")} — {language === "en" ? form.nameEn || form.nameAr : form.nameAr || form.nameEn}</h3>
+            <div style={S.muted}>{text("السجل محلي على هذا الجهاز ويحتفظ بآخر 100 عملية إنشاء أو تعديل.", "This device-local log keeps the latest 100 item creates and edits.")}</div>
+            {(initial.metadata?.auditHistory ?? []).length === 0 ? (
+              <div style={{ ...S.infoBox, textAlign: "center", marginTop: 14 }}>{text("لا توجد تعديلات مسجلة بعد.", "No edits have been recorded yet.")}</div>
+            ) : (
+              [...(initial.metadata?.auditHistory ?? [])].reverse().map((entry) => (
+                <section key={entry.id} style={{ ...S.sectionCard, marginTop: 12 }}>
+                  <div style={S.sectionHead}>
+                    <strong>{entry.action === "create" ? text("إنشاء الصنف", "Item created") : entry.action === "delete" ? text("حذف الصنف", "Item deleted") : text("تعديل الصنف", "Item edited")}</strong>
+                    <span style={S.muted}>{new Date(entry.occurredAt).toLocaleString(language === "en" ? "en-GB" : "ar-EG")}</span>
+                  </div>
+                  {entry.changes.length === 0
+                    ? <div style={S.muted}>{entry.action === "create" ? text("تم إنشاء الصنف.", "Item created.") : text("لا توجد فروق محفوظة.", "No field differences were saved.")}</div>
+                    : <div style={{ display: "grid", gap: 6 }}>
+                      {entry.changes.map((change, index) => (
+                        <div key={`${entry.id}-${change.field}-${index}`} style={{ fontSize: 12, padding: "6px 8px", background: "#f8fafc", borderRadius: 6 }}>
+                          <strong>{historyFieldLabel(change.field)}:</strong> {change.before} → {change.after}
+                        </div>
+                      ))}
+                    </div>}
+                </section>
+              ))
+            )}
+            <div style={{ ...S.btnRow, justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => setShowHistory(false)} style={S.btnGhost}>{text("إغلاق", "Close")}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1490,9 +2083,10 @@ function renderQty(s: StockMap[number] | undefined, language: UiLanguage) {
   return <span style={low ? S.qtyLow : S.qtyOk}>{s.qty}</span>;
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return <label style={{ display: "block", marginBottom: 12 }}>
     <div style={{ fontSize: 13, color: "#475569", marginBottom: 4 }}>{label}</div>
+    {hint && <div style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 5px", lineHeight: 1.5 }}>{hint}</div>}
     {children}
   </label>;
 }
@@ -1526,12 +2120,24 @@ const S = {
   btnEdit: { padding: "6px 12px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #e2e8f0", borderRadius: 6, cursor: "pointer", fontSize: 12, marginInlineEnd: 6 } as const,
   btnDel: { padding: "6px 12px", background: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontSize: 12 } as const,
   btnRow: { display: "flex", gap: 8, marginTop: 16 } as const,
+  formTabs: { display: "flex", alignItems: "center", flexWrap: "wrap" as const, gap: 5, padding: 5, marginBottom: 4, background: "#f1f5f9", borderRadius: 9 } as const,
+  formTab: { display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 11px", border: "1px solid transparent", background: "transparent", color: "#475569", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" as const } as const,
+  formTabActive: { display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 11px", border: "1px solid #bfdbfe", background: "#fff", color: "#1d4ed8", borderRadius: 7, cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" as const, boxShadow: "0 1px 2px rgba(15,23,42,.08)" } as const,
+  sectionCard: { border: "1px solid #e2e8f0", borderRadius: 9, padding: 14, background: "#fff", marginBottom: 10 } as const,
+  sectionHead: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10, flexWrap: "wrap" as const } as const,
+  checkRow: { display: "flex", alignItems: "flex-start", gap: 9, margin: "9px 0", fontSize: 13, color: "#475569", cursor: "pointer" } as const,
+  infoBox: { background: "#f8fafc", border: "1px solid #e2e8f0", color: "#475569", borderRadius: 8, padding: 11, fontSize: 12, lineHeight: 1.6, margin: "6px 0" } as const,
+  optionGrid: { display: "grid", gridTemplateColumns: "minmax(150px,1fr) minmax(150px,1fr) 130px auto", gap: 8, alignItems: "end" } as const,
+  unitGrid: { display: "grid", gridTemplateColumns: "minmax(120px,1.2fr) minmax(110px,.9fr) minmax(110px,.9fr) minmax(130px,1fr) auto", gap: 8, alignItems: "end" } as const,
+  brandGrid: { display: "grid", gridTemplateColumns: "minmax(150px,1.3fr) minmax(120px,1fr) minmax(110px,1fr) minmax(100px,.8fr) minmax(100px,.8fr) auto", gap: 8, alignItems: "end" } as const,
+  modifierGrid: { display: "grid", gridTemplateColumns: "minmax(180px,1.5fr) minmax(120px,.8fr) minmax(180px,1.2fr) auto", gap: 8, alignItems: "end" } as const,
+  usageRow: { display: "grid", gridTemplateColumns: "minmax(180px,1fr) minmax(160px,.8fr) minmax(180px,1fr)", gap: 8, alignItems: "center", padding: "8px 0", borderTop: "1px solid #f1f5f9", fontSize: 12 } as const,
   ok: { background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 } as const,
   err: { background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 } as const,
   modalBg: { position: "fixed" as const, inset: 0, background: "rgba(15,23,42,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 } as const,
   modal: { background: "#fff", borderRadius: 12, padding: 24, maxWidth: 560, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,.25)" } as const,
   modalTitle: { margin: "0 0 16px", fontSize: 18, color: "#0f172a" } as const,
-  formGrid4: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 } as const,
+  formGrid4: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 } as const,
   input: { width: "100%", padding: "10px 12px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 6, fontFamily: "inherit", boxSizing: "border-box" as const } as const,
   toolbar: { display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" as const } as const,
   btnTool: { padding: "9px 14px", background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" as const } as const,
