@@ -11,6 +11,7 @@ import { BarChart2, AlertTriangle, Search, Coins, Tag, Receipt } from "lucide-re
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
+import { averageCostFromInventoryValue } from "@/lib/stockBalanceCost";
 import AdvancedReportGrid, { type GridColumn } from "@/components/auditGrid/AdvancedReportGrid";
 import {
   InventoryBrandFilter,
@@ -115,7 +116,7 @@ export default function StockBalance() {
           ...row,
           id: `item-${key}`,
           qty,
-          avgCost: qty !== 0 ? costValue / qty : Number(row.avgCost ?? 0),
+          avgCost: averageCostFromInventoryValue(qty, costValue, Number(row.avgCost ?? 0)),
           __costValue: costValue,
           warehouse: {
             nameAr: "كل المستودعات",
@@ -128,7 +129,7 @@ export default function StockBalance() {
       const totalCostValue = Number(existing.__costValue ?? 0) + costValue;
       existing.qty = totalQty;
       existing.__costValue = totalCostValue;
-      existing.avgCost = totalQty !== 0 ? totalCostValue / totalQty : 0;
+      existing.avgCost = averageCostFromInventoryValue(totalQty, totalCostValue);
       return byItem;
     }, new Map<string, any>()).values(),
   );

@@ -20,6 +20,7 @@ import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combob
 import { useInventoryItemSearch } from "@/hooks/useInventoryItemSearch";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt, trimTrailingZeros } from "@/hooks/use-fmt";
+import { summarizeStockBalances } from "@/lib/stockBalanceCost";
 import {
   Plus, Pencil, Trash2, Package, Search, X, Save,
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
@@ -740,7 +741,7 @@ const UNIT_ROUNDING_LABELS: Record<string, string> = {
 // expands this tab. Self-contained so the surrounding loop stays clean.
 function ItemAnalyticsPanel({ itemId, unitCode }: { itemId: number; unitCode: string }) {
   const { t, i18n } = useTranslation();
-  const { fmt, fmtQty } = useFmt();
+  const { fmt, fmtQty, fmtCost } = useFmt();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["item-analytics", itemId],
     queryFn: () => inventoryApi.getItemAnalytics(itemId),
@@ -1639,6 +1640,7 @@ export default function Items() {
     queryFn: () => inventoryApi.getItem(expandedId!),
     enabled: expandedId !== null,
   });
+  const itemStockSummary = summarizeStockBalances(itemDetail?.balances ?? []);
 
   // Item Usage Control (التحكم في توجيه الصنف) — Phase أ. State holds only the
   // NON-default rules; loaded on edit, persisted after the item itself saves.
@@ -2731,7 +2733,7 @@ export default function Items() {
                                 <div className="rounded-lg border bg-background p-3">
                                   <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.items.lastPurchasePrice", { defaultValue: "آخر سعر شراء للوحدة الأساسية" })}</p>
                                   <p className="mt-1 text-sm font-semibold tabular-nums">
-                                    {itemDetail?.lastPurchase?.unitPrice != null ? fmt(itemDetail.lastPurchase.unitPrice) : "—"}
+                                    {itemDetail?.lastPurchase?.unitPrice != null ? fmtCost(itemDetail.lastPurchase.unitPrice) : "—"}
                                     {itemDetail?.lastPurchase?.currencyCode ? ` ${itemDetail.lastPurchase.currencyCode}` : ""}
                                   </p>
                                   <p className="text-[10px] text-muted-foreground">
@@ -2740,18 +2742,20 @@ export default function Items() {
                                 </div>
                                 <div className="rounded-lg border bg-background p-3">
                                   <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.items.currentInventoryCost", { defaultValue: "متوسط تكلفة المخزون الحالي" })}</p>
-                                  <p className="mt-1 text-sm font-semibold tabular-nums">{itemDetail?.costPrice != null ? fmt(itemDetail.costPrice) : "—"}</p>
+                                  <p className="mt-1 text-sm font-semibold tabular-nums" data-testid="text-item-average-inventory-cost">
+                                    {itemDetail?.balances?.length ? fmtCost(itemStockSummary.avgCost) : "—"}
+                                  </p>
                                 </div>
                                 <div className="rounded-lg border bg-background p-3">
                                   <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.items.totalStockQuantity", { defaultValue: "إجمالي رصيد المخزون" })}</p>
                                   <p className="mt-1 text-sm font-semibold tabular-nums">
-                                    {fmtQty((itemDetail?.balances ?? []).reduce((sum: number, balance: any) => sum + Number(balance.qty || 0), 0))} {itemDetail?.unit?.code ?? ""}
+                                    {fmtQty(itemStockSummary.quantity)} {itemDetail?.unit?.code ?? ""}
                                   </p>
                                 </div>
                                 <div className="rounded-lg border bg-background p-3">
                                   <p className="text-[10px] text-muted-foreground">{t("inventoryMaster.items.totalStockValue", { defaultValue: "قيمة المخزون الحالية" })}</p>
                                   <p className="mt-1 text-sm font-semibold tabular-nums">
-                                    {fmt((itemDetail?.balances ?? []).reduce((sum: number, balance: any) => sum + Number(balance.qty || 0) * Number(balance.avgCost || 0), 0))}
+                                    {fmt(itemStockSummary.inventoryValue)}
                                   </p>
                                 </div>
                               </div>
@@ -2766,7 +2770,7 @@ export default function Items() {
                                           <span className="text-lg font-bold tabular-nums">{fmtQty(b.qty)}</span>
                                           <span className="text-xs text-muted-foreground mb-0.5">{it.unit?.code ?? ""}</span>
                                         </div>
-                                        <p className="text-[10px] text-muted-foreground">{t("pages.items.avgCost")}: {fmt(b.avgCost)} {t("pages.items.sar")}</p>
+                                        <p className="text-[10px] text-muted-foreground">{t("pages.items.avgCost")}: {fmtCost(b.avgCost)} {t("pages.items.sar")}</p>
                                         {Number(b.qty) < Number(it.reorderLevel) && Number(b.qty) >= 0 && (
                                           <p className="text-[10px] text-amber-600 flex items-center gap-0.5 mt-0.5"><AlertTriangle className="h-2.5 w-2.5" />{t("pages.items.belowReorderLevel")}</p>
                                         )}
