@@ -41,7 +41,8 @@ const EMPTY_FORM = {
   // When true the running counter restarts at startNumber at the start of each
   // calendar month. Default false = continuous numbering (legacy behaviour).
   monthlyReset: false,
-  annualReset: true,
+  // Fiscal-year reset is opt-in; keep existing numbering continuous by default.
+  annualReset: false,
   applySourcePrefixes: false,
   transactionTypes: [] as string[],
   branchIds: [] as number[],
@@ -551,7 +552,7 @@ export default function Sequences() {
       padLength:        r.padLength,
       isActive:         r.isActive,
       monthlyReset:     r.monthlyReset ?? false,
-      annualReset:      r.annualReset ?? true,
+      annualReset:      r.annualReset ?? false,
       applySourcePrefixes: r.applySourcePrefixes ?? false,
       transactionTypes: Array.isArray(r.transactionTypes) ? r.transactionTypes : [],
       // Coerce in case the column round-trips strings (older rows or when

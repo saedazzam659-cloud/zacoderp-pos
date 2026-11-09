@@ -150,9 +150,9 @@ export const sequencesTable = pgTable("sequences", {
   // `sequence_counters.last_period` so each branch resets independently.
   monthlyReset:     boolean("monthly_reset").notNull().default(false),
   // Annual counters are bucketed by the fiscal year containing the document
-  // date. The rendered FY year marker prevents collisions with earlier years.
+  // date. This is explicitly opt-in; continuous numbering is the safe default.
   // Sales e-invoice streams remain continuous in the issuance helper.
-  annualReset:      boolean("annual_reset").notNull().default(true),
+  annualReset:      boolean("annual_reset").notNull().default(false),
   // "الطريقة العالمية" — unified JE counter with per-source prefixes.
   // Meaningful ONLY on the sequence bound to "journal_entry". When true,
   // EVERY auto-generated journal entry (from any screen: purchases, HR,

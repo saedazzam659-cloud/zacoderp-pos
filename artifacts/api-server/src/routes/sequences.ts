@@ -796,7 +796,9 @@ router.post("/", audit("sequences", "create"), async (req, res) => {
         // the beginning of each calendar month. Defaults to false (legacy
         // continuous numbering) when the client omits it.
         monthlyReset:     !!req.body.monthlyReset,
-        annualReset:      req.body.annualReset !== false && !req.body.monthlyReset,
+        // Fiscal-year resets are opt-in. Omitted values must preserve the
+        // legacy continuous sequence rather than silently restarting yearly.
+        annualReset:      req.body.annualReset === true && !req.body.monthlyReset,
         // "الطريقة العالمية" — unified JE counter with per-source prefixes.
         // Only meaningful when this sequence is bound to journal_entry.
         applySourcePrefixes: !!req.body.applySourcePrefixes,
@@ -887,7 +889,7 @@ router.post("/seed-payment-split", audit("sequences", "create"), async (req, res
           padLength:        4,
           isActive:         true,
           monthlyReset:     false,
-          annualReset:      true,
+          annualReset:      false,
           transactionTypes: [d.type],
           branchIds:        [],
           fiscalPeriodIds:  [],
@@ -933,7 +935,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
       existing.isActive      = existing.is_active      ?? existing.isActive;
       existing.transactionTypes = existing.transaction_types ?? existing.transactionTypes;
       existing.monthlyReset  = existing.monthly_reset  ?? existing.monthlyReset ?? false;
-      existing.annualReset   = existing.annual_reset   ?? existing.annualReset ?? true;
+      existing.annualReset   = existing.annual_reset   ?? existing.annualReset ?? false;
       existing.branchIds     = existing.branch_ids     ?? existing.branchIds ?? [];
       existing.fiscalPeriodIds = existing.fiscal_period_ids ?? existing.fiscalPeriodIds ?? [];
       existing.nameAr        = existing.name_ar        ?? existing.nameAr;

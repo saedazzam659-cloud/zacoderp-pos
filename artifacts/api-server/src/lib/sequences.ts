@@ -178,6 +178,66 @@ export interface SequencePeriodMatch {
 
 type SequenceSqlExec = { execute: (query: any) => Promise<{ rows?: Array<any> }> };
 
+export function carryForwardAnnualSequenceNumber(
+  startNumber: number,
+  currentNumber: number,
+  highestCounterNext: number | null,
+  highestLoggedSuffix: number | null,
+): number {
+  return Math.max(
+    startNumber,
+    currentNumber,
+    highestCounterNext ?? startNumber,
+    highestLoggedSuffix == null ? startNumber : highestLoggedSuffix + 1,
+  );
+}
+
+export async function hasAnnualSequenceCounters(exec: SequenceSqlExec, sequenceId: number): Promise<boolean> {
+  const rows = await exec.execute(sql`
+    SELECT EXISTS (
+      SELECT 1 FROM sequence_counters
+      WHERE sequence_id = ${sequenceId} AND period LIKE 'FY-%'
+    ) AS has_annual_counters
+  `);
+  return rows.rows?.[0]?.has_annual_counters === true;
+}
+
+/**
+ * When annual numbering is disabled after it has been used, continue after
+ * every number already issued in its fiscal-year buckets. Keep those buckets
+ * as history; a single company-wide continuous counter is used thereafter.
+ */
+export async function annualSequenceCarryForwardNextNumber(
+  exec: SequenceSqlExec,
+  sequenceId: number,
+  startNumber: number,
+  currentNumber: number,
+): Promise<number> {
+  const [counterRows, logRows] = await Promise.all([
+    exec.execute(sql`
+      SELECT MAX(current_number)::numeric AS highest_next
+      FROM sequence_counters
+      WHERE sequence_id = ${sequenceId} AND period LIKE 'FY-%'
+    `),
+    exec.execute(sql`
+      SELECT MAX((regexp_match(generated_number, '(\\d+)$'))[1]::numeric) AS highest_suffix
+      FROM sequence_logs
+      WHERE sequence_id = ${sequenceId}
+    `),
+  ]);
+  const counterValue = counterRows.rows?.[0]?.highest_next;
+  const logValue = logRows.rows?.[0]?.highest_suffix;
+  const highestCounterNext = counterValue == null ? null : Number(counterValue);
+  const highestLoggedSuffix = logValue == null ? null : Number(logValue);
+  if ((highestCounterNext != null && !Number.isSafeInteger(highestCounterNext))
+    || (highestLoggedSuffix != null && !Number.isSafeInteger(highestLoggedSuffix))) {
+    throw new Error("تعذر متابعة المسلسل السنوي: رقم سابق خارج النطاق الآمن");
+  }
+  return carryForwardAnnualSequenceNumber(
+    startNumber, currentNumber, highestCounterNext, highestLoggedSuffix,
+  );
+}
+
 export async function getFiscalYearSequencePolicy(
   exec: SequenceSqlExec,
   companyId: number,
@@ -479,9 +539,12 @@ export async function nextSequenceNumber(
     // continuous as well as preserving their separate ICV/PIH chain.
     const annualReset = applyFiscalYearPolicy || (configuredAnnualReset && !protectedZatcaNumber);
     // Annual identifiers are unique company-wide, not separately per branch.
-    const counterBranchKey = applyFiscalYearPolicy
+    let counterBranchKey = applyFiscalYearPolicy
       ? (configuredAnnualReset ? 0 : branchKey)
       : annualReset ? 0 : branchKey;
+    const carriesAnnualNumbers = !monthlyReset && !annualReset
+      && await hasAnnualSequenceCounters(tx, seq.id);
+    if (carriesAnnualNumbers) counterBranchKey = 0;
     const currentPeriod = periodKey(effectiveDate);          // "YYYY-MM"
     const fiscalYearBucket = `FY-${pm.fiscalYearId ?? `CAL-${periodDateStr.slice(0, 4)}`}-TX-${transactionType}`;
     const annualYearLabel = pm.fiscalYearLabel ?? periodDateStr.slice(0, 4);
@@ -512,6 +575,9 @@ export async function nextSequenceNumber(
 
     let counterId: number;
     let issuedNumber: number;
+    const carryForwardNext = carriesAnnualNumbers
+      ? await annualSequenceCarryForwardNextNumber(tx, seq.id, seq.start_number, seq.current_number)
+      : null;
 
     const existingCounter = counterRows.rows?.[0];
     if (existingCounter) {
@@ -521,6 +587,7 @@ export async function nextSequenceNumber(
       issuedNumber = journalEntryHighWater != null
         ? Math.max(existingCounter.current_number, journalEntryHighWater.number + 1)
         : existingCounter.current_number;
+      if (carryForwardNext != null) issuedNumber = Math.max(issuedNumber, carryForwardNext);
       if (applyFiscalYearPolicy && fiscalYearPolicy === "continue" && pm.fiscalYearId != null) {
         const previous = await priorFiscalYearNextNumber(
           tx, companyId, pm.fiscalYearId, seq.id, transactionType, counterBranchKey,
@@ -601,6 +668,7 @@ export async function nextSequenceNumber(
         seed = hasAnyCounter
           ? seq.start_number
           : Math.max(seq.start_number, seq.current_number);
+        if (carryForwardNext != null) seed = Math.max(seed, carryForwardNext);
         if (journalEntryHighWater != null) seed = Math.max(seed, journalEntryHighWater.number + 1);
       }
 

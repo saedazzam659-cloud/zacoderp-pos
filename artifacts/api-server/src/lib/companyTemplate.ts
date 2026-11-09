@@ -218,6 +218,7 @@ async function cloneSequences(companyId: number, templateId: number): Promise<nu
       padLength:     r.padLength,
       isActive:      true,
       monthlyReset:        isJournal ? true : r.monthlyReset,
+      annualReset:         false,
       applySourcePrefixes: isJournal ? true : r.applySourcePrefixes,
       transactionTypes: txTypes,
       branchIds:        [],              // template-local ids — never copy
