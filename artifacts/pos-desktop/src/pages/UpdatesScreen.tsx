@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TAURI_MODE, invoke } from "../lib/tauri-shim";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { localizeStaticUiText } from "../lib/appSettings";
 
 const APP_VERSION = __APP_VERSION__;
 
@@ -297,7 +298,7 @@ export default function UpdatesScreen({ baseUrl }: Props) {
                 "تعدد الفروع والكاشيرات والعملات",
                 "يعمل بدون إنترنت مع مزامنة تلقائية عند الاتصال",
               ].map((f) => (
-                <li key={f} style={S.featureItem}>✅ {f}</li>
+                <li key={f} style={S.featureItem}>✅ {localizeStaticUiText(f)}</li>
               ))}
             </ul>
             <div style={S.credit}>تطوير فريق عمل متكامل تحت إدارة م/ كرم عزام</div>

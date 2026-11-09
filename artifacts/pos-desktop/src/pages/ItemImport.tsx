@@ -21,6 +21,7 @@ import { imageToGridOffline } from "../lib/imageOcr";
 import { createApi } from "../lib/api";
 import { loadDeviceToken } from "../lib/tauri-shim";
 import { IS_TAURI } from "../lib/localStore";
+import { localizeStaticUiText } from "../lib/appSettings";
 
 // Instantiate the pdf.js worker via Vite's `?worker` bundling (a real Worker
 // assigned to workerPort) instead of a `?url` string handed to workerSrc. The
@@ -481,7 +482,7 @@ export default function ItemImport() {
               {([["none", "بدون علامة"], ["existing", "علامة موجودة"], ["new", "علامة جديدة"]] as const).map(([m, lbl]) => (
                 <label key={m} style={S.radio}>
                   <input type="radio" name="brandmode" checked={brandMode === m} onChange={() => setBrandMode(m)} />
-                  {lbl}
+                  {localizeStaticUiText(lbl)}
                 </label>
               ))}
             </div>

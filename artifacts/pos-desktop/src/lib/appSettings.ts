@@ -139,6 +139,20 @@ export function localizeStaticUiText(value: unknown, language = getUiLanguage())
   return (englishUiTranslations as Record<string, string>)[key] ?? value;
 }
 
+/** Localize a UI template while keeping interpolated values exactly as provided. */
+export function uiTemplate(
+  arabicParts: string[],
+  englishTemplate: string,
+  values: unknown[],
+  language = getUiLanguage(),
+): string {
+  const arabicTemplate = arabicParts
+    .map((part, index) => part + (index < values.length ? `{{${index}}}` : ""))
+    .join("");
+  const template = language === "en" ? englishTemplate : arabicTemplate;
+  return template.replace(/\{\{(\d+)\}\}/g, (_match, index: string) => String(values[Number(index)]));
+}
+
 /** Format stored date values for the active interface language without shifting date-only values across time zones. */
 export function formatUiDate(value: string, language = getUiLanguage()): string {
   const input = value.trim();
