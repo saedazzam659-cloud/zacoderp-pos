@@ -48,3 +48,21 @@ test("bulk disable previews every configured database and preserves unsafe cases
   assert.match(adminSequenceReset, /fiscal_year_sequence_policy:%/);
   assert.match(adminSequenceReset, /Preflight every database before the first write/);
 });
+
+test("SuperAdmin can review and disable annual reset for one company and database scope", () => {
+  assert.match(adminSequenceReset, /router\.get\("\/companies\/:id\/preview"/);
+  assert.match(adminSequenceReset, /router\.post\("\/companies\/:id\/disable"/);
+  assert.match(adminSequenceReset, /getCompanyDatabaseScope\(req\)/);
+  assert.match(adminSequenceReset, /getCandidates\(database, false, companyId\)/);
+  assert.match(adminSequenceReset, /getCandidates\(tx, true, companyId\)/);
+  assert.match(adminSequenceReset, /key LIKE \$\{`fiscal_year_sequence_policy:\$\{companyId\}:%`\}/);
+  assert.match(adminSequenceReset, /action: "disable_annual_reset_company"/);
+  assert.match(adminSequenceReset, /AND s\.company_id = \$\{companyId\}/);
+
+  const companiesUi = readFileSync(resolve(root, "artifacts/zatca-invoicing/src/pages/Companies.tsx"), "utf8");
+  assert.match(companiesUi, /button-company-annual-reset-/);
+  assert.match(companiesUi, /companies\/\$\{target\.id\}\/preview/);
+  assert.match(companiesUi, /companies\/\$\{annualResetCompanyTarget\.id\}\/disable/);
+  assert.match(companiesUi, /status-company-annual-reset-preview/);
+  assert.match(companiesUi, /button-apply-company-annual-sequence-reset/);
+});

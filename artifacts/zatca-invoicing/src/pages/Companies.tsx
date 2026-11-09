@@ -170,6 +170,12 @@ export default function Companies() {
   const [annualResetPreview, setAnnualResetPreview] = useState<any>(null);
   const [annualResetApplyResult, setAnnualResetApplyResult] = useState<any>(null);
   const [annualResetError, setAnnualResetError] = useState("");
+  const [annualResetCompanyTarget, setAnnualResetCompanyTarget] = useState<{ id: number; name: string; agent?: number } | null>(null);
+  const [annualResetCompanyPreview, setAnnualResetCompanyPreview] = useState<any>(null);
+  const [annualResetCompanyLoading, setAnnualResetCompanyLoading] = useState(false);
+  const [annualResetCompanyBusy, setAnnualResetCompanyBusy] = useState(false);
+  const [annualResetCompanyResult, setAnnualResetCompanyResult] = useState<any>(null);
+  const [annualResetCompanyError, setAnnualResetCompanyError] = useState("");
   const invoiceRepairKindLabel = (kind: string) => ({
     sales: "فاتورة مبيعات",
     purchase: "فاتورة مشتريات",
@@ -255,6 +261,66 @@ export default function Companies() {
       setAnnualResetError(error?.message || "تعذر تعطيل إعادة البدء السنوي.");
     } finally {
       setAnnualResetApplyBusy(false);
+    }
+  };
+
+  const openCompanyAnnualResetDialog = async (company: any) => {
+    const target = {
+      id: Number(company.id),
+      name: String(company.nameAr ?? company.nameEn ?? `شركة ${company.id}`),
+      ...(company.agentInstanceId ? { agent: Number(company.agentInstanceId) } : {}),
+    };
+    setAnnualResetCompanyTarget(target);
+    setAnnualResetCompanyPreview(null);
+    setAnnualResetCompanyResult(null);
+    setAnnualResetCompanyError("");
+    setAnnualResetCompanyLoading(true);
+    try {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const qs = target.agent ? `?agent=${target.agent}` : "";
+      const response = await fetch(
+        `${BASE}/api/admin/annual-sequence-reset/companies/${target.id}/preview${qs}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "تعذر فحص مسلسلات الشركة.");
+      setAnnualResetCompanyPreview(body);
+    } catch (error: any) {
+      setAnnualResetCompanyError(error?.message || "تعذر فحص مسلسلات الشركة.");
+    } finally {
+      setAnnualResetCompanyLoading(false);
+    }
+  };
+
+  const applyCompanyAnnualResetDisable = async () => {
+    if (!annualResetCompanyTarget || !annualResetCompanyPreview?.canApply
+      || annualResetCompanyPreview.eligibleCount <= 0 || annualResetCompanyBusy) return;
+    setAnnualResetCompanyBusy(true);
+    setAnnualResetCompanyError("");
+    try {
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const qs = annualResetCompanyTarget.agent ? `?agent=${annualResetCompanyTarget.agent}` : "";
+      const response = await fetch(
+        `${BASE}/api/admin/annual-sequence-reset/companies/${annualResetCompanyTarget.id}/disable${qs}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "تعذر تحديث مسلسلات الشركة.");
+      setAnnualResetCompanyResult(body);
+      await queryClient.invalidateQueries({ queryKey: ["companies"] });
+      toast({
+        title: "تم تحديث مسلسلات الشركة",
+        description: `تم تعطيل البدء السنوي في ${body.updatedCount ?? 0} مسلسل. بقي ${body.blockedCount ?? 0} دون تغيير بسبب الحد الأعلى.`,
+        variant: body.blockedCount ? "destructive" : "default",
+      });
+    } catch (error: any) {
+      setAnnualResetCompanyError(error?.message || "تعذر تحديث مسلسلات الشركة.");
+    } finally {
+      setAnnualResetCompanyBusy(false);
     }
   };
 
@@ -1105,6 +1171,15 @@ export default function Companies() {
                           <ListOrdered className="h-3.5 w-3.5" />تصحيح تسلسل القيود
                         </Button>
                       )}
+                      {isSuperAdmin && (
+                        <Button
+                          size="sm" variant="outline" className="gap-1.5 h-8"
+                          onClick={(event) => { event.stopPropagation(); void openCompanyAnnualResetDialog(company); }}
+                          data-testid={`button-company-annual-reset-${company.agentInstanceId ?? "central"}-${company.id}`}
+                        >
+                          <ListOrdered className="h-3.5 w-3.5" />مراجعة البدء السنوي
+                        </Button>
+                      )}
                        {isSuperAdmin && (
                          <Button
                            size="sm" variant="outline" className="gap-1.5 h-8"
@@ -1755,6 +1830,103 @@ export default function Companies() {
               data-testid="button-apply-disable-annual-sequence-reset"
             >
               {annualResetApplyBusy ? <><Loader2 className="h-4 w-4 animate-spin" />جارٍ التحديث…</> : `تعطيل ${annualResetPreview?.totalEligible ?? 0} مسلسل`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!annualResetCompanyTarget} onOpenChange={(open) => {
+        if (!open && !annualResetCompanyBusy) setAnnualResetCompanyTarget(null);
+      }}>
+        <DialogContent className="max-w-2xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ListOrdered className="h-5 w-5 text-primary" />مراجعة البدء السنوي — {annualResetCompanyTarget?.name}
+            </DialogTitle>
+            <DialogDescription>
+              مراجعة هذه الشركة فقط. عند التعطيل سيستمر كل مسلسل بعد أعلى رقم محفوظ، مع إبقاء التاريخ والسجلات وسياسات إقفال السنة الصريحة.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            {annualResetCompanyLoading && (
+              <p role="status" data-testid="status-company-annual-reset-loading" className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />جارٍ فحص مسلسلات هذه الشركة…
+              </p>
+            )}
+            {annualResetCompanyError && (
+              <p role="alert" data-testid="status-company-annual-reset-error" className="rounded border border-red-200 bg-red-50 p-3 text-red-800">
+                {annualResetCompanyError}
+              </p>
+            )}
+            {annualResetCompanyPreview && (
+              <>
+                <div role="status" data-testid="status-company-annual-reset-preview" className="grid gap-2 rounded border bg-muted/30 p-3 sm:grid-cols-3">
+                  <p>مسلسلات قابلة للتحديث: <strong>{annualResetCompanyPreview.eligibleCount}</strong></p>
+                  <p>مسلسلات ستبقى بسبب الحد الأعلى: <strong>{annualResetCompanyPreview.blockedCount}</strong></p>
+                  <p>سياسات إقفال سنة صريحة محفوظة: <strong>{annualResetCompanyPreview.resetPoliciesPreserved}</strong></p>
+                </div>
+                {annualResetCompanyPreview.sequences?.length ? (
+                  <div className="max-h-72 overflow-y-auto rounded border">
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b bg-muted/50 px-3 py-2 text-xs font-semibold">
+                      <span>المسلسل</span><span>الحالي ← التالي / الحد الأعلى</span>
+                    </div>
+                    {annualResetCompanyPreview.sequences.map((sequence: any) => (
+                      <div
+                        key={sequence.sequenceId}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b px-3 py-2 last:border-0"
+                        data-testid={`company-annual-reset-sequence-${sequence.sequenceId}`}
+                      >
+                        <span className="font-mono" dir="ltr">{sequence.code || `#${sequence.sequenceId}`}</span>
+                        <span className="text-left" dir="ltr">
+                          {sequence.currentNumber} ← {sequence.nextNumber} / {sequence.endNumber}
+                          {!sequence.eligible && <span className="ms-2 text-amber-700" dir="rtl">تجاوز الحد</span>}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded border border-emerald-200 bg-emerald-50 p-3 text-emerald-800">
+                    لا توجد مسلسلات مفعّل فيها البدء السنوي لهذه الشركة.
+                  </p>
+                )}
+              </>
+            )}
+            {annualResetCompanyResult && (
+              <div
+                role={annualResetCompanyResult.complete ? "status" : "alert"}
+                data-testid="status-company-annual-reset-result"
+                className={cn(
+                  "rounded border p-3",
+                  annualResetCompanyResult.blockedCount ? "border-amber-300 bg-amber-50 text-amber-950" : "border-emerald-200 bg-emerald-50 text-emerald-900",
+                )}
+              >
+                تم تعطيل البدء السنوي في {annualResetCompanyResult.updatedCount} مسلسل لهذه الشركة.
+                {annualResetCompanyResult.blockedCount > 0 && ` بقي ${annualResetCompanyResult.blockedCount} دون تغيير لتجاوز الرقم التالي الحد الأعلى.`}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="flex-row-reverse gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setAnnualResetCompanyTarget(null)}
+              disabled={annualResetCompanyBusy}
+              data-testid="button-close-company-annual-reset-dialog"
+            >
+              إغلاق
+            </Button>
+            <Button
+              onClick={() => void applyCompanyAnnualResetDisable()}
+              disabled={
+                !annualResetCompanyPreview?.canApply
+                || annualResetCompanyPreview.eligibleCount <= 0
+                || annualResetCompanyLoading
+                || annualResetCompanyBusy
+                || !!annualResetCompanyResult
+              }
+              data-testid="button-apply-company-annual-sequence-reset"
+            >
+              {annualResetCompanyBusy
+                ? <><Loader2 className="h-4 w-4 animate-spin" />جارٍ التحديث…</>
+                : `تعطيل البدء السنوي لهذه الشركة (${annualResetCompanyPreview?.eligibleCount ?? 0})`}
             </Button>
           </DialogFooter>
         </DialogContent>
