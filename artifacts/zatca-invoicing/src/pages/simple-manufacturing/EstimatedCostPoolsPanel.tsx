@@ -65,8 +65,85 @@ const BASIS_OPTIONS = [
   },
 ] as const;
 
+type PoolPreset = {
+  id: string;
+  code: string;
+  nameAr: string;
+  allocationBasis: (typeof BASIS_OPTIONS)[number]["value"];
+  description: string;
+};
+
+const COMMON_POOL_PRESETS: PoolPreset[] = [
+  {
+    id: "factory-rent",
+    code: "FACTORY_RENT",
+    nameAr: "إيجار المصنع",
+    allocationBasis: "area",
+    description: "استخدم حصة المصنع المخصصة للإنتاج، ووزّعها حسب المساحة.",
+  },
+  {
+    id: "electricity",
+    code: "FACTORY_ELECTRICITY",
+    nameAr: "كهرباء المصنع",
+    allocationBasis: "machine_hours",
+    description: "مناسب للتوزيع بحسب ساعات الآلات؛ تجنب تكراره إذا كانت تكلفة الكهرباء محسوبة عبر موارد الآلات.",
+  },
+  {
+    id: "water",
+    code: "FACTORY_WATER",
+    nameAr: "مياه المصنع",
+    allocationBasis: "production_quantity",
+    description: "اقتراح مبدئي للتوزيع حسب كمية الإنتاج؛ غيّره إذا كان استهلاك المياه يتبع أساساً آخر.",
+  },
+  {
+    id: "indirect-labor",
+    code: "INDIRECT_LABOR",
+    nameAr: "أجور العمالة غير المباشرة",
+    allocationBasis: "labor_hours",
+    description: "للعمالة غير المباشرة فقط؛ لا تكرر رواتب العاملين المحملة من مصدر الرواتب أو موارد المراحل.",
+  },
+  {
+    id: "supervision",
+    code: "SUPERVISION",
+    nameAr: "إشراف التصنيع",
+    allocationBasis: "labor_hours",
+    description: "استخدمه فقط إذا لم تكن تكلفة المشرف محملة بالفعل على أمر أو مرحلة إنتاج.",
+  },
+  {
+    id: "machine-depreciation",
+    code: "MACHINE_DEPRECIATION",
+    nameAr: "إهلاك آلات المصنع",
+    allocationBasis: "machine_hours",
+    description: "للإهلاك غير المحمل عبر تكلفة موارد الآلات أو الأصل الثابت.",
+  },
+  {
+    id: "machine-maintenance",
+    code: "MACHINE_MAINTENANCE",
+    nameAr: "صيانة آلات المصنع",
+    allocationBasis: "machine_hours",
+    description: "اقتراح لتوزيع الصيانة بحسب ساعات تشغيل الآلات.",
+  },
+  {
+    id: "allocated-office-rent",
+    code: "OFFICE_RENT_PRODUCTION_SHARE",
+    nameAr: "حصة التصنيع من إيجار المكاتب",
+    allocationBasis: "area",
+    description: "أدخل حصة التصنيع المعتمدة فقط، وليس كامل إيجار المكاتب الإدارية.",
+  },
+];
+
 function monthNow(): string {
   return new Date().toISOString().slice(0, 7);
+}
+
+function previousMonth(period: string): string | null {
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(period);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  return month === 1
+    ? `${year - 1}-12`
+    : `${year}-${String(month - 1).padStart(2, "0")}`;
 }
 
 export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, request }: Props) {
@@ -77,6 +154,8 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [previousPools, setPreviousPools] = useState<any[]>([]);
+  const [templateValue, setTemplateValue] = useState("");
   const [poolInputs, setPoolInputs] = useState<Record<number, {
     actualAmount: string;
     sourceReference: string;
@@ -112,22 +191,50 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
     label: option.label,
     description: option.description,
   }));
-  const accountItems = (rows: Account[]) => rows.map((account) => ({
+  const accountItems = (rows: Account[], excludedId = "") => rows.map((account) => ({
     value: String(account.id),
     code: account.code ?? account.accountCode ?? String(account.id),
     label: account.nameAr ?? account.name ?? String(account.id),
+    disabled: String(account.id) === excludedId,
+    disabledReason: String(account.id) === excludedId ? "اختر حساباً مختلفاً لهذا الدور" : undefined,
   }));
+  const templateItems = useMemo(() => [
+    ...COMMON_POOL_PRESETS.map((preset) => ({
+      value: `preset:${preset.id}`,
+      code: preset.code,
+      label: preset.nameAr,
+      description: preset.description,
+      group: "بنود جاهزة",
+    })),
+    ...previousPools.map((pool) => ({
+      value: `previous:${pool.id}`,
+      code: String(pool.code ?? ""),
+      label: `${pool.nameAr} — ${pool.code}`,
+      description: `نسخ أساس التوزيع والمقام والحسابات من ${previousMonth(period) ?? "الشهر السابق"}.`,
+      group: "إعدادات الشهر السابق",
+    })),
+  ], [period, previousPools]);
 
   useEffect(() => {
-    setForm((current) => ({
-      ...current,
-      actualExpenseAccountId: current.actualExpenseAccountId ||
-        String(expenseAccounts[0]?.id ?? ""),
-      varianceAccountId: current.varianceAccountId ||
-        String(expenseAccounts.find((account) => account.id !== Number(current.actualExpenseAccountId))?.id ?? ""),
-      absorbedAccountId: current.absorbedAccountId || String(liabilityAccounts[0]?.id ?? ""),
-    }));
-  }, [expenseAccounts, liabilityAccounts]);
+    const sourcePeriod = previousMonth(period);
+    if (!sourcePeriod) {
+      setPreviousPools([]);
+      return;
+    }
+    const controller = new AbortController();
+    void request(
+      `/api/simple-manufacturing/estimated-costing/pools?period=${encodeURIComponent(sourcePeriod)}`,
+      { signal: controller.signal },
+    ).then((result) => {
+      if (controller.signal.aborted) return;
+      setPreviousPools(Array.isArray(result?.pools)
+        ? result.pools.filter((pool: any) => pool.branchId == null)
+        : []);
+    }).catch((error: any) => {
+      if (error?.name !== "AbortError" && !controller.signal.aborted) setPreviousPools([]);
+    });
+    return () => controller.abort();
+  }, [period, request]);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!period) return;
@@ -186,6 +293,18 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
       toast({ title: "الحسابات ناقصة", description: "اختر حساب المصروف والامتصاص والفروق.", variant: "destructive" });
       return;
     }
+    if (new Set([
+      form.actualExpenseAccountId,
+      form.absorbedAccountId,
+      form.varianceAccountId,
+    ]).size !== 3) {
+      toast({
+        title: "الحسابات يجب أن تكون مختلفة",
+        description: "اختر حساباً مستقلاً للمصروف الفعلي، وحساب الامتصاص، وحساب فروق التصنيع.",
+        variant: "destructive",
+      });
+      return;
+    }
     setSaving(true);
     try {
       await request("/api/simple-manufacturing/estimated-costing/pools", {
@@ -210,6 +329,7 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
         estimatedAmount: "",
         monthlyDenominator: "",
       }));
+      setTemplateValue("");
       setRefreshKey((value) => value + 1);
       toast({ title: "تم إنشاء مجمع التكلفة" });
     } catch (error: any) {
@@ -217,6 +337,52 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
     } finally {
       setSaving(false);
     }
+  };
+
+  const applyTemplate = (value: string) => {
+    setTemplateValue(value);
+    if (!value) return;
+    if (value.startsWith("preset:")) {
+      const preset = COMMON_POOL_PRESETS.find((row) => `preset:${row.id}` === value);
+      if (!preset) return;
+      setForm((current) => ({
+        ...current,
+        code: preset.code,
+        nameAr: preset.nameAr,
+        allocationBasis: preset.allocationBasis,
+        monthlyDenominator: "",
+        actualExpenseAccountId: "",
+        absorbedAccountId: "",
+        varianceAccountId: "",
+      }));
+      return;
+    }
+
+    const poolId = Number(value.slice("previous:".length));
+    const pool = previousPools.find((row) => Number(row.id) === poolId);
+    if (!pool) return;
+    const activeExpenseIds = new Set(expenseAccounts.map((account) => String(account.id)));
+    const activeLiabilityIds = new Set(liabilityAccounts.map((account) => String(account.id)));
+    const previousActualAccountId = String(pool.actualExpenseAccountId ?? "");
+    const previousAbsorbedAccountId = String(pool.absorbedAccountId ?? "");
+    const previousVarianceAccountId = String(pool.varianceAccountId ?? "");
+    setForm((current) => ({
+      ...current,
+      code: String(pool.code ?? ""),
+      nameAr: String(pool.nameAr ?? ""),
+      allocationBasis: String(pool.allocationBasis ?? "machine_hours"),
+      monthlyDenominator: pool.monthlyDenominator == null ? "" : String(pool.monthlyDenominator),
+      actualExpenseAccountId: activeExpenseIds.has(previousActualAccountId)
+        ? previousActualAccountId : "",
+      absorbedAccountId: activeLiabilityIds.has(previousAbsorbedAccountId)
+        ? previousAbsorbedAccountId : "",
+      varianceAccountId: activeExpenseIds.has(previousVarianceAccountId)
+        ? previousVarianceAccountId : "",
+    }));
+    toast({
+      title: "تم نسخ إعداد الشهر السابق",
+      description: "راجع المقام والحسابات، ثم أدخل المبلغ التقديري الجديد.",
+    });
   };
 
   const saveActual = async (pool: any) => {
@@ -345,13 +511,33 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
       )}
       <form onSubmit={savePool}>
        <fieldset disabled={!canManageCompanyPools || saving} className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-2 xl:grid-cols-4">
+         <div className="space-y-1 xl:col-span-4">
+           <Label>قالب إعداد المجمع</Label>
+           <SearchCombobox
+             value={templateValue}
+             onValueChange={applyTemplate}
+             items={templateItems}
+             grouped
+             placeholder="اختر بنداً جاهزاً أو انسخ إعداد الشهر السابق"
+             searchPlaceholder="ابحث باسم البند أو رمزه..."
+             emptyText="لا توجد قوالب مطابقة"
+             className="h-10 bg-white"
+             openOnFocus={false}
+             testId="estimated-pool-template"
+           />
+           <p className="text-[11px] leading-4 text-slate-500">
+             القالب يملأ بيانات البداية فقط ولا ينشئ المجمع. اختر حسابات شركتك عند أول استخدام؛ نسخ الشهر السابق ينقل الحسابات المتاحة وأساس التوزيع والمقام.
+           </p>
+         </div>
         <div className="space-y-1">
           <Label>رمز المجمع</Label>
           <Input value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} maxLength={64} required />
+           <p className="text-[11px] leading-4 text-slate-500">يتعبأ من القالب ويمكن تعديله؛ يجب ألا يتكرر في الفترة نفسها.</p>
         </div>
         <div className="space-y-1">
           <Label>اسم بند التكلفة</Label>
           <Input value={form.nameAr} onChange={(event) => setForm({ ...form, nameAr: event.target.value })} maxLength={160} required />
+           <p className="text-[11px] leading-4 text-slate-500">يتعبأ من القالب ويمكن تخصيصه حسب بند التكلفة.</p>
         </div>
         <div className="space-y-1">
           <Label>المبلغ التقديري</Label>
@@ -405,7 +591,7 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
            <SearchCombobox
             value={form.actualExpenseAccountId}
              onValueChange={(value) => setForm((current) => ({ ...current, actualExpenseAccountId: value }))}
-             items={accountItems(expenseAccounts)}
+             items={accountItems(expenseAccounts, form.varianceAccountId)}
              placeholder="اختر حساب مصروف"
              searchPlaceholder="ابحث بالكود أو اسم الحساب..."
              emptyText="لا توجد حسابات مصروف مطابقة"
@@ -435,7 +621,7 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
            <SearchCombobox
             value={form.varianceAccountId}
              onValueChange={(value) => setForm((current) => ({ ...current, varianceAccountId: value }))}
-             items={accountItems(expenseAccounts)}
+             items={accountItems(expenseAccounts, form.actualExpenseAccountId)}
              placeholder="اختر حساب فروق"
              searchPlaceholder="ابحث بالكود أو اسم الحساب..."
              emptyText="لا توجد حسابات مصروف مطابقة"
@@ -443,11 +629,17 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
              openOnFocus={false}
              testId="estimated-pool-variance-account"
            />
-           <p className="text-[11px] leading-4 text-slate-500">حساب فرق التكلفة بين المبلغ المحمّل والفعلي.</p>
+           <p className="text-[11px] leading-4 text-slate-500">حساب فرق التكلفة بين المبلغ المحمّل والفعلي؛ يجب أن يختلف عن حساب المصروف الفعلي.</p>
         </div>
+         {expenseAccounts.length < 2 && (
+           <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900 md:col-span-2 xl:col-span-4">
+             يلزم وجود حسابَي مصروف مختلفين وحساب التزام نشط وقابل للترحيل قبل إنشاء المجمع.
+           </p>
+         )}
         <div className="flex items-end xl:col-span-4">
-           <Button type="submit" disabled={saving || !period || !expenseAccounts.length || !liabilityAccounts.length ||
+           <Button type="submit" disabled={saving || !period || expenseAccounts.length < 2 || !liabilityAccounts.length ||
              !form.actualExpenseAccountId || !form.absorbedAccountId || !form.varianceAccountId ||
+             new Set([form.actualExpenseAccountId, form.absorbedAccountId, form.varianceAccountId]).size !== 3 ||
              (usesDenominator && !(Number(form.monthlyDenominator) > 0))}>
             {saving ? "جاري الحفظ..." : "إنشاء مجمع للشهر"}
           </Button>

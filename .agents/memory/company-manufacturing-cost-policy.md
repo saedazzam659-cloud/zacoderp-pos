@@ -36,3 +36,9 @@ The factory's annual rent advance is part of the same lease as the monthly insta
 **Why:** The user confirmed the supervisor classification approach, that the annual payment is an advance from the same contract, and that each monthly cash-expense voucher is only the remainder after the advance.
 
 **How to apply:** Keep HR as the source of employee classification, freeze that value in payroll snapshots, capture stage assignment in manufacturing, and allocate each month's rent once across prepaid amortization and the eligible remaining-rent cash voucher.
+
+Monthly estimated-cost pools should offer reusable cost presets and a copy-from-prior-month path. Built-in presets may suggest a code, name, and allocation basis, but must not guess company account mappings. A prior-month copy may reuse account IDs only when those accounts are still active and retain the required account types; users must review the copied settings.
+
+**Why:** The user requested faster repeat setup for rent, utilities, labor, supervision, and machine costs, while account mappings are company-specific and incorrect defaults could mispost manufacturing costs.
+
+**How to apply:** Keep reusable presets separate from posted expenses and order allocations. Include clear warnings against charging the same payroll, depreciation, or electricity through both a pool and an existing resource-cost path.
