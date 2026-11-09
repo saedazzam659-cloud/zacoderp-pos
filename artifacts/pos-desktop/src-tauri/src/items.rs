@@ -21,6 +21,7 @@ pub struct LocalItem {
     pub name_ar: String,
     pub name_en: Option<String>,
     pub barcode: Option<String>,
+    pub cost_price: f64,
     pub sale_price: f64,
     pub vat_rate: f64,
     pub uom_id: Option<i64>,
@@ -46,7 +47,7 @@ const MAX_ROWS: i64 = 2000;
 const SELECT_COLS: &str =
     "id, cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate, \
      active_ingredient, dosage_form, strength, manufacturer, requires_prescription, \
-     controlled, expiry_date, batch_no, is_weighed, price_per_kg, plu, uom_id";
+     controlled, expiry_date, batch_no, is_weighed, price_per_kg, plu, uom_id, cost_price";
 
 fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
     Ok(LocalItem {
@@ -70,14 +71,33 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
         price_per_kg: row.get(17).ok().flatten(),
         plu: row.get(18).ok().flatten(),
         uom_id: row.get(19).ok().flatten(),
+        cost_price: row.get(20)?,
     })
+}
+
+/// Add the accounting fallback column without running unrelated item indexes
+/// from inside a sale-posting transaction.
+pub(crate) fn ensure_cost_price_column(conn: &rusqlite::Connection) -> Result<()> {
+    let exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(items_local)")?;
+        stmt.query_map([], |r| r.get::<_, String>(1))?
+            .filter_map(|column| column.ok())
+            .any(|column| column == "cost_price")
+    };
+    if !exists {
+        conn.execute(
+            "ALTER TABLE items_local ADD COLUMN cost_price REAL NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    Ok(())
 }
 
 /// Lazy migration: ensure all the Task #200 + #199 columns exist on
 /// `items_local`. `db.rs` is shared scaffolding we don't edit, so we
 /// PRAGMA-sniff and ALTER as needed on every open. SQLite ALTER ADD COLUMN
 /// is idempotent only via this sniff (there's no IF NOT EXISTS form).
-fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
+pub(crate) fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
     let existing: std::collections::HashSet<String> = conn
         .prepare("PRAGMA table_info(items_local)")?
         .query_map([], |r| r.get::<_, String>(1))?
@@ -103,6 +123,7 @@ fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
             conn.execute(&format!("ALTER TABLE items_local ADD COLUMN {col} {ty}"), [])?;
         }
     }
+    ensure_cost_price_column(conn)?;
     // PLU uniqueness (Task #201 review round 3). A partial unique index
     // means duplicate PLUs raise a clear SQLITE_CONSTRAINT at write time
     // instead of letting `find_item_by_plu` silently resolve to whichever
@@ -475,6 +496,8 @@ pub struct CloudItem {
     pub name_ar: String,
     pub name_en: Option<String>,
     pub barcode: Option<String>,
+    #[serde(default)]
+    pub cost_price: Option<f64>,
     pub sale_price: f64,
     pub vat_rate: f64,
 }
@@ -492,8 +515,8 @@ fn upsert_from_cloud(rows: Vec<CloudItem>) -> Result<u64> {
     // already exists via the table definition (UNIQUE in db.rs).
     let mut stmt = tx.prepare(
         "INSERT INTO items_local
-           (cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
+           (cloud_id, code, name_ar, name_en, barcode, sale_price, vat_rate, cost_price, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE(?8, 0), CURRENT_TIMESTAMP)
          ON CONFLICT(cloud_id) DO UPDATE SET
            code = excluded.code,
            name_ar = excluded.name_ar,
@@ -501,12 +524,13 @@ fn upsert_from_cloud(rows: Vec<CloudItem>) -> Result<u64> {
            barcode = excluded.barcode,
            sale_price = excluded.sale_price,
            vat_rate = excluded.vat_rate,
+           cost_price = COALESCE(?8, cost_price),
            updated_at = CURRENT_TIMESTAMP",
     )?;
     let mut count = 0_u64;
     for r in &rows {
         stmt.execute(rusqlite::params![
-            r.cloud_id, r.code, r.name_ar, r.name_en, r.barcode, r.sale_price, r.vat_rate,
+            r.cloud_id, r.code, r.name_ar, r.name_en, r.barcode, r.sale_price, r.vat_rate, r.cost_price,
         ])?;
         count += 1;
     }

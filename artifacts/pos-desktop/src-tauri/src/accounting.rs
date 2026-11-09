@@ -629,13 +629,25 @@ struct PosJeLine {
     cost: Option<f64>,
 }
 
-/// Per-BASE-unit cost for a POS line. A payload-supplied `cost` (already per
-/// base unit) wins; otherwise we read the maintained moving cost from
-/// `stock_on_hand_local` (the warehouse holding the most stock). Returns 0 when
-/// no cost is known so the COGS leg is simply skipped for that line.
-fn pos_line_base_cost(tx: &Transaction, line: &PosJeLine) -> f64 {
+/// Per-BASE-unit POS cost: a payload-supplied cost wins, then the maintained
+/// local stock cost. Sales may fall back to the synced item-card cost; returns
+/// keep the existing stock-cost-only behavior.
+fn item_card_cost_in_tx(tx: &Transaction, item_id: i64) -> Result<f64> {
+    let cost: Option<f64> = tx.query_row(
+        "SELECT cost_price FROM items_local WHERE id=?1",
+        params![item_id],
+        |r| r.get(0),
+    ).optional()?;
+    Ok(cost.filter(|value| value.is_finite() && *value > 0.0).unwrap_or(0.0))
+}
+
+fn pos_line_base_cost(
+    tx: &Transaction,
+    line: &PosJeLine,
+    allow_item_card_fallback: bool,
+) -> Result<f64> {
     if let Some(c) = line.cost {
-        if c > 0.0 { return c; }
+        if c.is_finite() && c > 0.0 { return Ok(c); }
     }
     if let Some(iid) = line.item_id {
         let c: Option<f64> = tx
@@ -644,11 +656,15 @@ fn pos_line_base_cost(tx: &Transaction, line: &PosJeLine) -> f64 {
                 params![iid],
                 |r| r.get(0),
             )
-            .optional()
-            .unwrap_or(None);
-        return c.unwrap_or(0.0);
+            .optional()?;
+        if let Some(cost) = c.filter(|value| value.is_finite() && *value > 0.0) {
+            return Ok(cost);
+        }
+        if allow_item_card_fallback {
+            return item_card_cost_in_tx(tx, iid);
+        }
     }
-    0.0
+    Ok(0.0)
 }
 
 #[derive(Deserialize, Default)]
@@ -723,7 +739,8 @@ fn resolve_pos_debit(tx: &Transaction, p: &PosJePayload) -> Result<(i64, bool)> 
 
 /// Posts the device-local journal entry (+ COGS leg + customer sub-ledger) for
 /// a register sale or return, parsing the raw offline payload. The COGS leg is
-/// posted only when the payload carried per-line cost. Distinct source_types
+/// posted when a positive payload or local cost source resolves for a line.
+/// Distinct source_types
 /// (pos_sale / pos_sale_cogs / pos_return / pos_return_cogs) let مركز الترحيل
 /// filter cashier activity apart from back-office sales. The caller treats any
 /// error as NON-FATAL (logs + swallows) so a cashier sale is never blocked by
@@ -745,6 +762,7 @@ pub(crate) fn post_pos_invoice_je(payload_json: &str, invoice_id: i64, invoice_n
 
     let mut conn = db::open()?;
     let tx = conn.transaction()?;
+    crate::items::ensure_cost_price_column(&tx)?;
 
     let rev = pos_acct(&tx, "pos_acct_revenue", "4100")?;
     let vat_acc = pos_acct(&tx, "pos_acct_vat", "2200")?;
@@ -778,14 +796,15 @@ pub(crate) fn post_pos_invoice_je(payload_json: &str, invoice_id: i64, invoice_n
         post,
     )?;
 
-    // COGS leg — cost resolved per line (payload cost wins, else maintained
-    // moving cost from stock_on_hand_local). Skipped entirely when no line has
-    // a known cost (cogs_total ≈ 0), e.g. a freshly-seeded company.
-    let cogs_total: f64 = payload
-        .lines
-        .iter()
-        .map(|l| pos_line_base_cost(&tx, l) * l.qty * l.unit_factor.unwrap_or(1.0))
-        .sum();
+    // COGS leg — payload cost, then local moving cost, then synced item-card
+    // cost for sales. Returns remain stock-cost-only. If no source is positive,
+    // the COGS leg is skipped.
+    let mut cogs_total = 0.0_f64;
+    for line in &payload.lines {
+        cogs_total += pos_line_base_cost(&tx, line, !is_return)?
+            * line.qty
+            * line.unit_factor.unwrap_or(1.0);
+    }
     if cogs_total > 0.0001 {
         let cogs = pos_acct(&tx, "pos_acct_cogs", "5100")?;
         let inv = pos_acct(&tx, "pos_acct_inventory", "1300")?;
@@ -3282,6 +3301,24 @@ fn item_cost_in_tx(tx: &Transaction, item_id: i64, warehouse_id: i64) -> f64 {
     ).optional().ok().flatten().unwrap_or(0.0)
 }
 
+/// Sales fallback: keep the warehouse's maintained last cost as the first
+/// choice; when no positive stock cost exists, use the item-card cost.
+fn sales_unit_cost_in_tx(
+    tx: &Transaction,
+    item_id: i64,
+    warehouse_id: i64,
+) -> std::result::Result<f64, String> {
+    let warehouse_cost: Option<f64> = tx.query_row(
+        "SELECT last_cost FROM stock_on_hand_local WHERE item_id=?1 AND warehouse_id=?2",
+        params![item_id, warehouse_id],
+        |r| r.get(0),
+    ).optional().map_err(|e| e.to_string())?;
+    if let Some(cost) = warehouse_cost.filter(|value| value.is_finite() && *value > 0.0) {
+        return Ok(cost);
+    }
+    item_card_cost_in_tx(tx, item_id).map_err(|e| e.to_string())
+}
+
 /// Whole days between two YYYY-MM-DD dates (to - from); 0 if either unparsable.
 fn days_between(from: &str, to: &str) -> i64 {
     use chrono::NaiveDate;
@@ -3446,6 +3483,7 @@ fn apply_sales_invoice_impact(
     vat_total: f64,
     grand_total: f64,
 ) -> Result<(), String> {
+    crate::items::ensure_cost_price_column(tx).map_err(|e| e.to_string())?;
     let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(tx)? };
     let mut cogs_total = 0.0_f64;
     for l in &input.lines {
@@ -3457,8 +3495,8 @@ fn apply_sales_invoice_impact(
         // Free (bonus) units: no revenue/VAT, but consume stock + add COGS.
         let free_qty = if l.free_qty > 0.0 { l.free_qty } else { 0.0 };
         let total_base_qty = (l.qty + free_qty) * factor;
-        // unit_cost is the moving cost PER BASE UNIT (from the LINE warehouse).
-        let unit_cost = item_cost_in_tx(tx, l.item_id, line_wh);
+        // unit_cost is per BASE UNIT: warehouse cost first, then item-card cost.
+        let unit_cost = sales_unit_cost_in_tx(tx, l.item_id, line_wh)?;
         cogs_total += unit_cost * total_base_qty;
         tx.execute(
             "INSERT INTO sales_invoice_lines_local(invoice_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
@@ -3773,11 +3811,11 @@ pub fn sales_invoice_update(id: i64, input: SalesInvoiceInput) -> Result<(), Str
 
 /// Inserts the sale's line rows WITHOUT any GL / stock-ledger / shadow-balance
 /// impact. Used by the draft lifecycle (draft create/update and the
-/// `unpost → keep lines` step). `unit_cost` is snapshotted from the current
-/// moving cost so a later `post` can still restore stock at the right value,
-/// but NO ledger movement happens here. Mirrors the line-insert columns in
-/// `apply_sales_invoice_impact`.
+/// `unpost → keep lines` step). `unit_cost` is snapshotted from the warehouse
+/// cost or item card so the draft uses the same fallback as posting. No ledger
+/// movement happens here. Mirrors `apply_sales_invoice_impact`.
 fn insert_sales_lines_only(tx: &Transaction, invoice_id: i64, input: &SalesInvoiceInput) -> Result<(), String> {
+    crate::items::ensure_cost_price_column(tx).map_err(|e| e.to_string())?;
     let default_wh = match input.warehouse_id { Some(w) if w > 0 => w, _ => crate::inventory::default_warehouse_id_in_tx(tx)? };
     for l in &input.lines {
         let factor = if l.conversion_factor > 0.0 { l.conversion_factor } else { 1.0 };
@@ -3785,7 +3823,7 @@ fn insert_sales_lines_only(tx: &Transaction, invoice_id: i64, input: &SalesInvoi
         let lt = line_sub + line_sub * l.vat_rate / 100.0;
         let line_wh = match l.warehouse_id { Some(w) if w > 0 => w, _ => default_wh };
         let free_qty = if l.free_qty > 0.0 { l.free_qty } else { 0.0 };
-        let unit_cost = item_cost_in_tx(tx, l.item_id, line_wh);
+        let unit_cost = sales_unit_cost_in_tx(tx, l.item_id, line_wh)?;
         tx.execute(
             "INSERT INTO sales_invoice_lines_local(invoice_id,item_id,qty,unit_price,unit_cost,vat_rate,line_total,uom_id,uom_name,conversion_factor,free_qty,note,warehouse_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
             params![invoice_id, l.item_id, l.qty, l.unit_price, unit_cost, l.vat_rate, lt, l.uom_id, l.uom_name, factor, free_qty, l.note, line_wh],

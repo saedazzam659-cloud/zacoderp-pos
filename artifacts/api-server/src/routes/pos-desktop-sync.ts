@@ -185,6 +185,7 @@ router.post("/pull", async (req: DeviceAuthedRequest, res) => {
       nameAr: itemsTable.nameAr,
       nameEn: itemsTable.nameEn,
       barcode: itemsTable.barcode,
+      costPrice: itemsTable.costPrice,
       salePrice: itemsTable.salePrice,
       vatRate: itemsTable.vatRate,
       updatedAt: itemsTable.updatedAt,

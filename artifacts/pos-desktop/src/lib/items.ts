@@ -144,6 +144,8 @@ export interface LocalItem {
   nameAr: string;
   nameEn?: string | null;
   barcode?: string | null;
+  /** Cloud item-card cost, used as the final COGS fallback when no posted stock cost exists. */
+  costPrice?: number;
   salePrice: number;
   vatRate: number;
   uomId?: number | null;
@@ -186,6 +188,7 @@ interface RustItem {
   name_ar: string;
   name_en: string | null;
   barcode: string | null;
+  cost_price?: number;
   sale_price: number;
   vat_rate: number;
   uom_id?: number | null;
@@ -210,6 +213,7 @@ function fromRust(r: RustItem): LocalItem {
     nameAr: r.name_ar,
     nameEn: r.name_en,
     barcode: r.barcode,
+    costPrice: r.cost_price ?? 0,
     salePrice: r.sale_price,
     vatRate: r.vat_rate,
     uomId: r.uom_id ?? null,
@@ -371,7 +375,8 @@ export async function seedDemoItems(): Promise<number> {
 // Bulk upsert from the cloud Pull response. Returns the count actually written.
 export async function upsertItemsFromCloud(remote: Array<{
   id: number; code: string; nameAr: string; nameEn: string | null;
-  barcode: string | null; salePrice: string; vatRate: string; updatedAt?: string;
+  barcode: string | null; costPrice?: string | number | null;
+  salePrice: string; vatRate: string; updatedAt?: string;
 }>): Promise<number> {
   // Coerce string prices/rates → number once at the boundary.
   const normalized = remote.map((r) => ({
@@ -380,6 +385,7 @@ export async function upsertItemsFromCloud(remote: Array<{
     nameAr: r.nameAr,
     nameEn: r.nameEn,
     barcode: r.barcode,
+    costPrice: r.costPrice == null ? undefined : Number(r.costPrice),
     salePrice: Number(r.salePrice),
     vatRate: Number(r.vatRate),
   }));
@@ -393,6 +399,7 @@ export async function upsertItemsFromCloud(remote: Array<{
           name_ar: r.nameAr,
           name_en: r.nameEn,
           barcode: r.barcode,
+          ...(r.costPrice == null ? {} : { cost_price: r.costPrice }),
           sale_price: r.salePrice,
           vat_rate: r.vatRate,
         })),
@@ -413,6 +420,7 @@ export async function upsertItemsFromCloud(remote: Array<{
         nameAr: r.nameAr,
         nameEn: r.nameEn,
         barcode: r.barcode,
+        ...(r.costPrice == null ? {} : { costPrice: r.costPrice }),
         salePrice: r.salePrice,
         vatRate: r.vatRate,
         updatedAt: new Date().toISOString(),
@@ -426,6 +434,7 @@ export async function upsertItemsFromCloud(remote: Array<{
         nameAr: r.nameAr,
         nameEn: r.nameEn,
         barcode: r.barcode,
+        costPrice: r.costPrice ?? 0,
         salePrice: r.salePrice,
         vatRate: r.vatRate,
         updatedAt: new Date().toISOString(),

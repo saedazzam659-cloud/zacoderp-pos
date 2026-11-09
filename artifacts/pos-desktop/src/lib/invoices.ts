@@ -55,8 +55,8 @@ export interface OfflineInvoicePayload {
     // invoices lack these → reuse falls back to a base-unit line.
     unitId?: string | null; unitName?: string | null; unitFactor?: number | null;
     weighed?: boolean;
-    /** Per-BASE-unit cost override for the COGS leg; omitted → Rust reads the
-     *  maintained moving cost from stock_on_hand_local. */
+    /** Per-BASE-unit cost override for the COGS leg; omitted → Rust uses local
+     *  stock cost, then the synced item-card cost for sales. */
     cost?: number | null;
   }[];
   subtotal: number;
