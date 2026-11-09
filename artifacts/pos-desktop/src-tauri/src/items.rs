@@ -82,9 +82,11 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalItem> {
 pub(crate) fn ensure_cost_price_column(conn: &rusqlite::Connection) -> Result<()> {
     let exists = {
         let mut stmt = conn.prepare("PRAGMA table_info(items_local)")?;
-        stmt.query_map([], |r| r.get::<_, String>(1))?
+        let found = stmt
+            .query_map([], |r| r.get::<_, String>(1))?
             .filter_map(|column| column.ok())
-            .any(|column| column == "cost_price")
+            .any(|column| column == "cost_price");
+        found
     };
     if !exists {
         conn.execute(
