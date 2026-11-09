@@ -100,6 +100,8 @@ test("only the newly created company is changed; issued or already-used counters
   assert.equal(companies.get(2)?.hideQuickAddBar, true);
   assert.equal(sequences.filter((s) => s.companyId === 2).length, newCompanySequenceGroups().length);
   assert.equal(sequences.filter((s) => s.companyId === 2).every((s) => s.currentNumber === 1 && s.startNumber === 1), true);
+  assert.equal(sequences.filter((s) => s.companyId === 2).every((s) => s.annualReset === false), true,
+    "fresh companies must keep continuous numbering unless annual reset is explicitly enabled");
   assert.equal(sequences.filter((s) => s.companyId === 2).every((s) => /[\u0600-\u06ff]/u.test(String((s as any).nameAr))), true);
 
   const before = JSON.stringify({ companies: [...companies], sequences });

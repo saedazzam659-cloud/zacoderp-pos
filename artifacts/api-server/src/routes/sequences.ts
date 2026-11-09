@@ -16,6 +16,8 @@ import {
   resolveSequencePeriodMatch,
   getFiscalYearSequencePolicy,
   priorFiscalYearNextNumber,
+  hasAnnualSequenceCounters,
+  annualSequenceCarryForwardNextNumber,
   periodMatchWhereSql,
   periodMatchRankSql,
   journalEntrySequenceHighWater,
@@ -190,9 +192,12 @@ router.get("/peek/:txType", async (req: any, res) => {
     const applyFiscalYearPolicy = fiscalYearPolicy != null && !protectedZatcaNumber;
     const monthlyReset = applyFiscalYearPolicy ? false : configuredMonthlyReset;
     const annualReset = applyFiscalYearPolicy || (configuredAnnualReset && !protectedZatcaNumber);
-    const counterBranchKey = applyFiscalYearPolicy
+    let counterBranchKey = applyFiscalYearPolicy
       ? (configuredAnnualReset ? 0 : branchKey)
       : annualReset ? 0 : branchKey;
+    const carriesAnnualNumbers = !monthlyReset && !annualReset
+      && await hasAnnualSequenceCounters(db, seq.id);
+    if (carriesAnnualNumbers) counterBranchKey = 0;
     const previewPeriod = `${effectiveDate.getFullYear()}-${String(effectiveDate.getMonth() + 1).padStart(2, "0")}`;
     const fiscalYearBucket = `FY-${pm.fiscalYearId ?? `CAL-${dateStr.slice(0, 4)}`}-TX-${qType}`;
     const annualYearLabel = pm.fiscalYearLabel ?? dateStr.slice(0, 4);
@@ -211,6 +216,9 @@ router.get("/peek/:txType", async (req: any, res) => {
     const cRow = counterRows.rows?.[0];
     const bucketCurrent = cRow?.bucket_current ?? null;
     const anyExists     = !!cRow?.any_exists;
+    const carryForwardNext = carriesAnnualNumbers
+      ? await annualSequenceCarryForwardNextNumber(db, seq.id, seq.start_number, seq.current_number)
+      : null;
 
     let previewNumber: number;
     if (bucketCurrent != null) {
@@ -281,6 +289,7 @@ router.get("/peek/:txType", async (req: any, res) => {
       // Non-reset, no "" row yet — identical to the pre-period seeding rule.
       previewNumber = anyExists ? seq.start_number : Math.max(seq.start_number, seq.current_number);
     }
+    if (carryForwardNext != null) previewNumber = Math.max(previewNumber, carryForwardNext);
 
     // Journal entries have one continuous numeric suffix across all months and
     // all source documents. `{MM}` changes only the displayed month segment.
@@ -970,6 +979,19 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         branchIds:        req.body.branchIds        ?? existing.branchIds,
         fiscalPeriodIds:  req.body.fiscalPeriodIds  ?? existing.fiscalPeriodIds,
       };
+      // When an administrator turns off an already-used annual reset, carry
+      // the next number forward from every saved fiscal-year bucket and log.
+      // This prevents the newly continuous stream from silently restarting at
+      // the configured start number.
+      if (existing.annualReset === true && !merged.annualReset && !merged.monthlyReset) {
+        const carriedNext = await annualSequenceCarryForwardNextNumber(
+          tx,
+          id,
+          Number(merged.startNumber),
+          Number(merged.currentNumber),
+        );
+        merged.currentNumber = Math.max(Number(merged.currentNumber), carriedNext);
+      }
       const err = validatePayload(merged);
       if (err) return { status: 400, body: { error: err } };
 
