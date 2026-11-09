@@ -12,6 +12,7 @@
 // dispatch a shared event so hooks + the cached decimals refresh in lockstep.
 
 import { useEffect, useState } from "react";
+import englishUiTranslations from "../../localization/en-ui.json";
 
 export const APP_SETTINGS_EVENT = "pos-desktop-company-changed";
 const EVT = APP_SETTINGS_EVENT;
@@ -105,9 +106,10 @@ export function getUiLanguage(): UiLanguage {
   return localStorage.getItem(LS_UI_LANGUAGE) === "en" ? "en" : "ar";
 }
 
-/** Kept internal until English translations cover the complete POS Desktop UI. */
 export function setUiLanguage(language: UiLanguage): void {
   writeKey(LS_UI_LANGUAGE, language);
+  document.documentElement.lang = language;
+  document.documentElement.dir = language === "en" ? "ltr" : "rtl";
   window.dispatchEvent(new Event(EVT));
 }
 
@@ -127,6 +129,14 @@ export function useUiLanguage(): UiLanguage {
 
 export function uiText(arabic: string, english: string, language = getUiLanguage()): string {
   return language === "en" ? english : arabic;
+}
+
+/** Translate a known static UI enum while leaving unknown/business text untouched. */
+export function localizeStaticUiText(value: unknown, language = getUiLanguage()): string {
+  if (typeof value !== "string") return "";
+  if (language !== "en") return value;
+  const key = value.trim().replace(/\s+/g, " ");
+  return (englishUiTranslations as Record<string, string>)[key] ?? value;
 }
 
 /** Format stored date values for the active interface language without shifting date-only values across time zones. */

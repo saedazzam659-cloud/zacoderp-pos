@@ -18,6 +18,7 @@
 // localStorage; later boots skip straight into the matching path.
 
 import { useState, useEffect, useRef } from "react";
+import { uiText, useUiLanguage } from "./lib/appSettings";
 import Activation from "./pages/Activation";
 import CashierLogin from "./pages/CashierLogin";
 import PosShell from "./pages/PosShell";
@@ -86,6 +87,7 @@ const EXPIRES_AT_KEY = "pos_desktop_license_expires_at";
 const COMPANY_NAME_KEY = "pos_desktop_company_name";
 
 export default function App() {
+  const language = useUiLanguage();
   const [state, setState] = useState<BootState>({ phase: "checking" });
   // Monotonic id for the current boot attempt. A retry (or the watchdog firing)
   // starts a new attempt; if a STALE attempt later rejects/resolves it must not
@@ -98,6 +100,10 @@ export default function App() {
 
   useEffect(() => { void boot(); }, []);
   useEffect(() => observeNumberSystem(document), []);
+  useEffect(() => {
+    document.documentElement.lang = language;
+    document.documentElement.dir = language === "en" ? "ltr" : "rtl";
+  }, [language]);
 
   // ── Clock-rollback guard tick ─────────────────────────────────────────
   // Re-checks the monotonic time guard once a minute while the app is in any
@@ -500,7 +506,11 @@ export default function App() {
   }
 
   async function handleStandaloneFullReset() {
-    if (!confirm("سيؤدي هذا إلى حذف كل بيانات الوضع المستقل (الترخيص، المستخدمين، الجلسة) والعودة لاختيار الوضع. متأكد؟")) return;
+    if (!confirm(uiText(
+      "سيؤدي هذا إلى حذف كل بيانات الوضع المستقل (الترخيص، المستخدمين، الجلسة) والعودة لاختيار الوضع. متأكد؟",
+      "This will delete all standalone data (license, users, and session) and return to the mode-selection screen. Continue?",
+      language,
+    ))) return;
     await wipeStandalone();
     setState({ phase: "needs-mode" });
   }
@@ -508,10 +518,12 @@ export default function App() {
   // ── Render ──────────────────────────────────────────────────────────
   if (state.phase === "checking") {
     return (
-      <div dir="rtl" style={loaderStyle}>
-        <div style={{ fontSize: 18, color: "#0f172a" }}>جاري التحقق من الجهاز…</div>
+      <div dir={language === "en" ? "ltr" : "rtl"} style={loaderStyle}>
+        <div style={{ fontSize: 18, color: "#0f172a" }}>{uiText("جاري التحقق من الجهاز…", "Checking device…", language)}</div>
         <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>
-          {TAURI_MODE === "tauri" ? "وضع التطبيق الأصلي" : "وضع المتصفح (تطوير)"}
+          {TAURI_MODE === "tauri"
+            ? uiText("وضع التطبيق الأصلي", "Native app mode", language)
+            : uiText("وضع المتصفح (تطوير)", "Browser preview mode", language)}
         </div>
       </div>
     );
@@ -520,7 +532,7 @@ export default function App() {
   if (state.phase === "boot-error") {
     return (
       <div
-        dir="rtl"
+        dir={language === "en" ? "ltr" : "rtl"}
         style={{
           minHeight: "100vh", display: "flex", flexDirection: "column",
           alignItems: "center", justifyContent: "center", gap: 16, padding: 24,
@@ -529,10 +541,15 @@ export default function App() {
         }}
       >
         <div style={{ fontSize: 48 }}>⚠️</div>
-        <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700 }}>تعذّر بدء تشغيل التطبيق</h1>
+        <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700 }}>
+          {uiText("تعذّر بدء تشغيل التطبيق", "Could not start the app", language)}
+        </h1>
         <p style={{ margin: 0, color: "#94a3b8", maxWidth: 480, lineHeight: 1.7 }}>
-          حدثت مشكلة أثناء بدء التشغيل. بياناتك المحفوظة محلياً آمنة. جرّب إعادة
-          المحاولة، وإن استمرت المشكلة أعد تشغيل التطبيق أو تواصل مع الدعم.
+          {uiText(
+            "حدثت مشكلة أثناء بدء التشغيل. بياناتك المحفوظة محلياً آمنة. جرّب إعادة المحاولة، وإن استمرت المشكلة أعد تشغيل التطبيق أو تواصل مع الدعم.",
+            "A problem occurred during startup. Your locally saved data is safe. Try again; if the problem continues, restart the app or contact support.",
+            language,
+          )}
         </p>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
           <button
@@ -542,7 +559,7 @@ export default function App() {
               background: "#2563eb", border: "none", borderRadius: 8, cursor: "pointer",
             }}
           >
-            إعادة المحاولة
+            {uiText("إعادة المحاولة", "Try again", language)}
           </button>
           <button
             onClick={() => window.location.reload()}
@@ -551,7 +568,7 @@ export default function App() {
               background: "transparent", border: "1px solid #334155", borderRadius: 8, cursor: "pointer",
             }}
           >
-            إعادة تحميل
+            {uiText("إعادة تحميل", "Reload", language)}
           </button>
         </div>
         {state.message ? (

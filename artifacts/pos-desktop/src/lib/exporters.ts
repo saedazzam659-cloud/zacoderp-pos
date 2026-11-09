@@ -1,5 +1,5 @@
 import { applyNumberSystemToDocument } from "./numberDisplay";
-import { getUiLanguage, uiText } from "./appSettings";
+import { getUiLanguage, localizeStaticUiText, uiText } from "./appSettings";
 
 // Reusable offline export helpers for list/report screens.
 //   • exportToExcel — real .xlsx via SheetJS (RTL sheet, Arabic-safe).
@@ -22,7 +22,8 @@ function stamp(): string {
 }
 
 export function exportToExcel<T>(filenameBase: string, columns: ExportColumn<T>[], rows: T[]): void {
-  const header = columns.map((c) => c.header);
+  const language = getUiLanguage();
+  const header = columns.map((c) => localizeStaticUiText(c.header, language));
   const body = rows.map((r) =>
     columns.map((c) => {
       const v = c.cell(r);
@@ -30,12 +31,11 @@ export function exportToExcel<T>(filenameBase: string, columns: ExportColumn<T>[
     }),
   );
   const ws = XLSX.utils.aoa_to_sheet([header, ...body]);
-  ws["!cols"] = columns.map((c) => ({ wch: Math.max(12, c.header.length + 2) }));
+  ws["!cols"] = header.map((cell) => ({ wch: Math.max(12, cell.length + 2) }));
   const wb = XLSX.utils.book_new();
-  // Right-to-left sheet so Arabic columns read naturally in Excel.
-  wb.Workbook = { Views: [{ RTL: true }] };
+  wb.Workbook = { Views: [{ RTL: language !== "en" }] };
   XLSX.utils.book_append_sheet(wb, ws, uiText("البيانات", "Data"));
-  saveWorkbook(wb, `${filenameBase}-${stamp()}.xlsx`);
+  saveWorkbook(wb, `${localizeStaticUiText(filenameBase, language)}-${stamp()}.xlsx`);
 }
 
 function escHtml(x: unknown): string {
@@ -71,26 +71,29 @@ function printDocHtml(html: string): void {
 }
 
 export function exportToPdf<T>(title: string, columns: ExportColumn<T>[], rows: T[]): void {
-  const thead = columns.map((c) => `<th>${escHtml(c.header)}</th>`).join("");
+  const language = getUiLanguage();
+  const direction = language === "en" ? "ltr" : "rtl";
+  const localizedTitle = localizeStaticUiText(title, language);
+  const thead = columns.map((c) => `<th>${escHtml(localizeStaticUiText(c.header, language))}</th>`).join("");
   const tbody = rows
     .map(
       (r) =>
         `<tr>${columns.map((c) => `<td>${escHtml(c.cell(r))}</td>`).join("")}</tr>`,
     )
     .join("");
-  const html = `<!DOCTYPE html><html dir="rtl" lang="ar">
-<head><meta charset="UTF-8"><title>${escHtml(title)}</title>
+  const html = `<!DOCTYPE html><html dir="${direction}" lang="${language}">
+<head><meta charset="UTF-8"><title>${escHtml(localizedTitle)}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   @page { size: A4 landscape; margin: 10mm; }
-  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; direction: rtl; padding: 4px; }
+  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; direction: ${direction}; padding: 4px; }
   .hd { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #b88a2a; padding-bottom:8px; margin-bottom:12px; }
   .hd h1 { font-size:18px; font-weight:800; }
   .hd .meta { font-size:10px; color:#64748b; }
   table { width:100%; border-collapse:collapse; font-size:11px; }
   thead tr { background:#f3f4f6; }
-  th { padding:7px 6px; text-align:right; font-weight:700; border-bottom:1px solid #e5e7eb; font-size:10.5px; }
-  td { padding:6px; text-align:right; border-bottom:1px solid #eef2f7; }
+   th { padding:7px 6px; text-align:start; font-weight:700; border-bottom:1px solid #e5e7eb; font-size:10.5px; }
+   td { padding:6px; text-align:start; border-bottom:1px solid #eef2f7; }
   tbody tr:nth-child(even) td { background:#fafbfc; }
   tbody tr { page-break-inside: avoid; break-inside: avoid; }
   .ft { margin-top:10px; font-size:9px; color:#94a3b8; text-align:center; }
@@ -98,7 +101,7 @@ export function exportToPdf<T>(title: string, columns: ExportColumn<T>[], rows: 
 </style></head>
 <body>
   <div class="hd">
-    <h1>${escHtml(title)}</h1>
+    <h1>${escHtml(localizedTitle)}</h1>
     <div class="meta">${uiText("عدد السجلات", "Records")}: ${rows.length} — ${uiText("تاريخ الطباعة", "Printed at")}: ${escHtml(new Date().toLocaleString(getUiLanguage() === "en" ? "en-GB" : "ar-SA"))}</div>
   </div>
   <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>

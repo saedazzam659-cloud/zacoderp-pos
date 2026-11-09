@@ -124,7 +124,7 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
   * { box-sizing: border-box; margin: 0; padding: 0; }
   @page { size: A4; margin: 10mm; }
   :root { --ink:#0f172a; --line:#e5e7eb; --soft:#f8fafc; --gold:#b88a2a; --gold2:#e5c277; }
-  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 12px; color: var(--ink); background: #fff; direction: rtl; }
+  body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 12px; color: var(--ink); background: #fff; direction: ${language === "en" ? "ltr" : "rtl"}; }
   .sheet { max-width: 800px; margin: 0 auto; }
   .mono { font-family: 'Segoe UI', monospace; }
 
