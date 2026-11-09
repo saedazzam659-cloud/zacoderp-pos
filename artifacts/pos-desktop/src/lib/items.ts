@@ -229,6 +229,7 @@ export interface LocalItem {
   barcode?: string | null;
   salePrice: number;
   vatRate: number;
+  costPrice?: number;
   uomId?: number | null;
   updatedAt?: string;
   /** Soft-delete tombstone (overlay). When true, listItems filters this row out. */
@@ -272,6 +273,7 @@ interface RustItem {
   barcode: string | null;
   sale_price: number;
   vat_rate: number;
+  cost_price?: number;
   metadata_json?: string | null;
   uom_id?: number | null;
   active_ingredient?: string | null;
@@ -305,6 +307,7 @@ function fromRust(r: RustItem): LocalItem {
     barcode: r.barcode,
     salePrice: r.sale_price,
     vatRate: r.vat_rate,
+    costPrice: r.cost_price ?? 0,
     metadata,
     uomId: r.uom_id ?? null,
     activeIngredient: r.active_ingredient ?? null,
