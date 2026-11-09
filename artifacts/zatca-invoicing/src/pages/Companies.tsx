@@ -515,7 +515,7 @@ export default function Companies() {
       if (!r.ok) throw new Error(body?.error || "تعذر استرجاع الأرقام المفقودة");
       toast({
         title: "تم استرجاع الأرقام كمسودات فارغة",
-        description: `${body.entries?.map((entry: any) => entry.docNumber).join("، ") || docNumbers.join("، ")} — لم يتغير العداد، وسيظل الرقم العادي التالي بعد أعلى قيد.`,
+        description: `${body.entries?.map((entry: any) => entry.docNumber).join("، ") || docNumbers.join("، ")}${body.recoveredClaimNumbers?.length ? ` — أُعيد إنشاء المسودة المحذوفة للرقم ${body.recoveredClaimNumbers.join("، ")}` : ""} — بتاريخ ${body.entryDate || gapFillDate}. لم يتغير العداد.`,
       });
       setGapFillNumbers("");
     } catch (e: any) {
@@ -1482,7 +1482,7 @@ export default function Companies() {
                   <h3 className="text-sm font-semibold text-foreground">استرجاع الأرقام المفقودة</h3>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
                     اكتب كل رقم في سطر أو افصل بينها بفاصلة. تُنشأ مسودات عامة فارغة فقط؛ لا تُرحّل ولا تغيّر القيود الحالية أو العداد.
-                    سيظل رقم القيد العادي التالي بعد أعلى رقم موجود.
+                    سيظل رقم القيد العادي التالي بعد أعلى رقم موجود. إذا كان الرقم محجوزًا من استرجاع سابق لمسودة فارغة حُذفت، ستُعاد المسودة بنفس التاريخ؛ أما الحجز المرتبط بقيد آخر أو غير مؤكد فلن يُتجاوز.
                   </p>
                 </div>
                 <div className="space-y-1.5">

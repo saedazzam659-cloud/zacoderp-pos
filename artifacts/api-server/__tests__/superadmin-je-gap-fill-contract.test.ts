@@ -17,6 +17,10 @@ test("SuperAdmin gap-fill restores requested journal numbers as atomic empty dra
   assert.match(gapFillRoute, /assertWritableForDate\(companyId, entryDate, tx\)/);
   assert.match(gapFillRoute, /pg_advisory_xact_lock\(\$\{companyId\}, 1001\)/);
   assert.match(gapFillRoute, /ensureJournalNumberClaimsTable\(tx\)/);
+  assert.match(gapFillRoute, /SELECT ref_table, ref_id[\s\S]*FOR UPDATE/);
+  assert.match(gapFillRoute, /claim\.ref_table !== "journal_entries" \|\| claim\.ref_id !== "gap_fill"/);
+  assert.match(gapFillRoute, /JOURNAL_NUMBER_CLAIM_NOT_RECOVERABLE/);
+  assert.match(gapFillRoute, /recoveredClaimNumbers/);
   assert.match(gapFillRoute, /ON CONFLICT \(company_id, doc_number\) DO NOTHING/);
   assert.match(gapFillRoute, /entryType: "general"/);
   assert.match(gapFillRoute, /status: "draft"/);
@@ -30,5 +34,6 @@ test("Companies UI separates gap restoration from existing-entry correction", ()
   assert.match(uiSource, /QYD\/10\/3178\\nQYD\/10\/3179/);
   assert.match(uiSource, /journal-sequence-control\/gap-fill/);
   assert.match(uiSource, /لم يتغير العداد/);
+  assert.match(uiSource, /ستُعاد المسودة بنفس التاريخ/);
   assert.match(uiSource, /تصحيح الرقم الموجود يظل للقيود الخاطئة فقط/);
 });

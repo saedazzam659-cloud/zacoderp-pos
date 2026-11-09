@@ -3464,7 +3464,7 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
         // twice. All numbers in this request commit or roll back together.
         await tx.execute(sql`SELECT pg_advisory_xact_lock(${companyId}, 1001)`);
         await ensureJournalNumberClaimsTable(tx);
-        const created: Array<{ id: number; docNumber: string }> = [];
+        const created: Array<{ id: number; docNumber: string; recoveredClaim: boolean }> = [];
         for (const docNumber of docNumbers) {
           const existing = await tx.select({ id: journalEntriesTable.id })
             .from(journalEntriesTable)
@@ -3479,16 +3479,40 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
             throw error;
           }
 
-          const claim = await tx.execute<{ doc_number: string }>(sql`
-            INSERT INTO journal_number_claims (company_id, doc_number, ref_table, ref_id)
-            VALUES (${companyId}, ${docNumber}, 'journal_entries', 'gap_fill')
-            ON CONFLICT (company_id, doc_number) DO NOTHING
-            RETURNING doc_number
+          // A previous gap-fill draft can be deleted while its permanent
+          // number claim remains. Reuse only that explicit gap-fill marker:
+          // unknown or source-linked claims are not evidence that the number
+          // is safe to recreate as a general draft.
+          const priorClaim = await tx.execute<{ ref_table: string | null; ref_id: string | null }>(sql`
+            SELECT ref_table, ref_id
+            FROM journal_number_claims
+            WHERE company_id = ${companyId} AND doc_number = ${docNumber}
+            FOR UPDATE
           `);
-          if (!claim.rows?.[0]) {
-            const error: any = new Error(`رقم القيد ${docNumber} مستخدم أو محجوز بالفعل`);
-            error.status = 409;
-            throw error;
+          let recoveredClaim = false;
+          if (priorClaim.rows?.[0]) {
+            const claim = priorClaim.rows[0];
+            if (claim.ref_table !== "journal_entries" || claim.ref_id !== "gap_fill") {
+              const error: any = new Error(
+                `الرقم ${docNumber} محجوز من قيد أو عملية سابقة غير مؤكدة؛ لم ننشئ قيدًا مكررًا. راجع سجل القيد أو الحجز أولًا.`,
+              );
+              error.status = 409;
+              error.code = "JOURNAL_NUMBER_CLAIM_NOT_RECOVERABLE";
+              throw error;
+            }
+            recoveredClaim = true;
+          } else {
+            const claim = await tx.execute<{ doc_number: string }>(sql`
+              INSERT INTO journal_number_claims (company_id, doc_number, ref_table, ref_id)
+              VALUES (${companyId}, ${docNumber}, 'journal_entries', 'gap_fill')
+              ON CONFLICT (company_id, doc_number) DO NOTHING
+              RETURNING doc_number
+            `);
+            if (!claim.rows?.[0]) {
+              const error: any = new Error(`الرقم ${docNumber} حُجز أثناء العملية؛ أعد المحاولة بعد تحديث الشاشة`);
+              error.status = 409;
+              throw error;
+            }
           }
 
           const [entry] = await tx.insert(journalEntriesTable).values({
@@ -3506,7 +3530,11 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
             id: journalEntriesTable.id,
             docNumber: journalEntriesTable.docNumber,
           });
-          created.push({ id: Number(entry.id), docNumber: String(entry.docNumber ?? docNumber) });
+          created.push({
+            id: Number(entry.id),
+            docNumber: String(entry.docNumber ?? docNumber),
+            recoveredClaim,
+          });
         }
         return created;
       });
@@ -3525,6 +3553,7 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
         statusCode: 201,
         metadata: {
           docNumbers: createdEntries.map((entry) => entry.docNumber),
+          recoveredClaimNumbers: createdEntries.filter((entry) => entry.recoveredClaim).map((entry) => entry.docNumber),
           entryDate,
           status: "draft",
           sequenceCounterChanged: false,
@@ -3533,6 +3562,7 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
       res.status(201).json({
         ok: true,
         entries: createdEntries,
+        recoveredClaimNumbers: createdEntries.filter((entry) => entry.recoveredClaim).map((entry) => entry.docNumber),
         entryDate,
         sequenceCounterChanged: false,
       });
@@ -3540,6 +3570,7 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
       const status = Number(error?.status);
       res.status(status || 500).json({
         error: status ? String(error.message) : "تعذر استرجاع الأرقام المفقودة",
+        ...(error?.code ? { code: String(error.code) } : {}),
       });
     }
   });

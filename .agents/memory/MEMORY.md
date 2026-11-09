@@ -47,6 +47,7 @@
 - [Account-note numbering boundary](account-note-numbering-boundary.md) — fresh-company customer-credit and supplier-debit notes share one counter to avoid duplicate numbers in the shared note table.
 - [Cost-center hierarchy levels](cost-center-level-integrity.md) — calculate depth for new centers and explicit moves; leave legacy levels untouched unless their subtree is moved.
 - [Source-linked JE reuse](je-number-reuse-on-repost.md) — protected unpost/repost keeps the same linked JE row and number; reservations remain for legacy paths.
+- [Gap-fill claim recovery](je-gap-fill-recovery-boundary.md) — recreate only a missing draft backed by the explicit gap-fill claim; never override unknown or source-linked claims.
 - [Journal-entry numbering continuity](journal-entry-numbering-continuity.md) — for the QYD company, manual journals continue the existing monthly-format series instead of starting a year-prefixed stream.
 - [Annual sequence reset policy](annual-sequence-reset-policy.md) — annual reset is opt-in; preserve saved settings and carry forward the highest used number when disabling it.
 - [Journal-entry reversals](journal-entry-reversal-boundary.md) — create independent drafts for manual entries; keep source-document entries on their native reversal paths.
