@@ -1,10 +1,10 @@
 ---
 name: Journal-entry gap-fill claim recovery
-description: Safely recreating a deleted blank draft from the sequence-repair screen.
+description: SuperAdmin recovery behavior for old number claims in sequence repair.
 ---
 
-When a requested journal number has no active journal row, allow the sequence-repair screen to recreate it as a blank general draft only if its permanent claim is explicitly marked `journal_entries` / `gap_fill`. Preserve the operator-entered date and leave sequence counters unchanged. Reject claims with any other or missing provenance; never bypass a live journal row or an uncertain/source-linked claim.
+When a SuperAdmin requests a journal number that has no active journal row, allow the sequence-repair screen to reuse any old permanent claim and recreate the number as a blank general draft. Preserve the operator-entered date and leave sequence counters unchanged. If a journal row still exists for the number, reject creation rather than producing a duplicate; do not alter that row from the gap-fill action.
 
-**Why:** The permanent claim registry intentionally survives deletion to prevent accidental number reuse, but that blocks the explicit workflow for restoring a previously gap-filled draft. A narrow provenance marker supports that recovery without treating every stale claim as safe.
+**Why:** The user explicitly authorized SuperAdmin to restore orphaned numbers as general drafts even when their original claim came from a different process or manual entry. The active-row check prevents duplicate journal numbers, while the SuperAdmin repair action may take ownership of an orphaned claim.
 
-**How to apply:** Perform the existing-row check and claim inspection under the per-company transaction lock. Reuse the original gap-fill claim in the same transaction as inserting the new draft, and audit which claims were recovered.
+**How to apply:** Perform the existing-row check and claim inspection under the per-company transaction lock. Convert any old claim to the gap-fill marker and insert the draft in the same transaction; audit the original claim provenance and which numbers were recovered.

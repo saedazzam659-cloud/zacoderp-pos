@@ -3464,7 +3464,13 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
         // twice. All numbers in this request commit or roll back together.
         await tx.execute(sql`SELECT pg_advisory_xact_lock(${companyId}, 1001)`);
         await ensureJournalNumberClaimsTable(tx);
-        const created: Array<{ id: number; docNumber: string; recoveredClaim: boolean }> = [];
+        const created: Array<{
+          id: number;
+          docNumber: string;
+          recoveredClaim: boolean;
+          priorClaimRefTable?: string | null;
+          priorClaimRefId?: string | null;
+        }> = [];
         for (const docNumber of docNumbers) {
           const existing = await tx.select({ id: journalEntriesTable.id })
             .from(journalEntriesTable)
@@ -3474,15 +3480,15 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
             ))
             .limit(1);
           if (existing[0]) {
-            const error: any = new Error(`رقم القيد ${docNumber} مستخدم بالفعل`);
+            const error: any = new Error(`يوجد قيد فعلي بالرقم ${docNumber}؛ لم ننشئ قيدًا ثانيًا بنفس الرقم`);
             error.status = 409;
             throw error;
           }
 
-          // A previous gap-fill draft can be deleted while its permanent
-          // number claim remains. Reuse only that explicit gap-fill marker:
-          // unknown or source-linked claims are not evidence that the number
-          // is safe to recreate as a general draft.
+          // SuperAdmin may recover any orphaned claim as a blank general draft.
+          // The active journal-row check above is the duplicate guard; claims
+          // remain permanent, so convert the existing reservation rather than
+          // deleting it or silently rejecting a known historical number.
           const priorClaim = await tx.execute<{ ref_table: string | null; ref_id: string | null }>(sql`
             SELECT ref_table, ref_id
             FROM journal_number_claims
@@ -3490,17 +3496,18 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
             FOR UPDATE
           `);
           let recoveredClaim = false;
+          let priorClaimRefTable: string | null | undefined;
+          let priorClaimRefId: string | null | undefined;
           if (priorClaim.rows?.[0]) {
             const claim = priorClaim.rows[0];
-            if (claim.ref_table !== "journal_entries" || claim.ref_id !== "gap_fill") {
-              const error: any = new Error(
-                `الرقم ${docNumber} محجوز من قيد أو عملية سابقة غير مؤكدة؛ لم ننشئ قيدًا مكررًا. راجع سجل القيد أو الحجز أولًا.`,
-              );
-              error.status = 409;
-              error.code = "JOURNAL_NUMBER_CLAIM_NOT_RECOVERABLE";
-              throw error;
-            }
             recoveredClaim = true;
+            priorClaimRefTable = claim.ref_table;
+            priorClaimRefId = claim.ref_id;
+            await tx.execute(sql`
+              UPDATE journal_number_claims
+              SET ref_table = 'journal_entries', ref_id = 'gap_fill'
+              WHERE company_id = ${companyId} AND doc_number = ${docNumber}
+            `);
           } else {
             const claim = await tx.execute<{ doc_number: string }>(sql`
               INSERT INTO journal_number_claims (company_id, doc_number, ref_table, ref_id)
@@ -3534,6 +3541,7 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
             id: Number(entry.id),
             docNumber: String(entry.docNumber ?? docNumber),
             recoveredClaim,
+            ...(recoveredClaim ? { priorClaimRefTable, priorClaimRefId } : {}),
           });
         }
         return created;
@@ -3554,6 +3562,11 @@ router.post("/companies/:id/journal-sequence-control/gap-fill", requireSuperAdmi
         metadata: {
           docNumbers: createdEntries.map((entry) => entry.docNumber),
           recoveredClaimNumbers: createdEntries.filter((entry) => entry.recoveredClaim).map((entry) => entry.docNumber),
+          recoveredClaimSources: createdEntries.filter((entry) => entry.recoveredClaim).map((entry) => ({
+            docNumber: entry.docNumber,
+            refTable: entry.priorClaimRefTable ?? null,
+            refId: entry.priorClaimRefId ?? null,
+          })),
           entryDate,
           status: "draft",
           sequenceCounterChanged: false,
