@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useToast } from "@/hooks/use-toast";
 
 type Account = {
@@ -22,23 +23,50 @@ type Props = {
 };
 
 const BASIS_OPTIONS = [
-  { value: "machine_hours", label: "ساعات تشغيل الآلات" },
-  { value: "labor_hours", label: "ساعات العمل" },
-  { value: "production_quantity", label: "كمية الإنتاج" },
-  { value: "area", label: "المساحة" },
-  { value: "percentage", label: "نسبة من المجمع" },
-  { value: "equal", label: "توزيع متساوٍ" },
-  { value: "manual", label: "مبلغ يدوي لكل أمر" },
+  {
+    value: "machine_hours",
+    label: "ساعات تشغيل الآلات",
+    description: "وزّع التكلفة بحسب ساعات تشغيل الآلات في كل أمر.",
+    denominatorLabel: "إجمالي ساعات تشغيل الآلات للشهر",
+  },
+  {
+    value: "labor_hours",
+    label: "ساعات العمل",
+    description: "وزّع التكلفة بحسب ساعات العمل المسجلة لكل أمر.",
+    denominatorLabel: "إجمالي ساعات العمل للشهر",
+  },
+  {
+    value: "production_quantity",
+    label: "كمية الإنتاج",
+    description: "وزّع التكلفة بحسب كمية الإنتاج في كل أمر.",
+    denominatorLabel: "إجمالي كمية الإنتاج للشهر",
+  },
+  {
+    value: "area",
+    label: "المساحة",
+    description: "وزّع التكلفة بحسب مساحة كل أمر مقارنة بإجمالي المساحة.",
+    denominatorLabel: "إجمالي المساحة للشهر",
+  },
+  {
+    value: "percentage",
+    label: "نسبة من المجمع",
+    description: "حدّد نسبة كل أمر مباشرة؛ يجب أن يكتمل مجموع النسب إلى 100٪.",
+  },
+  {
+    value: "equal",
+    label: "توزيع متساوٍ",
+    description: "وزّع المبلغ بالتساوي؛ أدخل 1 لكل أمر ومقاماً يساوي عدد الأوامر.",
+    denominatorLabel: "عدد الأوامر المتوقع للشهر",
+  },
+  {
+    value: "manual",
+    label: "مبلغ يدوي لكل أمر",
+    description: "حدّد المبلغ مباشرة لكل أمر؛ يجب أن يساوي مجموع المبالغ كامل المجمع.",
+  },
 ] as const;
 
 function monthNow(): string {
   return new Date().toISOString().slice(0, 7);
-}
-
-function accountLabel(account: Account): string {
-  const code = account.code ?? account.accountCode ?? String(account.id);
-  const name = account.nameAr ?? account.name ?? "";
-  return `${code} — ${name}`;
 }
 
 export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, request }: Props) {
@@ -78,6 +106,17 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
     [activeAccounts],
   );
   const usesDenominator = !["percentage", "manual"].includes(form.allocationBasis);
+  const selectedBasis = BASIS_OPTIONS.find((option) => option.value === form.allocationBasis) ?? BASIS_OPTIONS[0];
+  const basisItems = BASIS_OPTIONS.map((option) => ({
+    value: option.value,
+    label: option.label,
+    description: option.description,
+  }));
+  const accountItems = (rows: Account[]) => rows.map((account) => ({
+    value: String(account.id),
+    code: account.code ?? account.accountCode ?? String(account.id),
+    label: account.nameAr ?? account.name ?? String(account.id),
+  }));
 
   useEffect(() => {
     setForm((current) => ({
@@ -249,7 +288,7 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
         <div>
           <h2 className="text-lg font-bold text-slate-900">مجمعات التكلفة التقديرية الشهرية</h2>
           <p className="mt-1 max-w-4xl text-sm leading-6 text-slate-600">
-            تُجمّد حصة كل أمر عند بدء الإنتاج. أدخل الفعلي بعد ترحيله في حساب المصروف المعتاد؛ هذا الإقفال لا ينشئ المصروف مرة ثانية.
+            وزّع التكلفة المتوقعة على أوامر الشهر، ثم قارنها بالفعلي بعد ترحيله. تُثبّت حصة الأمر عند بدء الإنتاج، ولا ينشئ الإقفال مصروفاً مكرراً.
           </p>
         </div>
         <div className="flex items-end gap-2">
@@ -267,6 +306,36 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
             تحديث
           </Button>
         </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3" aria-label="خطوات استخدام مجمعات التكلفة">
+        {[
+          {
+            number: "١",
+            title: "أنشئ المجمع",
+            detail: "اختر الشهر، بند التكلفة، المبلغ التقديري، وطريقة التوزيع.",
+          },
+          {
+            number: "٢",
+            title: "وزّع على الأوامر",
+            detail: "أدخل قيمة كل أمر؛ تظهر حصته التقديرية قبل بدء الإنتاج.",
+          },
+          {
+            number: "٣",
+            title: "سوِّ الفعلي",
+            detail: "بعد ترحيل المصروف، أدخل مبلغه ومرجعه ثم راجع مسودة الإقفال.",
+          },
+        ].map((step) => (
+          <div key={step.number} className="flex gap-3 rounded-xl border border-teal-100 bg-gradient-to-br from-teal-50 to-white p-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-700 text-sm font-bold text-white">
+              {step.number}
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-slate-900">{step.title}</p>
+              <p className="mt-1 text-xs leading-5 text-slate-600">{step.detail}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
       {!canManageCompanyPools && (
@@ -290,17 +359,34 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
         </div>
         <div className="space-y-1">
           <Label>أساس التوزيع</Label>
-          <select
+           <SearchCombobox
             value={form.allocationBasis}
-            onChange={(event) => setForm({ ...form, allocationBasis: event.target.value })}
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-          >
-            {BASIS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
+             onValueChange={(value) => setForm((current) => ({ ...current, allocationBasis: value }))}
+             items={basisItems}
+             placeholder="اختر أساس التوزيع"
+             searchPlaceholder="ابحث عن طريقة التوزيع..."
+             emptyText="لا توجد طريقة مطابقة"
+             className="h-10"
+             openOnFocus={false}
+             testId="estimated-pool-allocation-basis"
+           />
         </div>
+         <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-3 text-xs leading-5 text-teal-950 md:col-span-2 xl:col-span-4">
+           <p className="font-semibold">{selectedBasis.label}</p>
+           <p className="mt-1">{selectedBasis.description}</p>
+           {usesDenominator ? (
+             <p className="mt-1 text-teal-800">
+               الحصة التقديرية للأمر = مبلغ المجمع × قيمة أساس الأمر ÷ إجمالي أساس الشهر. يجب أن يطابق مجموع قيم الأوامر المقام الشهري.
+             </p>
+           ) : form.allocationBasis === "percentage" ? (
+             <p className="mt-1 text-teal-800">لا يحتاج إلى مقام شهري؛ أكمل توزيع المجمع بنسبة 100٪ على الأوامر.</p>
+           ) : (
+             <p className="mt-1 text-teal-800">لا يحتاج إلى مقام شهري؛ يجب أن يساوي مجموع المبالغ المخصصة للأوامر مبلغ المجمع.</p>
+           )}
+         </div>
         {usesDenominator && (
           <div className="space-y-1">
-            <Label>المقام الشهري اليدوي</Label>
+            <Label>{"denominatorLabel" in selectedBasis ? selectedBasis.denominatorLabel : "المقام الشهري اليدوي"}</Label>
             <Input
               type="number"
               min="0.000001"
@@ -309,46 +395,60 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
               onChange={(event) => setForm({ ...form, monthlyDenominator: event.target.value })}
               required
             />
+            <p className="text-[11px] leading-4 text-slate-500">
+              أدخل الإجمالي المتوقع للشهر على أساس التوزيع المختار؛ لن يحسبه النظام تلقائياً.
+            </p>
           </div>
         )}
         <div className="space-y-1">
           <Label>حساب المصروف الفعلي</Label>
-          <select
+           <SearchCombobox
             value={form.actualExpenseAccountId}
-            onChange={(event) => setForm({ ...form, actualExpenseAccountId: event.target.value })}
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-            required
-          >
-            <option value="">اختر حساب مصروف</option>
-            {expenseAccounts.map((account) => <option key={account.id} value={account.id}>{accountLabel(account)}</option>)}
-          </select>
+             onValueChange={(value) => setForm((current) => ({ ...current, actualExpenseAccountId: value }))}
+             items={accountItems(expenseAccounts)}
+             placeholder="اختر حساب مصروف"
+             searchPlaceholder="ابحث بالكود أو اسم الحساب..."
+             emptyText="لا توجد حسابات مصروف مطابقة"
+             className="h-10"
+             openOnFocus={false}
+             testId="estimated-pool-actual-expense-account"
+           />
+           <p className="text-[11px] leading-4 text-slate-500">الحساب الذي رُحّل عليه المصروف الفعلي مسبقاً.</p>
         </div>
         <div className="space-y-1">
           <Label>حساب امتصاص التكلفة</Label>
-          <select
+           <SearchCombobox
             value={form.absorbedAccountId}
-            onChange={(event) => setForm({ ...form, absorbedAccountId: event.target.value })}
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-            required
-          >
-            <option value="">اختر حساب التزام</option>
-            {liabilityAccounts.map((account) => <option key={account.id} value={account.id}>{accountLabel(account)}</option>)}
-          </select>
+             onValueChange={(value) => setForm((current) => ({ ...current, absorbedAccountId: value }))}
+             items={accountItems(liabilityAccounts)}
+             placeholder="اختر حساب التزام"
+             searchPlaceholder="ابحث بالكود أو اسم الحساب..."
+             emptyText="لا توجد حسابات التزام مطابقة"
+             className="h-10"
+             openOnFocus={false}
+             testId="estimated-pool-absorbed-account"
+           />
+           <p className="text-[11px] leading-4 text-slate-500">حساب امتصاص تكلفة التصنيع الذي ستُراجع تسويته.</p>
         </div>
         <div className="space-y-1">
           <Label>حساب فروق التصنيع</Label>
-          <select
+           <SearchCombobox
             value={form.varianceAccountId}
-            onChange={(event) => setForm({ ...form, varianceAccountId: event.target.value })}
-            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-            required
-          >
-            <option value="">اختر حساب فروق</option>
-            {expenseAccounts.map((account) => <option key={account.id} value={account.id}>{accountLabel(account)}</option>)}
-          </select>
+             onValueChange={(value) => setForm((current) => ({ ...current, varianceAccountId: value }))}
+             items={accountItems(expenseAccounts)}
+             placeholder="اختر حساب فروق"
+             searchPlaceholder="ابحث بالكود أو اسم الحساب..."
+             emptyText="لا توجد حسابات مصروف مطابقة"
+             className="h-10"
+             openOnFocus={false}
+             testId="estimated-pool-variance-account"
+           />
+           <p className="text-[11px] leading-4 text-slate-500">حساب فرق التكلفة بين المبلغ المحمّل والفعلي.</p>
         </div>
         <div className="flex items-end xl:col-span-4">
-          <Button type="submit" disabled={saving || !period || !expenseAccounts.length || !liabilityAccounts.length}>
+           <Button type="submit" disabled={saving || !period || !expenseAccounts.length || !liabilityAccounts.length ||
+             !form.actualExpenseAccountId || !form.absorbedAccountId || !form.varianceAccountId ||
+             (usesDenominator && !(Number(form.monthlyDenominator) > 0))}>
             {saving ? "جاري الحفظ..." : "إنشاء مجمع للشهر"}
           </Button>
         </div>
@@ -368,6 +468,11 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
             confirmed: pool.actualPostedConfirmed === true,
           };
           const globalPoolReadOnly = pool.branchId == null && !canManageCompanyPools;
+          const estimateAmount = Number(pool.estimatedAmount ?? 0);
+          const appliedAmount = Number(pool.appliedAmount ?? 0);
+          const allocationProgress = estimateAmount > 0
+            ? Math.min(100, Math.max(0, (appliedAmount / estimateAmount) * 100))
+            : 0;
           return (
             <article key={pool.id} className="grid gap-4 rounded-xl border border-slate-200 p-4 xl:grid-cols-[1fr_1.5fr]">
               <div className="space-y-2">
@@ -382,9 +487,29 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
                   {" · "}الموزع: {Number(pool.appliedAmount ?? 0).toLocaleString("ar-EG", { minimumFractionDigits: 2 })} ر.س
                   {" · "}الأوامر: {Number(pool.orderCount ?? 0)}
                 </p>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>اكتمال التوزيع</span>
+                    <span className="font-semibold tabular-nums text-teal-800">{allocationProgress.toFixed(0)}٪</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-100" dir="rtl">
+                    <div
+                      className="h-full rounded-full bg-teal-600 transition-[width]"
+                      style={{ width: `${allocationProgress}%` }}
+                      role="progressbar"
+                      aria-label={`اكتمال توزيع مجمع ${pool.nameAr}`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(allocationProgress)}
+                    />
+                  </div>
+                </div>
                 {pool.actualSourceReference && <p className="text-xs text-slate-500">مرجع الفعلي: {pool.actualSourceReference}</p>}
               </div>
               <div className="space-y-3 rounded-lg bg-slate-50 p-3">
+                <p className="text-xs leading-5 text-slate-600">
+                  سجّل هنا المبلغ الفعلي بعد ترحيله في حساب المصروف، وأدخل رقم القيد أو مستند المصروف للمراجعة.
+                </p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
                     <Label>المبلغ الفعلي المرحّل</Label>
