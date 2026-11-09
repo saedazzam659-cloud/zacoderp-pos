@@ -42,3 +42,9 @@ Monthly estimated-cost pools should offer reusable cost presets and a copy-from-
 **Why:** The user requested faster repeat setup for rent, utilities, labor, supervision, and machine costs, while account mappings are company-specific and incorrect defaults could mispost manufacturing costs.
 
 **How to apply:** Keep reusable presets separate from posted expenses and order allocations. Include clear warnings against charging the same payroll, depreciation, or electricity through both a pool and an existing resource-cost path.
+
+The manufacturing modules may seed dedicated expense, absorption-liability, and variance accounts for each estimated-cost preset so they are available in the chart. Seeding these accounts does not assign them to a pool: the actual-expense mapping must continue to match the account where the company's source expense was posted.
+
+**Why:** Dedicated chart entries make manufacturing cost pools easier to configure, but companies may already post each actual source to different expense accounts.
+
+**How to apply:** Create the optional accounts on module activation and backfill them for enabled companies without changing existing account mappings, pool settings, or journal entries.

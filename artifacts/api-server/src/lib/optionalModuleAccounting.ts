@@ -28,7 +28,7 @@ export const CONTRACTING_ACCOUNTS = [
   spec("51902", "غرامات مستخلص المالك", "Owner bill penalties", "expense", "51"),
   spec("51903", "إضافات مستخلص الباطن", "Subcontract bill additions", "expense", "51"),
 ] as const;
-export const MANUFACTURING_ACCOUNTS = [
+const MANUFACTURING_CORE_ACCOUNTS = [
   spec("11911", "مخزون المواد الخام", "Raw material inventory", "asset", "11"),
   spec("11912", "إنتاج تحت التشغيل", "Manufacturing work in progress", "asset", "11"),
   spec("11913", "مخزون الإنتاج التام", "Finished goods inventory", "asset", "11"),
@@ -38,6 +38,76 @@ export const MANUFACTURING_ACCOUNTS = [
   spec("21912", "استحقاق التكاليف الصناعية", "Manufacturing overhead accrual", "liability", "21"),
   spec("51913", "فروق تكلفة التصنيع", "Manufacturing variance", "expense", "51"),
   spec("51914", "هالك التصنيع", "Manufacturing waste", "expense", "51"),
+] as const;
+
+/**
+ * Posting-account suggestions for the estimated-cost pools. These accounts
+ * are added to the chart when a manufacturing module is enabled, but are not
+ * assigned to pool templates: the actual expense account must match the
+ * account where the company already posts that source cost.
+ */
+export const ESTIMATED_MANUFACTURING_POOL_ACCOUNT_SETS = [
+  {
+    poolCode: "FACTORY_RENT",
+    actual: spec("51915", "مصروف إيجار المصنع", "Factory rent expense", "expense", "51"),
+    absorbed: spec("21913", "التزام امتصاص إيجار المصنع", "Factory rent absorption liability", "liability", "21"),
+    variance: spec("51923", "فروق تكلفة إيجار المصنع", "Factory rent variance", "expense", "51"),
+  },
+  {
+    poolCode: "FACTORY_ELECTRICITY",
+    actual: spec("51916", "مصروف كهرباء المصنع", "Factory electricity expense", "expense", "51"),
+    absorbed: spec("21914", "التزام امتصاص كهرباء المصنع", "Factory electricity absorption liability", "liability", "21"),
+    variance: spec("51924", "فروق تكلفة كهرباء المصنع", "Factory electricity variance", "expense", "51"),
+  },
+  {
+    poolCode: "FACTORY_WATER",
+    actual: spec("51917", "مصروف مياه المصنع", "Factory water expense", "expense", "51"),
+    absorbed: spec("21915", "التزام امتصاص مياه المصنع", "Factory water absorption liability", "liability", "21"),
+    variance: spec("51925", "فروق تكلفة مياه المصنع", "Factory water variance", "expense", "51"),
+  },
+  {
+    poolCode: "INDIRECT_LABOR",
+    actual: spec("51918", "مصروف أجور العمالة غير المباشرة", "Indirect labor expense", "expense", "51"),
+    absorbed: spec("21916", "التزام امتصاص أجور العمالة غير المباشرة", "Indirect labor absorption liability", "liability", "21"),
+    variance: spec("51926", "فروق تكلفة العمالة غير المباشرة", "Indirect labor variance", "expense", "51"),
+  },
+  {
+    poolCode: "SUPERVISION",
+    actual: spec("51919", "مصروف إشراف التصنيع", "Manufacturing supervision expense", "expense", "51"),
+    absorbed: spec("21917", "التزام امتصاص تكلفة الإشراف", "Manufacturing supervision absorption liability", "liability", "21"),
+    variance: spec("51927", "فروق تكلفة الإشراف", "Manufacturing supervision variance", "expense", "51"),
+  },
+  {
+    poolCode: "MACHINE_DEPRECIATION",
+    actual: spec("51920", "مصروف إهلاك آلات المصنع", "Factory machine depreciation expense", "expense", "51"),
+    absorbed: spec("21918", "التزام امتصاص إهلاك الآلات", "Machine depreciation absorption liability", "liability", "21"),
+    variance: spec("51928", "فروق تكلفة إهلاك الآلات", "Machine depreciation variance", "expense", "51"),
+  },
+  {
+    poolCode: "MACHINE_MAINTENANCE",
+    actual: spec("51921", "مصروف صيانة آلات المصنع", "Factory machine maintenance expense", "expense", "51"),
+    absorbed: spec("21919", "التزام امتصاص صيانة الآلات", "Machine maintenance absorption liability", "liability", "21"),
+    variance: spec("51929", "فروق تكلفة صيانة الآلات", "Machine maintenance variance", "expense", "51"),
+  },
+  {
+    poolCode: "OFFICE_RENT_PRODUCTION_SHARE",
+    actual: spec("51922", "مصروف حصة التصنيع من إيجار المكاتب", "Production share of office rent expense", "expense", "51"),
+    absorbed: spec("21920", "التزام امتصاص حصة التصنيع من الإيجار", "Production share of office rent absorption liability", "liability", "21"),
+    variance: spec("51930", "فروق تكلفة حصة التصنيع من الإيجار", "Production share of office rent variance", "expense", "51"),
+  },
+] as const;
+
+export const ESTIMATED_MANUFACTURING_POOL_ACCOUNTS =
+  ESTIMATED_MANUFACTURING_POOL_ACCOUNT_SETS.flatMap(({ actual, absorbed, variance }) =>
+    [actual, absorbed, variance],
+  );
+
+export const ESTIMATED_MANUFACTURING_POOL_ACCOUNT_CODES =
+  ESTIMATED_MANUFACTURING_POOL_ACCOUNTS.map((account) => account.code);
+
+export const MANUFACTURING_ACCOUNTS = [
+  ...MANUFACTURING_CORE_ACCOUNTS,
+  ...ESTIMATED_MANUFACTURING_POOL_ACCOUNTS,
 ] as const;
 
 /** Industry/template rows are inputs to *fresh* provisioning, not a tenant's

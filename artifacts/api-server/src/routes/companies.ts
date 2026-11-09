@@ -1425,17 +1425,33 @@ router.patch("/:id/menu-permissions", async (req, res) => {
   await runWithAgentScope(req, res, async () => {
     let company;
     try {
-      const { accountingModulesFromMenu, seedOptionalModuleAccountingTx } = await import("../lib/optionalModuleAccounting.js");
+      const {
+        accountingModulesFromMenu,
+        seedOptionalModuleAccountingTx,
+        ESTIMATED_MANUFACTURING_POOL_ACCOUNT_CODES,
+      } = await import("../lib/optionalModuleAccounting.js");
       company = await db.transaction(async (tx) => {
         const [before] = await tx.select().from(companiesTable).where(eq(companiesTable.id, id)).for("update");
         if (!before) return null;
         const previous = accountingModulesFromMenu(before.menuPermissions);
         const next = accountingModulesFromMenu(normalizedMenuPermissions);
+        let estimatedPoolAccountsMissing = false;
+        if (next.production || next.simple_manufacturing) {
+          const existingPoolAccounts = await tx.select({ code: accountsTable.code }).from(accountsTable)
+            .where(and(
+              eq(accountsTable.companyId, id),
+              inArray(accountsTable.code, ESTIMATED_MANUFACTURING_POOL_ACCOUNT_CODES),
+            ));
+          estimatedPoolAccountsMissing =
+            new Set(existingPoolAccounts.map((account: { code: string }) => account.code)).size <
+            ESTIMATED_MANUFACTURING_POOL_ACCOUNT_CODES.length;
+        }
         const enabled = {
           pos: next.pos && !previous.pos,
           contracting: next.contracting && !previous.contracting,
-          production: next.production && !previous.production,
-          simple_manufacturing: next.simple_manufacturing && !previous.simple_manufacturing,
+          production: next.production && (!previous.production || estimatedPoolAccountsMissing),
+          simple_manufacturing: next.simple_manufacturing &&
+            (!previous.simple_manufacturing || estimatedPoolAccountsMissing),
           school: next.school && !previous.school,
           hr: next.hr && !previous.hr,
         };

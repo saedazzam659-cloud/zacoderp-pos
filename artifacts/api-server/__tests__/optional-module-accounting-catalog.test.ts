@@ -5,6 +5,9 @@ import { DEFAULT_CHART_OF_ACCOUNTS } from "../src/lib/defaultChartOfAccounts.js"
 import {
   CONTRACTING_ACCOUNTS, CONTRACTING_ROLES, CONTRACTING_SHARED_ACCOUNT_SOURCES,
   MANUFACTURING_ACCOUNTS,
+  ESTIMATED_MANUFACTURING_POOL_ACCOUNT_SETS,
+  ESTIMATED_MANUFACTURING_POOL_ACCOUNTS,
+  ESTIMATED_MANUFACTURING_POOL_ACCOUNT_CODES,
   MANUFACTURING_FIELDS, OPTIONAL_MODULE_ACCOUNT_CODES, accountingModulesFromMenu,
   isCompatibleMappedModuleAccount, isOptionalModuleTemplateMapping,
   missingContractingRoles, missingManufacturingFields, canRollbackFreshCompany,
@@ -48,6 +51,20 @@ test("optional codes have valid typed parents and never collide with commercial 
     assert.equal(base.has(account.code), false, account.code);
     assert.equal(account.type, "expense");
     assert.equal(account.parent, "52");
+  }
+});
+
+test("manufacturing module seeds three typed chart accounts for every estimated-cost pool", () => {
+  assert.equal(ESTIMATED_MANUFACTURING_POOL_ACCOUNT_SETS.length, 8);
+  assert.equal(ESTIMATED_MANUFACTURING_POOL_ACCOUNTS.length, 24);
+  assert.equal(new Set(ESTIMATED_MANUFACTURING_POOL_ACCOUNT_CODES).size, 24);
+  for (const pool of ESTIMATED_MANUFACTURING_POOL_ACCOUNT_SETS) {
+    assert.equal(pool.actual.type, "expense", `${pool.poolCode} actual`);
+    assert.equal(pool.absorbed.type, "liability", `${pool.poolCode} absorption`);
+    assert.equal(pool.variance.type, "expense", `${pool.poolCode} variance`);
+    assert.ok(OPTIONAL_MODULE_ACCOUNT_CODES.has(pool.actual.code), `${pool.poolCode} actual`);
+    assert.ok(OPTIONAL_MODULE_ACCOUNT_CODES.has(pool.absorbed.code), `${pool.poolCode} absorption`);
+    assert.ok(OPTIONAL_MODULE_ACCOUNT_CODES.has(pool.variance.code), `${pool.poolCode} variance`);
   }
 });
 
