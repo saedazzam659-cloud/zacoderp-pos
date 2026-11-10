@@ -2244,6 +2244,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   // (no error). Posting is deferred until a warehouse is chosen. Default OFF
   // keeps the legacy behaviour (auto-post attempt fails if warehouse missing).
   const allowDraftWithoutWarehouse = _co?.allowDraftWithoutWarehouse === true;
+  const zeroPriceServiceItemIds = new Set(
+    ((inventoryItems as any[]) ?? [])
+      .filter(item => item.itemType === "service")
+      .map(item => Number(item.id)),
+  );
+  const zeroPriceServiceDraftOnly = isInvoice && lines.some(line =>
+    zeroPriceServiceItemIds.has(Number(line.itemId)) &&
+    line.unitPrice !== "" &&
+    Number.isFinite(Number(line.unitPrice)) &&
+    Number(line.unitPrice) === 0,
+  );
 
   // Per-doc-type print preferences for sales invoices. We don't open
       // the popup directly here — the current invoice register owns the
@@ -2317,9 +2328,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const deferDraftNoWarehouse =
         allowDraftWithoutWarehouse && isInvoice &&
         lines.some((l) => l.itemId && !l.warehouseId && !isServiceLine(l));
+      const deferDraftZeroPriceService = isInvoice && zeroPriceServiceDraftOnly;
 
       // Auto-post immediately after save for invoices only (not quotations) — only when enabled system-wide
       if (data.saveAsDraft === true) return { ...j, __savedAsDraft: true };
+      if (deferDraftZeroPriceService) return { ...j, __zeroPriceServiceDraft: true };
       if ((autoPostingEnabled || forcePost) && isInvoice && !deferDraftNoWarehouse && j?.id && (j.status ?? "draft") === "draft") {
         const postRes = await fetch(`${API}/api/sales/${apiPath}/${j.id}/post`, {
           method: "PATCH",
@@ -2363,6 +2376,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const deferredDraft = !!saved?.__deferredDraft;
       if (saved?.__savedAsDraft) {
         toast({ title: isRtl ? "تم حفظ الفاتورة كمسودة" : "Invoice saved as draft" });
+        if (saved?.id && matchNew) navigate(`${basePath}/${saved.id}?savedTab=items`);
+        return;
+      }
+      if (saved?.__zeroPriceServiceDraft) {
+        toast({
+          title: isRtl ? "حُفظت الفاتورة كمسودة" : "Invoice saved as draft",
+          description: isRtl
+            ? "تحتوي الفاتورة على صنف خدمي بسعر صفر؛ لم تتم محاولة ترحيلها."
+            : "This invoice contains a zero-priced service item, so it was not posted.",
+        });
         if (saved?.id && matchNew) navigate(`${basePath}/${saved.id}?savedTab=items`);
         return;
       }
@@ -2674,7 +2697,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       });
       return;
     }
-    const allowZeroPriceItemIds = isInvoice && user?.company?.allowZeroPriceServiceItems === true
+    const allowZeroPriceItemIds = (isInvoice || isQuotation) && user?.company?.allowZeroPriceServiceItems === true
       ? new Set((inventoryItems as any[])
           .filter(item => item.itemType === "service")
           .map(item => Number(item.id)))
@@ -4388,9 +4411,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           {canSaveDraft && <Button size="sm" variant="outline" onClick={() => handleSave(true)} disabled={saveMut.isPending} data-testid="button-save-draft-top">{t("salesDocForm.saveDraftAction")}</Button>}
           <Button size="sm" data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={() => handleSave(false)} disabled={saveMut.isPending || (isInvoice && draftOnly)} className="gap-1.5" data-testid="button-save-top">
             <Save className="h-4 w-4" />
-            {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
+            {saveMut.isPending ? t("common.saving") : zeroPriceServiceDraftOnly ? t("salesDocForm.saveDraftAction") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
-          {isInvoice && !autoPostingEnabled && !draftOnly && (
+          {isInvoice && !autoPostingEnabled && !draftOnly && !zeroPriceServiceDraftOnly && (
             <Button
               size="sm"
               variant="default"
@@ -5383,9 +5406,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <>
           {canSaveDraft && <Button variant="outline" onClick={() => handleSave(true)} disabled={saveMut.isPending} data-testid="button-save-draft">{t("salesDocForm.saveDraftAction")}</Button>}
           <Button data-enter-submit="true" data-voice={isInvoice ? "save" : undefined} onClick={() => handleSave(false)} disabled={saveMut.isPending || (isInvoice && draftOnly)}>
-            {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
+            {saveMut.isPending ? t("common.saving") : zeroPriceServiceDraftOnly ? t("salesDocForm.saveDraftAction") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
           </Button>
-          {isInvoice && !autoPostingEnabled && !draftOnly && (
+          {isInvoice && !autoPostingEnabled && !draftOnly && !zeroPriceServiceDraftOnly && (
             <Button
               variant="default"
               onClick={() => handleSave(false, undefined, true)}

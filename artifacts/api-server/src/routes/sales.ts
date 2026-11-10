@@ -119,6 +119,7 @@ async function enforceServiceZeroPriceSetting(
   res: any,
   companyId: number,
   lines: unknown,
+  documentLabel = "الفاتورة",
 ): Promise<boolean> {
   // This setting is part of the web document workflow. Preserve the mobile
   // channel's existing permission and price-validation behavior.
@@ -164,7 +165,7 @@ async function enforceServiceZeroPriceSetting(
   if (settings?.allowZeroPriceServiceItems === true) return true;
 
   res.status(400).json({
-    error: "لا يمكن حفظ صنف خدمي بسعر صفر. فعّل خيار السماح بسعر صفر للصنف الخدمي من الإعدادات العامة.",
+    error: `لا يمكن حفظ صنف خدمي بسعر صفر في ${documentLabel}. فعّل خيار السماح بسعر صفر للصنف الخدمي من الإعدادات العامة.`,
     code: "ZERO_PRICE_SERVICE_ITEM_DISABLED",
     itemIds: [...new Set(candidates
       .filter((line: any) => serviceIds.has(Number(line.itemId)) && Number(line.unitPrice) === 0)
@@ -4199,6 +4200,18 @@ async function postSalesInvoiceHandler(
       itemCardCostById.set(r.id, Number(r.itemCardCost) || 0);
     }
     const isServiceLine = (l: any) => { if (!l.itemId) return false; const t = typeById.get(l.itemId); return t === "service" || t === "prepaid_expense"; };
+    const zeroPriceServiceLine = lines.find((line: any) =>
+      line.itemId &&
+      typeById.get(Number(line.itemId)) === "service" &&
+      Number(line.unitPrice) === 0,
+    );
+    if (!isMobileChannel(req) && zeroPriceServiceLine) {
+      res.status(400).json({
+        code: "ZERO_PRICE_SERVICE_INVOICE_DRAFT_ONLY",
+        error: "الفاتورة التي تحتوي على صنف خدمي بسعر صفر تُحفظ كمسودة ولا يمكن ترحيلها. عدّل سعر الصنف إذا أردت ترحيل الفاتورة.",
+      });
+      return;
+    }
 
     // Guard: every stock-affecting (item-bearing) line must specify a warehouse.
     // SERVICE items (خدمي) never touch stock, so they are EXEMPT — a pure
@@ -7384,6 +7397,7 @@ router.post("/sales-quotations", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, quotationDate, validUntil, customerId, manualPrintPartyName, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId, branchId } = req.body;
+    if (!(await enforceServiceZeroPriceSetting(req, res, cid, lines, "عرض السعر"))) return;
     if (!quotationDate) { res.status(400).json({ error: "تاريخ العرض مطلوب" }); return; }
     // Item Usage Control (Phase ب): block a save containing restricted items.
     {
@@ -7456,6 +7470,8 @@ router.put("/sales-quotations/:id", async (req, res) => {
     if (!["draft", "sent"].includes(String(scoped.status ?? "draft"))) {
       res.status(400).json({ error: "لا يمكن تعديل عرض سعر مقبول أو مرفوض أو محوّل لفاتورة" }); return;
     }
+    if (lines !== undefined &&
+        !(await enforceServiceZeroPriceSetting(req, res, cid, lines, "عرض السعر"))) return;
     const [q] = await db.update(salesQuotationsTable).set({
       docNumber: docNumber || null, quotationDate,
       branchId: branchId ? Number(branchId) : null,

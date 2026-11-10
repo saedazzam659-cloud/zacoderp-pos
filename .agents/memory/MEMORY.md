@@ -43,6 +43,7 @@
 - [Retail variant module boundary](clothing-module-boundary.md) — keep retail variants opt-in, reusable from item tabs, and backed by existing stock-item variants.
 - [Item sales price options](item-sales-price-options.md) — per-item selectable price options change the invoice line price but keep stock on the same item.
 - [Sales price floor policy](sales-price-floor-policy.md) — manual underpricing stays open by default; optional company enforcement respects a selected configured price.
+- [Zero-priced service sales](zero-priced-service-sales.md) — web quotations may use zero-priced services; invoices containing one stay draft-only.
 - [Restaurant subgroup rollout](restaurant-subgroups-rollout.md) — current companies are commercial; subgroup classification is preparatory and must remain optional.
 - [Account-note visibility defaults](account-note-visibility-defaults.md) — show customer credit and supplier debit notes; hide the opposite types unless each company opts in.
 - [Account-note numbering boundary](account-note-numbering-boundary.md) — fresh-company customer-credit and supplier-debit notes share one counter to avoid duplicate numbers in the shared note table.
