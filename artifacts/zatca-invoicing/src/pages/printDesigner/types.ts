@@ -46,4 +46,5 @@ export interface Layout {
   pageBackground?: string;
   margins?: { top: number; right: number; bottom: number; left: number };
   baseTemplateId?: number;
+  baseTemplateVersion?: number;
 }

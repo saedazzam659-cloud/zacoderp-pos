@@ -15,6 +15,7 @@ import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
 import { ensurePrinterReady } from "@/lib/printerGuard";
 import QRCode from "qrcode";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { applyPrintFieldVisibility, isPrintFieldVisible } from "@/lib/printFieldVisibility";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -139,7 +140,7 @@ function companyBlock(c: any) {
     ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:160px;object-fit:contain;display:block;" /></div>`
     : "";
   return `
-    <div>
+    <div data-print-field="companyDetails">
       ${logo}
       <div style="font-size:15px;font-weight:700;">${c?.nameAr ?? "اسم الشركة"}</div>
       ${c?.nameEn ? `<div style="font-size:10px;opacity:.7;">${c.nameEn}</div>` : ""}
@@ -153,10 +154,10 @@ function supplierBlock(s: any) {
   if (!s) return "<div>—</div>";
   return `
     <div>
-      <div style="font-weight:600;">${escapePrintText(s.nameAr ?? "—")}</div>
-      ${s.vatNumber ? `<div>الرقم الضريبي: ${s.vatNumber}</div>` : ""}
+      <div data-print-field="partyName" style="font-weight:600;">${escapePrintText(s.nameAr ?? "—")}</div>
+      ${s.vatNumber ? `<div data-print-field="partyVat">الرقم الضريبي: ${s.vatNumber}</div>` : ""}
       ${s.phone     ? `<div>هاتف: ${s.phone}</div>` : ""}
-      ${s.city      ? `<div>${s.city}</div>` : ""}
+      ${s.city      ? `<div data-print-field="partyAddress">${s.city}</div>` : ""}
     </div>`;
 }
 
@@ -190,16 +191,16 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "", inc = fal
     return `
       <tr style="${i % 2 === 0 ? rowEvenStyle : ""}">
         <td>${i + 1}</td>
-        <td><div>${l.itemName ?? l.itemCode ?? "—"}</div>${traceHtml}</td>
-        <td class="mono">${Math.round(Number(l.qty) || 0)}</td>
-        ${showFree ? `<td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
-        <td>${l.unit ?? "—"}</td>
-        <td class="mono">${fmt(l.unitPrice)}</td>
-        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discPctCell}</td>` : ""}
-        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
-        <td class="mono">${l.vatRate ?? 15}%</td>
-        <td class="mono">${fmt(vat)}</td>
-        <td class="mono" style="font-weight:600;">${fmt(tot)}</td>
+        <td data-print-column="itemName"><div>${l.itemName ?? l.itemCode ?? "—"}</div>${traceHtml}</td>
+        <td data-print-column="quantity" class="mono">${Math.round(Number(l.qty) || 0)}</td>
+        ${showFree ? `<td data-print-column="freeQuantity" class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
+        <td data-print-column="unit">${l.unit ?? "—"}</td>
+        <td data-print-column="unitPrice" class="mono">${fmt(l.unitPrice)}</td>
+        ${showDisc ? `<td data-print-column="discountPercent" class="mono" style="color:#b91c1c;">${discPctCell}</td>` : ""}
+        ${showDisc ? `<td data-print-column="discountAmount" class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
+        <td data-print-column="taxRate" class="mono">${l.vatRate ?? 15}%</td>
+        <td data-print-column="taxAmount" class="mono">${fmt(vat)}</td>
+        <td data-print-column="lineTotal" class="mono" style="font-weight:600;">${fmt(tot)}</td>
       </tr>`;
   }).join("");
 
@@ -208,16 +209,16 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "", inc = fal
       <thead>
         <tr style="${headerStyle}">
           <th style="width:30px">#</th>
-          <th>الصنف / الخدمة</th>
-          <th>الكمية</th>
-          ${showFree ? `<th style="color:#b45309;">مجاني</th>` : ""}
-          <th>الوحدة</th>
-          <th>سعر الوحدة</th>
-          ${showDisc ? `<th>الخصم</th>` : ""}
-          ${showDisc ? `<th>قيمة الخصم</th>` : ""}
-          <th>الضريبة</th>
-          <th>قيمة الضريبة</th>
-          <th>الإجمالي</th>
+          <th data-print-column="itemName">الصنف / الخدمة</th>
+          <th data-print-column="quantity">الكمية</th>
+          ${showFree ? `<th data-print-column="freeQuantity" style="color:#b45309;">مجاني</th>` : ""}
+          <th data-print-column="unit">الوحدة</th>
+          <th data-print-column="unitPrice">سعر الوحدة</th>
+          ${showDisc ? `<th data-print-column="discountPercent">الخصم</th>` : ""}
+          ${showDisc ? `<th data-print-column="discountAmount">قيمة الخصم</th>` : ""}
+          <th data-print-column="taxRate">الضريبة</th>
+          <th data-print-column="taxAmount">قيمة الضريبة</th>
+          <th data-print-column="lineTotal">الإجمالي</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -232,17 +233,17 @@ function totalsBlock(doc: any, align = "right") {
           <span>نوع التسعير</span>
           <span>${vatModeLabel(!!doc.priceIncludesVat)}</span>
         </div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+        <div data-print-field="subtotal" style="display:flex;justify-content:space-between;margin-bottom:6px;">
           <span style="color:#666">المجموع قبل الضريبة:</span>
-          <span class="mono">${fmt(doc.subtotal)} ${currencySymbol(doc.currencyCode)}</span>
+          <span class="mono">${fmt(doc.subtotal)} <span data-print-field="currency">${currencySymbol(doc.currencyCode)}</span></span>
         </div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+        <div data-print-field="taxTotal" style="display:flex;justify-content:space-between;margin-bottom:6px;">
           <span style="color:#666">ضريبة القيمة المضافة (15%):</span>
-          <span class="mono" style="color:#b45309;">${fmt(doc.vatAmount)} ${currencySymbol(doc.currencyCode)}</span>
+          <span class="mono" style="color:#b45309;">${fmt(doc.vatAmount)} <span data-print-field="currency">${currencySymbol(doc.currencyCode)}</span></span>
         </div>
-        <div style="display:flex;justify-content:space-between;border-top:2px solid #ddd;padding-top:6px;font-size:14px;font-weight:700;">
+        <div data-print-field="grandTotal" style="display:flex;justify-content:space-between;border-top:2px solid #ddd;padding-top:6px;font-size:14px;font-weight:700;">
           <span>الإجمالي الشامل:</span>
-          <span class="mono">${fmt(doc.totalAmount)} ${currencySymbol(doc.currencyCode)}</span>
+          <span class="mono">${fmt(doc.totalAmount)} <span data-print-field="currency">${currencySymbol(doc.currencyCode)}</span></span>
         </div>
       </div>
     </div>`;
@@ -400,23 +401,23 @@ function sarEqRowsHtml(
 function totalRowsHtml(t: FullTotals, rowClass = "totals-row", grandClass = "grand"): string {
   return `
     <div class="${rowClass}" style="font-size:9px;opacity:.7;"><span>نوع التسعير</span><span>${vatModeLabel(t.priceIncludesVat)}</span></div>
-    <div class="${rowClass}"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} ${t.currencySym}</span></div>
-    <div class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} ${t.currencySym}</span></div>
-    <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} ${t.currencySym}</span></div>
-    <div class="${rowClass}"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(t.vatAmount)} ${t.currencySym}</span></div>
-    <div class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} ${t.currencySym}</span></div>`;
+    <div data-print-field="subtotal" class="${rowClass}"><span>الإجمالي قبل الخصم — Subtotal</span><span class="mono">${fmt(t.subtotalPreDiscount)} <span data-print-field="currency">${t.currencySym}</span></span></div>
+    <div data-print-field="discountTotal" class="${rowClass}"><span>مبلغ الخصم — Discount</span><span class="mono">${fmt(t.discountTotal)} <span data-print-field="currency">${t.currencySym}</span></span></div>
+    <div class="${rowClass}"><span>الصافي بدون الضريبة — Net</span><span class="mono">${fmt(t.netPreVat)} <span data-print-field="currency">${t.currencySym}</span></span></div>
+    <div data-print-field="taxTotal" class="${rowClass}"><span>ضريبة القيمة المضافة — VAT</span><span class="mono">${fmt(t.vatAmount)} <span data-print-field="currency">${t.currencySym}</span></span></div>
+    <div data-print-field="grandTotal" class="${rowClass} ${grandClass}"><span>الصافي شامل الضريبة — Total</span><span class="mono">${fmt(t.grandTotal)} <span data-print-field="currency">${t.currencySym}</span></span></div>`;
 }
 
 // Universal summary footer (tafqeet + total items + total qty inc. free).
 function summaryFooterHtml(t: FullTotals): string {
   return `
     <div style="margin-top:10px;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;font-size:11px;background:#fafafa;">
-      <div style="font-weight:700;color:#0f172a;margin-bottom:6px;line-height:1.5;">${t.amountWords}</div>
+      <div data-print-field="amountInWords" style="font-weight:700;color:#0f172a;margin-bottom:6px;line-height:1.5;">${t.amountWords}</div>
       <div style="display:flex;justify-content:space-between;border-top:1px dashed #cbd5e1;padding-top:6px;">
         <span>إجمالي أصناف الفاتورة</span>
         <span class="mono" style="font-weight:700;">${t.itemsCount}</span>
       </div>
-      <div style="display:flex;justify-content:space-between;margin-top:3px;">
+      <div data-print-field="quantity" style="display:flex;justify-content:space-between;margin-top:3px;">
         <span>إجمالي كميات الفاتورة (شاملة المجانية)</span>
         <span class="mono" style="font-weight:700;">${fmt(t.totalQty + t.totalFreeQty)}${t.totalFreeQty > 0 ? ` <span style="color:#b45309;font-weight:600;">(منها ${fmt(t.totalFreeQty)} مجاني)</span>` : ""}</span>
       </div>
@@ -1651,9 +1652,31 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
     const printData: PrintData = !data.supplier && data.doc?.supplierId == null && manualName
       ? { ...qrPrintData, supplier: { nameAr: manualName, nameEn: manualName } }
       : qrPrintData;
-    const visiblePrintData: PrintData = user?.company?.showFreeQuantity === false
-      ? { ...printData, lines: (printData.lines ?? []).map((line: any) => ({ ...line, freeQty: 0 })) }
-      : printData;
+    const printFieldVisibility = user?.company?.printFieldVisibility ?? data.company?.printFieldVisibility;
+    const purchaseVisibilityDocument = data.type === "invoice" ? "purchase_invoice" : null;
+    const legacyShowFreeQuantity = user?.company?.showFreeQuantity !== false;
+    const showFreeQuantity = purchaseVisibilityDocument
+      ? isPrintFieldVisible(printFieldVisibility, purchaseVisibilityDocument, "freeQuantity", legacyShowFreeQuantity)
+      : legacyShowFreeQuantity;
+    const hidePrintNotes = !!purchaseVisibilityDocument &&
+      !isPrintFieldVisible(printFieldVisibility, purchaseVisibilityDocument, "notes");
+    const hideItemCode = !!purchaseVisibilityDocument &&
+      !isPrintFieldVisible(printFieldVisibility, purchaseVisibilityDocument, "itemCode");
+    const visiblePrintData: PrintData = {
+      ...printData,
+      doc: hidePrintNotes ? { ...printData.doc, notes: "" } : printData.doc,
+      company: {
+        ...printData.company,
+        printFieldVisibility,
+        ...(hidePrintNotes ? { printCustomNotes: "" } : {}),
+      },
+      lines: (printData.lines ?? []).map((line: any) => ({
+        ...line,
+        ...(!showFreeQuantity ? { freeQty: 0 } : {}),
+        ...(hidePrintNotes ? { notes: "" } : {}),
+        ...(hideItemCode ? { itemCode: "" } : {}),
+      })),
+    };
     let namesForPrint = enNamesMap;
     let unitsForPrint = enUnitsMap;
     if (printLang === "en" && itemsCompanyId && printItemIds.length > 0 && namesForPrint.size === 0) {
@@ -1673,7 +1696,7 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
       _lang: printLang,
       _enNames: namesForPrint,
       _enUnits: unitsForPrint,
-      company: { ...visiblePrintData.company, _printLanguage: printLang },
+      company: { ...visiblePrintData.company, printFieldVisibility, _printLanguage: printLang },
       lines: (visiblePrintData.lines ?? []).map((line: any) => ({
         ...line,
         itemName: namesForPrint.get(String(line.itemName ?? "").trim().toLowerCase()) ?? line.itemName,
@@ -1687,7 +1710,7 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
       () =>
       tmpl.fn(localizedPrintData)
     );
-    const rawHtml = user?.company?.showFreeQuantity === false
+    const rawHtml = !showFreeQuantity
       ? renderedHtml
           .replaceAll("إجمالي كميات الفاتورة (شاملة المجانية)", "إجمالي كميات الفاتورة")
           .replaceAll("إجمالي الكميات (مع المجاني):", "إجمالي الكميات:")
@@ -1696,10 +1719,13 @@ export default function PurchasePrintModal({ open, onClose, data }: Props) {
     const html = printLang === "en"
       ? localizePrintHtml(rawHtml, printLang, localizedPrintData)
       : rawHtml;
+    const htmlWithFieldVisibility = purchaseVisibilityDocument
+      ? applyPrintFieldVisibility(html, purchaseVisibilityDocument, printFieldVisibility)
+      : html;
     const win = window.open("", "_blank", "width=900,height=700");
     if (!win) return;
     win.document.open();
-    win.document.write(html);
+    win.document.write(htmlWithFieldVisibility);
     win.document.close();
     win.onload = async () => {
         if (!(await gate('print'))) return; win.print(); };

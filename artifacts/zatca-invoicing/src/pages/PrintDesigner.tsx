@@ -18,7 +18,11 @@ import {
   getDefaultQuotationBaseTemplateId,
   getEnabledSalesPrintTemplates,
 } from "@/lib/salesPrintTemplateCatalog";
-import { renderQuotationCustomLayoutHtml } from "@/lib/quotationCustomPrint";
+import {
+  composeQuotationBaseWithCustomLayout,
+  renderQuotationCustomLayoutHtml,
+} from "@/lib/quotationCustomPrint";
+import { renderQuotationBaseTemplatePreviewHtml } from "@/pages/sales/SalesPrintModal";
 
 // ───────────────────────────── Types ─────────────────────────────
 
@@ -392,6 +396,12 @@ export default function PrintDesigner() {
   const [baseTemplateId, setBaseTemplateId] = useState<number>(defaultQuotationBaseId);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [layout, setLayout] = useState<Layout>(emptyLayout);
+  const nativeQuotationPreviewHtml = useMemo(
+    () => documentType === "sales_quotation" && layout.baseTemplateVersion === 2
+      ? renderQuotationBaseTemplatePreviewHtml(baseTemplateId)
+      : "",
+    [documentType, layout.baseTemplateVersion, baseTemplateId],
+  );
   const [paperSize, setPaperSize] = useState<string>("A4");
   const [widthMm, setWidthMm]   = useState(210);
   const [heightMm, setHeightMm] = useState(297);
@@ -1382,40 +1392,48 @@ function ElementRnd({
 function ElementView({ el }: { el: Element }) {
   const common: React.CSSProperties = {
     width: "100%", height: "100%",
-    background: el.background, color: el.color,
-    fontFamily: el.fontFamily, fontSize: el.fontSize,
-    fontWeight: el.fontWeight as any, fontStyle: el.fontStyle,
-    textAlign: el.textAlign as any,
-    padding: el.padding, opacity: el.opacity ?? 1,
+    background: el.background ?? "transparent", color: el.color ?? "#111827",
+    fontFamily: el.fontFamily ?? "Tahoma, Arial, sans-serif", fontSize: el.fontSize ?? 14,
+    fontWeight: el.fontWeight as any, fontStyle: el.fontStyle ?? "normal",
+    textAlign: (el.textAlign ?? "start") as any,
+    padding: el.padding ?? 0, opacity: el.opacity ?? 1,
     borderColor: el.borderColor, borderStyle: el.borderStyle ?? "solid",
     borderWidth: el.borderWidth ?? 0, borderRadius: 0,
     transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
     overflow: "hidden", boxSizing: "border-box",
-    display: "flex", alignItems: "center",
-    justifyContent: el.textAlign === "center" ? "center"
-      : el.textAlign === "end" ? "flex-end" : "flex-start",
+    whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: "normal",
   };
   if (el.type === "text" || el.type === "field") {
-    return <div style={common}><span style={{ width: "100%" }}>{el.type === "field" ? sampleFieldText(el) : el.text}</span></div>;
+    return <div style={common}>{el.type === "field" ? sampleFieldText(el) : el.text}</div>;
   }
   if (el.type === "image") {
     return el.src
-      ? <img src={el.src} style={{ width: "100%", height: "100%", objectFit: "contain" }} alt="" />
-      : <div style={{ ...common, color: "#9ca3af", justifyContent: "center" }}>📷 صورة</div>;
+      ? <img src={el.src} style={{ ...common, objectFit: "contain" }} alt="" />
+      : <div style={{ ...common, color: "#9ca3af", textAlign: "center" }}>صورة</div>;
   }
   if (el.type === "rect") return <div style={common} />;
-  if (el.type === "container") return <div style={{ ...common, background: el.background ?? "transparent" }} />;
-  if (el.type === "line") return <div style={{ ...common, background: el.background ?? "#111827" }} />;
+  if (el.type === "container") {
+    return (
+      <div style={{
+        ...common,
+        background: el.background ?? "transparent",
+        border: `${el.borderWidth ?? 1}px dashed ${el.borderColor ?? "#94a3b8"}`,
+      }}>
+        {el.text ? <span>{el.text}</span> : null}
+      </div>
+    );
+  }
+  if (el.type === "line") return <div style={{ ...common, background: el.background ?? "#000" }} />;
   if (el.type === "table") {
     const spec = el.tableSpec!;
     return (
-      <table style={{ width: "100%", height: "100%", borderCollapse: "collapse", fontFamily: el.fontFamily, fontSize: el.fontSize ?? 12 }}>
+      <table style={{ ...common, borderCollapse: "collapse", tableLayout: "fixed" }}>
         <thead>
           <tr>{spec.columns.map(c => (
             <th key={c.key} style={{
               background: spec.headerBg, color: spec.headerColor,
               border: `${spec.borderWidth ?? 1}px solid ${spec.borderColor ?? "#e5e7eb"}`,
-              padding: 4, textAlign: c.align ?? "start", width: c.width,
+              padding: 5, textAlign: c.align ?? "start", width: c.width,
             }}>{c.label}</th>
           ))}</tr>
         </thead>
@@ -1425,7 +1443,7 @@ function ElementView({ el }: { el: Element }) {
               {spec.columns.map(c => (
                 <td key={c.key} style={{
                   border: `${spec.borderWidth ?? 1}px solid ${spec.borderColor ?? "#e5e7eb"}`,
-                  padding: 4, textAlign: c.align ?? "start",
+                  padding: 5, textAlign: c.align ?? "start",
                 }}>{sampleTableCell(c.key, r)}</td>
               ))}
             </tr>

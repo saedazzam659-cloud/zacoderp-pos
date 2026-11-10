@@ -386,6 +386,14 @@ export const companiesTable = pgTable("companies", {
     termsAr: string;
     termsEn: string;
   }>(),
+  // Per-document print visibility. Missing keys mean visible, so adding this
+  // nullable setting preserves the current output for existing companies.
+  printFieldVisibility: jsonb("print_field_visibility").$type<
+    Partial<Record<
+      "sales_invoice" | "sales_quotation" | "purchase_order" | "purchase_invoice" | "receipt_voucher" | "payment_voucher",
+      Record<string, boolean>
+    >>
+  >(),
   deliveryReceiptPrintOptions: jsonb("delivery_receipt_print_options").$type<{
     showCompanyDetails: boolean;
     showBranch: boolean;

@@ -217,6 +217,7 @@ export async function cloneCompany(opts: CloneCompanyOptions): Promise<CloneComp
       printT14ShowEnSubtitle:    source.printT14ShowEnSubtitle,
       printT14ShowAccountCode:   source.printT14ShowAccountCode,
       printT14ShowAuditFooter:   source.printT14ShowAuditFooter,
+      printFieldVisibility:     source.printFieldVisibility,
       printEnabledTemplates:     source.printEnabledTemplates,
       printThermalTemplates:     source.printThermalTemplates,
       printDefaultTemplate:      source.printDefaultTemplate,

@@ -16,6 +16,11 @@
 // PaymentVoucherForm.tsx so سند القبض and سند الصرف stay in lock-step.
 import { safeLogoSrc } from "@/lib/export";
 import { localizePrintHtml } from "@/lib/localizedUiText";
+import {
+  applyPrintFieldVisibility,
+  isPrintFieldVisible,
+  type PrintFieldVisibility,
+} from "@/lib/printFieldVisibility";
 
 export type CashVoucherKind = "receipt" | "payment";
 
@@ -92,6 +97,7 @@ export interface CashVoucherCompany {
   buildingNumber?: string | null;
   address?: string | null;
   logo?: string | null;
+  printFieldVisibility?: PrintFieldVisibility | null;
 }
 
 export interface CashVoucherDoc {
@@ -154,9 +160,13 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
   const date = doc.date || "—";
   const desc = doc.description || "";
   const invoiceNumber = doc.invoiceNumber || "";
+  const visibilityDocument = kind === "receipt" ? "receipt_voucher" : "payment_voucher";
+  const showCurrency = isPrintFieldVisible(company?.printFieldVisibility, visibilityDocument, "currency");
   const tafqeet = isEnglish
-    ? `Amount: ${fmtMoney(amount, company?.decimalPlaces)} ${doc.currency || "SAR"}`
-    : numberToArabicWords(amount);
+    ? `Amount: ${fmtMoney(amount, company?.decimalPlaces)}${showCurrency ? ` ${doc.currency || "SAR"}` : ""}`
+    : showCurrency
+      ? numberToArabicWords(amount)
+      : numberToArabicWords(amount).replace(" ريال سعودي", "");
   // Table rows: one per allocation line when present, else the legacy single
   // account row. المبلغ = net, الإجمالي = net + per-line VAT (payments only).
   // Receipts have no VAT, so المبلغ (net) always equals الإجمالي (total) — the
@@ -167,19 +177,19 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
         const net = Number(l.amount || 0);
         const tax = Number(l.tax || 0);
         return `    <tr>
-      <td class="num">${esc(l.code ?? "")}</td>
-      <td>${esc(l.name ?? "—")}</td>
-      <td>${esc(l.description ?? "")}</td>
-      ${showNetCol ? `<td class="num">${fmtMoney(net, company?.decimalPlaces)}</td>` : ""}
-      <td class="num">${fmtMoney(net + tax, company?.decimalPlaces)}</td>
+      <td data-print-column="itemCode" class="num">${esc(l.code ?? "")}</td>
+      <td data-print-column="account" data-print-field="partyName">${esc(l.name ?? "—")}</td>
+      <td data-print-column="description">${esc(l.description ?? "")}</td>
+      ${showNetCol ? `<td data-print-column="subtotal" class="num">${fmtMoney(net, company?.decimalPlaces)}</td>` : ""}
+      <td data-print-column="lineTotal" data-print-field="grandTotal" class="num">${fmtMoney(net + tax, company?.decimalPlaces)}</td>
     </tr>`;
       }).join("\n")
     : `    <tr>
-      <td class="num">${esc(account?.code ?? "")}</td>
-      <td>${esc(account?.name ?? "—")}</td>
-      <td>${esc(desc || "")}</td>
-      ${showNetCol ? `<td class="num">${fmtMoney(amount, company?.decimalPlaces)}</td>` : ""}
-      <td class="num">${fmtMoney(amount, company?.decimalPlaces)}</td>
+      <td data-print-column="itemCode" class="num">${esc(account?.code ?? "")}</td>
+      <td data-print-column="account" data-print-field="partyName">${esc(account?.name ?? "—")}</td>
+      <td data-print-column="description">${esc(desc || "")}</td>
+      ${showNetCol ? `<td data-print-column="subtotal" class="num">${fmtMoney(amount, company?.decimalPlaces)}</td>` : ""}
+      <td data-print-column="lineTotal" data-print-field="grandTotal" class="num">${fmtMoney(amount, company?.decimalPlaces)}</td>
     </tr>`;
   const footNet = hasLines
     ? lines!.reduce((s, l) => s + Number(l.amount || 0), 0)
@@ -197,7 +207,7 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
   // Bilingual company header: Arabic block (right) + logo (center) +
   // English block (left). Both blocks carry the SAME values.
   const arBlock = `
-    <div class="co-block ar">
+    <div data-print-field="companyDetails" class="co-block ar">
       <div class="co-name">${esc(company?.nameAr ?? "اسم الشركة")}</div>
       <table class="co-meta">
         <tr><td class="k">: السجل التجاري</td><td class="v">${esc(company?.crNumber ?? "")}</td></tr>
@@ -208,7 +218,7 @@ export function buildCashVoucherHtml(args: CashVoucherArgs): string {
       </table>
     </div>`;
   const enBlock = `
-    <div class="co-block en" dir="ltr">
+    <div data-print-field="companyDetails" class="co-block en" dir="ltr">
       <div class="co-name">${esc(company?.nameEn ?? company?.nameAr ?? "")}</div>
       <table class="co-meta">
         <tr><td class="k">C.R-No :</td><td class="v">${esc(company?.crNumber ?? "")}</td></tr>
@@ -257,30 +267,30 @@ table.lines tfoot td { font-weight:800; background:#f1f5f9; }
 @media print { .print-btn { display:none; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة</button>
-<div class="header">
+<div data-print-field="companyDetails" class="header">
   ${arBlock}
   ${logoBlock}
   ${enBlock}
 </div>
 <div class="title-bar">${esc(title)}</div>
 <div class="info">
-  <div class="row"><span class="k">رقم السند</span><span class="v">: ${esc(code)}</span></div>
-  <div class="row"><span class="k">تاريخ السند</span><span class="v">: ${esc(date)}</span></div>
-  <div class="row"><span class="k">رمز النقدية</span><span class="v">: ${esc(treasury?.code ?? "")}</span></div>
-  <div class="row"><span class="k">اسم النقدية</span><span class="v">: ${esc(treasury?.name ?? "—")}</span></div>
+  <div data-print-field="documentNumber" class="row"><span class="k">رقم السند</span><span class="v">: ${esc(code)}</span></div>
+  <div data-print-field="date" class="row"><span class="k">تاريخ السند</span><span class="v">: ${esc(date)}</span></div>
+  <div data-print-field="treasury" class="row"><span class="k">رمز النقدية</span><span class="v">: ${esc(treasury?.code ?? "")}</span></div>
+  <div data-print-field="treasury" class="row"><span class="k">اسم النقدية</span><span class="v">: ${esc(treasury?.name ?? "—")}</span></div>
   ${isMulti ? "" : `<div class="row"><span class="k">رمز الحساب</span><span class="v">: ${esc((hasLines ? lines![0]!.code : account?.code) ?? "—")}</span></div>
   <div class="row"><span class="k">اسم الحساب</span><span class="v">: ${esc((hasLines ? lines![0]!.name : account?.name) ?? "—")}</span></div>`}
-  ${invoiceNumber ? `<div class="row"><span class="k">رقم الفاتورة</span><span class="v">: ${esc(invoiceNumber)}</span></div>` : ""}
-  <div class="row" style="grid-column:1 / -1;"><span class="k">بيان السند</span><span class="v">: ${esc(desc || "—")}</span></div>
+  ${invoiceNumber ? `<div data-print-field="invoiceNumber" class="row"><span class="k">رقم الفاتورة</span><span class="v">: ${esc(invoiceNumber)}</span></div>` : ""}
+  <div data-print-field="description" class="row" style="grid-column:1 / -1;"><span class="k">بيان السند</span><span class="v">: ${esc(desc || "—")}</span></div>
 </div>
 <table class="lines">
   <thead>
     <tr>
-      <th>رمز الحساب</th>
-      <th>اسم الحساب</th>
-      <th style="width:50%;">البيان</th>
-      ${showNetCol ? "<th>المبلغ</th>" : ""}
-      <th>الإجمالي</th>
+       <th data-print-column="itemCode">رمز الحساب</th>
+       <th data-print-column="account">اسم الحساب</th>
+       <th data-print-column="description" style="width:50%;">البيان</th>
+       ${showNetCol ? "<th data-print-column=\"subtotal\">المبلغ</th>" : ""}
+       <th data-print-column="lineTotal" data-print-field="grandTotal">الإجمالي</th>
     </tr>
   </thead>
   <tbody>
@@ -288,25 +298,30 @@ ${bodyRows}
   </tbody>
   <tfoot>
     <tr>
-      <td colspan="3" style="text-align:left;">الإجمالي</td>
-      ${showNetCol ? `<td class="num">${fmtMoney(footNet, company?.decimalPlaces)}</td>` : ""}
-      <td class="num">${fmtMoney(footTotal, company?.decimalPlaces)}</td>
+     <td colspan="3" style="text-align:left;">الإجمالي</td>
+     ${showNetCol ? `<td data-print-column="subtotal" class="num">${fmtMoney(footNet, company?.decimalPlaces)}</td>` : ""}
+     <td data-print-column="lineTotal" data-print-field="grandTotal" class="num">${fmtMoney(footTotal, company?.decimalPlaces)}</td>
     </tr>
   </tfoot>
 </table>
-<div class="tafqeet">${esc(tafqeet)}</div>
-<div class="sigs">
+<div data-print-field="amountInWords" class="tafqeet">${esc(tafqeet)}</div>
+<div data-print-field="signatures" class="sigs">
   <div class="box">المدير المالي</div>
   <div class="box">مدير الحسابات</div>
   <div class="box">إعداد${preparedBy ? ` : ${esc(preparedBy)}` : ""}</div>
 </div>
-<div class="footer">
+<div data-print-field="printedAt" class="footer">
   <span>تاريخ الطباعة : ${esc(printedAt)}</span>
   <span>الصفحة 1 من 1</span>
 </div>
 <script>setTimeout(function(){window.print()},300);</script>
 </body></html>`;
-  return isEnglish ? localizePrintHtml(html, "en", args) : html;
+  const localized = isEnglish ? localizePrintHtml(html, "en", args) : html;
+  return applyPrintFieldVisibility(
+    localized,
+    kind === "receipt" ? "receipt_voucher" : "payment_voucher",
+    company?.printFieldVisibility,
+  );
 }
 
 /** Opens a blank print window synchronously (popup-blocker safe) with a small

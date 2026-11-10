@@ -90,11 +90,13 @@ function elementStyle(element: Element): string {
 
 function renderField(element: Element, context: CustomPrintContext): string {
   const fieldKey = element.fieldKey ?? "";
+  const visibilityField = customFieldVisibilityKey(fieldKey);
+  const printFieldAttr = visibilityField ? ` data-print-field="${visibilityField}"` : "";
   if (context.hiddenFields?.includes(fieldKey)) return "";
   if (fieldKey === "qr.zatca") {
     const src = context.showQr ? safeImageSource(context.qrDataUrl) : "";
     return src
-      ? `<img src="${escapeHtml(src)}" alt="QR" style="${elementStyle(element)};object-fit:contain" />`
+      ? `<img${printFieldAttr} src="${escapeHtml(src)}" alt="QR" style="${elementStyle(element)};object-fit:contain" />`
       : "";
   }
   const value = context.fields[fieldKey] ?? "—";
@@ -102,23 +104,62 @@ function renderField(element: Element, context: CustomPrintContext): string {
   const content = /\{[^{}]*\}/.test(label)
     ? label.replace(/\{[^{}]*\}/g, () => value)
     : value;
-  return `<div style="${elementStyle(element)}">${escapeHtml(content)}</div>`;
+  return `<div${printFieldAttr} style="${elementStyle(element)}">${escapeHtml(content)}</div>`;
+}
+
+function customFieldVisibilityKey(fieldKey: string): string | undefined {
+  if (fieldKey.startsWith("company.")) return "companyDetails";
+  if (fieldKey === "quotation.number" || fieldKey === "invoice.number") return "documentNumber";
+  if (fieldKey === "quotation.date" || fieldKey === "invoice.date") return "date";
+  if (fieldKey === "quotation.validUntil") return "validUntil";
+  if (fieldKey === "customer.name") return "partyName";
+  if (fieldKey === "customer.vat") return "partyVat";
+  if (fieldKey === "customer.address") return "partyAddress";
+  if (fieldKey === "totals.subtotal") return "subtotal";
+  if (fieldKey === "totals.discount") return "discountTotal";
+  if (fieldKey === "totals.vat") return "taxTotal";
+  if (fieldKey === "totals.grand") return "grandTotal";
+  if (fieldKey === "totals.grandWords") return "amountInWords";
+  if (fieldKey === "notes") return "notes";
+  if (fieldKey === "qr.zatca") return "qr";
+  return undefined;
+}
+
+function customColumnVisibilityKey(key: string): string | undefined {
+  if (key === "name" || key === "itemName") return "itemName";
+  if (key === "code" || key === "itemCode") return "itemCode";
+  if (key === "qty" || key === "quantity") return "quantity";
+  if (key === "freeQty" || key === "freeQuantity") return "freeQuantity";
+  if (key === "unit") return "unit";
+  if (key === "price" || key === "unitPrice") return "unitPrice";
+  if (key === "discountPercent") return "discountPercent";
+  if (key === "discount") return "discountAmount";
+  if (key === "vat" || key === "tax") return "taxAmount";
+  if (key === "taxRate") return "taxRate";
+  if (key === "total" || key === "lineTotal") return "lineTotal";
+  if (key === "description") return "description";
+  if (key === "account") return "account";
+  return undefined;
 }
 
 function renderTable(element: Element, context: CustomPrintContext): string {
   const spec = element.tableSpec;
   if (!spec?.columns?.length) return "";
   const border = `${cssNumber(spec.borderWidth, 1, 0, 12)}px solid ${cssColor(spec.borderColor, "#e5e7eb")}`;
-  const headers = spec.columns.map(column =>
-    `<th style="background:${cssColor(spec.headerBg, "#1f2937")};color:${cssColor(spec.headerColor, "#fff")};border:${border};padding:5px;text-align:${["start", "end", "center"].includes(String(column.align)) ? column.align : "start"};width:${cssNumber(column.width, 80, 16, 1000)}px">${escapeHtml(column.label)}</th>`,
-  ).join("");
+  const headers = spec.columns.map(column => {
+    const visibilityField = customColumnVisibilityKey(column.key);
+    const attr = visibilityField ? ` data-print-column="${visibilityField}"` : "";
+    return `<th${attr} style="background:${cssColor(spec.headerBg, "#1f2937")};color:${cssColor(spec.headerColor, "#fff")};border:${border};padding:5px;text-align:${["start", "end", "center"].includes(String(column.align)) ? column.align : "start"};width:${cssNumber(column.width, 80, 16, 1000)}px">${escapeHtml(column.label)}</th>`;
+  }).join("");
   const rows = context.rows.length > 0
     ? context.rows
     : [{ no: "", name: "", qty: "", unit: "", price: "", discount: "", vat: "", total: "" }];
   const body = rows.map((row, rowIndex) => `<tr style="background:${rowIndex % 2 === 0 ? cssColor(spec.rowBg, "#fff") : cssColor(spec.altRowBg, "#f9fafb")}">${
-    spec.columns.map(column =>
-      `<td style="border:${border};padding:5px;text-align:${["start", "end", "center"].includes(String(column.align)) ? column.align : "start"}">${escapeHtml(row[column.key] ?? "—")}</td>`,
-    ).join("")
+    spec.columns.map(column => {
+      const visibilityField = customColumnVisibilityKey(column.key);
+      const attr = visibilityField ? ` data-print-column="${visibilityField}"` : "";
+      return `<td${attr} style="border:${border};padding:5px;text-align:${["start", "end", "center"].includes(String(column.align)) ? column.align : "start"}">${escapeHtml(row[column.key] ?? "—")}</td>`;
+    }).join("")
   }</tr>`).join("");
   return `<table style="${elementStyle(element)};border-collapse:collapse;table-layout:fixed"><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table>`;
 }
@@ -159,4 +200,47 @@ export function renderQuotationCustomLayoutHtml(
     @media screen{body{padding:18px;background:#edf1f5}.custom-print-page{box-shadow:0 14px 48px rgba(15,23,42,.16)}}
     @media print{html,body{width:${widthMm}mm;height:${heightMm}mm;background:#fff}.custom-print-page{box-shadow:none}}
   </style></head><body><main class="custom-print-page">${elements.map(el => renderElement(el, context)).join("")}</main></body></html>`;
+}
+
+function cssLengthToMm(value: string | undefined): number {
+  const match = value?.trim().match(/^(-?\d+(?:\.\d+)?)(mm|cm|in|pt|px)?$/i);
+  if (!match) return 0;
+  const number = Number(match[1]);
+  const unit = (match[2] ?? "mm").toLowerCase();
+  const factor = unit === "cm" ? 10 : unit === "in" ? 25.4 : unit === "pt" ? 25.4 / 72 : unit === "px" ? 25.4 / 96 : 1;
+  return Math.max(0, number * factor);
+}
+
+function nativePageOffsetsMm(nativeHtml: string): { top: number; right: number; bottom: number; left: number } {
+  const rule = nativeHtml.match(/@page\s*{([^}]*)}/i)?.[1] ?? "";
+  const value = rule.match(/\bmargin\s*:\s*([^;]+)/i)?.[1]?.trim();
+  if (!value) return { top: 0, right: 0, bottom: 0, left: 0 };
+  const values = value.split(/\s+/).slice(0, 4).map(cssLengthToMm);
+  if (values.length === 1) return { top: values[0], right: values[0], bottom: values[0], left: values[0] };
+  if (values.length === 2) return { top: values[0], right: values[1], bottom: values[0], left: values[1] };
+  if (values.length === 3) return { top: values[0], right: values[1], bottom: values[2], left: values[1] };
+  return { top: values[0] ?? 0, right: values[1] ?? 0, bottom: values[2] ?? 0, left: values[3] ?? 0 };
+}
+
+/**
+ * Adds editable designer elements over a native quotation renderer without
+ * replacing or approximating the built-in template itself.
+ */
+export function composeQuotationBaseWithCustomLayout(
+  nativeHtml: string,
+  layout: Layout,
+  context: CustomPrintContext,
+  page: { widthMm: number; heightMm: number; name: string },
+): string {
+  const widthMm = cssNumber(page.widthMm, 210, 40, 1000);
+  const heightMm = cssNumber(page.heightMm, 297, 60, 2000);
+  const offsets = nativePageOffsetsMm(nativeHtml);
+  const elements = (Array.isArray(layout.elements) ? layout.elements : [])
+    .map(element => renderElement(element, context))
+    .join("");
+  const overlay = `<div aria-hidden="true" style="position:fixed;top:-${offsets.top}mm;left:-${offsets.left}mm;width:${widthMm}mm;height:${heightMm}mm;overflow:hidden;background:transparent;z-index:2147483647;pointer-events:none;margin:0;padding:0;box-sizing:border-box">${elements}</div>`;
+  const bodyClose = /<\/body\s*>/i;
+  return bodyClose.test(nativeHtml)
+    ? nativeHtml.replace(bodyClose, `${overlay}</body>`)
+    : `${nativeHtml}${overlay}`;
 }

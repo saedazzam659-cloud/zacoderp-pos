@@ -13,6 +13,7 @@ import { safeLogoSrc } from "./export";
 import { currencySymbol } from "./format";
 import { buildLetterheadHtml, letterheadCss, wrapWithLetterhead } from "./printLetterhead";
 import { localizePrintHtml } from "./localizedUiText";
+import { applyPrintFieldVisibility, type PrintFieldVisibility } from "./printFieldVisibility";
 
 export type VoucherKind = "receipt" | "payment";
 export type VoucherTemplate = "a4" | "thermal";
@@ -30,6 +31,7 @@ export interface VoucherCompany {
   buildingNumber?: string | null;
   postalCode?: string | null;
   logo?: string | null;
+  printFieldVisibility?: PrintFieldVisibility | null;
 }
 
 export interface VoucherDoc {
@@ -169,7 +171,7 @@ function buildA4(args: BuildVoucherArgs): string {
     ? escapeHtml(counterparty.nameAr || counterparty.nameEn || "—")
     : "—";
   const counterpartyVat = counterparty?.vatNumber ? escapeHtml(counterparty.vatNumber) : "";
-  const letterhead = buildLetterheadHtml(company, { accent: "navy", size: "lg" });
+  const letterhead = `<div data-print-field="companyDetails">${buildLetterheadHtml(company, { accent: "navy", size: "lg" })}</div>`;
   return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(titleAr)} — ${escapeHtml(docNumber)}</title>
 <style>
 @page { size: A4; margin: 14mm; }
@@ -199,24 +201,24 @@ ${wrapWithLetterhead(letterhead, `<div class="title-bar">
   <span>${escapeHtml(docNumber)}</span>
 </div>
 <div class="info-grid">
-  <div><div class="lbl">رقم المستند</div><div class="val">${escapeHtml(docNumber)}</div></div>
-  <div><div class="lbl">التاريخ</div><div class="val">${escapeHtml(doc.settlementDate ?? today)}</div></div>
-  <div><div class="lbl">طريقة الدفع</div><div class="val">${escapeHtml(paymentMethodLabel(doc.paymentMethod))}</div></div>
-  <div><div class="lbl">العملة</div><div class="val">${escapeHtml(currency)}</div></div>
-  <div><div class="lbl">سعر الصرف</div><div class="val">${escapeHtml(doc.exchangeRate ?? "1")}</div></div>
-  <div><div class="lbl">حساب البنك / الخزنة</div><div class="val">${accountLabel}</div></div>
+  <div data-print-field="documentNumber"><div class="lbl">رقم المستند</div><div class="val">${escapeHtml(docNumber)}</div></div>
+  <div data-print-field="date"><div class="lbl">التاريخ</div><div class="val">${escapeHtml(doc.settlementDate ?? today)}</div></div>
+  <div data-print-field="paymentMethod"><div class="lbl">طريقة الدفع</div><div class="val">${escapeHtml(paymentMethodLabel(doc.paymentMethod))}</div></div>
+  <div data-print-field="currency"><div class="lbl">العملة</div><div class="val">${escapeHtml(currency)}</div></div>
+  <div data-print-field="exchangeRate"><div class="lbl">سعر الصرف</div><div class="val">${escapeHtml(doc.exchangeRate ?? "1")}</div></div>
+  <div data-print-field="account"><div class="lbl">حساب البنك / الخزنة</div><div class="val">${accountLabel}</div></div>
 </div>
 <div class="party-box">
   <span class="lbl">${escapeHtml(partyLabel)}</span>
-  <div class="val">${counterpartyName}</div>
-  ${counterpartyVat ? `<div style="font-size:11px;color:#6b7280;margin-top:4px;">الرقم الضريبي: ${counterpartyVat}</div>` : ""}
+  <div data-print-field="partyName" class="val">${counterpartyName}</div>
+  ${counterpartyVat ? `<div data-print-field="partyVat" style="font-size:11px;color:#6b7280;margin-top:4px;">الرقم الضريبي: ${counterpartyVat}</div>` : ""}
 </div>
 <div class="amount-box">
-  <div class="digits">${fmtMoney(amountNumber, company?.decimalPlaces)} ${escapeHtml(currencySym)}</div>
-  <div class="words">${escapeHtml(amountInWords)}</div>
+  <div data-print-field="grandTotal" class="digits">${fmtMoney(amountNumber, company?.decimalPlaces)} <span data-print-field="currency">${escapeHtml(currencySym)}</span></div>
+  <div data-print-field="amountInWords" class="words">${escapeHtml(amountInWords)}</div>
 </div>
-${doc.notes ? `<div class="notes-box"><span class="lbl">ملاحظات</span>${escapeHtml(doc.notes)}</div>` : ""}
-<div class="signatures">
+${doc.notes ? `<div data-print-field="notes" class="notes-box"><span class="lbl">ملاحظات</span>${escapeHtml(doc.notes)}</div>` : ""}
+<div data-print-field="signatures" class="signatures">
   <div class="sig-line">توقيع المُحاسب</div>
   <div class="sig-line">توقيع ${isReceipt ? "المستلم" : "المُستفيد"}</div>
 </div>`)}
@@ -262,19 +264,21 @@ body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#000
 @media print { .print-btn { display:none; } body { width:auto; } }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة / حفظ PDF</button>
-${logoBlockHtml(company, 50)}
-${company?.nameAr ? `<div class="center bold" style="font-size:13px;">${escapeHtml(company.nameAr)}</div>` : ""}
-${company?.crNumber ? `<div class="center" style="font-size:10px;">س.ت: ${escapeHtml(company.crNumber)}</div>` : ""}
-${company?.vatNumber ? `<div class="center" style="font-size:10px;">ض.ق.م: ${escapeHtml(company.vatNumber)}</div>` : ""}
-${company?.phone ? `<div class="center" style="font-size:10px;">جوال: ${escapeHtml(company.phone)}</div>` : ""}
+ <div data-print-field="companyDetails">
+ ${logoBlockHtml(company, 50)}
+ ${company?.nameAr ? `<div class="center bold" style="font-size:13px;">${escapeHtml(company.nameAr)}</div>` : ""}
+ ${company?.crNumber ? `<div class="center" style="font-size:10px;">س.ت: ${escapeHtml(company.crNumber)}</div>` : ""}
+ ${company?.vatNumber ? `<div class="center" style="font-size:10px;">ض.ق.م: ${escapeHtml(company.vatNumber)}</div>` : ""}
+ ${company?.phone ? `<div class="center" style="font-size:10px;">جوال: ${escapeHtml(company.phone)}</div>` : ""}
+ </div>
 <div class="h2 center">${escapeHtml(titleAr)}</div>
-<div class="row"><span class="lbl">رقم</span><span class="val">${escapeHtml(docNumber)}</span></div>
-<div class="row"><span class="lbl">التاريخ</span><span class="val">${escapeHtml(doc.settlementDate ?? today)}</span></div>
-<div class="row"><span class="lbl">${escapeHtml(partyLabel)}</span><span class="val">${counterpartyName}</span></div>
-<div class="row"><span class="lbl">طريقة الدفع</span><span class="val">${escapeHtml(paymentMethodLabel(doc.paymentMethod))}</span></div>
-<div class="row"><span class="lbl">الحساب</span><span class="val" style="font-size:10px;">${accountLabel}</span></div>
-<div class="amount">${fmtMoney(amountNumber, company?.decimalPlaces)} ${escapeHtml(currencySym)}</div>
-${doc.notes ? `<div class="notes"><span class="bold">ملاحظات: </span>${escapeHtml(doc.notes)}</div>` : ""}
+<div data-print-field="documentNumber" class="row"><span class="lbl">رقم</span><span class="val">${escapeHtml(docNumber)}</span></div>
+<div data-print-field="date" class="row"><span class="lbl">التاريخ</span><span class="val">${escapeHtml(doc.settlementDate ?? today)}</span></div>
+<div data-print-field="partyName" class="row"><span class="lbl">${escapeHtml(partyLabel)}</span><span class="val">${counterpartyName}</span></div>
+<div data-print-field="paymentMethod" class="row"><span class="lbl">طريقة الدفع</span><span class="val">${escapeHtml(paymentMethodLabel(doc.paymentMethod))}</span></div>
+<div data-print-field="account" class="row"><span class="lbl">الحساب</span><span class="val" style="font-size:10px;">${accountLabel}</span></div>
+<div data-print-field="grandTotal" class="amount">${fmtMoney(amountNumber, company?.decimalPlaces)} <span data-print-field="currency">${escapeHtml(currencySym)}</span></div>
+${doc.notes ? `<div data-print-field="notes" class="notes"><span class="bold">ملاحظات: </span>${escapeHtml(doc.notes)}</div>` : ""}
 <div class="footer">شكراً لتعاملكم</div>
 <script>setTimeout(()=>window.print(),300);</script>
 </body></html>`;
@@ -285,9 +289,14 @@ ${doc.notes ? `<div class="notes"><span class="bold">ملاحظات: </span>${es
 export function buildVoucherPrintHtml(args: BuildVoucherArgs): string {
   const html = args.template === "thermal" ? buildThermal(args) : buildA4(args);
   const language = typeof document === "undefined" ? "ar" : document.documentElement.lang;
-  return language.toLowerCase().startsWith("en")
+  const localized = language.toLowerCase().startsWith("en")
     ? localizePrintHtml(html, language, args)
     : html;
+  return applyPrintFieldVisibility(
+    localized,
+    args.kind === "receipt" ? "receipt_voucher" : "payment_voucher",
+    args.company?.printFieldVisibility,
+  );
 }
 
 /** Convenience helper: opens a new window and writes the HTML into it.

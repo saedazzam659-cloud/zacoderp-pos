@@ -36,6 +36,7 @@ import {
 } from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import { applyPrintFieldVisibility, isPrintFieldVisible } from "@/lib/printFieldVisibility";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const DEFAULT_PO_PRINT_OPTIONS = {
@@ -421,20 +422,31 @@ ${sections}
 
   const buildProfessionalHtml = (docs: any[]) => {
     const company = user?.company ?? {};
-    const companyDetails = poPrintOptions.showCompanyDetails
+    const visibility = company.printFieldVisibility;
+    const showCompany = isPrintFieldVisible(visibility, "purchase_order", "companyDetails", poPrintOptions.showCompanyDetails);
+    const showItemCode = isPrintFieldVisible(visibility, "purchase_order", "itemCode", poPrintOptions.showItemCode);
+    const showTax = isPrintFieldVisible(visibility, "purchase_order", "taxAmount", poPrintOptions.showTaxBreakdown);
+    const showNotes = isPrintFieldVisible(visibility, "purchase_order", "notes", poPrintOptions.showNotes);
+    const showSupplierVat = isPrintFieldVisible(visibility, "purchase_order", "partyVat", poPrintOptions.showSupplierDetails);
+    const showSupplierAddress = isPrintFieldVisible(visibility, "purchase_order", "partyAddress", poPrintOptions.showSupplierDetails);
+    const showDeliveryDate = isPrintFieldVisible(visibility, "purchase_order", "deliveryDate", poPrintOptions.showDeliveryDate);
+    const showReceiver = isPrintFieldVisible(visibility, "purchase_order", "receiverDetails", poPrintOptions.showReceiverDetails);
+    const showTerms = isPrintFieldVisible(visibility, "purchase_order", "terms", poPrintOptions.showTerms);
+    const companyDetails = showCompany
       ? [company.vatNumber && `الرقم الضريبي: ${company.vatNumber}`, company.phone, [company.street, company.city].filter(Boolean).join("، ")]
           .filter(Boolean).map((x: string) => `<span>${escapeHtml(x)}</span>`).join("")
       : "";
     const pages = docs.map((doc: any, pageIndex: number) => {
       const supplier = (suppliers as any[]).find((row: any) => Number(row.id) === Number(doc.supplierId)) ?? {};
-      const supplierInfo = poPrintOptions.showSupplierDetails
-        ? [supplier.vatNumber && `الرقم الضريبي: ${supplier.vatNumber}`, supplier.phone, supplier.email, supplier.address, supplier.city]
-            .filter(Boolean).map((x: string) => `<span>${escapeHtml(x)}</span>`).join("")
-        : "";
-      const deliveryInfo = poPrintOptions.showReceiverDetails
+      const supplierInfo = [
+        showSupplierVat && supplier.vatNumber && `<span data-print-field="partyVat">${escapeHtml(`الرقم الضريبي: ${supplier.vatNumber}`)}</span>`,
+        showSupplierAddress && [supplier.phone, supplier.email, supplier.address, supplier.city].filter(Boolean)
+          .map((value: string) => `<span data-print-field="partyAddress">${escapeHtml(value)}</span>`).join(""),
+      ].filter(Boolean).join("");
+      const deliveryInfo = showReceiver
         ? [doc.deliveryAddress, doc.receiverName && `المستلم: ${doc.receiverName}`,
             doc.receiverEmail, doc.receiverPhone]
-            .filter(Boolean).map((x: string) => `<span>${escapeHtml(x)}</span>`).join("")
+            .filter(Boolean).map((x: string) => `<span data-print-field="receiverDetails">${escapeHtml(x)}</span>`).join("")
         : "";
       const lines = (doc.lines ?? []).map((line: any, index: number) => {
         const qty = Number(line.qty ?? line.quantity ?? 0);
@@ -442,6 +454,9 @@ ${sections}
         const percentDiscount = Math.max(0, Math.min(100, Number(line.discount ?? 0)));
         const lineGross = Math.max(0, qty * Number(line.unitPrice ?? 0) * (1 - percentDiscount / 100));
         const fixedDiscount = Math.max(0, Number(line.discountAmount ?? 0));
+        const showFree = isPrintFieldVisible(visibility, "purchase_order", "freeQuantity");
+        const showDiscountPercent = isPrintFieldVisible(visibility, "purchase_order", "discountPercent");
+        const showDiscountAmount = isPrintFieldVisible(visibility, "purchase_order", "discountAmount");
         // Match PurchaseOrderForm.calcLine: VAT is calculated after the
         // percentage discount; the persisted fixed discount remains separate.
         const taxableGross = lineGross;
@@ -449,46 +464,46 @@ ${sections}
           ? taxableGross - taxableGross / (1 + rate)
           : taxableGross * rate;
         const details = [
-          Number(line.freeQty ?? 0) > 0 ? `كمية مجانية / Free qty: ${fmt(Number(line.freeQty))}` : "",
-          percentDiscount > 0 ? `خصم / Discount: ${fmt(percentDiscount)}%` : "",
-          fixedDiscount > 0
-            ? `خصم مبلغ / Fixed discount: ${fmt(fixedDiscount)} ${escapeHtml(doc.currencyCode ?? "")}`
+          showFree && Number(line.freeQty ?? 0) > 0 ? `<span data-print-field="freeQuantity">كمية مجانية / Free qty: ${fmt(Number(line.freeQty))}</span>` : "",
+          showDiscountPercent && percentDiscount > 0 ? `<span data-print-field="discountPercent">خصم / Discount: ${fmt(percentDiscount)}%</span>` : "",
+          showDiscountAmount && fixedDiscount > 0
+            ? `<span data-print-field="discountAmount">خصم مبلغ / Fixed discount: ${fmt(fixedDiscount)} ${escapeHtml(doc.currencyCode ?? "")}</span>`
             : "",
-          poPrintOptions.showNotes && line.notes ? `ملاحظة / Note: ${escapeHtml(line.notes)}` : "",
+          showNotes && line.notes ? `<span data-print-field="notes">ملاحظة / Note: ${escapeHtml(line.notes)}</span>` : "",
         ].filter(Boolean);
         const item = escapeHtml(line.itemName ?? line.description ?? `#${line.itemId ?? ""}`);
         return `<tr><td>${index + 1}</td>
-        ${poPrintOptions.showItemCode ? `<td class="code">${escapeHtml(line.itemCode ?? "")}</td>` : ""}
-        <td>${item}${details.length ? `<div class="line-details">${details.join("<br>")}</div>` : ""}</td>
-        <td class="num">${fmt(qty)} ${escapeHtml(line.unit ?? "")}</td>
-        <td class="num">${fmt(Number(line.unitPrice ?? 0))}</td>
-        ${poPrintOptions.showTaxBreakdown ? `<td class="num">${fmt(vatAmount)}</td>` : ""}
-        <td class="num">${fmt(Number(line.totalAmount ?? line.lineTotal ?? 0))}</td></tr>`;
+        ${showItemCode ? `<td data-print-column="itemCode" class="code">${escapeHtml(line.itemCode ?? "")}</td>` : ""}
+        <td data-print-column="itemName">${item}${details.length ? `<div class="line-details">${details.join("<br>")}</div>` : ""}</td>
+        <td data-print-column="quantity" class="num">${fmt(qty)} ${line.unit ? `<span data-print-field="unit">${escapeHtml(line.unit)}</span>` : ""}</td>
+        <td data-print-column="unitPrice" class="num">${fmt(Number(line.unitPrice ?? 0))}</td>
+        ${showTax ? `<td data-print-column="taxAmount" class="num">${fmt(vatAmount)}</td>` : ""}
+        <td data-print-column="lineTotal" class="num">${fmt(Number(line.totalAmount ?? line.lineTotal ?? 0))}</td></tr>`;
       }).join("");
-      const emptyLineCellCount = 5 + Number(poPrintOptions.showItemCode) + Number(poPrintOptions.showTaxBreakdown);
+      const emptyLineCellCount = 5 + Number(showItemCode) + Number(showTax);
       const currency = escapeHtml(doc.currencyCode ?? "");
-      const terms = poPrintOptions.showTerms && (poPrintOptions.termsAr || poPrintOptions.termsEn)
-        ? `<section class="terms"><h2>الشروط والأحكام <small>Terms &amp; Conditions</small></h2>
+      const terms = showTerms && (poPrintOptions.termsAr || poPrintOptions.termsEn)
+        ? `<section data-print-field="terms" class="terms"><h2>الشروط والأحكام <small>Terms &amp; Conditions</small></h2>
           ${poPrintOptions.termsAr ? `<p dir="rtl">${escapeHtml(poPrintOptions.termsAr).replace(/\n/g, "<br>")}</p>` : ""}
           ${poPrintOptions.termsEn ? `<p dir="ltr">${escapeHtml(poPrintOptions.termsEn).replace(/\n/g, "<br>")}</p>` : ""}</section>`
         : "";
       return `<article class="page">
-        <header><div class="brand">${safeLogo ? `<img src="${safeLogo}" alt="">` : ""}
-          <div><strong>${escapeHtml(company.nameAr ?? "")}</strong><div class="muted">${companyDetails}</div></div></div>
+        <header><div data-print-field="companyDetails" class="brand">${showCompany && safeLogo ? `<img src="${safeLogo}" alt="">` : ""}
+          <div>${showCompany ? `<strong>${escapeHtml(company.nameAr ?? "")}</strong><div class="muted">${companyDetails}</div>` : ""}</div></div>
           <div class="title"><span>مستند مشتريات</span><h1>أمر شراء <small>Purchase Order</small></h1>
-          <b>${escapeHtml(doc.docNumber ?? `PO-${doc.id}`)}</b></div></header>
-        <div class="meta"><div><span>المورد / Supplier</span><strong>${escapeHtml(supMap[doc.supplierId] ?? "")}</strong>${supplierInfo}</div>
+          <b data-print-field="documentNumber">${escapeHtml(doc.docNumber ?? `PO-${doc.id}`)}</b></div></header>
+        <div class="meta"><div><span>المورد / Supplier</span><strong data-print-field="partyName">${escapeHtml(supMap[doc.supplierId] ?? "")}</strong>${supplierInfo}</div>
           <div><span>تاريخ الأمر / Order date</span><strong>${escapeHtml(doc.orderDate ?? "—")}</strong>
-          ${poPrintOptions.showDeliveryDate && doc.expectedDeliveryDate ? `<span>التسليم المتوقع / Expected delivery</span><strong>${escapeHtml(doc.expectedDeliveryDate)}</strong>` : ""}</div>
-          <div><span>التسليم والمستلم / Delivery</span>${deliveryInfo || "<strong>—</strong>"}</div>
-          <div><span>الحالة / Status</span><strong>${escapeHtml(statusLabel(doc.status))}</strong><span>العملة / Currency</span><strong>${currency}</strong></div></div>
-        <table><thead><tr><th>#</th>${poPrintOptions.showItemCode ? "<th>الكود</th>" : ""}<th>الصنف / Description</th><th>الكمية / Qty</th><th>سعر الوحدة / Unit price</th>${poPrintOptions.showTaxBreakdown ? "<th>الضريبة / VAT</th>" : ""}<th>الإجمالي / Total</th></tr></thead><tbody>${lines || `<tr><td colspan="${emptyLineCellCount}" style="text-align:center;color:#64748b">لا توجد بنود لهذا الأمر.</td></tr>`}</tbody></table>
-        <div class="totals"><div>الإجمالي الفرعي <b>${fmt(Number(doc.subtotal ?? 0))} ${currency}</b></div>
-          ${Number(doc.discountAmount ?? 0) > 0 ? `<div>خصم المستند <b>${fmt(Number(doc.discountAmount))} ${currency}</b></div>` : ""}
-          ${poPrintOptions.showTaxBreakdown ? `<div>الضريبة <b>${fmt(Number(doc.vatAmount ?? 0))} ${currency}</b></div>` : ""}
-          <div class="grand">الإجمالي الكلي <b>${fmt(Number(doc.totalAmount ?? 0))} ${currency}</b></div></div>
-        ${poPrintOptions.showNotes && doc.notes ? `<section class="notes"><b>ملاحظات / Notes</b><p>${escapeHtml(doc.notes)}</p></section>` : ""}
-        ${terms}<footer>${escapeHtml(company.nameAr ?? "")} · ${escapeHtml(company.vatNumber ?? "")}<span>${pageIndex + 1} / ${docs.length}</span></footer>
+          ${showDeliveryDate && doc.expectedDeliveryDate ? `<span data-print-field="deliveryDate">التسليم المتوقع / Expected delivery</span><strong data-print-field="deliveryDate">${escapeHtml(doc.expectedDeliveryDate)}</strong>` : ""}</div>
+          <div data-print-field="receiverDetails"><span>التسليم والمستلم / Delivery</span>${deliveryInfo || "<strong>—</strong>"}</div>
+          <div><span>الحالة / Status</span><strong>${escapeHtml(statusLabel(doc.status))}</strong><span>طريقة الدفع / Payment</span><strong data-print-field="paymentMethod">${escapeHtml(paymentTypeLabel(doc.paymentType))}</strong><span>العملة / Currency</span><strong>${currency}</strong></div></div>
+        <table><thead><tr><th>#</th>${showItemCode ? "<th data-print-column=\"itemCode\">الكود</th>" : ""}<th data-print-column="itemName">الصنف / Description</th><th data-print-column="quantity">الكمية / Qty</th><th data-print-column="unitPrice">سعر الوحدة / Unit price</th>${showTax ? "<th data-print-column=\"taxAmount\">الضريبة / VAT</th>" : ""}<th data-print-column="lineTotal">الإجمالي / Total</th></tr></thead><tbody>${lines || `<tr><td colspan="${emptyLineCellCount}" style="text-align:center;color:#64748b">لا توجد بنود لهذا الأمر.</td></tr>`}</tbody></table>
+        <div class="totals"><div data-print-field="subtotal">الإجمالي الفرعي <b>${fmt(Number(doc.subtotal ?? 0))} ${currency}</b></div>
+          ${Number(doc.discountAmount ?? 0) > 0 ? `<div data-print-field="discountTotal">خصم المستند <b>${fmt(Number(doc.discountAmount))} ${currency}</b></div>` : ""}
+          ${showTax ? `<div data-print-field="taxTotal">الضريبة <b>${fmt(Number(doc.vatAmount ?? 0))} ${currency}</b></div>` : ""}
+          <div data-print-field="grandTotal" class="grand">الإجمالي الكلي <b>${fmt(Number(doc.totalAmount ?? 0))} ${currency}</b></div></div>
+        ${showNotes && doc.notes ? `<section data-print-field="notes" class="notes"><b>ملاحظات / Notes</b><p>${escapeHtml(doc.notes)}</p></section>` : ""}
+        ${terms}<footer><span data-print-field="companyDetails">${escapeHtml(company.nameAr ?? "")} · ${escapeHtml(company.vatNumber ?? "")}</span><span>${pageIndex + 1} / ${docs.length}</span></footer>
       </article>`;
     }).join("");
     return `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>أوامر الشراء</title><style>
@@ -523,7 +538,11 @@ ${sections}
         if (!res.ok) throw new Error(`تعذر تحميل أمر الشراء ${id}`);
         return res.json();
       }));
-      openPrintWindow(buildProfessionalHtml(docs));
+      openPrintWindow(applyPrintFieldVisibility(
+        buildProfessionalHtml(docs),
+        "purchase_order",
+        user?.company?.printFieldVisibility,
+      ));
     } catch (error: any) {
       toast({ title: error?.message ?? "تعذر تجهيز نموذج الطباعة", variant: "destructive" });
     }

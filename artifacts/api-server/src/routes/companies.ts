@@ -477,6 +477,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     printQuotationShowQr, printQuotationShowCurrencyName, printQuotationShowCustomerAddress,
     purchaseOrderPrintOptions, deliveryReceiptPrintOptions,
+    printFieldVisibility,
     bankAccountText, printCustomNotes, printCustomNotesOnSales, printCustomNotesOnQuotation,
     printShowItemsSummary,
     printT14ShowEnSubtitle, printT14ShowAccountCode, printT14ShowAuditFooter,
@@ -563,6 +564,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       termsAr: string;
       termsEn: string;
     };
+    printFieldVisibility?: Record<string, Record<string, boolean>>;
     deliveryReceiptPrintOptions?: {
       showCompanyDetails: boolean; showBranch: boolean; showWarehouse: boolean;
       showInvoice: boolean; showRecipient: boolean; showLineNotes: boolean;
@@ -895,6 +897,36 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       termsAr: purchaseOrderPrintOptions.termsAr.trim(),
       termsEn: purchaseOrderPrintOptions.termsEn.trim(),
     };
+  }
+  if (printFieldVisibility !== undefined) {
+    const allowedDocuments = new Set([
+      "sales_invoice",
+      "sales_quotation",
+      "purchase_order",
+      "purchase_invoice",
+      "receipt_voucher",
+      "payment_voucher",
+    ]);
+    const invalid =
+      !printFieldVisibility ||
+      typeof printFieldVisibility !== "object" ||
+      Array.isArray(printFieldVisibility) ||
+      Object.keys(printFieldVisibility).some((documentKey) => !allowedDocuments.has(documentKey)) ||
+      Object.entries(printFieldVisibility).some(([documentKey, fields]) =>
+        !allowedDocuments.has(documentKey) ||
+        !fields ||
+        typeof fields !== "object" ||
+        Array.isArray(fields) ||
+        Object.keys(fields).length > 80 ||
+        Object.entries(fields).some(([fieldKey, visible]) =>
+          !/^[A-Za-z][A-Za-z0-9]{0,63}$/.test(fieldKey) || typeof visible !== "boolean"
+        )
+      );
+    if (invalid) {
+      res.status(400).json({ error: "إعدادات ظهور حقول الطباعة غير صالحة" });
+      return;
+    }
+    updates.printFieldVisibility = printFieldVisibility;
   }
   if (deliveryReceiptPrintOptions !== undefined) {
     const optionKeys = [

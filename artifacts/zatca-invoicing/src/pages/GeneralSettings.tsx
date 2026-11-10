@@ -41,6 +41,7 @@ import { saveWorkbook } from "@/lib/saveFile";
 import SenderSettingsTab from "./settings/SenderSettingsTab";
 import CompanyDocumentFieldControls from "./settings/CompanyDocumentFieldControls";
 import InputHintColorsTab from "./settings/InputHintColorsTab";
+import PrintFieldVisibilityTab from "@/components/PrintFieldVisibilityTab";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { DateField } from "@/components/ui/date-field";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
@@ -1858,6 +1859,14 @@ export default function GeneralSettings() {
           >
             <Printer className="h-4 w-4 shrink-0" />
             <span className="truncate">إعدادات الطباعة</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="printFieldVisibility"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md"
+            data-testid="tab-print-field-visibility"
+          >
+            <Printer className="h-4 w-4 shrink-0" />
+            <span className="truncate">{i18n.language.toLowerCase().startsWith("ar") ? "حقول الطباعة" : "Print field visibility"}</span>
           </TabsTrigger>
           <TabsTrigger
             value="autoLogout"
@@ -4042,6 +4051,10 @@ export default function GeneralSettings() {
 
         <TabsContent value="printPrefs" className="mt-5 space-y-6">
           <PrintPreferencesTab user={user} token={token} setUser={setUser} />
+        </TabsContent>
+
+        <TabsContent value="printFieldVisibility" className="mt-5 space-y-6">
+          <PrintFieldVisibilityTab user={user} token={token} setUser={setUser} />
         </TabsContent>
 
         <TabsContent value="paymentPrefs" className="mt-5 space-y-6">
