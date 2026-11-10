@@ -37,7 +37,7 @@ test("compact routing setup edits the same routing and rebuilds ordered stages a
   const editRoute = facade.slice(start, end);
 
   assert.match(editRoute, /router\.patch\("\/setup\/routing\/:id", edit,/);
-  assert.match(editRoute, /normalizeSetupRouting\(cid, req\.body\)/);
+  assert.match(editRoute, /normalizeSetupRouting\(cid, req\.body, req\)/);
   assert.match(editRoute, /tx\.update\(productionRoutingsTable\)/);
   assert.match(editRoute, /tx\.delete\(productionRoutingStagesTable\)/);
   assert.match(editRoute, /tx\.insert\(productionRoutingStagesTable\)/);
@@ -45,6 +45,32 @@ test("compact routing setup edits the same routing and rebuilds ordered stages a
   assert.match(editRoute, /sequence: i \+ 1/, "stage order must be derived from submitted array order");
   assert.match(editRoute, /validateSetupBranch\(req, cid, req\.body\?\.branchId\)/);
   assert.match(editRoute, /productItemId: normalized\.productItemId/);
+  assert.match(editRoute, /machineResourceIds: x\.machineResourceIds/);
+  assert.match(editRoute, /machineSelectionEnabled: x\.machineSelectionEnabled/);
+});
+
+test("routing editor enables alternative-machine selection only with multiple machines", async () => {
+  const [setup, execution, production] = await Promise.all([
+    readFile(
+      new URL("../../zatca-invoicing/src/pages/simple-manufacturing/SimpleSetup.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../zatca-invoicing/src/components/ProductionStageExecution.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../src/routes/production.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(setup, /machineSelectionEnabled: nextIds\.length > 1/);
+  assert.match(setup, /machineIds\.length > 1/);
+  assert.match(execution, /activeStage\.machineResourceIds\.includes\(String\(machine\.id\)\)/);
+  assert.match(production, /الآلة المختارة ليست من بدائل هذه المرحلة/);
+  assert.match(production, /existingStageById\.get\(Number\(s\.id\)\)/);
+  const editor = await readFile(
+    new URL("../../zatca-invoicing/src/pages/production/ProductionRoutings.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(editor, /id: s\.id,/);
 });
 
 test("SimpleSetup opens the existing dialogs for double-click editing and sends stable ids", async () => {
@@ -86,16 +112,17 @@ test("Smart Manufacturing route setup saves machine power on the selected shared
   assert.match(facade, /electricityEnabled && !\(electricityKw && electricityKw > 0\)/);
   assert.match(facade, /effectiveBranchCondition\(\s*req,\s*productionResourcesTable\.branchId/);
   assert.match(setup, /إضافة آلة وقدرة/);
-  assert.match(setup, /قدرة الآلة المحفوظة:/);
+  assert.match(setup, /إعداد قدرة الآلة الأساسية/);
   assert.match(setup, /onSaveMachine\(/);
-  assert.match(setup, /resourceId: String\(machineId\)/);
+  assert.match(setup, /machineResourceIds: nextIds/);
+  assert.match(setup, /resourceId: primaryId/);
   assert.match(controller, /setup\/machines\/\$\{Number\(data\.id\)\}/);
   assert.match(controller, /setup\/machines"/);
 
   const automaticCopyStart = production.indexOf("// ─── PHASE C: Auto-copy active production routing");
   const automaticCopyEnd = production.indexOf("routingLoaded = rs.length;", automaticCopyStart);
   const automaticCopy = production.slice(automaticCopyStart, automaticCopyEnd);
-  assert.match(automaticCopy, /resourceId:\s*s\.resourceId/);
+  assert.match(automaticCopy, /orderMachineStageSnapshot\(s\)/);
 });
 
 test("Smart Manufacturing can create and immediately assign a work center in a route stage", async () => {

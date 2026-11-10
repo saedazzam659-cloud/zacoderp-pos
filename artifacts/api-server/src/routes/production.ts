@@ -5,6 +5,7 @@
 import { Router } from "express";
 import { postedProvisionOffsets, netProvisionSourceAmount } from "../lib/employeeProvisionManufacturing.js";
 import { TransactionFailure, transactionFailureResponse } from "../lib/transactionFailure.js";
+import { orderMachineStageSnapshot } from "../lib/production-machine-alternatives.js";
 import { db } from "@workspace/db";
 import {
   CreateEstimatedManufacturingCostPoolBody,
@@ -6955,9 +6956,10 @@ export async function productionWizardHandler(req: any, res: any) {
       if (snapshots.length) await tx.insert(productionCostAllocationsTable)
         .values(snapshots.map((x) => ({ ...x, orderId: order.id })));
       if (stages.length) await tx.insert(productionOrderStagesTable).values(stages.map((s: any, i: number) => ({
+        ...orderMachineStageSnapshot(s),
         orderId: order.id, sequence: s.sequence, code: s.code, nameAr: s.nameAr, nameEn: s.nameEn,
         workCenterId: s.workCenterId, expectedWasteRatio: s.expectedWasteRatio,
-        resourceMode: s.resourceMode, resourceId: s.resourceId, workerCount: s.workerCount,
+        resourceMode: s.resourceMode, workerCount: s.workerCount,
          workerEmployeeIds: s.workerEmployeeIds ?? [],
         expectedDurationMinutes: s.expectedDurationMinutes, expectedCost: s.expectedCost,
         expectedCostAccountId: s.expectedCostAccountId, icon: s.icon, color: s.color,
@@ -7289,7 +7291,7 @@ router.post("/orders", async (req, res) => {
                 nameEn: s.nameEn,
                 workCenterId: s.workCenterId,
                 resourceMode: s.resourceMode,
-                resourceId: s.resourceId,
+                ...orderMachineStageSnapshot(s),
                 workerCount: s.workerCount,
                 workerEmployeeIds: s.workerEmployeeIds ?? [],
                 expectedWasteRatio: s.expectedWasteRatio,
@@ -10600,6 +10602,11 @@ router.put("/routings/:id/stages", async (req, res) => {
       return;
     }
     const stages = Array.isArray(req.body?.stages) ? req.body.stages : [];
+    const existingStages = await db
+      .select()
+      .from(productionRoutingStagesTable)
+      .where(eq(productionRoutingStagesTable.routingId, id));
+    const existingStageById = new Map(existingStages.map((stage) => [stage.id, stage]));
     for (const s of stages) {
       if (s.workCenterId) await loadWorkCenter(cid, Number(s.workCenterId));
     }
@@ -10608,26 +10615,38 @@ router.put("/routings/:id/stages", async (req, res) => {
       .where(eq(productionRoutingStagesTable.routingId, id));
     if (stages.length > 0) {
       const stageRows = await Promise.all(
-        stages.map(async (s: any, i: number) => ({
-          routingId: id,
-          sequence: Number(s.sequence ?? i + 1),
-          code: String(s.code ?? `S${i + 1}`).toUpperCase(),
-          nameAr: String(s.nameAr ?? `مرحلة ${i + 1}`),
-          nameEn: s.nameEn || null,
-          workCenterId: s.workCenterId ? Number(s.workCenterId) : null,
-          expectedWasteRatio: String(num(s.expectedWasteRatio)),
-          expectedDurationMinutes: s.expectedDurationMinutes
-            ? Number(s.expectedDurationMinutes)
-            : null,
-          expectedCost: String(num(s.expectedCost)),
-          expectedCostAccountId: await validateAccount(
-            cid,
-            s.expectedCostAccountId ? Number(s.expectedCostAccountId) : null,
-          ),
-          icon: s.icon || null,
-          color: s.color || null,
-          notes: s.notes || null,
-        })),
+        stages.map(async (s: any, i: number) => {
+          const priorStage = Number.isInteger(Number(s.id))
+            ? existingStageById.get(Number(s.id))
+            : undefined;
+          return {
+            routingId: id,
+            sequence: Number(s.sequence ?? i + 1),
+            code: String(s.code ?? `S${i + 1}`).toUpperCase(),
+            nameAr: String(s.nameAr ?? `مرحلة ${i + 1}`),
+            nameEn: s.nameEn || null,
+            workCenterId: s.workCenterId ? Number(s.workCenterId) : null,
+            resourceMode: priorStage?.resourceMode ?? "labor",
+            resourceId: priorStage?.resourceId ?? null,
+            machineResourceIds: priorStage?.machineResourceIds ?? [],
+            machineSelectionEnabled: priorStage?.machineSelectionEnabled ?? false,
+            workerCount: priorStage?.workerCount ?? null,
+            workerEmployeeIds: priorStage?.workerEmployeeIds ?? [],
+            materialLineIds: priorStage?.materialLineIds ?? [],
+            expectedWasteRatio: String(num(s.expectedWasteRatio)),
+            expectedDurationMinutes: s.expectedDurationMinutes
+              ? Number(s.expectedDurationMinutes)
+              : null,
+            expectedCost: String(num(s.expectedCost)),
+            expectedCostAccountId: await validateAccount(
+              cid,
+              s.expectedCostAccountId ? Number(s.expectedCostAccountId) : null,
+            ),
+            icon: s.icon || null,
+            color: s.color || null,
+            notes: s.notes || null,
+          };
+        }),
       );
       await db.insert(productionRoutingStagesTable).values(stageRows);
     }
@@ -10711,6 +10730,8 @@ async function validateStageExecutionReferences(
   existingStage?: {
     workCenterId: number | null;
     resourceId: number | null;
+    machineResourceIds?: number[] | null;
+    machineSelectionEnabled?: boolean | null;
     resourceMode?: string | null;
     workerCount?: number | null;
   } | null,
@@ -10769,9 +10790,26 @@ async function validateStageExecutionReferences(
   const effectiveResourceId = execution.resourceId !== undefined
     ? execution.resourceId
     : existingStage?.resourceId ?? null;
+  const allowedMachineIds = Array.isArray(existingStage?.machineResourceIds)
+    ? [...new Set(existingStage.machineResourceIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))]
+    : [];
+  const machineSelectionEnabled = existingStage?.machineSelectionEnabled === true &&
+    allowedMachineIds.length > 1;
+  if (resourceCostingVersion >= 1 && allowedMachineIds.length > 1 &&
+      !machineSelectionEnabled && effectiveResourceId !== (existingStage?.resourceId ?? null)) {
+    throw Object.assign(new Error("هذه المرحلة تستخدم الآلة الأساسية المحفوظة ولا تسمح بتغييرها"), { status: 400 });
+  }
   if (resourceCostingVersion >= 1 && ["machine", "both"].includes(effectiveResourceMode) &&
       (!Number.isInteger(effectiveResourceId) || effectiveResourceId! <= 0)) {
-    throw Object.assign(new Error("مرحلة الآلة تحتاج آلة مرتبطة"), { status: 400 });
+    throw Object.assign(new Error(
+      machineSelectionEnabled
+        ? "اختر آلة واحدة من بدائل المرحلة قبل التنفيذ"
+        : "مرحلة الآلة تحتاج آلة مرتبطة",
+    ), { status: 400 });
+  }
+  if (resourceCostingVersion >= 1 && machineSelectionEnabled &&
+      effectiveResourceId != null && !allowedMachineIds.includes(effectiveResourceId)) {
+    throw Object.assign(new Error("الآلة المختارة ليست من بدائل هذه المرحلة"), { status: 400 });
   }
   if (effectiveWorkCenterId != null) {
     const [workCenter] = await db.select({ id: workCentersTable.id })
@@ -12219,7 +12257,7 @@ async function refreshOrderActualHours(
   return actualHours;
 }
 
-function resourceRelationshipId(meta: unknown, key: "workCenterId" | "fixedAssetId"): number | null {
+export function resourceRelationshipId(meta: unknown, key: "workCenterId" | "fixedAssetId"): number | null {
   const value = meta && typeof meta === "object"
     ? (meta as Record<string, unknown>)[key]
     : null;
@@ -12258,13 +12296,15 @@ productionExecutionRouter.get("/orders/:id/resource-catalog", async (req, res) =
     const stages = await db
       .select({
         resourceId: productionOrderStagesTable.resourceId,
+        machineResourceIds: productionOrderStagesTable.machineResourceIds,
         workCenterId: productionOrderStagesTable.workCenterId,
       })
       .from(productionOrderStagesTable)
       .where(eq(productionOrderStagesTable.orderId, order.id));
-    const savedMachineIds = [...new Set(
-      stages.map((stage) => stage.resourceId).filter((id): id is number => id != null),
-    )];
+    const savedMachineIds = [...new Set(stages.flatMap((stage) => [
+      ...(stage.resourceId == null ? [] : [stage.resourceId]),
+      ...(Array.isArray(stage.machineResourceIds) ? stage.machineResourceIds : []),
+    ]))];
     const machineBranch = orderBranchResourceCondition(productionResourcesTable, order.branchId);
     const machineType = savedMachineIds.length
       ? or(eq(productionResourcesTable.type, "machine"), inArray(productionResourcesTable.id, savedMachineIds))
@@ -12746,6 +12786,7 @@ productionExecutionRouter.post("/orders/:id/stages/seed", async (req, res) => {
       }
       await tx.insert(productionOrderStagesTable).values(
         rs.map((s, idx) => ({
+          ...orderMachineStageSnapshot(s),
           orderId: order.id,
           sequence: s.sequence,
           code: s.code,
@@ -12753,7 +12794,6 @@ productionExecutionRouter.post("/orders/:id/stages/seed", async (req, res) => {
           nameEn: s.nameEn,
           workCenterId: s.workCenterId,
           resourceMode: s.resourceMode,
-          resourceId: s.resourceId,
           workerCount: s.workerCount,
           workerEmployeeIds: s.workerEmployeeIds ?? [],
           expectedWasteRatio: s.expectedWasteRatio,

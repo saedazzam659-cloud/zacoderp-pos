@@ -80,6 +80,8 @@ export type Catalog = {
       workCenterId?: number | null;
         resourceMode?: "labor" | "machine" | "both";
         resourceId?: number | null;
+        machineResourceIds?: number[];
+        machineSelectionEnabled?: boolean;
         workerCount?: number | null;
       workerEmployeeIds?: number[];
       materialLineIds?: number[];

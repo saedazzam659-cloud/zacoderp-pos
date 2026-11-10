@@ -45,7 +45,7 @@ export function SimpleSetup({
   onSaveMaterial: (data: { code: string; nameAr: string; itemNature: string; unitId: string }) => Promise<any>;
   onSaveBom: (data: { id?: number; productItemId: string; nameAr: string; outputQty: string; outputUnitCode: string; lines: Array<{ itemId: string; quantity: string; unitCode: string }> }) => Promise<unknown>;
   onLoadBom: (id: number) => Promise<any>;
-  onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null; resourceMode: "labor" | "machine" | "both"; resourceId?: string; workerCount?: number; materialLineIds?: string[] }> }) => Promise<unknown>;
+  onSaveRouting: (data: { id?: number; productItemId: string; nameAr: string; stages: Array<{ nameAr: string; expectedDurationMinutes?: number; code?: string; expectedCost?: string | number; expectedWasteRatio?: string | number; workCenterId?: number | null; expectedCostAccountId?: number | null; notes?: string | null; nameEn?: string | null; resourceMode: "labor" | "machine" | "both"; resourceId?: string; machineResourceIds?: string[]; machineSelectionEnabled?: boolean; workerCount?: number; materialLineIds?: string[] }> }) => Promise<unknown>;
   onLoadRouting: (id: number) => Promise<any>;
   onSaveMachine: (data: { id?: number; name?: string; electricityEnabled: boolean; electricityKw: number | null }) => Promise<any>;
   onSaveWorkCenter: (data: { nameAr: string }) => Promise<any>;
@@ -84,10 +84,12 @@ export function SimpleSetup({
     nameEn?: string | null;
     resourceMode: "labor" | "machine" | "both";
     resourceId?: string;
+    machineResourceIds?: string[];
+    machineSelectionEnabled?: boolean;
     workerCount?: number;
     workerEmployeeIds?: string[];
     materialLineIds?: string[];
-  }>>([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [], materialLineIds: [] }]);
+  }>>([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [], materialLineIds: [], machineResourceIds: [], machineSelectionEnabled: false }]);
   const [template, setTemplate] = useState({ name: "", productItemId: "", plannedQty: "1", unitCode: "" });
   const [warehouse, setWarehouse] = useState({ code: "", nameAr: "", isDefault: false });
   const [internalTransportEnabled, setInternalTransportEnabled] = useState(
@@ -204,7 +206,7 @@ export function SimpleSetup({
     setRoutingMaterialItemIds([]);
     setEditingRoutingId(null);
     setRouting({ productItemId: "", nameAr: "" });
-    setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, materialLineIds: [] }]);
+    setRoutingStages([{ nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, materialLineIds: [], machineResourceIds: [], machineSelectionEnabled: false }]);
   };
 
   const loadRoutingMaterialsForProduct = async (productItemId: string) => {
@@ -293,9 +295,23 @@ export function SimpleSetup({
     if (!Number.isInteger(machineId) || machineId <= 0 || machineDialogStage == null) {
       throw new Error("لم يتم حفظ الآلة أو قدرتها بشكل صحيح");
     }
-    setRoutingStages(stages => stages.map((stage, index) => index === machineDialogStage
-      ? { ...stage, resourceId: String(machineId), resourceMode: stage.resourceMode === "labor" ? "both" : stage.resourceMode }
-      : stage));
+    setRoutingStages(stages => stages.map((stage, index) => {
+      if (index !== machineDialogStage) return stage;
+      const currentIds = stage.machineResourceIds?.length
+        ? stage.machineResourceIds
+        : stage.resourceId ? [stage.resourceId] : [];
+      const nextIds = [...new Set([...currentIds, String(machineId)])];
+      const primaryId = stage.resourceId && nextIds.includes(stage.resourceId)
+        ? stage.resourceId
+        : nextIds[0];
+      return {
+        ...stage,
+        resourceId: primaryId,
+        machineResourceIds: nextIds,
+        machineSelectionEnabled: nextIds.length > 1,
+        resourceMode: stage.resourceMode === "labor" ? "both" : stage.resourceMode,
+      };
+    }));
     setMachineDialogStage(null);
     setMachineForm({ name: "", electricityEnabled: true, electricityKw: "" });
   };
@@ -387,6 +403,11 @@ export function SimpleSetup({
             nameEn: stage?.nameEn ?? null,
             resourceMode: stage?.resourceMode === "machine" || stage?.resourceMode === "both" ? stage.resourceMode : "labor",
             resourceId: stage?.resourceId == null ? "" : String(stage.resourceId),
+            machineResourceIds: Array.isArray(stage?.machineResourceIds) && stage.machineResourceIds.length
+              ? [...new Set(stage.machineResourceIds.map(String))]
+              : stage?.resourceId == null ? [] : [String(stage.resourceId)],
+            machineSelectionEnabled: stage?.machineSelectionEnabled === true &&
+              Array.isArray(stage?.machineResourceIds) && stage.machineResourceIds.length > 1,
             workerCount: Number(stage?.workerCount ?? 1) || 1,
             workerEmployeeIds: Array.isArray(stage?.workerEmployeeIds) ? stage.workerEmployeeIds.map(String) : [],
             materialLineIds: (Array.isArray(stage?.materialLineIds) ? stage.materialLineIds : [])
@@ -801,10 +822,14 @@ export function SimpleSetup({
             <DialogTrigger asChild>
               <Button variant="outline" className="w-full justify-start" disabled={!canEdit} onClick={startRoutingCreate} data-testid="button-create-routing"><Plus className="mr-2 h-4 w-4" /> مسار إنتاج جديد</Button>
             </DialogTrigger>
-            <DialogContent dir="rtl" className="max-w-xl max-h-[85vh] overflow-y-auto">
-              <DialogHeader><DialogTitle>{editingRoutingId ? "تعديل مسار الإنتاج" : "مسار إنتاج جديد"}</DialogTitle></DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
+            <DialogContent dir="rtl" className="flex h-[min(94dvh,920px)] max-h-[94dvh] w-[calc(100vw-1rem)] max-w-[1280px] flex-col gap-0 overflow-hidden p-0 sm:w-[calc(100vw-2rem)] sm:max-w-[1280px]">
+              <DialogHeader className="shrink-0 border-b bg-gradient-to-l from-violet-50 via-white to-teal-50 px-5 py-4 text-start sm:px-7">
+                <DialogTitle className="text-xl font-bold text-slate-900">{editingRoutingId ? "تعديل مسار الإنتاج" : "مسار إنتاج جديد"}</DialogTitle>
+                <DialogDescription className="text-sm">رتّب مراحل المنتج وحدد موارد كل مرحلة. تستخدم أوامر الإنتاج الجديدة إعدادات المسار وقت إنشائها.</DialogDescription>
+              </DialogHeader>
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 sm:px-7">
+                <div className="grid gap-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:grid-cols-2">
+                  <div className="space-y-2">
                   <label className="text-sm font-semibold">المنتج المرتبط</label>
                   <SearchCombobox
                     value={routing.productItemId}
@@ -831,10 +856,11 @@ export function SimpleSetup({
                     onSearchChange={productItemSearch.setSearch}
                     loading={productItemSearch.isSearching}
                   />
-                </div>
-                <div className="space-y-2">
+                  </div>
+                  <div className="space-y-2">
                   <label className="text-sm font-semibold">اسم المسار</label>
                   <Input value={routing.nameAr} onChange={e => setRouting({ ...routing, nameAr: e.target.value })} placeholder="اسم المسار (مثال: خط الخبز)" />
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -844,8 +870,14 @@ export function SimpleSetup({
                   </div>
                   {routingStages.map((stage, index) => {
                     const accent = ROUTING_STAGE_ACCENTS[index % ROUTING_STAGE_ACCENTS.length];
+                    const machineIds = stage.machineResourceIds?.length
+                      ? stage.machineResourceIds
+                      : stage.resourceId ? [stage.resourceId] : [];
+                    const selectedMachines = machineIds.map(id =>
+                      (catalog.machines ?? []).find(machine => String(machine.id) === String(id)),
+                    ).filter(Boolean);
                     return (
-                     <div key={index} data-testid={`routing-stage-editor-${index + 1}`} className={`rounded-xl border p-4 shadow-sm transition-colors ${accent.card}`}>
+                     <div key={index} data-testid={`routing-stage-editor-${index + 1}`} className={`rounded-xl border p-5 shadow-sm transition-colors ${accent.card}`}>
                        <div className="mb-3 flex items-center justify-between gap-3">
                          <div className="flex items-center gap-3">
                            <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 text-sm font-bold ${accent.marker}`}>{index + 1}</div>
@@ -962,9 +994,9 @@ export function SimpleSetup({
                            </div>
                          )}
                          {(stage.resourceMode === "machine" || stage.resourceMode === "both") && (
-                           <div className="space-y-1">
+                            <div className="space-y-1">
                                <div className="flex items-center justify-between gap-2">
-                                 <label className="text-xs font-medium text-slate-600">آلة المرحلة</label>
+                                  <label className="text-xs font-medium text-slate-600">آلات المرحلة البديلة</label>
                                  {canCreate && (
                                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2"
                                      disabled={busy} onClick={() => openMachineSettings(index)}>
@@ -973,45 +1005,101 @@ export function SimpleSetup({
                                  )}
                                </div>
                               <SearchCombobox
-                                value={stage.resourceId ?? ""}
-                                placeholder="اختر آلة محفوظة…"
+                                value=""
+                                placeholder={selectedMachines.length ? "أضف آلة بديلة…" : "اختر آلة محفوظة…"}
                                 searchPlaceholder="ابحث عن آلة…"
+                                disabled={!canEdit}
                                 items={[
-                                  { value: "", label: "اختر آلة محفوظة…" },
-                                  ...(catalog.machines ?? []).map(machine => ({
-                                    value: String(machine.id),
-                                     label: `${machine.name}${machine.electricityEnabled && machine.electricityKw ? ` — ${machine.electricityKw} kW` : " — الكهرباء غير مفعلة"}`,
-                                  })),
+                                  { value: "", label: "اختر آلة لإضافتها…" },
+                                  ...(catalog.machines ?? [])
+                                    .filter(machine => !machineIds.includes(String(machine.id)))
+                                    .map(machine => ({
+                                      value: String(machine.id),
+                                      label: `${machine.name}${machine.electricityEnabled && machine.electricityKw ? ` — ${machine.electricityKw} kW` : " — الكهرباء غير مفعلة"}`,
+                                    })),
                                 ]}
-                                onValueChange={resourceId => setRoutingStages(stages => stages.map((s, i) => i === index
-                                  ? { ...s, resourceId }
-                                  : s))}
+                                onValueChange={resourceId => {
+                                  if (!resourceId) return;
+                                  setRoutingStages(stages => stages.map((current, i) => {
+                                    if (i !== index) return current;
+                                    const ids = current.machineResourceIds?.length
+                                      ? current.machineResourceIds
+                                      : current.resourceId ? [current.resourceId] : [];
+                                    const nextIds = [...new Set([...ids, String(resourceId)])];
+                                    return {
+                                      ...current,
+                                      resourceId: current.resourceId && nextIds.includes(current.resourceId)
+                                        ? current.resourceId : nextIds[0],
+                                      machineResourceIds: nextIds,
+                                      machineSelectionEnabled: nextIds.length > 1,
+                                      resourceMode: current.resourceMode === "labor" ? "both" : current.resourceMode,
+                                    };
+                                  }));
+                                }}
                               />
-                              {(() => {
-                                const machine = (catalog.machines ?? []).find(row => String(row.id) === stage.resourceId);
-                                 if (!machine) return null;
-                                 return (
-                                   <div className="space-y-1">
-                                     <p className={`text-[11px] leading-5 ${machine.electricityEnabled ? "text-amber-800" : "text-slate-500"}`}>
-                                       {machine.electricityEnabled
-                                         ? `قدرة الآلة المحفوظة: ${machine.electricityKw ?? "—"} kW. تُنسخ الآلة وقدرتها تلقائياً إلى مراحل أوامر التصنيع الناتجة من هذا المسار.`
-                                         : "لم تُفعّل كهرباء هذه الآلة بعد؛ فعّلها وأدخل قدرتها لتظهر تلقائياً في أوامر التصنيع."}
-                                     </p>
-                                     {canEdit && (
-                                       <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs"
-                                         disabled={busy} onClick={() => openMachineSettings(index, machine)}>
-                                         إعداد قدرة هذه الآلة
-                                       </Button>
-                                     )}
-                                   </div>
-                                 );
-                              })()}
+                              {machineIds.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-2" data-testid={`routing-machine-options-${index + 1}`}>
+                                  {machineIds.map(machineId => {
+                                    const machine = (catalog.machines ?? []).find(row => String(row.id) === String(machineId));
+                                    const isPrimary = String(stage.resourceId ?? "") === String(machineId);
+                                    return (
+                                      <div key={machineId} className={`inline-flex items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5 text-xs ${isPrimary ? "border-violet-300 ring-1 ring-violet-100" : "border-slate-200"}`}>
+                                        <button type="button" className="font-semibold text-slate-800 hover:text-violet-700"
+                                          onClick={() => setRoutingStages(stages => stages.map((current, i) => i === index ? { ...current, resourceId: String(machineId) } : current))}
+                                          title="تعيين كآلة أساسية">
+                                          {machine?.name ?? `آلة #${machineId}`}
+                                        </button>
+                                        {isPrimary && <span className="rounded-full bg-violet-100 px-1.5 py-0.5 font-semibold text-violet-800">أساسية</span>}
+                                        {machine?.electricityEnabled && <span className="text-amber-700">{machine.electricityKw ?? "—"} kW</span>}
+                                        {canEdit && <button type="button" aria-label={`إزالة ${machine?.name ?? `الآلة ${machineId}`}`}
+                                          className="rounded-full p-0.5 text-slate-400 hover:bg-rose-50 hover:text-rose-700"
+                                          onClick={() => setRoutingStages(stages => stages.map((current, i) => {
+                                            if (i !== index) return current;
+                                            const ids = current.machineResourceIds?.length
+                                              ? current.machineResourceIds
+                                              : current.resourceId ? [current.resourceId] : [];
+                                            const nextIds = ids.filter(id => String(id) !== String(machineId));
+                                            return {
+                                              ...current,
+                                              machineResourceIds: nextIds,
+                                              resourceId: nextIds.includes(String(current.resourceId)) ? current.resourceId : nextIds[0] ?? "",
+                                              machineSelectionEnabled: nextIds.length > 1 && current.machineSelectionEnabled === true,
+                                            };
+                                          }))}>×</button>}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              {canEdit && stage.resourceId && (
+                                <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs"
+                                  disabled={busy}
+                                  onClick={() => openMachineSettings(index, selectedMachines.find(machine => String(machine?.id) === String(stage.resourceId)))}>
+                                  إعداد قدرة الآلة الأساسية
+                                </Button>
+                              )}
+                              {machineIds.length > 1 && (
+                                <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50/80 p-3">
+                                  <label className="flex cursor-pointer items-center justify-between gap-4">
+                                    <span>
+                                      <span className="block text-xs font-semibold text-violet-950">اختيار الآلة عند تنفيذ المرحلة</span>
+                                      <span className="mt-0.5 block text-[11px] leading-5 text-violet-800">يختار المنفذ آلة واحدة من البدائل، وتُحسب ساعاتها وتكلفتها وحدها.</span>
+                                    </span>
+                                    <Switch
+                                      checked={stage.machineSelectionEnabled === true}
+                                      disabled={!canEdit}
+                                      onCheckedChange={checked => setRoutingStages(stages => stages.map((current, i) => i === index
+                                        ? { ...current, machineSelectionEnabled: checked && machineIds.length > 1 }
+                                        : current))}
+                                      aria-label={`اختيار آلة التنفيذ للمرحلة ${index + 1}`}
+                                    />
+                                  </label>
+                                </div>
+                              )}
                            </div>
                          )}
                        </div>
-                       <p className="text-[11px] text-slate-500">
-                          تستخدم المرحلة ساعات تشغيل واحدة فقط. بيانات الطاقة مرتبطة بالآلة المختارة؛ لا توجد ساعات كهرباء أو إهلاك منفصلة.
-                       </p>
+                       <p className="text-[11px] text-slate-500">عند اختيار آلة واحدة يبقى المسار على السلوك الحالي. الآلات المتعددة تُعامل كبدائل ولا تضاعف ساعات التشغيل أو التكلفة.</p>
                        {(stage.resourceMode === "labor" || stage.resourceMode === "both") && (
                          <div className="space-y-1.5">
                            <label className="text-xs font-medium text-slate-600">الموظفون المعيّنون للمرحلة</label>
@@ -1031,9 +1119,9 @@ export function SimpleSetup({
                      </div>
                     );
                   })}
-                  <Button type="button" variant="outline" size="sm"
+                   <Button type="button" variant="outline" size="sm"
                      className="h-11 w-full justify-center border-dashed border-violet-300 bg-violet-50/40 font-semibold text-violet-800 hover:bg-violet-50 dark:border-violet-800 dark:bg-violet-950/20 dark:text-violet-200 dark:hover:bg-violet-950/50"
-                      onClick={() => setRoutingStages(stages => [...stages, { nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [], materialLineIds: [] }])}
+                       onClick={() => setRoutingStages(stages => [...stages, { nameAr: "", expectedDurationMinutes: 0, resourceMode: "labor", workerCount: 1, workerEmployeeIds: [], materialLineIds: [], machineResourceIds: [], machineSelectionEnabled: false }])}
                     disabled={!canEdit}>
                     <Plus className="mr-1 h-4 w-4" /> إضافة مرحلة
                   </Button>
@@ -1043,7 +1131,7 @@ export function SimpleSetup({
                   !s.nameAr ||
                   ((s.resourceMode === "labor" || s.resourceMode === "both") && !(Number.isInteger(s.workerCount) && Number(s.workerCount) > 0)) ||
                   ((s.resourceMode === "machine" || s.resourceMode === "both") && !(Number.isInteger(Number(s.resourceId)) && Number(s.resourceId) > 0))
-                )} onClick={async () => { await onSaveRouting({ ...routing, id: editingRoutingId ?? undefined, stages: routingStages }); setOpenRouting(false); resetRouting(); }} className="w-full">
+                )} onClick={async () => { await onSaveRouting({ ...routing, id: editingRoutingId ?? undefined, stages: routingStages }); setOpenRouting(false); resetRouting(); }} className="sticky bottom-0 z-10 w-full bg-primary shadow-lg">
                   {editingRoutingId ? "تحديث المسار" : "حفظ المسار"}
                 </Button>
               </div>

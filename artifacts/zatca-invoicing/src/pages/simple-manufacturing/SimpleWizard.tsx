@@ -1520,6 +1520,12 @@ export function SimpleWizard({
                     >
                       {routeStages.map((s: any, i: number) => {
                         const accent = ROUTE_STAGE_ACCENTS[i % ROUTE_STAGE_ACCENTS.length];
+                        const machineIds = Array.isArray(s.machineResourceIds) && s.machineResourceIds.length
+                          ? [...new Set<number>(s.machineResourceIds.map(Number).filter((id: number) => Number.isInteger(id) && id > 0))]
+                          : s.resourceId == null ? [] : [Number(s.resourceId)];
+                        const machines = machineIds
+                          .map((id: number) => (catalog.machines ?? []).find((row: any) => Number(row.id) === id))
+                          .filter(Boolean);
                         const machine = (catalog.machines ?? []).find((row: any) => String(row.id) === String(s.resourceId));
                         const resourceLabel = s.resourceMode === "both" ? "آلة + عمالة" : s.resourceMode === "machine" ? "آلة" : "عمالة";
                         const duration = Math.max(0, Number(s.expectedDurationMinutes) || 0);
@@ -1557,7 +1563,9 @@ export function SimpleWizard({
                                 {(s.resourceMode === "machine" || s.resourceMode === "both") && (
                                   <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 px-2 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
                                     <Cog className="h-3.5 w-3.5 text-slate-500" />
-                                    الآلة: {machine?.name || (s.resourceId == null ? "غير محددة" : `#${s.resourceId}`)}
+                                    {s.machineSelectionEnabled === true && machines.length > 1
+                                      ? `الآلات المتاحة (${machines.length}): ${machines.map((candidate: any) => candidate.name).join("، ")} — يختار المنفذ واحدة`
+                                      : `الآلة: ${machine?.name || (s.resourceId == null ? "غير محددة" : `#${s.resourceId}`)}`}
                                   </span>
                                 )}
                               </div>

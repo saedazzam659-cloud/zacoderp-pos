@@ -12,6 +12,8 @@ export const modules: ModuleMap = {
   "./components/mockups/pos-checkout/Improved.tsx": () => import("../components/mockups/pos-checkout/Improved.tsx"),
   "./components/mockups/pos-register/Aurora.tsx": () => import("../components/mockups/pos-register/Aurora.tsx"),
   "./components/mockups/pos-register/Onyx.tsx": () => import("../components/mockups/pos-register/Onyx.tsx"),
+  "./components/mockups/routing-editor/Current.tsx": () => import("../components/mockups/routing-editor/Current.tsx"),
+  "./components/mockups/routing-editor/Wide.tsx": () => import("../components/mockups/routing-editor/Wide.tsx"),
   "./components/mockups/simple-manufacturing-flow/Current.tsx": () => import("../components/mockups/simple-manufacturing-flow/Current.tsx"),
   "./components/mockups/simple-manufacturing-flow/StageAware.tsx": () => import("../components/mockups/simple-manufacturing-flow/StageAware.tsx")
 };

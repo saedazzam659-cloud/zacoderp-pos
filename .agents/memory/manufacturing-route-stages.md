@@ -20,3 +20,9 @@ Material-stage assignments are tied to recipe-line IDs and copied into each new 
 **Why:** The user chose an independent snapshot per order and needs to avoid ambiguous mapping when a recipe repeats the same item on multiple lines.
 
 **How to apply:** Preserve the order's material-stage mapping as its own snapshot. Never silently reassign a material line with an active stock issue; any later edit must preserve the issue history.
+
+Alternative machines on a route stage are mutually exclusive choices, not parallel resources. When multiple machines are configured, enable choosing exactly one at execution; preserve the existing behavior for a stage with one machine.
+
+**Why:** The user chose alternatives so a production stage runs on one selected machine, not all listed machines concurrently; combining their hours or costs would misstate execution.
+
+**How to apply:** Keep alternative-machine settings on the reusable route and copy them into each new order-stage snapshot. Validate the selected machine against the configured alternatives and preserve company, branch, work-center, and active-manufacturing-machine boundaries.

@@ -1152,6 +1152,10 @@ export const productionRoutingStagesTable = pgTable(
       () => productionResourcesTable.id,
       { onDelete: "set null" },
     ),
+    // The legacy resourceId remains the route's primary machine. Alternatives
+    // are an opt-in snapshot used only when machineSelectionEnabled is true.
+    machineResourceIds: jsonb("machine_resource_ids").$type<number[]>(),
+    machineSelectionEnabled: boolean("machine_selection_enabled").notNull().default(false),
     workerCount: integer("worker_count"),
     workerEmployeeIds: jsonb("worker_employee_ids").$type<number[]>(),
     materialLineIds: jsonb("material_line_ids").$type<number[]>().notNull().default([]),
@@ -1255,6 +1259,10 @@ export const productionOrderStagesTable = pgTable(
       () => productionResourcesTable.id,
       { onDelete: "set null" },
     ),
+    // Copied from the reusable route; execution still selects one resourceId
+    // so existing machine-hour costing remains singular and unchanged.
+    machineResourceIds: jsonb("machine_resource_ids").$type<number[]>(),
+    machineSelectionEnabled: boolean("machine_selection_enabled").notNull().default(false),
     resourceMode: text("resource_mode").notNull().default("labor"), // labor | machine | both
     wasteReason: text("waste_reason"),
     wasteType: text("waste_type"),

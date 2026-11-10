@@ -359,6 +359,7 @@ function RoutingEditor({
     setBusy(true);
     try {
       const stagesPayload = stages.map((s, i) => ({
+        id: s.id,
         sequence: i + 1,
         code: (s.code || `S${i + 1}`).toUpperCase().slice(0, 24),
         nameAr: s.nameAr || `مرحلة ${i + 1}`,

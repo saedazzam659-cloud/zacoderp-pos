@@ -65,6 +65,8 @@ type Stage = {
   wasteClassification: "normal" | "abnormal";
   resourceMode: "labor" | "machine" | "both";
   resourceId: string;
+  machineResourceIds: string[];
+  machineSelectionEnabled: boolean;
   machineId: string;
   workCenterId: string;
   resourceCostStatus: "pending" | "review" | "calculated" | "not_calculated";
@@ -251,6 +253,11 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
         ? normalizeStageUnitFactor(rawWasteUnit, s.wasteUnitFactor)
         : 1;
       const wasteUnitExplicit = rawWasteUnit !== null;
+      const machineResourceIds: string[] = Array.isArray(s.machineResourceIds)
+        ? [...new Set<string>((s.machineResourceIds as unknown[])
+            .map(String)
+            .filter((id) => /^\d+$/.test(id) && Number(id) > 0))]
+        : s.resourceId ? [String(s.resourceId)] : [];
       return {
       id: String(s.id),
       nameAr: s.nameAr || "مرحلة",
@@ -277,6 +284,9 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
       wasteClassification: s.wasteClassification === "abnormal" ? "abnormal" : "normal",
        resourceMode: s.resourceMode === "machine" || s.resourceMode === "both" ? s.resourceMode : "labor",
        resourceId: s.resourceId ? String(s.resourceId) : s.machineId ? String(s.machineId) : "",
+         machineResourceIds,
+        machineSelectionEnabled: s.machineSelectionEnabled === true &&
+          Array.isArray(s.machineResourceIds) && s.machineResourceIds.length > 1,
        machineId: s.machineId ? String(s.machineId) : s.resourceId ? String(s.resourceId) : "",
       workCenterId: s.workCenterId ? String(s.workCenterId) : "",
        resourceCostStatus: ["pending", "review", "calculated"].includes(s.resourceCostStatus)
@@ -941,12 +951,29 @@ export function ProductionStageExecution({ orderId, orderStatus, plannedQty, tok
                          </div>
                        )}
                       
-                      {(!isResourceCostingV1 || activeStage.resourceMode === "machine" || activeStage.resourceMode === "both") && <ProductionResourcePicker
+                       {isResourceCostingV1 && activeStage.machineSelectionEnabled &&
+                         activeStage.machineResourceIds.length > 1 && (
+                           <p className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs leading-5 text-violet-900">
+                             اختر آلة واحدة من البدائل المحددة للمسار. تُسجل ساعات وتكلفة الآلة المختارة فقط.
+                           </p>
+                         )}
+                       {(!isResourceCostingV1 || activeStage.resourceMode === "machine" || activeStage.resourceMode === "both") && <ProductionResourcePicker
                         workCenterId={activeStage.workCenterId}
                         machineId={isResourceCostingV1 ? activeStage.resourceId : activeStage.machineId}
-                        catalog={resourceCatalog}
+                         catalog={{
+                           ...resourceCatalog,
+                           machines: isResourceCostingV1 && activeStage.machineResourceIds.length > 1
+                             ? resourceCatalog.machines.filter(machine =>
+                                 activeStage.machineSelectionEnabled
+                                   ? activeStage.machineResourceIds.includes(String(machine.id))
+                                   : String(machine.id) === activeStage.resourceId,
+                               )
+                             : resourceCatalog.machines,
+                         }}
                         disabled={!isExecuting || !canEdit || activeStage.status === "done" || activeStage.status === "skipped" || busyStage === activeStage.id}
-                        canCreate={canCreate}
+                         canCreate={canCreate && !(
+                           isResourceCostingV1 && activeStage.machineResourceIds.length > 1
+                         )}
                         endpoint={`${apiBase}/orders/${orderId}`}
                         headers={headers}
                         onChange={values => handleUpdateStage(activeStage.id, {

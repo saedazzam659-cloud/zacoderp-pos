@@ -74,7 +74,12 @@ import {
   getWorkCenters,
   loadItemUnitOptions,
   resolveProductionItemUnit,
+  resourceRelationshipId,
 } from "./production.js";
+import {
+  normalizeMachineResourceIds,
+  normalizePrimaryMachineId,
+} from "../lib/production-machine-alternatives.js";
 
 const router = Router();
 
@@ -241,6 +246,8 @@ router.get("/catalog", view, async (req, res) => {
         workCenterId: productionRoutingStagesTable.workCenterId,
         resourceMode: productionRoutingStagesTable.resourceMode,
         resourceId: productionRoutingStagesTable.resourceId,
+        machineResourceIds: productionRoutingStagesTable.machineResourceIds,
+        machineSelectionEnabled: productionRoutingStagesTable.machineSelectionEnabled,
         workerCount: productionRoutingStagesTable.workerCount,
         workerEmployeeIds: productionRoutingStagesTable.workerEmployeeIds,
       }).from(productionRoutingStagesTable)
@@ -266,6 +273,8 @@ router.get("/catalog", view, async (req, res) => {
       workCenterId: number | null;
       resourceMode: string;
       resourceId: number | null;
+      machineResourceIds: number[] | null;
+      machineSelectionEnabled: boolean | null;
       workerCount: number | null;
       workerEmployeeIds: number[];
     }>>();
@@ -279,6 +288,8 @@ router.get("/catalog", view, async (req, res) => {
         workCenterId: stage.workCenterId,
         resourceMode: stage.resourceMode,
         resourceId: stage.resourceId,
+        machineResourceIds: stage.machineResourceIds ?? [],
+        machineSelectionEnabled: stage.machineSelectionEnabled === true,
         workerCount: stage.workerCount,
         workerEmployeeIds: stage.workerEmployeeIds ?? [],
       };
@@ -1560,7 +1571,7 @@ async function normalizeSetupBom(cid: number, body: any) {
   };
 }
 
-async function normalizeSetupRouting(cid: number, body: any) {
+async function normalizeSetupRouting(cid: number, body: any, req: any) {
   // Resource costing is separately versioned and currently server-gated. Do
   // not make a legacy routing (including the historic compact `stage` string)
   // invalid merely because it has no resource configuration.
@@ -1599,8 +1610,17 @@ async function normalizeSetupRouting(cid: number, body: any) {
       !["labor", "machine", "both"].includes(requestedResourceMode)
       ? "labor"
       : requestedResourceMode;
-    const resourceId = x.resourceId == null || x.resourceId === ""
-      ? null : Number(x.resourceId);
+    let machineResourceIds: number[];
+    try {
+      machineResourceIds = normalizeMachineResourceIds(x.machineResourceIds, x.resourceId);
+    } catch {
+      throw setupError("قائمة آلات المرحلة تحتوي رقم آلة غير صالح");
+    }
+    const resourceId = normalizePrimaryMachineId(x.resourceId, machineResourceIds);
+    const machineSelectionEnabled =
+      x.machineSelectionEnabled === true &&
+      machineResourceIds.length > 1 &&
+      (resourceMode === "machine" || resourceMode === "both");
     const workerCount = x.workerCount == null || x.workerCount === ""
       ? null : Number(x.workerCount);
     return {
@@ -1616,6 +1636,8 @@ async function normalizeSetupRouting(cid: number, body: any) {
       workCenterId: rawWorkCenterId,
       resourceMode,
       resourceId,
+      machineResourceIds,
+      machineSelectionEnabled,
       workerCount,
       workerEmployeeIds: Array.isArray(x.workerEmployeeIds)
         ? [...new Set(x.workerEmployeeIds.map(Number))]
@@ -1666,19 +1688,58 @@ async function normalizeSetupRouting(cid: number, body: any) {
   }
   const resourceIds: number[] = [...new Set<number>(
     normalizedStages
-      .map((stage: any) => stage.resourceId)
-      .filter((id: number | null): id is number => id !== null),
+      .flatMap((stage: any) => stage.machineResourceIds),
   )];
   if (resourceIds.length) {
-    const permittedResources = await db.select({ id: productionResourcesTable.id })
+    const branchResult = effectiveBranchCondition(
+      req,
+      productionResourcesTable.branchId,
+      body?.branchId,
+    );
+    if ("deny" in branchResult) throw setupError("لا يمكنك العمل على هذا الفرع", 403);
+    const permittedResources = await db.select({
+      id: productionResourcesTable.id,
+      branchId: productionResourcesTable.branchId,
+      meta: productionResourcesTable.meta,
+      fixedAssetId: productionResourcesTable.fixedAssetId,
+    })
       .from(productionResourcesTable)
       .where(and(
         eq(productionResourcesTable.companyId, cid),
         inArray(productionResourcesTable.id, resourceIds),
         eq(productionResourcesTable.type, "machine"),
+        ...(branchResult.cond ? [branchResult.cond] : []),
       ));
     if (permittedResources.length !== resourceIds.length) {
-      throw setupError("إحدى آلات المرحلة غير موجودة في هذه الشركة");
+      throw setupError("إحدى آلات المرحلة غير موجودة أو خارج نطاق الفرع");
+    }
+    const assetBranchResult = effectiveBranchCondition(
+      req,
+      fixedAssetsTable.branchId,
+      body?.branchId,
+    );
+    if ("deny" in assetBranchResult) throw setupError("لا يمكنك العمل على هذا الفرع", 403);
+    const eligibleAssets = await getActiveManufacturingAssets(cid, assetBranchResult.cond);
+    const eligibleAssetById = new Map(eligibleAssets.map((asset) => [asset.id, asset]));
+    const resourceById = new Map(permittedResources.map((resource) => [resource.id, resource]));
+    for (const machine of permittedResources) {
+      const linkedAssetId = machine.fixedAssetId ??
+        resourceRelationshipId(machine.meta, "fixedAssetId");
+      if (linkedAssetId == null) continue;
+      const eligibleAsset = eligibleAssetById.get(linkedAssetId);
+      if (!eligibleAsset || eligibleAsset.branchId !== machine.branchId) {
+        throw setupError("إحدى الآلات مرتبطة بأصل غير نشط أو غير مخصص للتصنيع أو خارج نطاق الفرع");
+      }
+    }
+    for (const stage of normalizedStages) {
+      if (stage.workCenterId == null) continue;
+      for (const machineId of stage.machineResourceIds) {
+        const machine = resourceById.get(machineId);
+        const machineWorkCenterId = resourceRelationshipId(machine?.meta, "workCenterId");
+        if (machineWorkCenterId != null && machineWorkCenterId !== stage.workCenterId) {
+          throw setupError("إحدى الآلات البديلة مرتبطة بمركز عمل مختلف عن مركز المرحلة");
+        }
+      }
     }
   }
   const workerEmployeeIds = [...new Set<number>(
@@ -1852,7 +1913,7 @@ router.post("/setup/routing", edit, async (req, res) => {
   }
   try {
     await validateSetupBranch(req, cid, req.body?.branchId);
-    const normalizedResourceStages = (await normalizeSetupRouting(cid, req.body)).normalizedStages;
+    const normalizedResourceStages = (await normalizeSetupRouting(cid, req.body, req)).normalizedStages;
     const [product] = await db.select({ id: itemsTable.id }).from(itemsTable)
       .where(and(
         eq(itemsTable.id, productItemId),
@@ -1902,6 +1963,8 @@ router.post("/setup/routing", edit, async (req, res) => {
       workCenterId: x.workCenterId,
         resourceMode: x.resourceMode,
         resourceId: x.resourceId,
+        machineResourceIds: x.machineResourceIds,
+        machineSelectionEnabled: x.machineSelectionEnabled,
         workerCount: x.workerCount,
         workerEmployeeIds: x.workerEmployeeIds,
       materialLineIds: x.materialLineIds,
@@ -1936,7 +1999,7 @@ router.patch("/setup/routing/:id", edit, async (req, res) => {
       )).limit(1);
     if (!existing) return void res.status(404).json({ error: "مسار الإنتاج غير موجود" });
 
-    const normalized = await normalizeSetupRouting(cid, req.body);
+    const normalized = await normalizeSetupRouting(cid, req.body, req);
     const row = await db.transaction(async (tx) => {
       const [updated] = await tx.update(productionRoutingsTable)
         .set({
@@ -1963,6 +2026,8 @@ router.patch("/setup/routing/:id", edit, async (req, res) => {
         workCenterId: x.workCenterId,
         resourceMode: x.resourceMode,
         resourceId: x.resourceId,
+        machineResourceIds: x.machineResourceIds,
+        machineSelectionEnabled: x.machineSelectionEnabled,
         workerCount: x.workerCount,
         workerEmployeeIds: x.workerEmployeeIds,
         materialLineIds: x.materialLineIds,

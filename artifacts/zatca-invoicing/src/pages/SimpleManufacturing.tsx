@@ -398,6 +398,7 @@ export default function SimpleManufacturing() {
 
   const handleSaveRouting = async (data: any) => {
     const stages = (data.stages || []).map((s: any, idx: number) => ({
+      id: s.id == null ? undefined : Number(s.id),
       nameAr: s.nameAr || "مرحلة",
       code: s.code || `S${idx + 1}`,
       expectedCost: Number(s.expectedCost ?? 0) || 0,
@@ -409,6 +410,10 @@ export default function SimpleManufacturing() {
       expectedDurationMinutes: s.expectedDurationMinutes ? Number(s.expectedDurationMinutes) : undefined,
       resourceMode: s.resourceMode,
       resourceId: s.resourceId ? Number(s.resourceId) : null,
+      machineResourceIds: Array.isArray(s.machineResourceIds)
+        ? [...new Set(s.machineResourceIds.map(Number).filter((id: number) => Number.isInteger(id) && id > 0))]
+        : s.resourceId ? [Number(s.resourceId)] : [],
+      machineSelectionEnabled: s.machineSelectionEnabled === true,
       workerCount: s.workerCount == null ? null : Number(s.workerCount),
       workerEmployeeIds: Array.isArray(s.workerEmployeeIds) ? s.workerEmployeeIds.map(Number) : [],
       materialLineIds: Array.isArray(s.materialLineIds) ? s.materialLineIds.map(Number) : [],
