@@ -420,6 +420,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const isInvoice   = mode === "invoice";
   const isQuotation = mode === "quotation";
   const isOrder     = mode === "order";
+  const supportsMultiItemAdd = isInvoice || isQuotation || isOrder;
   const compactInvoiceTypeSelector = useAgentCompactInvoiceTypeSelector();
   const colorfulInvoiceTabs = useAgentColorfulInvoiceTabs();
   const colorInvoiceTabs = isInvoice && colorfulInvoiceTabs;
@@ -1878,6 +1879,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     });
     await Promise.all(additions.map(({ line, item }) => selectItem(line._id, String(item.id), item)));
     setFocusLineId(additions[additions.length - 1].line._id);
+    if (!targetLineId) setQaItemId("");
   }
 
   async function addScannedSalesItem(item: any) {
@@ -2639,11 +2641,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         }
       }
     } else {
-      // Quotation mode: require a customer (a quotation without an addressed
-      // party isn't meaningful) AND a branch (so it can be branch-scoped like
-      // invoices/orders).
+      // A quotation needs either a linked customer or a print-only party name,
+      // plus a branch so it remains branch-scoped like invoices/orders.
       const missing: string[] = [];
-      if (!customerId) missing.push(t("salesDocForm.customer", { defaultValue: isRtl ? "العميل" : "Customer" }));
+      if (!customerId && !manualPrintPartyName.trim()) {
+        missing.push(t("salesDocForm.customer", { defaultValue: isRtl ? "العميل" : "Customer" }));
+      }
       if (!branchId)   missing.push(t("salesDocForm.branch",   { defaultValue: isRtl ? "الفرع" : "Branch" }));
       if (missing.length) {
         toast({
@@ -2671,7 +2674,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       });
       return;
     }
-    const lineCheck = validateInvoiceLines(lines, { requireRealItem: isInvoice });
+    const allowZeroPriceItemIds = isInvoice && user?.company?.allowZeroPriceServiceItems === true
+      ? new Set((inventoryItems as any[])
+          .filter(item => item.itemType === "service")
+          .map(item => Number(item.id)))
+      : undefined;
+    const lineCheck = validateInvoiceLines(lines, {
+      requireRealItem: isInvoice,
+      allowZeroPriceItemIds,
+    });
     if (!lineCheck.ok) {
       toast({ title: lineCheck.title, description: lineCheck.description, variant: "destructive" });
       return;
@@ -2740,6 +2751,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       base.quotationDate = docDate;
       base.validUntil = validUntil || null;
       base.branchId = branchId || null;
+      base.manualPrintPartyName = !customerId ? manualPrintPartyName.trim().slice(0, 200) || null : null;
     }
     // The backend uses this as its POST idempotency key. It survives all
     // failures/retries for this explicit new-invoice form and is never sent on
@@ -3058,8 +3070,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           <SalesItemPickerWithStock
             items={itemComboItems}
             value={qaItemId}
-            onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, undefined, selectedOptions) : undefined}
-            onItemDoubleClick={isInvoice ? item => handleMultiItemAdd([item.value], undefined, [item]) : undefined}
+            onAddSelected={supportsMultiItemAdd ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, undefined, selectedOptions) : undefined}
+            onItemDoubleClick={supportsMultiItemAdd ? item => handleMultiItemAdd([item.value], undefined, [item]) : undefined}
             warehouseId={qaWarehouseId || headerWarehouseId}
             onValueChange={value => {
               const item = (inventoryItems as any[]).find(candidate => String(candidate.id) === value);
@@ -3257,9 +3269,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <SalesItemPickerWithStock
                         items={itemComboItems}
                         value={l.itemId}
-                        onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined}
-                        closeOnDoubleClick={isInvoice}
-                        onItemDoubleClick={isInvoice ? item => {
+                        onAddSelected={supportsMultiItemAdd ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined}
+                        closeOnDoubleClick={supportsMultiItemAdd}
+                        onItemDoubleClick={supportsMultiItemAdd ? item => {
                           void selectItem(l._id, item.value, item.rawItem);
                           setFocusLineId(l._id);
                         } : undefined}
@@ -3526,7 +3538,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         }} />}
                       {user ? (
                         <div className="min-w-0">
-                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={isInvoice ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} closeOnDoubleClick={isInvoice} onItemDoubleClick={isInvoice ? item => {
+                          <SalesItemPickerWithStock items={itemComboItems} value={l.itemId} onAddSelected={supportsMultiItemAdd ? (itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions) : undefined} closeOnDoubleClick={supportsMultiItemAdd} onItemDoubleClick={supportsMultiItemAdd ? item => {
                             void selectItem(l._id, item.value, item.rawItem);
                             setFocusLineId(l._id);
                           } : undefined} warehouseId={l.warehouseId || headerWarehouseId} onValueChange={v => void selectItem(l._id, v)} onSearchChange={setItemSearch} loading={isSearchingItems} placeholder={t("salesDocForm.itemPlaceholder")} searchPlaceholder={t("salesDocForm.searchItemPlaceholder")} companyId={cid ?? ""} userId={user?.id ?? ""} branchId={branchId} headers={authH} stockEnabled={(isInvoice || isQuotation) && user?.company?.showSalesBranchStock === true} />
@@ -4234,7 +4246,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         missing.push(isRtl ? "العميل" : "Customer");
       }
       if (usesBranch && !branchId) missing.push(isRtl ? "الفرع" : "Branch");
-    } else if (fp.isRequired("customer") && !customerId) {
+    } else if (fp.isRequired("customer") && !customerId && !manualPrintPartyName.trim()) {
       missing.push(isRtl ? "العميل" : "Customer");
     }
     if (!docDate) missing.push(isRtl ? "التاريخ" : "Date");
@@ -4830,7 +4842,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 {fp.isVisible("customer") && (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
-                    <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && !(isInvoice && (paymentType === "cash" || paymentType === "bank")) && <span className="text-destructive"> *</span>}</Label>
+                    <Label className="text-xs">{t("salesDocForm.customer")}{fp.isRequired("customer") && !(isInvoice && (paymentType === "cash" || paymentType === "bank")) && !(isQuotation && !customerId && !!manualPrintPartyName.trim()) && <span className="text-destructive"> *</span>}</Label>
                     {(isQuotation || isOrder) && fp.isVisible("addCustomerTool") && !fp.isReadOnly("addCustomerTool") && !fp.isReadOnly("customer") && (
                       <Button
                         type="button"
@@ -4881,7 +4893,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   onAddDialogOpenChange={setQuickCustomerDialogOpen}
                   hideAddButton={isQuotation || isOrder}
                 />
-                {isInvoice && (paymentType === "cash" || paymentType === "bank") && !customerId && (
+                {((isInvoice && (paymentType === "cash" || paymentType === "bank")) || isQuotation) && !customerId && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("printOnlyPartyName")}</Label>
                     <Input

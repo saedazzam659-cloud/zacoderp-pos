@@ -81,6 +81,9 @@ export const companiesTable = pgTable("companies", {
   // lines are opt-in so existing companies keep their current behavior.
   salesBarcodeEntryEnabled: boolean("sales_barcode_entry_enabled").notNull().default(false),
   allowDuplicateInvoiceItems: boolean("allow_duplicate_invoice_items").notNull().default(false),
+  // Explicitly opt in before sales invoices/returns may use a zero price for
+  // service items. Stock and other item types retain their existing checks.
+  allowZeroPriceServiceItems: boolean("allow_zero_price_service_items").notNull().default(false),
   purchaseDirectExpensesCustodyEnabled: boolean("purchase_direct_expenses_custody_enabled").notNull().default(false),
   // Controls capitalization of recoverable purchase VAT into stock cost.
   // Existing companies retain the legacy behavior (true); fresh-company

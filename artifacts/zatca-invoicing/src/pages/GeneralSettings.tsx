@@ -2315,6 +2315,29 @@ export default function GeneralSettings() {
           </span>
         </label>
         <label
+          data-testid="allow-zero-price-service-items-toggle"
+          className={cn(
+            "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",
+            user?.company?.allowZeroPriceServiceItems === true
+              ? "border-primary bg-primary/5 shadow-sm"
+              : "border-border hover:border-primary/40 hover:bg-muted/30"
+          )}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-5 w-5 accent-primary cursor-pointer"
+            checked={user?.company?.allowZeroPriceServiceItems === true}
+            disabled={postingSaving}
+            onChange={e => togglePostingMode({ allowZeroPriceServiceItems: e.target.checked })}
+          />
+          <span className="space-y-1">
+            <span className="block text-sm font-semibold">السماح بسعر صفر للصنف الخدمي</span>
+            <span className="block text-xs text-muted-foreground leading-relaxed">
+              عند التفعيل يمكن حفظ فواتير المبيعات ومرتجعاتها بسعر صفر للصنف الخدمي فقط. الإعداد مغلق افتراضيًا ولا يغيّر التحقق من أصناف المخزون أو الأصناف الأخرى.
+            </span>
+          </span>
+        </label>
+        <label
           data-testid="show-free-quantity-toggle"
           className={cn(
             "flex items-start gap-3 rounded-xl border p-4 cursor-pointer select-none transition-all",

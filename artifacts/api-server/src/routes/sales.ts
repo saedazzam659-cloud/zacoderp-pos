@@ -114,6 +114,65 @@ function restaurantOrderIdFromInvoiceRequestId(clientRequestId: string | null): 
   return Number.isSafeInteger(orderId) && orderId > 0 ? orderId : null;
 }
 
+async function enforceServiceZeroPriceSetting(
+  req: any,
+  res: any,
+  companyId: number,
+  lines: unknown,
+): Promise<boolean> {
+  // This setting is part of the web document workflow. Preserve the mobile
+  // channel's existing permission and price-validation behavior.
+  if (isMobileChannel(req) || !Array.isArray(lines)) return true;
+  const candidates = lines.filter((line: any) => {
+    const itemId = Number(line?.itemId);
+    if (!Number.isInteger(itemId) || itemId <= 0) return false;
+    const rawPrice = line?.unitPrice;
+    return rawPrice == null || String(rawPrice).trim() === "" || Number(rawPrice) <= 0;
+  });
+  if (!candidates.length) return true;
+  const candidateItemIds = [...new Set(candidates.map((line: any) => Number(line.itemId)))];
+  const serviceItems = await db.select({ id: itemsTable.id }).from(itemsTable).where(and(
+    eq(itemsTable.companyId, companyId),
+    eq(itemsTable.itemType, "service"),
+    inArray(itemsTable.id, candidateItemIds),
+  ));
+  if (!serviceItems.length) return true;
+
+  const serviceIds = new Set(serviceItems.map(item => item.id));
+  const invalidServiceLine = candidates.find((line: any) => {
+    if (!serviceIds.has(Number(line.itemId))) return false;
+    const rawPrice = line?.unitPrice;
+    if (rawPrice == null || String(rawPrice).trim() === "") return true;
+    const price = Number(rawPrice);
+    return !Number.isFinite(price) || price < 0;
+  });
+  if (invalidServiceLine) {
+    res.status(400).json({
+      error: "يجب إدخال سعر صالح للصنف الخدمي؛ يسمح بسعر صفر فقط عند تفعيل الإعداد.",
+      code: "INVALID_SERVICE_ITEM_PRICE",
+      itemId: Number(invalidServiceLine.itemId),
+    });
+    return false;
+  }
+
+  const hasZeroPriceService = candidates.some((line: any) =>
+    serviceIds.has(Number(line.itemId)) && Number(line.unitPrice) === 0);
+  if (!hasZeroPriceService) return true;
+  const [settings] = await db.select({
+    allowZeroPriceServiceItems: companiesTable.allowZeroPriceServiceItems,
+  }).from(companiesTable).where(eq(companiesTable.id, companyId));
+  if (settings?.allowZeroPriceServiceItems === true) return true;
+
+  res.status(400).json({
+    error: "لا يمكن حفظ صنف خدمي بسعر صفر. فعّل خيار السماح بسعر صفر للصنف الخدمي من الإعدادات العامة.",
+    code: "ZERO_PRICE_SERVICE_ITEM_DISABLED",
+    itemIds: [...new Set(candidates
+      .filter((line: any) => serviceIds.has(Number(line.itemId)) && Number(line.unitPrice) === 0)
+      .map((line: any) => Number(line.itemId)))],
+  });
+  return false;
+}
+
 async function assertRestaurantOrderInvoiceAllowed(
   executor: any,
   companyId: number,
@@ -3149,6 +3208,7 @@ router.post("/sales-invoices", async (req, res) => {
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             posSessionId, salesRepId, documentOfferId, sourceQuotationId, costCenter, taxId } = req.body;
+    if (!(await enforceServiceZeroPriceSetting(req, res, cid, lines))) return;
     const duplicateItemId = (Array.isArray(lines) ? lines : []).reduce((duplicate: number | null, line: any, index: number, rows: any[]) => {
       if (duplicate !== null || line?.itemId == null || line.itemId === "") return duplicate;
       const itemId = Number(line.itemId);
@@ -3748,6 +3808,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, allowNegativeStock, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
             documentOfferId, costCenter, taxId } = req.body;
+    if (!(await enforceServiceZeroPriceSetting(req, res, cid, lines))) return;
     const duplicateItemId = (Array.isArray(lines) ? lines : []).reduce((duplicate: number | null, line: any, index: number, rows: any[]) => {
       if (duplicate !== null || line?.itemId == null || line.itemId === "") return duplicate;
       const itemId = Number(line.itemId);
@@ -5941,6 +6002,7 @@ router.post("/sales-returns", async (req, res) => {
     const { docNumber, returnDate, customerId, manualPrintPartyName, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId, taxId } = req.body;
+    if (!(await enforceServiceZeroPriceSetting(req, res, cid, lines))) return;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
     // Item Usage Control (Phase ب): block a save containing restricted items.
@@ -6240,6 +6302,7 @@ router.put("/sales-returns/:id", async (req, res) => {
     const { returnDate, customerId, manualPrintPartyName, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId, taxId } = req.body;
+    if (!(await enforceServiceZeroPriceSetting(req, res, cid, lines))) return;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
     let resolvedCustomerId: number | null = customerId ? Number(customerId) : null;
@@ -7319,7 +7382,7 @@ function mapQuotationLine(l: any, quotationId: number, cid: number, fallbackRate
 router.post("/sales-quotations", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
+    const { docNumber, quotationDate, validUntil, customerId, manualPrintPartyName, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId, branchId } = req.body;
     if (!quotationDate) { res.status(400).json({ error: "تاريخ العرض مطلوب" }); return; }
     // Item Usage Control (Phase ب): block a save containing restricted items.
@@ -7343,6 +7406,9 @@ router.post("/sales-quotations", async (req, res) => {
       branchId: branchId ? Number(branchId) : null,
       validUntil: validUntil || null,
       customerId: customerId ? Number(customerId) : null,
+      manualPrintPartyName: !customerId && typeof manualPrintPartyName === "string"
+        ? manualPrintPartyName.trim().slice(0, 200) || null
+        : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       subtotal: totals.subtotal, vatAmount: totals.vatAmount,
@@ -7366,7 +7432,7 @@ router.put("/sales-quotations/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     if (!(await requireMobilePerm(req, res, cid, "quotation_edit", "ليست لديك صلاحية تعديل عروض الأسعار من تطبيق الموبايل"))) return;
     const id = Number(req.params.id);
-    const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
+    const { docNumber, quotationDate, validUntil, customerId, manualPrintPartyName, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines, taxId, branchId } = req.body;
     // Branch presence required on edit too (quotations are branch-owned).
     if (!branchId) { res.status(400).json({ error: "يجب اختيار الفرع" }); return; }
@@ -7395,6 +7461,9 @@ router.put("/sales-quotations/:id", async (req, res) => {
       branchId: branchId ? Number(branchId) : null,
       validUntil: validUntil || null,
       customerId: customerId ? Number(customerId) : null,
+      manualPrintPartyName: !customerId && typeof manualPrintPartyName === "string"
+        ? manualPrintPartyName.trim().slice(0, 200) || null
+        : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       subtotal: totals.subtotal, vatAmount: totals.vatAmount,

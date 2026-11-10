@@ -678,6 +678,41 @@ export default function PurchaseOrderForm() {
     setQaItemId(""); setQaQty("1"); setQaFreeQty("0"); setQaPrice(""); setQaDiscount("0");
   }
 
+  async function handleMultiItemAdd(
+    itemIds: string[],
+    targetLineId?: string,
+    selectedOptions?: Array<{ value: string; rawItem?: any }>,
+  ) {
+    const selectedItems = itemIds
+      .map(itemId =>
+        selectedOptions?.find(option => option.value === itemId)?.rawItem
+        ?? inventoryItems.find((item: any) => String(item.id) === itemId))
+      .filter((item: any) => Boolean(item));
+    if (!selectedItems.length) return;
+
+    const targetLine = targetLineId ? lines.find(line => line._id === targetLineId) : undefined;
+    const canReuseTarget = Boolean(targetLine && !targetLine.itemId && !targetLine.itemName && !targetLine.itemCode);
+    const additions = selectedItems.map((item: any, index: number) => {
+      const line = index === 0 && canReuseTarget ? { ...targetLine! } : newLine();
+      const rate = percentRateOf(headerTaxId);
+      if (rate !== null) line.vatRate = String(rate);
+      line.warehouseId = targetLine?.warehouseId || qaWarehouseId || headerWarehouseId || "";
+      return { line, item };
+    });
+    setLines(previous => {
+      if (!canReuseTarget || !targetLine || !previous.some(line => line._id === targetLine._id)) {
+        return [...previous, ...additions.map(({ line }) => line)];
+      }
+      return [
+        ...previous.map(line => line._id === targetLine._id ? additions[0].line : line),
+        ...additions.slice(1).map(({ line }) => line),
+      ];
+    });
+    await Promise.all(additions.map(({ line, item }) => selectItem(line._id, String(item.id), item)));
+    setFocusLineId(additions[additions.length - 1].line._id);
+    if (!targetLineId) setQaItemId("");
+  }
+
   const subtotal       = lines.reduce((s, l) => { const { subtotal } = calcLine(l, priceIncludesVat); return s + subtotal; }, 0);
   const vatAmount      = lines.reduce((s, l) => { const { lineTotal, subtotal } = calcLine(l, priceIncludesVat); return s + (lineTotal - subtotal); }, 0);
   const lineDiscountTotal = lines.reduce((s, l) => {
@@ -801,6 +836,7 @@ export default function PurchaseOrderForm() {
       value: String(i.id),
       code: i.code ?? undefined,
       label: itemNameOf(i),
+      rawItem: i,
     })),
   ], usageModes);
   // 11-column lines grid — same column widths as the invoice form, minus the
@@ -971,6 +1007,9 @@ export default function PurchaseOrderForm() {
           <SearchCombobox
             items={itemComboItems}
             value={qaItemId}
+            onAddSelected={(itemIds, selectedOptions) => handleMultiItemAdd(itemIds, undefined, selectedOptions)}
+            onItemDoubleClick={item => handleMultiItemAdd([item.value], undefined, [item])}
+            closeOnDoubleClick
             onValueChange={setQaItemId}
             onSearchChange={setItemSearch}
             loading={isSearchingItems}
@@ -1372,6 +1411,12 @@ export default function PurchaseOrderForm() {
                         <SearchCombobox
                           items={itemComboItems}
                           value={l.itemId}
+                          onAddSelected={(itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions)}
+                          closeOnDoubleClick
+                          onItemDoubleClick={item => {
+                            void selectItem(l._id, item.value, item.rawItem);
+                            setFocusLineId(l._id);
+                          }}
                           onValueChange={v => selectItem(l._id, v)}
                           onSearchChange={setItemSearch}
                           loading={isSearchingItems}

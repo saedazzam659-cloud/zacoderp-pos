@@ -452,7 +452,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     logo, logoBase64, logoMime,
     brandLogo, brandLogoBase64, brandLogoMime,
     decimalPlaces, showZeros, hideQuickAddBar, inputHintColorsEnabled, inputHintColor, showFreeQuantity, showSalesBranchStock, allowNegativeSales, negativeStockCostEnforced, deferNegativeStockCostToPurchases, enforceSalesPriceFloor, purchaseBatchExpiryEnabled, autoPostingEnabled,
-    salesBarcodeEntryEnabled, allowDuplicateInvoiceItems, purchaseDirectExpensesCustodyEnabled, purchaseVatInInventoryCost,
+    salesBarcodeEntryEnabled, allowDuplicateInvoiceItems, allowZeroPriceServiceItems, purchaseDirectExpensesCustodyEnabled, purchaseVatInInventoryCost,
     customerSupplierOffsetEnabled,
     documentFieldControlsEnabled,
     allowHistoricalUnitChanges,
@@ -517,7 +517,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     logo?: string; logoBase64?: string | null; logoMime?: string;
     brandLogo?: string | null; brandLogoBase64?: string | null; brandLogoMime?: string;
     decimalPlaces?: number; showZeros?: boolean; hideQuickAddBar?: boolean; inputHintColorsEnabled?: boolean; inputHintColor?: string; showFreeQuantity?: boolean; showSalesBranchStock?: boolean; allowNegativeSales?: boolean; negativeStockCostEnforced?: boolean; deferNegativeStockCostToPurchases?: boolean; enforceSalesPriceFloor?: boolean; purchaseBatchExpiryEnabled?: boolean; autoPostingEnabled?: boolean;
-    salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean; purchaseDirectExpensesCustodyEnabled?: boolean; purchaseVatInInventoryCost?: boolean;
+    salesBarcodeEntryEnabled?: boolean; allowDuplicateInvoiceItems?: boolean; allowZeroPriceServiceItems?: boolean; purchaseDirectExpensesCustodyEnabled?: boolean; purchaseVatInInventoryCost?: boolean;
     customerSupplierOffsetEnabled?: boolean;
     documentFieldControlsEnabled?: boolean;
     allowHistoricalUnitChanges?: boolean;
@@ -669,6 +669,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
   for (const [key, value] of [
     ["salesBarcodeEntryEnabled", salesBarcodeEntryEnabled],
     ["allowDuplicateInvoiceItems", allowDuplicateInvoiceItems],
+    ["allowZeroPriceServiceItems", allowZeroPriceServiceItems],
     ["purchaseDirectExpensesCustodyEnabled", purchaseDirectExpensesCustodyEnabled],
     ["purchaseVatInInventoryCost", purchaseVatInInventoryCost],
     ["customerSupplierOffsetEnabled", customerSupplierOffsetEnabled],

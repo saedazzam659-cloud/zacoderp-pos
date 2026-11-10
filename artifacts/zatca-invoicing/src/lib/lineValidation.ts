@@ -39,7 +39,7 @@ export interface LineValidationResult {
 
 export function validateInvoiceLines(
   lines: InvoiceLineLike[],
-  options: { requireRealItem?: boolean } = {},
+  options: { requireRealItem?: boolean; allowZeroPriceItemIds?: Set<number> } = {},
 ): LineValidationResult {
   const nonEmpty = lines.filter(l => !isEmptyLine(l));
   if (nonEmpty.length === 0) {
@@ -72,7 +72,11 @@ export function validateInvoiceLines(
     if (!Number.isFinite(q) || q <= 0) missing.push("الكمية");
     const priceRaw = l.unitPrice;
     const p = Number(priceRaw);
-    if (priceRaw === "" || priceRaw == null || !Number.isFinite(p) || p <= 0) missing.push("سعر البيع");
+    const allowedZeroPrice = priceRaw !== "" && priceRaw != null && Number.isFinite(p) && p === 0
+      && options.allowZeroPriceItemIds?.has(Number(l.itemId)) === true;
+    if (!allowedZeroPrice && (priceRaw === "" || priceRaw == null || !Number.isFinite(p) || p <= 0)) {
+      missing.push("سعر البيع");
+    }
     if (missing.length) errors.push(`السطر ${i + 1}: ${missing.join("، ")}`);
   }
   if (errors.length) {

@@ -244,6 +244,7 @@ export const salesQuotationsTable = pgTable("sales_quotations", {
   quotationDate:  text("quotation_date").notNull(),
   validUntil:     text("valid_until"),
   customerId:     integer("customer_id").references(() => customersTable.id),
+  manualPrintPartyName: text("manual_print_party_name"),
   currencyCode:   text("currency_code").notNull().default("SAR"),
   exchangeRate:   numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),
   subtotal:       numeric("subtotal",        { precision: 15, scale: 2 }).notNull().default("0"),

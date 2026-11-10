@@ -640,8 +640,8 @@ export default function GoodsDeliveries() {
     }));
   }
 
-  async function selectItem(lineId: string, itemId: string) {
-    const item = inventoryItems.find((i: any) => String(i.id) === itemId);
+  async function selectItem(lineId: string, itemId: string, createdItem?: any) {
+    const item = createdItem ?? inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) return;
     const itemUnits = await fetchItemUnits(itemId);
     const baseUnitId = defaultDocumentUnitId(itemUnits, item.unitId);
@@ -670,6 +670,40 @@ export default function GoodsDeliveries() {
       };
       return { ...updated, lineTotal: calcLineTotal(updated, !!form.priceIncludesVat).toFixed(2) };
     }));
+  }
+
+  async function handleMultiItemAdd(
+    itemIds: string[],
+    targetLineId?: string,
+    selectedOptions?: Array<{ value: string; rawItem?: any }>,
+  ) {
+    const selectedItems = itemIds
+      .map(itemId =>
+        selectedOptions?.find(option => option.value === itemId)?.rawItem
+        ?? inventoryItems.find((item: any) => String(item.id) === itemId))
+      .filter((item: any) => Boolean(item));
+    if (!selectedItems.length) return;
+
+    const targetLine = targetLineId ? lines.find(line => line._id === targetLineId) : undefined;
+    const canReuseTarget = Boolean(targetLine && !targetLine.itemId && !targetLine.itemName && !targetLine.itemCode);
+    const additions = selectedItems.map((item: any, index: number) => {
+      const line = index === 0 && canReuseTarget ? { ...targetLine! } : newLine();
+      const rate = percentRateOf(headerTaxId);
+      if (rate !== null) line.vatRate = String(rate);
+      line.warehouseId = targetLine?.warehouseId || "";
+      return { line, item };
+    });
+    setLines(previous => {
+      if (!canReuseTarget || !targetLine || !previous.some(line => line._id === targetLine._id)) {
+        return [...previous, ...additions.map(({ line }) => line)];
+      }
+      return [
+        ...previous.map(line => line._id === targetLine._id ? additions[0].line : line),
+        ...additions.slice(1).map(({ line }) => line),
+      ];
+    });
+    await Promise.all(additions.map(({ line, item }) => selectItem(line._id, String(item.id), item)));
+    setFocusLineId(additions[additions.length - 1].line._id);
   }
 
   const priceIncludesVat = !!form.priceIncludesVat;
@@ -712,6 +746,7 @@ export default function GoodsDeliveries() {
       value: String(i.id),
       code: i.code ?? undefined,
       label: itemName(i),
+      rawItem: i,
     })),
   ], usageModes);
   const custMap = Object.fromEntries(customers.map((s: any) => [s.id, custName(s)]));
@@ -1392,6 +1427,12 @@ ${sections}
                           onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                         {user ? (
                           <SearchCombobox items={itemComboItems} value={l.itemId}
+                            onAddSelected={(itemIds, selectedOptions) => handleMultiItemAdd(itemIds, l._id, selectedOptions)}
+                            closeOnDoubleClick
+                            onItemDoubleClick={item => {
+                              void selectItem(l._id, item.value, item.rawItem);
+                              setFocusLineId(l._id);
+                            }}
                             onValueChange={v => selectItem(l._id, v)}
                             onSearchChange={setItemSearch}
                             loading={isSearchingItems}

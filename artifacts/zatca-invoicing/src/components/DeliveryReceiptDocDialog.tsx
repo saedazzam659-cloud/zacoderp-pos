@@ -260,6 +260,27 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
   function updateLine(i: number, patch: Partial<LineRow>) {
     setLines(ls => ls.map((l, idx) => idx === i ? { ...l, ...patch } : l));
   }
+  function addSelectedItems(
+    itemIds: string[],
+    selectedOptions?: Array<{ value: string; rawItem?: any }>,
+  ) {
+    const selectedItems = itemIds
+      .map(itemId =>
+        selectedOptions?.find(option => option.value === itemId)?.rawItem
+        ?? inventoryItems.find((item: any) => String(item.id) === itemId))
+      .filter((item: any) => Boolean(item));
+    if (!selectedItems.length) return;
+    setLines(previous => [
+      ...previous,
+      ...selectedItems.map((item: any) => ({
+        itemId: Number(item.id),
+        itemName: displayText(item.nameAr) || displayText(item.name) || displayText(item.nameEn) || `#${item.id}`,
+        unit: displayText(item.unitName) || displayText(item.unit) || displayText(item.baseUnitName) || null,
+        orderedQty: 0,
+        actualQty: 0,
+      })),
+    ]);
+  }
 
   async function onSignatureImage(file: File) {
     const reader = new FileReader();
@@ -598,6 +619,9 @@ export default function DeliveryReceiptDocDialog({ open, onOpenChange, kind, edi
                     <tr key={i} className="border-t">
                       <td className="p-1 min-w-[220px]"><SearchCombobox items={itemOptions}
                         value={l.itemId == null ? "" : String(l.itemId)}
+                        onAddSelected={(itemIds, selectedOptions) => addSelectedItems(itemIds, selectedOptions)}
+                        onItemDoubleClick={item => addSelectedItems([item.value], [item])}
+                        closeOnDoubleClick
                         onValueChange={value => {
                           const item = inventoryItems.find((row: any) => String(row.id) === value);
                           updateLine(i, {
