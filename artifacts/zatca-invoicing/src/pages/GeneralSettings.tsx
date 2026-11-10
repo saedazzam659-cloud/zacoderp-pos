@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { SharedPartyIdentityTab } from "./SharedPartyIdentityTab";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
   Tabs,
@@ -23,7 +24,7 @@ import {
   Users as UsersIcon, Percent, Calculator,
   Wand2, PanelTop, PanelRight, Scale,
   Archive, Cloud, HardDrive, Ban,
-  LayoutTemplate, LayoutGrid, LayoutList,
+  LayoutTemplate, LayoutGrid, LayoutList, SlidersHorizontal,
   Mail, Send, ShieldAlert, MessageCircle, XCircle
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -5348,6 +5349,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   const [quotationShowCurrencyName, setQuotationShowCurrencyName] = useState<boolean>(company.printQuotationShowCurrencyName !== false);
   const [quotationShowCustomerAddress, setQuotationShowCustomerAddress] = useState<boolean>(company.printQuotationShowCustomerAddress !== false);
   const [bankAccountText, setBankAccountText] = useState<string>(company.bankAccountText ?? "");
+  const [fieldSettingsTemplate, setFieldSettingsTemplate] = useState<{ id: number; name: string } | null>(null);
   const bankAccountTextDirtyRef = useRef(false);
   const bankAccountTextValueRef = useRef(bankAccountText);
   const bankAccountTextCompanyIdRef = useRef(cid);
@@ -5747,7 +5749,13 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
                 )}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleTemplate(tpl.id); } }}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleTemplate(tpl.id);
+                  }
+                }}
               >
                 {/* Color stripe */}
                 <div
@@ -5803,6 +5811,22 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
                     className="w-full h-7 text-[11px]"
                   >
                     {isDefault ? "النموذج الافتراضي ✓" : "اجعله الافتراضي"}
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full h-7 text-[11px] gap-1"
+                    data-testid={`configure-template-fields-settings-${tpl.id}`}
+                    aria-label={`إعداد حقول الطباعة للنموذج ${tpl.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFieldSettingsTemplate({ id: tpl.id, name: tpl.name });
+                    }}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    إعداد الحقول
                   </Button>
 
                   <div className="pt-1 border-t border-dashed" onClick={(e) => e.stopPropagation()}>
@@ -5909,6 +5933,30 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             );
           })}
         </div>
+
+        <Dialog
+          open={!!fieldSettingsTemplate}
+          onOpenChange={(open) => {
+            if (!open) setFieldSettingsTemplate(null);
+          }}
+        >
+          <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto" dir="rtl">
+            <DialogHeader>
+              <DialogTitle>
+                إعداد حقول الطباعة · {fieldSettingsTemplate?.name}
+              </DialogTitle>
+            </DialogHeader>
+            {fieldSettingsTemplate && (
+              <PrintFieldVisibilityTab
+                key={`builtin:${fieldSettingsTemplate.id}`}
+                user={user}
+                token={token ?? ""}
+                setUser={setUser}
+                templateKey={`builtin:${fieldSettingsTemplate.id}`}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
 
         {enabledIds.size <= 1 && (
           <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
