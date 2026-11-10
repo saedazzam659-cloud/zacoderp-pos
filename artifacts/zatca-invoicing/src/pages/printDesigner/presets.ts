@@ -195,6 +195,15 @@ const V_SALES_INVOICE: InvoiceVariant = {
   docNumberKey: "invoice.number", docNumberLabel: "رقم الفاتورة",
   docDateKey:   "invoice.date",   docDateLabel:   "تاريخ الفاتورة",
 };
+const V_SALES_QUOTATION: InvoiceVariant = {
+  title: "عرض سعر",
+  partyHeading: "بيانات العميل",
+  partyNameKey: "customer.name", partyNameLabel: "اسم العميل",
+  partyVatKey: "customer.vat", partyVatLabel: "الرقم الضريبي للعميل",
+  partyAddressKey: "customer.address", partyAddressLabel: "عنوان العميل",
+  docNumberKey: "quotation.number", docNumberLabel: "رقم عرض السعر",
+  docDateKey: "quotation.date", docDateLabel: "تاريخ العرض",
+};
 const V_PURCHASE_INVOICE: InvoiceVariant = {
   title: "فاتورة مشتريات",
   partyHeading: "بيانات المورد",
@@ -288,6 +297,106 @@ function classicInvoiceLike(v: InvoiceVariant, accent = "#1e3a8a"): Layout {
       txt({ text: "تم إصدار هذا المستند إلكترونياً",
         x: 20, y: 790, width: W - 40, height: 24, fontSize: 11, textAlign: "center", color: "#94a3b8" }),
     ], W, H, SAFE),
+  };
+}
+
+export function createQuotationBaseLayout(baseTemplateId: number, accent: string, thermal = false): Layout {
+  if (thermal) {
+    const W = 80 * MM;
+    const H = 200 * MM;
+    return {
+      pageBackground: "#ffffff",
+      margins: { top: 4, right: 4, bottom: 4, left: 4 },
+      baseTemplateId,
+      elements: fit([
+        field({ fieldKey: "company.name", text: "{اسم الشركة}", x: 12, y: 12, width: W - 24, height: 28, fontSize: 17, fontWeight: "700", textAlign: "center", color: accent }),
+        field({ fieldKey: "company.vat", text: "الرقم الضريبي: {الرقم الضريبي}", x: 12, y: 42, width: W - 24, height: 18, fontSize: 9, textAlign: "center" }),
+        field({ fieldKey: "company.phone", text: "هاتف: {هاتف الشركة}", x: 12, y: 60, width: W - 24, height: 18, fontSize: 9, textAlign: "center" }),
+        line({ x: 10, y: 84, width: W - 20, height: 1, background: accent }),
+        txt({ text: "عرض سعر", x: 10, y: 91, width: W - 20, height: 25, fontSize: 16, fontWeight: "700", textAlign: "center", color: accent }),
+        field({ fieldKey: "quotation.number", text: "رقم العرض: {رقم عرض السعر}", x: 12, y: 120, width: W - 24, height: 18, fontSize: 9 }),
+        field({ fieldKey: "quotation.date", text: "التاريخ: {تاريخ العرض}", x: 12, y: 140, width: W - 24, height: 18, fontSize: 9 }),
+        field({ fieldKey: "quotation.validUntil", text: "صالح حتى: {صالح حتى}", x: 12, y: 160, width: W - 24, height: 18, fontSize: 9 }),
+        field({ fieldKey: "customer.name", text: "العميل: {اسم العميل}", x: 12, y: 180, width: W - 24, height: 20, fontSize: 10, fontWeight: "600" }),
+        table([
+          { key: "name", label: "الصنف", width: 122, align: "start" },
+          { key: "qty", label: "كمية", width: 38, align: "center" },
+          { key: "price", label: "السعر", width: 54, align: "end" },
+          { key: "total", label: "الإجمالي", width: 68, align: "end" },
+        ], { x: 10, y: 210, width: W - 20, height: 255 }, { headerBg: accent, headerColor: "#ffffff", altRowBg: "#f3f4f6" }),
+        field({ fieldKey: "totals.subtotal", text: "قبل الخصم: {المجموع قبل الخصم}", x: 12, y: 480, width: W - 24, height: 18, fontSize: 9 }),
+        field({ fieldKey: "totals.vat", text: "الضريبة: {الضريبة}", x: 12, y: 500, width: W - 24, height: 18, fontSize: 9 }),
+        field({ fieldKey: "totals.grand", text: "الإجمالي: {الإجمالي}", x: 12, y: 522, width: W - 24, height: 23, fontSize: 12, fontWeight: "700", color: accent }),
+        field({ fieldKey: "notes", text: "ملاحظات: {ملاحظات}", x: 12, y: 552, width: W - 24, height: 45, fontSize: 9 }),
+        field({ fieldKey: "qr.zatca", text: "{رمز QR}", x: (W - 66) / 2, y: 602, width: 66, height: 66, fontSize: 8, textAlign: "center" }),
+      ], W, H, 8),
+    };
+  }
+
+  const modern = [2, 4, 10, 11].includes(baseTemplateId);
+  const minimal = baseTemplateId === 8;
+  const base = modern ? modernSalesInvoice() : minimal
+    ? minimalSalesInvoice()
+    : classicInvoiceLike(V_SALES_QUOTATION, accent);
+  const modernPalette: Record<string, string> = {
+    "#10b981": accent,
+    "#064e3b": accent,
+    "#047857": accent,
+    "#ecfdf5": "#f1f5f9",
+    "#d1fae5": "#dbeafe",
+  };
+  const elements = base.elements.map(element => {
+    const next: Element = { ...element };
+    if (modern) {
+      next.color = modernPalette[next.color ?? ""] ?? next.color;
+      next.background = modernPalette[next.background ?? ""] ?? next.background;
+      next.borderColor = modernPalette[next.borderColor ?? ""] ?? next.borderColor;
+      if (next.tableSpec) {
+        next.tableSpec = {
+          ...next.tableSpec,
+          headerBg: modernPalette[next.tableSpec.headerBg ?? ""] ?? next.tableSpec.headerBg,
+          altRowBg: modernPalette[next.tableSpec.altRowBg ?? ""] ?? next.tableSpec.altRowBg,
+          borderColor: modernPalette[next.tableSpec.borderColor ?? ""] ?? next.tableSpec.borderColor,
+        };
+      }
+    }
+    if (next.fieldKey === "invoice.number") next.fieldKey = "quotation.number";
+    if (next.fieldKey === "invoice.date") next.fieldKey = "quotation.date";
+    if (next.text) {
+      next.text = next.text
+        .replace(/رقم الفاتورة/g, "رقم عرض السعر")
+        .replace(/تاريخ الفاتورة/g, "تاريخ العرض")
+        .replace(/INVOICE/g, "QUOTATION")
+        .replace(/فاتورة/g, "عرض سعر");
+    }
+    return next;
+  });
+
+  const validUntil = field({
+    fieldKey: "quotation.validUntil",
+    text: "صالح حتى: {صالح حتى}",
+    x: modern ? 553 : 50 + (210 * MM - 60) / 2,
+    y: modern ? 240 : minimal ? 226 : 264,
+    width: modern ? 200 : (210 * MM - 80) / 2,
+    height: 22,
+    fontSize: 12,
+    color: accent,
+    fontWeight: "600",
+  });
+  const notes = field({
+    fieldKey: "notes",
+    text: "ملاحظات: {ملاحظات}",
+    x: minimal ? 160 : 30,
+    y: minimal ? 570 : modern ? 755 : 735,
+    width: minimal ? 410 : 520,
+    height: 34,
+    fontSize: 11,
+    color: "#475569",
+  });
+  return {
+    ...base,
+    baseTemplateId,
+    elements: [...elements, validUntil, notes],
   };
 }
 
@@ -644,6 +753,18 @@ export const PRESETS_BY_DOC: Record<string, PresetDescriptor[]> = {
     { key: "modern",  name: "حديث أخضر",    description: "شريط علوي بارز، جدول ملوّن، صندوق إجمالي مميز", paperSize: "A4", widthMm: 210, heightMm: 297, build: modernSalesInvoice,  accent: "from-emerald-500 to-teal-600" },
     { key: "minimal", name: "بسيط أنيق",   description: "تصميم نظيف بخطوط رفيعة بدون ألوان داعمة",      paperSize: "A4", widthMm: 210, heightMm: 297, build: minimalSalesInvoice, accent: "from-slate-500 to-slate-700" },
     { key: "thermal", name: "إيصال 80mm",  description: "للطابعات الحرارية، صفحة ضيقة وخط أكبر",       paperSize: "80mm", widthMm: 80, heightMm: 200, build: thermalSalesInvoice, accent: "from-gray-700 to-black" },
+  ],
+  sales_quotation: [
+    {
+      key: "quotation-copy",
+      name: "عرض سعر قابل للتخصيص",
+      description: "ابدأ من نموذج عرض سعر جاهز، ثم أضف الحقول والأعمدة التي تحتاجها.",
+      paperSize: "A4",
+      widthMm: 210,
+      heightMm: 297,
+      build: () => createQuotationBaseLayout(1, "#2563eb"),
+      accent: "from-blue-500 to-indigo-600",
+    },
   ],
   purchase_invoice: [
     { key: "classic", name: "كلاسيكي A4", description: "بيانات المورد + جدول مشتريات مبسّط", paperSize: "A4", widthMm: 210, heightMm: 297, build: () => classicInvoiceLike(V_PURCHASE_INVOICE, "#0e7490"), accent: "from-cyan-500 to-blue-600" },

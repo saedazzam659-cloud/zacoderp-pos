@@ -32,7 +32,7 @@ const documentTypeSchema = z.enum(DOCUMENT_TYPES);
 
 const elementSchema = z.object({
   id:       z.string(),
-  type:     z.enum(["text", "image", "rect", "line", "table", "field"]),
+  type:     z.enum(["text", "image", "rect", "line", "table", "field", "container"]),
   x:        z.number(),
   y:        z.number(),
   width:    z.number(),

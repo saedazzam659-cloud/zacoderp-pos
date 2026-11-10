@@ -1,8 +1,6 @@
 // Visual WYSIWYG designer for print templates across the system.
-// Phase 1: Free drag/resize/style of text, images, tables, fields,
-// rectangles, and lines on an A4 canvas. Layout is stored as JSON per
-// (company, documentType) and rendered later by each document's print
-// modal in subsequent phases.
+// Free drag/resize/style of text, images, tables, fields, rectangles, and
+// lines. Saved layouts are rendered by the matching document print modal.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Rnd } from "react-rnd";
@@ -15,12 +13,17 @@ import {
   LayoutTemplate, X, CheckCircle2, Maximize2, PanelLeftOpen, PanelRightOpen,
   Box, MousePointer2, Undo2, Redo2,
 } from "lucide-react";
-import { PRESETS_BY_DOC, type PresetDescriptor } from "./printDesigner/presets";
+import { createQuotationBaseLayout, PRESETS_BY_DOC, type PresetDescriptor } from "./printDesigner/presets";
+import {
+  getDefaultQuotationBaseTemplateId,
+  getEnabledSalesPrintTemplates,
+} from "@/lib/salesPrintTemplateCatalog";
+import { renderQuotationCustomLayoutHtml } from "@/lib/quotationCustomPrint";
 
 // ───────────────────────────── Types ─────────────────────────────
 
 type DocumentType =
-  | "sales_invoice" | "purchase_invoice" | "sales_return" | "purchase_return"
+  | "sales_invoice" | "sales_quotation" | "purchase_invoice" | "sales_return" | "purchase_return"
   | "receipt_voucher" | "payment_voucher" | "bank_receipt" | "treasury_receipt"
   | "account_statement" | "journal_entry";
 
@@ -66,6 +69,7 @@ interface Layout {
   elements: Element[];
   pageBackground?: string;
   margins?: { top: number; right: number; bottom: number; left: number };
+  baseTemplateId?: number;
 }
 
 interface Template {
@@ -86,6 +90,7 @@ interface Template {
 
 const DOC_TYPES: { value: DocumentType; label: string }[] = [
   { value: "sales_invoice",     label: "فاتورة مبيعات" },
+  { value: "sales_quotation",   label: "عرض سعر" },
   { value: "purchase_invoice",  label: "فاتورة مشتريات" },
   { value: "sales_return",      label: "مرتجع مبيعات" },
   { value: "purchase_return",   label: "مرتجع مشتريات" },
@@ -118,6 +123,26 @@ const FIELDS_BY_DOC: Record<DocumentType, { key: string; label: string }[]> = {
     { key: "totals.grandWords", label: "الإجمالي كتابة" },
     { key: "qr.zatca",          label: "QR زاتكا" },
     { key: "notes",             label: "ملاحظات" },
+  ],
+  sales_quotation: [
+    { key: "company.name",         label: "اسم الشركة" },
+    { key: "company.vat",          label: "الرقم الضريبي" },
+    { key: "company.address",      label: "عنوان الشركة" },
+    { key: "company.phone",        label: "هاتف الشركة" },
+    { key: "quotation.number",    label: "رقم عرض السعر" },
+    { key: "quotation.date",      label: "تاريخ العرض" },
+    { key: "quotation.validUntil", label: "صالح حتى" },
+    { key: "customer.name",       label: "اسم العميل" },
+    { key: "customer.vat",        label: "الرقم الضريبي للعميل" },
+    { key: "customer.address",    label: "عنوان العميل" },
+    { key: "totals.subtotal",     label: "المجموع قبل الخصم" },
+    { key: "totals.discount",     label: "الخصم" },
+    { key: "totals.vat",          label: "الضريبة" },
+    { key: "totals.grand",        label: "الإجمالي" },
+    { key: "totals.grandWords",   label: "الإجمالي كتابة" },
+    { key: "items.count",         label: "عدد الأصناف" },
+    { key: "qr.zatca",            label: "رمز QR" },
+    { key: "notes",               label: "ملاحظات" },
   ],
   purchase_invoice: [
     { key: "company.name", label: "اسم الشركة" },
@@ -200,6 +225,15 @@ const DEFAULT_TABLE_COLS: Record<DocumentType, TableColumn[]> = {
     { key: "vat",      label: "الضريبة",  width: 60,  align: "end"    },
     { key: "total",    label: "الإجمالي", width: 80,  align: "end"    },
   ],
+  sales_quotation: [
+    { key: "no",       label: "م",        width: 30,  align: "center" },
+    { key: "name",     label: "الصنف",    width: 190, align: "start" },
+    { key: "qty",      label: "الكمية",   width: 55,  align: "center" },
+    { key: "price",    label: "السعر",    width: 70,  align: "end" },
+    { key: "discount", label: "الخصم",    width: 55,  align: "end" },
+    { key: "vat",      label: "الضريبة",  width: 55,  align: "end" },
+    { key: "total",    label: "الإجمالي", width: 75,  align: "end" },
+  ],
   purchase_invoice: [
     { key: "no",    label: "م",        width: 30,  align: "center" },
     { key: "name",  label: "الصنف",     width: 200, align: "start"  },
@@ -281,6 +315,63 @@ function emptyLayout(): Layout {
   return { elements: [], pageBackground: "#ffffff", margins: { top: 10, right: 10, bottom: 10, left: 10 } };
 }
 
+const DESIGNER_SAMPLE_FIELDS: Record<string, string> = {
+  "company.name": "شركة الأفق للتقنية",
+  "company.vat": "300123456700003",
+  "company.address": "الرياض، المملكة العربية السعودية",
+  "company.phone": "011 234 5678",
+  "invoice.number": "SI-2026-0042",
+  "invoice.date": "10/11/2026",
+  "quotation.number": "SQ-2026-0018",
+  "quotation.date": "10/11/2026",
+  "quotation.validUntil": "25/11/2026",
+  "return.number": "SR-2026-0005",
+  "return.date": "10/11/2026",
+  "customer.name": "مؤسسة النور التجارية",
+  "customer.vat": "310123456700003",
+  "customer.address": "جدة، حي الروضة",
+  "supplier.name": "شركة الإمداد",
+  "supplier.vat": "310987654300003",
+  "totals.subtotal": "1,000.00 ر.س",
+  "totals.discount": "50.00 ر.س",
+  "totals.vat": "142.50 ر.س",
+  "totals.grand": "1,092.50 ر.س",
+  "totals.grandWords": "ألف واثنان وتسعون ريالاً وخمسون هللة",
+  "items.count": "3 أصناف",
+  "notes": "يسري العرض حسب الشروط الموضحة، والأسعار بالريال السعودي.",
+  "qr.zatca": "رمز QR",
+};
+
+function sampleFieldText(el: Element): string {
+  const value = DESIGNER_SAMPLE_FIELDS[el.fieldKey ?? ""] ?? "قيمة تجريبية";
+  const text = el.text ?? "";
+  return /\{[^{}]*\}/.test(text) ? text.replace(/\{[^{}]*\}/g, value) : value;
+}
+
+function sampleTableCell(key: string, row: number): string {
+  const values: Record<string, string[]> = {
+    no: [String(row + 1)],
+    name: ["خدمة استشارية", "دعم فني سنوي", "تدريب المستخدمين"],
+    qty: ["2", "1", "3"],
+    unit: ["ساعة", "اشتراك", "جلسة"],
+    price: ["250.00", "600.00", "150.00"],
+    discount: ["25.00", "0.00", "22.50"],
+    vat: ["71.25", "90.00", "57.38"],
+    total: ["546.25", "690.00", "544.88"],
+    debit: ["1,000.00", "—", "1,000.00"],
+    credit: ["—", "250.00", "—"],
+    balance: ["1,000.00", "750.00", "750.00"],
+    description: ["خدمة تجريبية", "بند إضافي", "—"],
+  };
+  return values[key]?.[row] ?? "—";
+}
+
+const DESIGNER_SAMPLE_QUOTATION_ROWS = [
+  { no: "1", name: "خدمة استشارية", qty: "2", unit: "ساعة", price: "250.00", discount: "25.00", vat: "71.25", total: "546.25" },
+  { no: "2", name: "دعم فني سنوي", qty: "1", unit: "اشتراك", price: "600.00", discount: "0.00", vat: "90.00", total: "690.00" },
+  { no: "3", name: "تدريب المستخدمين", qty: "3", unit: "جلسة", price: "150.00", discount: "22.50", vat: "57.38", total: "544.88" },
+];
+
 // ───────────────────────────── Page ──────────────────────────────
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -288,10 +379,17 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 export default function PrintDesigner() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { token } = useAuth();
+  const { token, user } = useAuth() as any;
+  const company = user?.company ?? {};
+  const quotationBaseTemplates = useMemo(
+    () => getEnabledSalesPrintTemplates(company),
+    [company.printEnabledTemplates],
+  );
+  const defaultQuotationBaseId = getDefaultQuotationBaseTemplateId(company, quotationBaseTemplates);
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   const [documentType, setDocumentType] = useState<DocumentType>("sales_invoice");
+  const [baseTemplateId, setBaseTemplateId] = useState<number>(defaultQuotationBaseId);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [layout, setLayout] = useState<Layout>(emptyLayout);
   const [paperSize, setPaperSize] = useState<string>("A4");
@@ -468,6 +566,9 @@ export default function PrintDesigner() {
     const t = templates.find(x => x.id === selectedTemplateId);
     if (!t) return;
     setLayout(t.layoutJson ?? emptyLayout());
+    if (Number.isInteger(Number(t.layoutJson?.baseTemplateId))) {
+      setBaseTemplateId(Number(t.layoutJson.baseTemplateId));
+    }
     setTemplateName(t.name);
     setPaperSize(t.paperSize);
     setWidthMm(t.widthMm);
@@ -476,6 +577,14 @@ export default function PrintDesigner() {
   }, [selectedTemplateId, templates]);
 
   // Mutations -------------------------------------------------------------
+  function invalidateQuotationPrintChoices() {
+    if (documentType === "sales_quotation" && company?.id != null) {
+      qc.invalidateQueries({
+        queryKey: ["print-designer", "templates", company.id, "sales_quotation"],
+      });
+    }
+  }
+
   const createMut = useMutation({
     mutationFn: async (body: any) => {
       const r = await fetch(`${API}/api/print-designer/templates`, {
@@ -486,6 +595,7 @@ export default function PrintDesigner() {
     },
     onSuccess: (row) => {
       qc.invalidateQueries({ queryKey: ["print-designer", "templates", documentType] });
+      if (row.documentType === "sales_quotation") invalidateQuotationPrintChoices();
       setSelectedTemplateId(row.id);
       setDirty(false);
       toast({ title: "تم إنشاء القالب" });
@@ -503,6 +613,7 @@ export default function PrintDesigner() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["print-designer", "templates", documentType] });
+      invalidateQuotationPrintChoices();
       setDirty(false);
       toast({ title: "تم الحفظ" });
     },
@@ -517,6 +628,7 @@ export default function PrintDesigner() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["print-designer", "templates", documentType] });
+      invalidateQuotationPrintChoices();
       setSelectedTemplateId(null);
       toast({ title: "تم الحذف" });
     },
@@ -531,6 +643,7 @@ export default function PrintDesigner() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["print-designer", "templates", documentType] });
+      invalidateQuotationPrintChoices();
       toast({ title: "تم تعيينه افتراضياً" });
     },
   });
@@ -674,7 +787,10 @@ export default function PrintDesigner() {
 
   function createNew() {
     setSelectedTemplateId(null);
-    setLayout(emptyLayout());
+    setLayout({
+      ...emptyLayout(),
+      ...(documentType === "sales_quotation" ? { baseTemplateId } : {}),
+    });
     setTemplateName(`قالب ${DOC_TYPES.find(d => d.value === documentType)?.label ?? ""}`);
     setPaperSize("A4"); setWidthMm(210); setHeightMm(297);
     setSelectedElId(null);
@@ -685,9 +801,18 @@ export default function PrintDesigner() {
   // refs across calls), give every element a fresh id so subsequent edits
   // don't collide, and mark the editor dirty so the user is prompted to save.
   function applyPreset(p: PresetDescriptor) {
-    const raw = p.build();
+    const quotationBase = documentType === "sales_quotation"
+      ? quotationBaseTemplates.find(template => template.id === baseTemplateId) ?? quotationBaseTemplates[0]
+      : undefined;
+    const raw = quotationBase
+      ? createQuotationBaseLayout(quotationBase.id, quotationBase.color, quotationBase.thermal)
+      : p.build();
+    const targetPaperSize = quotationBase?.thermal ? "80mm" : p.paperSize;
+    const targetWidthMm = quotationBase?.thermal ? 80 : p.widthMm;
+    const targetHeightMm = quotationBase?.thermal ? 200 : p.heightMm;
     const cloned = {
       ...raw,
+      ...(quotationBase ? { baseTemplateId: quotationBase.id } : {}),
       elements: raw.elements.map(el => ({
         ...el,
         id: `el_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -695,14 +820,43 @@ export default function PrintDesigner() {
     };
     setSelectedTemplateId(null);
     setLayout(cloned);
-    setTemplateName(`${p.name} — ${DOC_TYPES.find(d => d.value === documentType)?.label ?? ""}`);
-    setPaperSize(p.paperSize);
-    setWidthMm(p.widthMm);
-    setHeightMm(p.heightMm);
+    if (quotationBase) setBaseTemplateId(quotationBase.id);
+    setTemplateName(quotationBase
+      ? `${quotationBase.name} — عرض سعر مخصص`
+      : `${p.name} — ${DOC_TYPES.find(d => d.value === documentType)?.label ?? ""}`);
+    setPaperSize(targetPaperSize);
+    setWidthMm(targetWidthMm);
+    setHeightMm(targetHeightMm);
     setSelectedElId(null);
     setDirty(true);
     setShowPresets(false);
     toast({ title: "تم تحميل القالب الجاهز", description: "يمكنك الآن التعديل ثم الحفظ" });
+  }
+
+  function startFromQuotationBase(id: number) {
+    const base = quotationBaseTemplates.find(template => template.id === id);
+    if (!base) return;
+    if (dirty && !window.confirm("سيتم استبدال التعديلات غير المحفوظة. هل تريد المتابعة؟")) return;
+    const raw = createQuotationBaseLayout(base.id, base.color, base.thermal);
+    const cloned: Layout = {
+      ...raw,
+      baseTemplateId: id,
+      elements: raw.elements.map(el => ({ ...el, id: uid() })),
+    };
+    setBaseTemplateId(id);
+    setSelectedTemplateId(null);
+    setLayout(cloned);
+    setTemplateName(`${base.name} — عرض سعر مخصص`);
+    setPaperSize(base.thermal ? "80mm" : "A4");
+    setWidthMm(base.thermal ? 80 : 210);
+    setHeightMm(base.thermal ? 200 : 297);
+    setSelectedElId(null);
+    setSelectedIds([]);
+    setDirty(true);
+    toast({
+      title: "تم إنشاء نسخة قابلة للتعديل",
+      description: "القالب الأصلي في الإعدادات العامة لم يتغير.",
+    });
   }
 
   function exportJson() {
@@ -716,7 +870,14 @@ export default function PrintDesigner() {
   function previewPrint() {
     const win = window.open("", "_blank", "width=900,height=1100");
     if (!win) return;
-    const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${templateName}</title>
+    const html = documentType === "sales_quotation"
+      ? renderQuotationCustomLayoutHtml(layout, {
+          fields: DESIGNER_SAMPLE_FIELDS,
+          rows: DESIGNER_SAMPLE_QUOTATION_ROWS,
+          showQr: false,
+        }, { widthMm, heightMm, name: templateName })
+          .replace("</body>", `<script>setTimeout(()=>window.print(),300)<\/script></body>`)
+      : `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${templateName}</title>
       <style>body{margin:0;font-family:Tahoma,Arial,sans-serif;background:#eee;padding:20px;display:flex;justify-content:center}
       .page{background:${layout.pageBackground ?? "#fff"};position:relative;box-shadow:0 0 8px rgba(0,0,0,.1);width:${widthMm}mm;height:${heightMm}mm}
       @media print{body{background:#fff;padding:0}.page{box-shadow:none}}
@@ -740,6 +901,22 @@ export default function PrintDesigner() {
         >
           {DOC_TYPES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
         </select>
+        {documentType === "sales_quotation" && (
+          <label className="flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/70 px-2 py-1">
+            <span className="text-xs font-semibold text-indigo-900">ابدأ من قالب مفعّل</span>
+            <select
+              data-testid="select-quotation-base-template"
+              value={quotationBaseTemplates.some(item => item.id === baseTemplateId) ? baseTemplateId : defaultQuotationBaseId}
+              onChange={e => startFromQuotationBase(Number(e.target.value))}
+              className="max-w-[190px] rounded border border-indigo-200 bg-white px-2 py-1 text-xs"
+              aria-label="اختر قالب عرض السعر الأساسي"
+            >
+              {quotationBaseTemplates.map(template => (
+                <option key={template.id} value={template.id}>{template.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <select
           value={selectedTemplateId ?? ""}
           onChange={e => setSelectedTemplateId(e.target.value ? Number(e.target.value) : null)}
@@ -896,6 +1073,11 @@ export default function PrintDesigner() {
           </div>
           <div>
             <div className="font-semibold mb-2 text-slate-700">إعدادات الصفحة</div>
+            {documentType === "sales_quotation" && (
+              <p className="mb-2 rounded-lg bg-indigo-50 p-2 text-[11px] leading-relaxed text-indigo-800">
+                يتم إنشاء نسخة قابلة للتعديل من القالب المحدد؛ يظل القالب الأصلي محفوظًا دون تغيير.
+              </p>
+            )}
             <div className="space-y-2">
               <label className="block">
                 <span className="text-xs text-slate-600">حجم الورق</span>
@@ -927,7 +1109,11 @@ export default function PrintDesigner() {
 
         {/* Canvas */}
         <div ref={canvasViewportRef}
-          className="flex-1 overflow-auto p-4 flex items-start justify-center bg-gradient-to-b from-slate-100 to-slate-200">
+        className="relative flex-1 overflow-auto p-4 flex items-start justify-center bg-gradient-to-b from-slate-100 to-slate-200">
+          <div className="pointer-events-none absolute start-6 top-5 z-10 flex items-center gap-2 rounded-full border border-emerald-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-sm">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            معاينة مباشرة — تتحدث مع كل تعديل
+          </div>
           <div
             ref={canvasRef}
             onMouseDown={e => {
@@ -1210,7 +1396,7 @@ function ElementView({ el }: { el: Element }) {
       : el.textAlign === "end" ? "flex-end" : "flex-start",
   };
   if (el.type === "text" || el.type === "field") {
-    return <div style={common}><span style={{ width: "100%" }}>{el.text}</span></div>;
+    return <div style={common}><span style={{ width: "100%" }}>{el.type === "field" ? sampleFieldText(el) : el.text}</span></div>;
   }
   if (el.type === "image") {
     return el.src
@@ -1240,7 +1426,7 @@ function ElementView({ el }: { el: Element }) {
                 <td key={c.key} style={{
                   border: `${spec.borderWidth ?? 1}px solid ${spec.borderColor ?? "#e5e7eb"}`,
                   padding: 4, textAlign: c.align ?? "start",
-                }}>—</td>
+                }}>{sampleTableCell(c.key, r)}</td>
               ))}
             </tr>
           ))}
@@ -1375,33 +1561,77 @@ function Inspector({
         <div className="space-y-2 border-t pt-3">
           <div className="font-semibold text-xs text-slate-700">أعمدة الجدول</div>
           {el.tableSpec.columns.map((c, idx) => (
-            <div key={idx} className="flex gap-1 items-center">
-              <input value={c.label}
-                onChange={e => {
-                  const cols = [...el.tableSpec!.columns];
-                  cols[idx] = { ...c, label: e.target.value };
-                  onChange({ tableSpec: { ...el.tableSpec!, columns: cols } });
-                }}
-                className="flex-1 border rounded px-1 text-xs py-0.5"/>
-              <input type="number" value={c.width ?? 80}
-                onChange={e => {
-                  const cols = [...el.tableSpec!.columns];
-                  cols[idx] = { ...c, width: Number(e.target.value) || 80 };
-                  onChange({ tableSpec: { ...el.tableSpec!, columns: cols } });
-                }}
-                className="w-16 border rounded px-1 text-xs py-0.5"/>
-              <button onClick={() => {
-                  const cols = el.tableSpec!.columns.filter((_, i) => i !== idx);
-                  onChange({ tableSpec: { ...el.tableSpec!, columns: cols } });
-                }}
-                className="text-rose-500 text-xs">×</button>
+            <div key={idx} className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-1.5">
+              <div className="flex gap-1">
+                <select
+                  aria-label={`مصدر بيانات العمود ${idx + 1}`}
+                  data-testid={`select-table-column-source-${idx}`}
+                  value={c.key}
+                  onChange={e => {
+                    const cols = [...el.tableSpec!.columns];
+                    cols[idx] = { ...c, key: e.target.value };
+                    onChange({ tableSpec: { ...el.tableSpec!, columns: cols } });
+                  }}
+                  className="min-w-0 flex-1 rounded border bg-white px-1 py-0.5 text-[11px]"
+                >
+                  {[
+                    ["no", "الترقيم"],
+                    ["name", "اسم الصنف"],
+                    ["code", "كود الصنف"],
+                    ["description", "الوصف"],
+                    ["qty", "الكمية"],
+                    ["unit", "الوحدة"],
+                    ["price", "سعر الوحدة"],
+                    ["discount", "الخصم"],
+                    ["vat", "الضريبة"],
+                    ["total", "الإجمالي"],
+                    ["date", "التاريخ"],
+                    ["ref", "المرجع"],
+                    ["account", "الحساب"],
+                    ["debit", "مدين"],
+                    ["credit", "دائن"],
+                    ["balance", "الرصيد"],
+                  ].map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+                <button onClick={() => {
+                    const cols = el.tableSpec!.columns.filter((_, i) => i !== idx);
+                    onChange({ tableSpec: { ...el.tableSpec!, columns: cols } });
+                  }}
+                  aria-label="حذف العمود"
+                  data-testid={`button-remove-table-column-${idx}`}
+                  className="rounded px-1 text-rose-600 hover:bg-rose-100 text-xs">×</button>
+              </div>
+              <div className="flex gap-1">
+                <input
+                  aria-label={`عنوان العمود ${idx + 1}`}
+                  value={c.label}
+                  onChange={e => {
+                    const cols = [...el.tableSpec!.columns];
+                    cols[idx] = { ...c, label: e.target.value };
+                    onChange({ tableSpec: { ...el.tableSpec!, columns: cols } });
+                  }}
+                  className="min-w-0 flex-1 rounded border bg-white px-1 py-0.5 text-xs"
+                />
+                <input
+                  aria-label={`عرض العمود ${idx + 1}`}
+                  type="number"
+                  value={c.width ?? 80}
+                  onChange={e => {
+                    const cols = [...el.tableSpec!.columns];
+                    cols[idx] = { ...c, width: Number(e.target.value) || 80 };
+                    onChange({ tableSpec: { ...el.tableSpec!, columns: cols } });
+                  }}
+                  className="w-16 rounded border bg-white px-1 py-0.5 text-xs"
+                />
+              </div>
             </div>
           ))}
           <button onClick={() => {
-              const cols = [...el.tableSpec!.columns, { key: `col${el.tableSpec!.columns.length+1}`, label: "عمود", width: 80, align: "start" as const }];
+              const cols = [...el.tableSpec!.columns, { key: "name", label: "عمود جديد", width: 80, align: "start" as const }];
               onChange({ tableSpec: { ...el.tableSpec!, columns: cols } });
             }}
-            className="text-xs px-2 py-1 bg-slate-100 rounded hover:bg-slate-200">+ عمود</button>
+            data-testid="button-add-table-column"
+            className="text-xs px-2 py-1 bg-indigo-50 text-indigo-800 rounded hover:bg-indigo-100">+ إضافة عمود</button>
           <div className="grid grid-cols-2 gap-1 pt-2">
             <ColorField label="خلفية الرأس"  value={el.tableSpec.headerBg}    onChange={v => onChange({ tableSpec: { ...el.tableSpec!, headerBg: v }})} />
             <ColorField label="لون الرأس"    value={el.tableSpec.headerColor} onChange={v => onChange({ tableSpec: { ...el.tableSpec!, headerColor: v }})} />
@@ -1452,7 +1682,10 @@ function renderElementsHtml(elements: Element[]): string {
       + (el.borderWidth ? `border:${el.borderWidth}px ${el.borderStyle ?? "solid"} ${el.borderColor ?? "#000"};` : "")
       + `z-index:${el.zIndex ?? 1};box-sizing:border-box;overflow:hidden;`
       + (el.rotation ? `transform:rotate(${el.rotation}deg);` : "");
-    if (el.type === "text" || el.type === "field") return `<div style="${base}">${escapeHtml(el.text ?? "")}</div>`;
+    if (el.type === "text" || el.type === "field") {
+      const content = el.type === "field" ? sampleFieldText(el) : (el.text ?? "");
+      return `<div style="${base}">${escapeHtml(content)}</div>`;
+    }
     if (el.type === "image") return el.src
       ? `<img src="${el.src}" style="${base};object-fit:contain"/>`
       : `<div style="${base}"></div>`;
@@ -1465,7 +1698,7 @@ function renderElementsHtml(elements: Element[]): string {
       ).join("");
       const rows = [0,1,2].map(r =>
         `<tr style="background:${r%2===0 ? s.rowBg ?? "#fff" : s.altRowBg ?? "#f9fafb"}">${
-          s.columns.map(c => `<td style="border:${s.borderWidth ?? 1}px solid ${s.borderColor ?? "#e5e7eb"};padding:4px;text-align:${c.align ?? "start"}">—</td>`).join("")
+          s.columns.map(c => `<td style="border:${s.borderWidth ?? 1}px solid ${s.borderColor ?? "#e5e7eb"};padding:4px;text-align:${c.align ?? "start"}">${escapeHtml(sampleTableCell(c.key, r))}</td>`).join("")
         }</tr>`,
       ).join("");
       return `<table style="${base};border-collapse:collapse"><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;

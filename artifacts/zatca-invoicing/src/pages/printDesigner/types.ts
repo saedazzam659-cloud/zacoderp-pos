@@ -1,5 +1,5 @@
 export type DocumentType =
-  | "sales_invoice" | "purchase_invoice" | "sales_return" | "purchase_return"
+  | "sales_invoice" | "sales_quotation" | "purchase_invoice" | "sales_return" | "purchase_return"
   | "receipt_voucher" | "payment_voucher" | "bank_receipt" | "treasury_receipt"
   | "account_statement" | "journal_entry";
 
@@ -45,4 +45,5 @@ export interface Layout {
   elements: Element[];
   pageBackground?: string;
   margins?: { top: number; right: number; bottom: number; left: number };
+  baseTemplateId?: number;
 }

@@ -5,6 +5,7 @@ import { usersTable } from "./users";
 
 export const DOCUMENT_TYPES = [
   "sales_invoice",
+  "sales_quotation",
   "purchase_invoice",
   "sales_return",
   "purchase_return",

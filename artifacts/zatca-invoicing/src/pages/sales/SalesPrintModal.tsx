@@ -35,6 +35,11 @@ import {
 import QRCode from "qrcode";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
 import { localizePrintHtml } from "@/lib/localizedUiText";
+import { renderQuotationCustomLayoutHtml, type CustomPrintContext } from "@/lib/quotationCustomPrint";
+import {
+  getEnabledSalesPrintTemplates,
+  SALES_PRINT_TEMPLATE_CATALOG,
+} from "@/lib/salesPrintTemplateCatalog";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -661,6 +666,77 @@ function quotationCustomerAddressText(
   ).toUpperCase();
   const countryName = getWorldCountryName(countryCode, language);
   return buildQuotationCustomerAddress(d.customer, d.doc, language, countryName);
+}
+
+function customQuotationPrintContext(d: PrintData): CustomPrintContext {
+  const doc = d.doc ?? {};
+  const company = d.company ?? {};
+  const customer = d.customer ?? {};
+  const isEnglish = (d as any)._lang === "en";
+  const enNames: Map<string, string> = (d as any)._enNames instanceof Map ? (d as any)._enNames : new Map();
+  const enUnits: Map<string, string> = (d as any)._enUnits instanceof Map ? (d as any)._enUnits : new Map();
+  const totals = computeFullTotals(doc, d.lines ?? [], "quotation");
+  const customerName = isEnglish
+    ? customer.nameEn ?? customer.nameAr ?? customer.name ?? doc.manualPrintPartyName ?? doc.buyerName ?? "—"
+    : customer.nameAr ?? customer.nameEn ?? customer.name ?? doc.manualPrintPartyName ?? doc.buyerName ?? "—";
+  const currency = totals.currencySym;
+  const quotationOptions = getQuotationPrintOptions(company);
+  const currencyName = quotationOptions.showCurrencyName
+    ? resolveQuotationCurrencyName(company, d.currency ?? doc.currency, isEnglish ? "en" : "ar")
+    : "";
+  const currencyText = currencyName ? `${currency} (${currencyName})` : currency;
+  const amount = (value: number) => `${fmt(value)} ${currencyText}`;
+  const fields: Record<string, string> = {
+    "company.name": isEnglish ? company.nameEn ?? company.nameAr ?? "—" : company.nameAr ?? company.nameEn ?? "—",
+    "company.vat": company.vatNumber ?? "—",
+    "company.address": company.address ?? company.addressAr ?? company.city ?? "—",
+    "company.phone": company.phone ?? company.phoneNumber ?? "—",
+    "quotation.number": doc.docNumber ?? `SQ-${doc.id ?? ""}`,
+    "quotation.date": doc.quotationDate ?? "—",
+    "quotation.validUntil": doc.validUntil ?? "—",
+    "customer.name": customerName,
+    "customer.vat": customer.vatNumber ?? doc.buyerVatNumber ?? "—",
+    "customer.address": quotationCustomerAddressText(d) || "—",
+    "totals.subtotal": amount(totals.subtotalPreDiscount),
+    "totals.discount": amount(totals.discountTotal),
+    "totals.vat": amount(totals.vatAmount),
+    "totals.grand": amount(totals.grandTotal),
+    "totals.grandWords": totals.amountWords,
+    "items.count": String(totals.itemsCount),
+    notes: doc.notes ?? "—",
+  };
+  const rows = (d.lines ?? []).map((line: any, index: number) => {
+    const figures = lineFigures(line, !!doc.priceIncludesVat);
+    const itemName = String(line.itemName ?? line.itemCode ?? line.nameAr ?? line.name ?? "—");
+    const englishItemName = enNames.get(itemName.trim().toLowerCase());
+    const unit = String(line.unit ?? line.unitNameAr ?? line.unitAr ?? line.unitName ?? "—");
+    return {
+      no: String(index + 1),
+      name: isEnglish ? englishItemName ?? itemName : itemName,
+      code: line.itemCode ?? line.code ?? "—",
+      description: line.description ?? line.notes ?? "—",
+      qty: fmtQty(figures.qty),
+      unit: isEnglish
+        ? enUnits.get(unit.trim().toLowerCase()) ?? enUnits.get(unit.trim().toUpperCase()) ?? unit
+        : unit,
+      price: fmt(figures.price),
+      discount: fmt(figures.discEx),
+      vat: fmt(figures.vat),
+      total: fmt(figures.tot),
+      date: "—",
+      ref: "—",
+      account: "—",
+      debit: "—",
+      credit: "—",
+      balance: "—",
+    };
+  });
+  return {
+    fields,
+    rows,
+    qrDataUrl: (d as any)._qrDataUrl,
+    showQr: quotationOptions.showQr,
+  };
 }
 
 function customerBlock(cu: any, d?: PrintData) {
@@ -3336,11 +3412,8 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     return savedThermalIds ? savedThermalIds.has(id) : defaultTemplate === "thermal";
   }
   const visibleTemplates = useMemo(() => {
-    const enabled = Array.isArray(companyCfg.printEnabledTemplates) && companyCfg.printEnabledTemplates.length > 0
-      ? new Set<number>(companyCfg.printEnabledTemplates.map((n: any) => Number(n)))
-      : null;
-    const filtered = enabled ? TEMPLATES.filter(t => enabled.has(t.id)) : TEMPLATES;
-    return filtered.length > 0 ? filtered : TEMPLATES; // never let the modal go empty
+    const enabled = new Set(getEnabledSalesPrintTemplates(companyCfg).map(template => template.id));
+    return TEMPLATES.filter(template => enabled.has(template.id));
   }, [companyCfg.printEnabledTemplates]);
 
   function resolveInitialId(): number {
@@ -3362,8 +3435,8 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   const orderedVisibleTemplates = [...visibleTemplates].sort((a, b) =>
     Number(b.id === initialTemplateId) - Number(a.id === initialTemplateId),
   );
-  const [selected, setSelected] = useState<number>(resolveInitialId);
-  const selectedIsThermal = templateIsThermal(selected);
+  const [selected, setSelected] = useState<number | `custom:${number}`>(resolveInitialId);
+  const selectionChangedByUserRef = useRef(false);
   const [thermalScale, setThermalScale] = useState<number>(
     () => readThermalPrintScale(companyCfg.id, resolveInitialId()),
   );
@@ -3384,6 +3457,42 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   // Live inventory catalogue → English item-name lookup. Only fetched when
   // we're actually printing in English (and the modal is open).
   const itemsCompanyId = companyCfg?.id ?? user?.company?.id;
+  const customQuotationTemplatesQuery = useQuery<any[]>({
+    queryKey: ["print-designer", "templates", itemsCompanyId, "sales_quotation"],
+    enabled: !!open && data?.type === "quotation" && !!itemsCompanyId && !!token,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const params = new URLSearchParams({ documentType: "sales_quotation", companyId: String(itemsCompanyId) });
+      const response = await fetch(`${API}/api/print-designer/templates?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("تعذر تحميل قوالب عروض الأسعار المخصصة");
+      const result = await response.json();
+      return Array.isArray(result) ? result : [];
+    },
+  });
+  const customQuotationTemplates = customQuotationTemplatesQuery.data ?? [];
+  const orderedCustomQuotationTemplates = [...customQuotationTemplates].sort(
+    (a, b) => Number(b.isDefault) - Number(a.isDefault),
+  );
+  const selectedCustomTemplate = typeof selected === "string"
+    ? customQuotationTemplates.find(template => `custom:${template.id}` === selected)
+    : undefined;
+  const selectedCustomBaseId = Number(selectedCustomTemplate?.layoutJson?.baseTemplateId);
+  const selectedIsThermal = typeof selected === "number"
+    ? templateIsThermal(selected)
+    : selectedCustomTemplate?.paperSize === "80mm";
+  const thermalSettingsTemplateId = typeof selected === "number"
+    ? selected
+    : selectedIsThermal && Number.isInteger(selectedCustomBaseId) && selectedCustomBaseId > 0
+      ? selectedCustomBaseId
+      : resolveInitialId();
+  function resolveInitialSelection(): number | `custom:${number}` {
+    const customDefault = data?.type === "quotation"
+      ? customQuotationTemplates.find(template => template.isDefault)
+      : undefined;
+    return customDefault ? `custom:${customDefault.id}` : resolveInitialId();
+  }
   const printItemIds = useMemo(
     () => [...new Set((Array.isArray(data?.lines) ? data.lines : [])
       .map((line: any) => Number(line.itemId))
@@ -3453,18 +3562,25 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   }, [accountsQuery.data]);
   // Re-sync the selected template when the caller's preference or the
   // company's visibility config changes.
-  useEffect(() => { setSelected(resolveInitialId()); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate, companyCfg.printDefaultTemplateQuotation, companyCfg.printDefaultTemplateOrder, companyCfg.printDefaultTemplateReturn, (data as any)?.type]);
   useEffect(() => {
-    setThermalScale(readThermalPrintScale(companyCfg.id, selected));
-    setThermalBoldness(readThermalPrintBold(companyCfg.id, selected));
-  }, [companyCfg.id, selected]);
+    if (!open) {
+      selectionChangedByUserRef.current = false;
+      return;
+    }
+    if (!selectionChangedByUserRef.current) setSelected(resolveInitialSelection());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, customQuotationTemplatesQuery.data, defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate, companyCfg.printDefaultTemplateQuotation, companyCfg.printDefaultTemplateOrder, companyCfg.printDefaultTemplateReturn, (data as any)?.type]);
+  useEffect(() => {
+    setThermalScale(readThermalPrintScale(companyCfg.id, thermalSettingsTemplateId));
+    setThermalBoldness(readThermalPrintBold(companyCfg.id, thermalSettingsTemplateId));
+  }, [companyCfg.id, thermalSettingsTemplateId]);
 
   function changeThermalScale(value: number) {
-    const percent = saveThermalPrintScale(companyCfg.id, selected, value);
+    const percent = saveThermalPrintScale(companyCfg.id, thermalSettingsTemplateId, value);
     setThermalScale(percent);
   }
   function changeThermalBold(value: number) {
-    const boldness = saveThermalPrintBold(companyCfg.id, selected, value);
+    const boldness = saveThermalPrintBold(companyCfg.id, thermalSettingsTemplateId, value);
     setThermalBoldness(boldness);
   }
   // Fire-and-forget auto-print on open. We track the last id we auto-
@@ -3473,6 +3589,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   const printedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!open || !autoPrintOnOpen || !data) { printedKeyRef.current = null; return; }
+    if (data.type === "quotation" && customQuotationTemplatesQuery.isFetching && !customQuotationTemplatesQuery.data) return;
     const key = `${(data as any)?.doc?.id ?? ""}-${defaultTemplate ?? "a4"}`;
     if (printedKeyRef.current === key) return;
     printedKeyRef.current = key;
@@ -3482,7 +3599,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     const t = setTimeout(() => { handlePrint(); }, 100);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, autoPrintOnOpen, data, defaultTemplate]);
+  }, [open, autoPrintOnOpen, data, defaultTemplate, customQuotationTemplatesQuery.isFetching, customQuotationTemplatesQuery.data]);
 
   // Intercept Ctrl+P / Cmd+P while the modal is open so the user gets the
   // selected template's print preview (a clean, properly-styled invoice
@@ -3514,8 +3631,10 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     // printer (or "Save as PDF"). Gating on the localStorage hint
     // silently blocked Chrome users who never saved a printer name in
     // General Settings, which is what the user reported.
-    const tmpl = TEMPLATES.find(t => t.id === selected);
-    if (!tmpl) return;
+    const tmpl = typeof selected === "number" ? TEMPLATES.find(t => t.id === selected) : undefined;
+    const customTemplate = typeof selected === "string" ? selectedCustomTemplate : undefined;
+    if (!tmpl && !customTemplate) return;
+    if (customTemplate && data.type !== "quotation") return;
     // The detail endpoint does not include settlement figures. Template 20
     // reads the invoice list's authoritative batch settlement fields instead
     // of guessing that cash was paid or treating a credit invoice as unpaid.
@@ -3610,8 +3729,17 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
       : printSource;
     const renderedHtml = withCompanyPrintPrecision(
       { decimalPlaces: printData.company?.decimalPlaces ?? user?.company?.decimalPlaces },
-      () =>
-      tmpl.fn(printData)
+      () => customTemplate
+        ? renderQuotationCustomLayoutHtml(
+            customTemplate.layoutJson,
+            customQuotationPrintContext(printData),
+            {
+              widthMm: customTemplate.widthMm ?? 210,
+              heightMm: customTemplate.heightMm ?? 297,
+              name: customTemplate.name,
+            },
+          )
+        : tmpl!.fn(printData)
     );
     const freeSafeHtml = showFreeQuantity === false
       ? renderedHtml
@@ -3622,7 +3750,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     const englishSafeHtml = printLang === "en"
       ? localizePrintHtml(freeSafeHtml, printLang, printData)
       : freeSafeHtml;
-    const paperSizedHtml = selectedIsThermal && !tmpl.thermal
+    const paperSizedHtml = selectedIsThermal && tmpl && !tmpl.thermal
       ? forceThermalPaperSize(englishSafeHtml)
       : englishSafeHtml;
     const scaledHtml = selectedIsThermal
@@ -3782,7 +3910,10 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
           {orderedVisibleTemplates.map(t => (
             <button
               key={t.id}
-              onClick={() => setSelected(t.id)}
+              onClick={() => {
+                selectionChangedByUserRef.current = true;
+                setSelected(t.id);
+              }}
               className={cn(
                 "rounded-xl border-2 p-3 text-center transition-all hover:shadow-md relative",
                 selected === t.id
@@ -3844,7 +3975,63 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
               <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{t.desc}</p>
             </button>
           ))}
+          {data.type === "quotation" && orderedCustomQuotationTemplates.map(template => {
+            const selectedKey = `custom:${template.id}` as `custom:${number}`;
+            const isSelected = selected === selectedKey;
+            const baseId = Number(template.layoutJson?.baseTemplateId);
+            const base = SALES_PRINT_TEMPLATE_CATALOG.find(item => item.id === baseId);
+            const color = base?.color ?? "#4f46e5";
+            return (
+              <button
+                key={selectedKey}
+                data-testid={`custom-quotation-template-${template.id}`}
+                onClick={() => {
+                  selectionChangedByUserRef.current = true;
+                  setSelected(selectedKey);
+                }}
+                className={cn(
+                  "rounded-xl border-2 p-3 text-center transition-all hover:shadow-md relative",
+                  isSelected ? "shadow-lg scale-105" : "border-border hover:border-muted-foreground",
+                )}
+                style={isSelected ? { borderColor: color } : {}}
+              >
+                {template.isDefault && (
+                  <span className="absolute -top-2 -right-2 rounded-full bg-emerald-700 px-2 py-0.5 text-[9px] font-bold text-white shadow">
+                    الافتراضي المخصص
+                  </span>
+                )}
+                <div
+                  className="w-full aspect-[3/4] rounded-md mb-2 flex flex-col overflow-hidden"
+                  style={{ background: "#f8f8f8", border: `2px solid ${color}` }}
+                >
+                  <div className="h-6 w-full flex-shrink-0" style={{ background: color }} />
+                  <div className="flex-1 p-1.5 space-y-1">
+                    <div className="h-1.5 w-3/4 rounded-sm" style={{ background: color, opacity: .75 }} />
+                    <div className="h-px w-full my-1" style={{ background: color, opacity: .35 }} />
+                    {[95, 82, 90, 70].map((width, index) => (
+                      <div key={index} className="h-1 rounded-sm bg-slate-300" style={{ width: `${width}%` }} />
+                    ))}
+                    <div className="mt-2 h-5 w-2/5 rounded-sm" style={{ background: color, opacity: .35 }} />
+                  </div>
+                </div>
+                <p className="text-xs font-bold" style={isSelected ? { color } : {}}>{template.name}</p>
+                <p className="text-[9px] font-medium text-muted-foreground">
+                  نسخة مخصصة · {base?.name ?? "قالب مستقل"}
+                </p>
+              </button>
+            );
+          })}
         </div>
+        {data.type === "quotation" && customQuotationTemplatesQuery.isLoading && (
+          <p role="status" className="text-center text-xs text-muted-foreground">
+            جارٍ تحميل قوالب عروض الأسعار المخصصة…
+          </p>
+        )}
+        {data.type === "quotation" && customQuotationTemplatesQuery.isError && (
+          <p role="alert" className="text-center text-xs text-destructive">
+            تعذر تحميل القوالب المخصصة؛ يمكنك إعادة فتح نافذة الطباعة للمحاولة مرة أخرى.
+          </p>
+        )}
 
         <div className="rounded-lg bg-muted/40 border px-4 py-3 text-sm space-y-1">
           <div className="flex gap-6">
@@ -3874,7 +4061,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
             <X className="h-4 w-4 ml-1" />إلغاء
           </Button>
           <Button onClick={handlePrint} className="gap-2">
-            <Printer className="h-4 w-4" />طباعة النموذج {selected} · {selectedIsThermal ? "80 مم" : "A4"}
+            <Printer className="h-4 w-4" />طباعة النموذج {selectedCustomTemplate?.name ?? selected} · {selectedIsThermal ? "80 مم" : "A4"}
           </Button>
         </div>
       </DialogContent>
