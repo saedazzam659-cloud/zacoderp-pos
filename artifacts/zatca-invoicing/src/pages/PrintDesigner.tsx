@@ -74,6 +74,7 @@ interface Layout {
   pageBackground?: string;
   margins?: { top: number; right: number; bottom: number; left: number };
   baseTemplateId?: number;
+  baseTemplateVersion?: number;
 }
 
 interface Template {
@@ -396,11 +397,12 @@ export default function PrintDesigner() {
   const [baseTemplateId, setBaseTemplateId] = useState<number>(defaultQuotationBaseId);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [layout, setLayout] = useState<Layout>(emptyLayout);
+  const previewBaseTemplateId = Number(layout.baseTemplateId) || baseTemplateId;
   const nativeQuotationPreviewHtml = useMemo(
     () => documentType === "sales_quotation" && layout.baseTemplateVersion === 2
-      ? renderQuotationBaseTemplatePreviewHtml(baseTemplateId)
+      ? renderQuotationBaseTemplatePreviewHtml(previewBaseTemplateId)
       : "",
-    [documentType, layout.baseTemplateVersion, baseTemplateId],
+    [documentType, layout.baseTemplateVersion, previewBaseTemplateId],
   );
   const [paperSize, setPaperSize] = useState<string>("A4");
   const [widthMm, setWidthMm]   = useState(210);
@@ -887,7 +889,7 @@ export default function PrintDesigner() {
     };
     const quotationPage = { widthMm, heightMm, name: templateName };
     const nativeBaseHtml = layout.baseTemplateVersion === 2
-      ? renderQuotationBaseTemplatePreviewHtml(baseTemplateId)
+      ? renderQuotationBaseTemplatePreviewHtml(previewBaseTemplateId)
       : "";
     const html = documentType === "sales_quotation"
       ? (nativeBaseHtml

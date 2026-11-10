@@ -41,6 +41,7 @@ export function applyPrintFieldVisibility(
 
   const parsed = new DOMParser().parseFromString(html, "text/html");
   markLabeledPrintFields(parsed, document);
+  markTableColumns(parsed);
   for (const image of Array.from(parsed.querySelectorAll<HTMLImageElement>('img[alt*="qr" i], img[alt*="zatca" i]'))) {
     image.dataset.printField = [image.dataset.printField, "qr"].filter(Boolean).join(" ");
   }
@@ -101,6 +102,7 @@ function markLabeledPrintFields(parsed: Document, document: PrintDocumentKey): v
     if (
       parent &&
       parent !== parsed.body &&
+      parent.tagName !== "TR" &&
       !parent.hasAttribute("data-print-field") &&
       (candidate.matches(".lbl,.label,.k") ||
         candidate.tagName === "TD" ||
@@ -114,11 +116,51 @@ function markLabeledPrintFields(parsed: Document, document: PrintDocumentKey): v
   }
 }
 
+function markTableColumns(parsed: Document): void {
+  for (const table of Array.from(parsed.querySelectorAll<HTMLTableElement>("table"))) {
+    const headerRow = Array.from(table.rows).find((row) =>
+      Array.from(row.cells).some((cell) => cell.tagName === "TH"),
+    );
+    if (!headerRow) continue;
+    for (const [index, header] of Array.from(headerRow.cells).entries()) {
+      if (header.colSpan > 1) continue;
+      const field = header.dataset.printColumn || inferPrintColumnFromLabel(header.textContent ?? "");
+      if (!field || !PRINT_COLUMN_FIELDS.has(field)) continue;
+      header.dataset.printColumn = field;
+      for (const row of Array.from(table.rows)) {
+        const cell = row.cells.item(index);
+        if (cell) cell.dataset.printColumn = field;
+      }
+    }
+  }
+}
+
+function inferPrintColumnFromLabel(text: string): string | undefined {
+  const value = text.toLocaleLowerCase().replace(/\s+/g, " ").trim();
+  if (/^(?:رمز الصنف|كود الصنف|item code|sku)$/.test(value)) return "itemCode";
+  if (/^(?:الصنف(?:\s*\/\s*الخدمة)?|اسم الصنف|المنتج|item(?: name)?|product)$/.test(value)) return "itemName";
+  if (/^(?:الكمية|qty|quantity)$/.test(value)) return "quantity";
+  if (/^(?:الكمية المجانية|مجاني|free qty|free quantity)$/.test(value)) return "freeQuantity";
+  if (/^(?:الوحدة|وحدة القياس|unit)$/.test(value)) return "unit";
+  if (/^(?:سعر الوحدة|السعر|unit price|price)$/.test(value)) return "unitPrice";
+  if (/^(?:نسبة الخصم|discount %|discount percent(?:age)?)$/.test(value)) return "discountPercent";
+  if (/^(?:قيمة الخصم|discount amount)$/.test(value)) return "discountAmount";
+  if (/^(?:نسبة الضريبة|tax rate|vat rate)$/.test(value)) return "taxRate";
+  if (/^(?:قيمة الضريبة|الضريبة|tax amount|vat amount)$/.test(value)) return "taxAmount";
+  if (/^(?:إجمالي السطر|إجمالي الصنف|الإجمالي|line total|total)$/.test(value)) return "lineTotal";
+  if (/^(?:الوصف|البيان|description)$/.test(value)) return "description";
+  if (/^(?:الحساب|اسم الحساب|account)$/.test(value)) return "account";
+  if (/^(?:الإجمالي قبل الخصم|subtotal)$/.test(value)) return "subtotal";
+  if (/^(?:الإجمالي النهائي|الصافي شامل الضريبة|grand total)$/.test(value)) return "grandTotal";
+  return undefined;
+}
+
 function inferPrintFieldFromLabel(
   text: string,
   document: PrintDocumentKey,
 ): string | undefined {
   const value = text.toLocaleLowerCase();
+  if (/^(?:صالح حتى|تاريخ الانتهاء|valid until|valid through)\b/.test(value)) return "validUntil";
   if (/^(?:تاريخ التسليم|التسليم المتوقع|expected delivery)\b/.test(value)) return "deliveryDate";
   if (/^(?:رقم الفاتورة المرتبطة|linked invoice(?:\s*(?:no\.?|number))?)\b/.test(value)) return "invoiceNumber";
   if (/^(?:رقم (?:المستند|السند|الفاتورة|عرض(?: السعر)?|الأمر)|(?:invoice|document|voucher)\s*(?:no\.?|number))\b/.test(value)) return "documentNumber";

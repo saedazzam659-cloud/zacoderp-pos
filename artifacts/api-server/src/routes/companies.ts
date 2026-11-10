@@ -477,7 +477,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     printQuotationShowQr, printQuotationShowCurrencyName, printQuotationShowCustomerAddress,
     purchaseOrderPrintOptions, deliveryReceiptPrintOptions,
-    printFieldVisibility,
+    printFieldVisibility, printTemplateFieldVisibility,
     bankAccountText, printCustomNotes, printCustomNotesOnSales, printCustomNotesOnQuotation,
     printShowItemsSummary,
     printT14ShowEnSubtitle, printT14ShowAccountCode, printT14ShowAuditFooter,
@@ -565,6 +565,7 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       termsEn: string;
     };
     printFieldVisibility?: Record<string, Record<string, boolean>>;
+    printTemplateFieldVisibility?: Record<string, Record<string, Record<string, boolean>>>;
     deliveryReceiptPrintOptions?: {
       showCompanyDetails: boolean; showBranch: boolean; showWarehouse: boolean;
       showInvoice: boolean; showRecipient: boolean; showLineNotes: boolean;
@@ -927,6 +928,41 @@ router.patch("/:id/general-settings", async (req, res): Promise<void> => {
       return;
     }
     updates.printFieldVisibility = printFieldVisibility;
+  }
+  if (printTemplateFieldVisibility !== undefined) {
+    const allowedDocuments = new Set([
+      "sales_invoice",
+      "sales_quotation",
+      "sales_return",
+      "sales_order",
+    ]);
+    const invalid =
+      !printTemplateFieldVisibility ||
+      typeof printTemplateFieldVisibility !== "object" ||
+      Array.isArray(printTemplateFieldVisibility) ||
+      Object.keys(printTemplateFieldVisibility).length > 64 ||
+      Object.entries(printTemplateFieldVisibility).some(([templateKey, documents]) =>
+        !/^(?:builtin:\d{1,6}|custom:\d{1,12})$/.test(templateKey) ||
+        !documents ||
+        typeof documents !== "object" ||
+        Array.isArray(documents) ||
+        Object.keys(documents).some((documentKey) => !allowedDocuments.has(documentKey)) ||
+        Object.entries(documents).some(([documentKey, fields]) =>
+          !allowedDocuments.has(documentKey) ||
+          !fields ||
+          typeof fields !== "object" ||
+          Array.isArray(fields) ||
+          Object.keys(fields).length > 80 ||
+          Object.entries(fields).some(([fieldKey, visible]) =>
+            !/^[A-Za-z][A-Za-z0-9]{0,63}$/.test(fieldKey) || typeof visible !== "boolean"
+          )
+        )
+      );
+    if (invalid) {
+      res.status(400).json({ error: "إعدادات ظهور الحقول في قالب الطباعة غير صالحة" });
+      return;
+    }
+    updates.printTemplateFieldVisibility = printTemplateFieldVisibility;
   }
   if (deliveryReceiptPrintOptions !== undefined) {
     const optionKeys = [

@@ -238,7 +238,7 @@ export function composeQuotationBaseWithCustomLayout(
   const elements = (Array.isArray(layout.elements) ? layout.elements : [])
     .map(element => renderElement(element, context))
     .join("");
-  const overlay = `<div aria-hidden="true" style="position:fixed;top:-${offsets.top}mm;left:-${offsets.left}mm;width:${widthMm}mm;height:${heightMm}mm;overflow:hidden;background:transparent;z-index:2147483647;pointer-events:none;margin:0;padding:0;box-sizing:border-box">${elements}</div>`;
+  const overlay = `<div aria-hidden="true" style="position:absolute;top:-${offsets.top}mm;left:-${offsets.left}mm;width:${widthMm}mm;height:${heightMm}mm;overflow:hidden;background:transparent;z-index:2147483647;pointer-events:none;margin:0;padding:0;box-sizing:border-box">${elements}</div>`;
   const bodyClose = /<\/body\s*>/i;
   return bodyClose.test(nativeHtml)
     ? nativeHtml.replace(bodyClose, `${overlay}</body>`)

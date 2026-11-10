@@ -162,6 +162,7 @@ async function cloneDisplaySettings(companyId: number, templateId: number): Prom
     printEnabledTemplates:   companiesTable.printEnabledTemplates,
     printThermalTemplates:   companiesTable.printThermalTemplates,
     printFieldVisibility:   companiesTable.printFieldVisibility,
+    printTemplateFieldVisibility: companiesTable.printTemplateFieldVisibility,
     printAutoAfterSaveSales:   companiesTable.printAutoAfterSaveSales,
     printAutoAfterSaveReceipt: companiesTable.printAutoAfterSaveReceipt,
     printAutoAfterSavePayment: companiesTable.printAutoAfterSavePayment,

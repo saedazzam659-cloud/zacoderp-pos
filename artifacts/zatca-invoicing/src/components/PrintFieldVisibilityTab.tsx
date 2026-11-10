@@ -120,7 +120,7 @@ const documents: {
   fields: FieldKey[];
 }[] = [
   { key: "sales_invoice", label: "فاتورة مبيعات", type: "مبيعات", accent: "border-r-teal-600", fields: [...itemKeys, ...salesCommon.filter((key) => key !== "invoiceNumber")] },
-  { key: "sales_quotation", label: "عرض سعر", type: "مبيعات", accent: "border-r-sky-600", fields: [...itemKeys, ...salesCommon.filter((key) => key !== "paymentMethod" && key !== "qr" && key !== "invoiceNumber"), "validUntil", "deliveryDate", "terms", "status"] },
+  { key: "sales_quotation", label: "عرض سعر", type: "مبيعات", accent: "border-r-sky-600", fields: [...itemKeys, ...salesCommon.filter((key) => key !== "paymentMethod" && key !== "invoiceNumber"), "validUntil", "deliveryDate", "terms", "status"] },
   { key: "sales_return", label: "مرتجع مبيعات", type: "مبيعات", accent: "border-r-rose-600", fields: [...itemKeys, ...salesCommon] },
   { key: "sales_order", label: "أمر بيع", type: "مبيعات", accent: "border-r-indigo-600", fields: [...itemKeys, ...salesCommon.filter((key) => key !== "paymentMethod" && key !== "qr" && key !== "invoiceNumber"), "validUntil", "deliveryDate", "terms", "status"] },
   { key: "purchase_order", label: "أمر شراء", type: "مشتريات", accent: "border-r-amber-600", fields: [...itemKeys, ...purchaseCommon.filter((key) => key !== "paymentMethod" && key !== "invoiceNumber" && key !== "qr"), "validUntil", "deliveryDate"] },
@@ -178,6 +178,8 @@ const englishLabels: Record<string, string> = {
   "وقت الطباعة": "Print time",
   "فاتورة مبيعات": "Sales invoice",
   "عرض سعر": "Sales quotation",
+  "مرتجع مبيعات": "Sales return",
+  "أمر بيع": "Sales order",
   "أمر شراء": "Purchase order",
   "فاتورة مشتريات": "Purchase invoice",
   "سند قبض": "Receipt voucher",
@@ -190,13 +192,16 @@ const englishLabels: Record<string, string> = {
   "حقول الطباعة": "Print field visibility",
   "حدّد ما يظهر في النسخ المطبوعة لكل نوع مستند. إعداد الإخفاء يخص شكل الطباعة فقط ولا يغيّر أي قيمة محاسبية.": "Choose which fields appear on printed copies of each document type. Hiding a field changes print presentation only; it never changes accounting values.",
   "عرض افتراضي آمن": "Safe default display",
-  "الحقول غير المحددة تبقى ظاهرة": "Fields without a setting remain visible",
+  "الحقول غير المحددة تحافظ على الطباعة الحالية": "Fields without a setting keep their current print behavior",
   "نوع المستند": "Document type",
   "اختر قالباً لضبط حقوله": "Choose a document to configure its fields",
   "حقلاً ظاهراً": "fields shown",
   "من": "of",
   "ظاهرة": "shown",
   "تظهر الحقول المفعّلة في المخرجات المطبوعة لهذا النوع.": "Enabled fields appear on printed copies of this document type.",
+  "استعادة إعدادات القالب": "Restore template defaults",
+  "تُحفظ التغييرات للقالب المحدد ونوع المستند فقط.": "Changes are saved only for this template and document type.",
+  "التغييرات تُحفظ للشركة بالكامل، وتؤثر على المظهر المطبوع فقط.": "Changes are saved company-wide and affect print appearance only.",
   "إظهار الكل": "Show all",
   "إخفاء الكل": "Hide all",
   "الافتراضي": "Default",
@@ -204,7 +209,6 @@ const englishLabels: Record<string, string> = {
   "مخفي من الطباعة": "Hidden from print",
   "إخفاء": "Hide",
   "إظهار": "Show",
-  "التغييرات تُحفظ للشركة بالكامل، وتؤثر على المظهر المطبوع فقط.": "Changes are saved company-wide and affect printed appearance only.",
   "جارٍ الحفظ...": "Saving...",
   "حفظ الإعدادات": "Save settings",
   "تعذّر قراءة رد الحفظ.": "Could not read the save response.",
@@ -236,14 +240,16 @@ export default function PrintFieldVisibilityTab({
     : user?.company?.printFieldVisibility;
   const availableDocuments = useMemo(
     () => documents.filter((item) => templateKey
-      ? item.key.startsWith("sales_")
+      ? templateKey.startsWith("custom:")
+        ? item.key === "sales_quotation"
+        : item.key.startsWith("sales_")
       : !item.key.startsWith("sales_")),
     [templateKey],
   );
   const settingsSnapshot = JSON.stringify(companySettings ?? {});
   const [visibility, setVisibility] = useState<VisibilityMap>({});
   const [selectedDocument, setSelectedDocument] = useState<DocumentKey>(
-    templateKey ? "sales_invoice" : "purchase_order",
+    templateKey?.startsWith("custom:") ? "sales_quotation" : templateKey ? "sales_invoice" : "purchase_order",
   );
   const [saving, setSaving] = useState(false);
 
@@ -263,8 +269,38 @@ export default function PrintFieldVisibilityTab({
     })).filter((group) => group.fields.length > 0),
     [document],
   );
-  const shownCount = document.fields.filter((field) => visibility[selectedDocument]?.[field] !== false).length;
   const hasChanges = JSON.stringify(visibility) !== settingsSnapshot;
+  const defaultVisible = (documentKey: DocumentKey, field: FieldKey): boolean => {
+    const company = user?.company ?? {};
+    if (field === "freeQuantity" && company.showFreeQuantity === false) return false;
+    if (documentKey === "sales_quotation") {
+      if (field === "qr") return company.printQuotationShowQr === true;
+      if (field === "partyAddress") return company.printQuotationShowCustomerAddress !== false;
+    }
+    if (documentKey === "purchase_order") {
+      const options = company.purchaseOrderPrintOptions ?? {};
+      const legacyDefaults: Partial<Record<FieldKey, boolean>> = {
+        companyDetails: options.showCompanyDetails,
+        branch: options.showBranch,
+        partyName: options.showSupplierDetails,
+        partyVat: options.showSupplierDetails,
+        partyAddress: options.showSupplierDetails,
+        itemCode: options.showItemCode,
+        taxRate: options.showTaxBreakdown,
+        taxAmount: options.showTaxBreakdown,
+        notes: options.showNotes,
+        terms: options.showTerms ?? false,
+        deliveryDate: options.showDeliveryDate,
+        receiverDetails: options.showReceiverDetails,
+      };
+      const legacy = legacyDefaults[field];
+      if (typeof legacy === "boolean") return legacy;
+    }
+    return true;
+  };
+  const isFieldVisible = (documentKey: DocumentKey, field: FieldKey) =>
+    visibility[documentKey]?.[field] ?? defaultVisible(documentKey, field);
+  const shownCount = document.fields.filter((field) => isFieldVisible(selectedDocument, field)).length;
 
   function updateField(field: FieldKey, shown: boolean) {
     setVisibility((current) => ({
@@ -367,7 +403,7 @@ export default function PrintFieldVisibilityTab({
             <ShieldCheck className="h-5 w-5 shrink-0 text-teal-100" />
             <div>
               <div className="text-sm font-semibold">{translate("عرض افتراضي آمن")}</div>
-              <div className="mt-0.5 text-xs text-teal-50/80">{translate("الحقول غير المحددة تبقى ظاهرة")}</div>
+              <div className="mt-0.5 text-xs text-teal-50/80">{translate("الحقول غير المحددة تحافظ على الطباعة الحالية")}</div>
             </div>
           </div>
         </div>
@@ -385,7 +421,7 @@ export default function PrintFieldVisibilityTab({
           <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
             {availableDocuments.map((item, index) => {
               const active = item.key === selectedDocument;
-              const count = item.fields.filter((field) => visibility[item.key]?.[field] !== false).length;
+              const count = item.fields.filter((field) => isFieldVisible(item.key, field)).length;
               return (
                 <button
                   key={item.key}
@@ -427,9 +463,15 @@ export default function PrintFieldVisibilityTab({
               <Button type="button" variant="outline" size="sm" onClick={() => setAllFields(false)} data-testid={`hide-all-print-fields-${selectedDocument}`}>
                 <EyeOff className="ms-1.5 h-4 w-4" /> {translate("إخفاء الكل")}
               </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={resetDocument} data-testid={`reset-print-fields-${selectedDocument}`}>
-                <RotateCcw className="ms-1.5 h-4 w-4" /> {translate("الافتراضي")}
-              </Button>
+              {templateKey ? (
+                <Button type="button" variant="ghost" size="sm" onClick={resetTemplateDefaults} data-testid="reset-template-print-fields">
+                  <RotateCcw className="ms-1.5 h-4 w-4" /> {translate("استعادة إعدادات القالب")}
+                </Button>
+              ) : (
+                <Button type="button" variant="ghost" size="sm" onClick={resetDocument} data-testid={`reset-print-fields-${selectedDocument}`}>
+                  <RotateCcw className="ms-1.5 h-4 w-4" /> {translate("الافتراضي")}
+                </Button>
+              )}
             </div>
           </div>
 
@@ -443,7 +485,7 @@ export default function PrintFieldVisibilityTab({
                 </div>
                 <div className="grid gap-2 md:grid-cols-2">
                   {group.fields.map((field) => {
-                    const checked = visibility[selectedDocument]?.[field.key] !== false;
+                    const checked = isFieldVisible(selectedDocument, field.key);
                     return (
                       <div
                         key={field.key}
@@ -472,7 +514,9 @@ export default function PrintFieldVisibilityTab({
 
           <footer className="flex flex-col gap-3 border-t border-border/70 bg-muted/20 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <p className="text-xs leading-5 text-muted-foreground" data-testid="print-field-visibility-save-hint">
-              {translate("التغييرات تُحفظ للشركة بالكامل، وتؤثر على المظهر المطبوع فقط.")}
+              {translate(templateKey
+                ? "تُحفظ التغييرات للقالب المحدد ونوع المستند فقط."
+                : "التغييرات تُحفظ للشركة بالكامل، وتؤثر على المظهر المطبوع فقط.")}
             </p>
             <Button
               type="button"

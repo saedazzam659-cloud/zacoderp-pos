@@ -119,6 +119,7 @@
 - [Purchase picker price priority](purchase-picker-weighted-average-cost.md) — default from latest posted purchase; keep current weighted-average inventory cost separate.
 - [Purchase direct-expense and custody boundary](purchase-direct-expense-custody.md) — default-off direct-expense lines use normal expense/tax posting; custody settlements and returns reuse the existing lifecycle.
 - [Company document field controls](company-document-field-controls.md) — keep company controls off by default, SuperAdmin-gated, and company-wide when enabled.
+- [Print field visibility scope](print-field-visibility-scope.md) — sales controls are per template and document type; purchases and vouchers stay company-wide.
 - [Document visibility scope](document-visibility-scope.md) — per-user own-document visibility is opt-in; company admins retain company-wide access.
 - [Searchable web dropdowns](searchable-web-dropdowns.md) — use the existing searchable combobox pattern for dropdowns added or modified in ERP web forms.
 - [Agent top navigation and module tiles](agent-topnav-module-tiles.md) — selected modules use existing tile hubs only when agent top navigation is enabled; other groups remain dropdowns.

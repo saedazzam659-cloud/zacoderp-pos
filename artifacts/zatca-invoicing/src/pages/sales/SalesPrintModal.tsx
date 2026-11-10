@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Printer, X } from "lucide-react";
+import { Printer, SlidersHorizontal, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
 import { currencySymbol } from "@/lib/format";
@@ -34,6 +34,7 @@ import {
 } from "@/lib/quotationPrintOptions";
 import QRCode from "qrcode";
 import { useDemoActionGate } from "@/hooks/use-demo-action-gate";
+import PrintFieldVisibilityTab from "@/components/PrintFieldVisibilityTab";
 import { localizePrintHtml } from "@/lib/localizedUiText";
 import {
   composeQuotationBaseWithCustomLayout,
@@ -457,7 +458,7 @@ function totalRowsHtml(
 ): string {
   const resolvedCurrencyName = currencyNameOverride ?? t.currencyName;
   const currencyName = resolvedCurrencyName
-    ? ` <span class="currency-name">${currencyNameAtLabel ? escapePrintHtml(resolvedCurrencyName) : `(${escapePrintHtml(resolvedCurrencyName)})`}</span>`
+    ? ` <span data-print-field="currency" class="currency-name">${currencyNameAtLabel ? escapePrintHtml(resolvedCurrencyName) : `(${escapePrintHtml(resolvedCurrencyName)})`}</span>`
     : "";
   const grandLabel = `الصافي شامل الضريبة — Total${currencyNameAtLabel ? currencyName : ""}`;
   const grandValueSuffix = currencyNameAtLabel ? "" : currencyName;
@@ -545,18 +546,17 @@ async function buildZatcaQrDataUrl(company: any, doc: any, t: FullTotals): Promi
 }
 
 function shouldShowQr(d: PrintData): boolean {
-  if (d?.type === "quotation") {
-    return isPrintFieldVisible(
-      d.company?.printFieldVisibility,
-      "sales_quotation",
-      "qr",
-      getQuotationPrintOptions(d.company).showQr,
-    );
-  }
-  if (d?.type === "invoice") {
-    return isPrintFieldVisible(d.company?.printFieldVisibility, "sales_invoice", "qr");
-  }
-  return true;
+  const document = d?.type === "quotation"
+    ? "sales_quotation"
+    : d?.type === "return"
+      ? "sales_return"
+      : d?.type === "order"
+        ? "sales_order"
+        : "sales_invoice";
+  const legacyDefault = d?.type === "quotation"
+    ? getQuotationPrintOptions(d.company).showQr
+    : true;
+  return isPrintFieldVisible(d.company?.printFieldVisibility, document, "qr", legacyDefault);
 }
 
 // Reusable QR rendering helper — uses the real ZATCA data URL when available,
@@ -3318,10 +3318,32 @@ export async function renderSalesDocsBundleHtml(
   const id = resolveTemplateIdFor(company, type);
   const tmpl = TEMPLATES.find(t => t.id === id) ?? TEMPLATES[0];
   const rendered = await Promise.all(datas.map(async source => {
+    const visibilityDocument = source.type === "quotation"
+      ? "sales_quotation"
+      : source.type === "return"
+        ? "sales_return"
+        : source.type === "order"
+          ? "sales_order"
+          : "sales_invoice";
+    const templateVisibility = company?.printTemplateFieldVisibility?.[`builtin:${id}`]?.[visibilityDocument];
+    const documentVisibility = { [visibilityDocument]: templateVisibility ?? {} };
+    const showFreeQuantity = isPrintFieldVisible(
+      documentVisibility,
+      visibilityDocument,
+      "freeQuantity",
+      company?.showFreeQuantity !== false,
+    );
     const d: PrintData = {
       ...source,
       doc: { ...source.doc },
-      company: { ...(source.company ?? company), _printLanguage: language },
+      lines: showFreeQuantity
+        ? source.lines
+        : (source.lines ?? []).map(line => ({ ...line, freeQty: 0 })),
+      company: {
+        ...(source.company ?? company),
+        _printLanguage: language,
+        printFieldVisibility: documentVisibility,
+      },
       _lang: language,
     } as PrintData;
     (d.doc as any).__printType = d.type;
@@ -3341,7 +3363,8 @@ export async function renderSalesDocsBundleHtml(
       () =>
       tmpl.fn(withManualSalesPrintPartyName(d))
     );
-    return language === "en" ? localizePrintHtml(html, language, d) : html;
+    const localizedHtml = language === "en" ? localizePrintHtml(html, language, d) : html;
+    return applyPrintFieldVisibility(localizedHtml, visibilityDocument, documentVisibility);
   }));
   if (rendered.length === 1) {
     // Single doc → keep the template's own auto-print behavior intact.
@@ -3530,6 +3553,10 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     Number(b.id === initialTemplateId) - Number(a.id === initialTemplateId),
   );
   const [selected, setSelected] = useState<number | `custom:${number}`>(resolveInitialId);
+  const [fieldSettingsTemplate, setFieldSettingsTemplate] = useState<{
+    key: string;
+    name: string;
+  } | null>(null);
   const selectionChangedByUserRef = useRef(false);
   const [thermalScale, setThermalScale] = useState<number>(
     () => readThermalPrintScale(companyCfg.id, resolveInitialId()),
@@ -3538,13 +3565,22 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     () => readThermalPrintBold(companyCfg.id, resolveInitialId()),
   );
   const { toast } = useToast();
-  const { user, token } = useAuth() as any;
-  const printFieldVisibility = companyCfg?.printFieldVisibility ?? user?.company?.printFieldVisibility;
+  const { user, token, setUser } = useAuth() as any;
+  const printTemplateKey = typeof selected === "string"
+    ? selected
+    : `builtin:${selected}`;
+  const templateVisibilityMap = {
+    ...(companyCfg?.printTemplateFieldVisibility ?? {}),
+    ...(user?.company?.printTemplateFieldVisibility ?? {}),
+  };
+  const printFieldVisibility = templateVisibilityMap[printTemplateKey] ?? {};
   const salesVisibilityDocument = data?.type === "quotation"
     ? "sales_quotation"
-    : data?.type === "invoice"
-      ? "sales_invoice"
-      : null;
+    : data?.type === "return"
+      ? "sales_return"
+      : data?.type === "order"
+        ? "sales_order"
+        : "sales_invoice";
   const legacyShowFreeQuantity = companyCfg.showFreeQuantity ?? user?.company?.showFreeQuantity;
   const showFreeQuantity = salesVisibilityDocument
     ? isPrintFieldVisible(printFieldVisibility, salesVisibilityDocument, "freeQuantity", legacyShowFreeQuantity !== false)
@@ -3772,9 +3808,10 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     // Stamp the print TYPE onto the doc so the shared totals helpers can gate
     // the SAR-equivalent block to tax documents (invoice/return) only — every
     // template reads `doc` (directly or via {...doc}) so this reaches them all.
+    data.company = { ...data.company, printFieldVisibility };
     (data.doc as any).__printType = data.type;
     (data.doc as any).__pd = data;
-    const shouldBuildQr = data.type !== "quotation" || getQuotationPrintOptions(data.company).showQr;
+    const shouldBuildQr = shouldShowQr(data);
     if (!shouldBuildQr) delete (data as any)._qrDataUrl;
     try {
       if (shouldBuildQr) {
@@ -3831,17 +3868,22 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
       !isPrintFieldVisible(printFieldVisibility, salesVisibilityDocument, "notes");
     const hideItemCode = !!salesVisibilityDocument &&
       !isPrintFieldVisible(printFieldVisibility, salesVisibilityDocument, "itemCode");
+    const hideDescription = !!salesVisibilityDocument &&
+      !isPrintFieldVisible(printFieldVisibility, salesVisibilityDocument, "description");
     const printData: PrintData = {
       ...printSource,
       doc: hidePrintNotes ? { ...printSource.doc, notes: "" } : printSource.doc,
-      company: hidePrintNotes
-        ? { ...printSource.company, printCustomNotes: "" }
-        : printSource.company,
+      company: {
+        ...printSource.company,
+        printFieldVisibility,
+        ...(hidePrintNotes ? { printCustomNotes: "" } : {}),
+      },
       lines: (printSource.lines ?? []).map((line: any) => ({
         ...line,
         ...(showFreeQuantity === false ? { freeQty: 0 } : {}),
         ...(hidePrintNotes ? { notes: "" } : {}),
         ...(hideItemCode ? { itemCode: "" } : {}),
+        ...(hideDescription ? { description: "" } : {}),
       })),
     };
     const customBaseId = Number(customTemplate?.layoutJson?.baseTemplateId);
@@ -4039,12 +4081,8 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
 
         <div className="grid grid-cols-3 md:grid-cols-6 gap-3 my-4 max-h-[55vh] overflow-y-auto pr-1">
           {orderedVisibleTemplates.map(t => (
-            <button
+            <div
               key={t.id}
-              onClick={() => {
-                selectionChangedByUserRef.current = true;
-                setSelected(t.id);
-              }}
               className={cn(
                 "rounded-xl border-2 p-3 text-center transition-all hover:shadow-md relative",
                 selected === t.id
@@ -4053,6 +4091,15 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
               )}
               style={selected === t.id ? { borderColor: t.color } : {}}
             >
+              <button
+                type="button"
+                className="w-full text-center"
+                aria-pressed={selected === t.id}
+                onClick={() => {
+                  selectionChangedByUserRef.current = true;
+                  setSelected(t.id);
+                }}
+              >
               {t.id === initialTemplateId && (
                 <span className="absolute -top-2 -right-2 rounded-full bg-primary px-2 py-0.5 text-[9px] font-bold text-primary-foreground shadow">
                   الافتراضي
@@ -4104,7 +4151,22 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
               <p className="text-xs font-bold" style={selected === t.id ? { color: t.color } : {}}>{t.name}</p>
               <p className="text-[9px] font-medium text-muted-foreground">{templateIsThermal(t.id) ? "حراري 80 مم" : "ورقة A4"}</p>
               <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{t.desc}</p>
-            </button>
+              </button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2 h-7 w-full gap-1 px-1 text-[10px]"
+                data-testid={`configure-template-fields-${t.id}`}
+                onClick={event => {
+                  event.stopPropagation();
+                  setFieldSettingsTemplate({ key: `builtin:${t.id}`, name: t.name });
+                }}
+              >
+                <SlidersHorizontal className="h-3 w-3" />
+                حقول الطباعة
+              </Button>
+            </div>
           ))}
           {data.type === "quotation" && orderedCustomQuotationTemplates.map(template => {
             const selectedKey = `custom:${template.id}` as `custom:${number}`;
@@ -4113,19 +4175,24 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
             const base = SALES_PRINT_TEMPLATE_CATALOG.find(item => item.id === baseId);
             const color = base?.color ?? "#4f46e5";
             return (
-              <button
+              <div
                 key={selectedKey}
                 data-testid={`custom-quotation-template-${template.id}`}
-                onClick={() => {
-                  selectionChangedByUserRef.current = true;
-                  setSelected(selectedKey);
-                }}
                 className={cn(
                   "rounded-xl border-2 p-3 text-center transition-all hover:shadow-md relative",
                   isSelected ? "shadow-lg scale-105" : "border-border hover:border-muted-foreground",
                 )}
                 style={isSelected ? { borderColor: color } : {}}
               >
+                <button
+                  type="button"
+                  className="w-full text-center"
+                  aria-pressed={isSelected}
+                  onClick={() => {
+                    selectionChangedByUserRef.current = true;
+                    setSelected(selectedKey);
+                  }}
+                >
                 {template.isDefault && (
                   <span className="absolute -top-2 -right-2 rounded-full bg-emerald-700 px-2 py-0.5 text-[9px] font-bold text-white shadow">
                     الافتراضي المخصص
@@ -4149,7 +4216,22 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
                 <p className="text-[9px] font-medium text-muted-foreground">
                   نسخة مخصصة · {base?.name ?? "قالب مستقل"}
                 </p>
-              </button>
+                </button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 h-7 w-full gap-1 px-1 text-[10px]"
+                  data-testid={`configure-template-fields-custom-${template.id}`}
+                  onClick={event => {
+                    event.stopPropagation();
+                    setFieldSettingsTemplate({ key: selectedKey, name: template.name });
+                  }}
+                >
+                  <SlidersHorizontal className="h-3 w-3" />
+                  حقول الطباعة
+                </Button>
+              </div>
             );
           })}
         </div>
@@ -4163,6 +4245,28 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
             تعذر تحميل القوالب المخصصة؛ يمكنك إعادة فتح نافذة الطباعة للمحاولة مرة أخرى.
           </p>
         )}
+
+        <Dialog
+          open={!!fieldSettingsTemplate}
+          onOpenChange={isOpen => {
+            if (!isOpen) setFieldSettingsTemplate(null);
+          }}
+        >
+          <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto" dir="rtl">
+            <DialogHeader>
+              <DialogTitle>حقول الطباعة · {fieldSettingsTemplate?.name}</DialogTitle>
+            </DialogHeader>
+            {fieldSettingsTemplate && (
+              <PrintFieldVisibilityTab
+                key={fieldSettingsTemplate.key}
+                user={user}
+                token={token ?? ""}
+                setUser={setUser}
+                templateKey={fieldSettingsTemplate.key}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
 
         <div className="rounded-lg bg-muted/40 border px-4 py-3 text-sm space-y-1">
           <div className="flex gap-6">

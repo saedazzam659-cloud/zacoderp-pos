@@ -394,6 +394,14 @@ export const companiesTable = pgTable("companies", {
       Record<string, boolean>
     >>
   >(),
+  // Sales-field settings are scoped to both the selected template and document
+  // type; missing entries preserve the template's existing output.
+  printTemplateFieldVisibility: jsonb("print_template_field_visibility").$type<
+    Record<string, Partial<Record<
+      "sales_invoice" | "sales_quotation" | "sales_return" | "sales_order",
+      Record<string, boolean>
+    >>>
+  >(),
   deliveryReceiptPrintOptions: jsonb("delivery_receipt_print_options").$type<{
     showCompanyDetails: boolean;
     showBranch: boolean;
