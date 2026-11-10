@@ -689,14 +689,16 @@ function customQuotationPrintContext(d: PrintData): CustomPrintContext {
   const fields: Record<string, string> = {
     "company.name": isEnglish ? company.nameEn ?? company.nameAr ?? "—" : company.nameAr ?? company.nameEn ?? "—",
     "company.vat": company.vatNumber ?? "—",
-    "company.address": company.address ?? company.addressAr ?? company.city ?? "—",
+    "company.address": isEnglish
+      ? company.addressEn ?? company.address ?? company.addressAr ?? company.city ?? "—"
+      : company.addressAr ?? company.address ?? company.city ?? "—",
     "company.phone": company.phone ?? company.phoneNumber ?? "—",
     "quotation.number": doc.docNumber ?? `SQ-${doc.id ?? ""}`,
     "quotation.date": doc.quotationDate ?? "—",
     "quotation.validUntil": doc.validUntil ?? "—",
     "customer.name": customerName,
     "customer.vat": customer.vatNumber ?? doc.buyerVatNumber ?? "—",
-    "customer.address": quotationCustomerAddressText(d) || "—",
+    "customer.address": quotationOptions.showCustomerAddress ? quotationCustomerAddressText(d) || "—" : "",
     "totals.subtotal": amount(totals.subtotalPreDiscount),
     "totals.discount": amount(totals.discountTotal),
     "totals.vat": amount(totals.vatAmount),
@@ -736,6 +738,7 @@ function customQuotationPrintContext(d: PrintData): CustomPrintContext {
     rows,
     qrDataUrl: (d as any)._qrDataUrl,
     showQr: quotationOptions.showQr,
+    hiddenFields: quotationOptions.showCustomerAddress ? [] : ["customer.address"],
   };
 }
 

@@ -9,6 +9,7 @@ export interface CustomPrintContext {
   rows: CustomPrintRow[];
   qrDataUrl?: string;
   showQr?: boolean;
+  hiddenFields?: string[];
 }
 
 function escapeHtml(value: unknown): string {
@@ -89,6 +90,7 @@ function elementStyle(element: Element): string {
 
 function renderField(element: Element, context: CustomPrintContext): string {
   const fieldKey = element.fieldKey ?? "";
+  if (context.hiddenFields?.includes(fieldKey)) return "";
   if (fieldKey === "qr.zatca") {
     const src = context.showQr ? safeImageSource(context.qrDataUrl) : "";
     return src
