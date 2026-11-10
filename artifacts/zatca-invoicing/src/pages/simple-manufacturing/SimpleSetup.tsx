@@ -644,43 +644,61 @@ export function SimpleSetup({
               <DialogTrigger asChild>
                 <Button variant="outline" className="w-full justify-start" disabled={!canEdit} onClick={startBomCreate} data-testid="button-create-bom"><Plus className="mr-2 h-4 w-4" /> ربط قائمة مكونات (بسيطة)</Button>
               </DialogTrigger>
-              <DialogContent dir="rtl" className="max-w-2xl max-h-[85vh] overflow-y-auto">
-                 <DialogHeader><DialogTitle>{editingBomId ? "تعديل قائمة مكونات مبسطة" : "قائمة مكونات مبسطة"}</DialogTitle><DialogDescription>اربط أي عدد من المواد بالمنتج النهائي.</DialogDescription></DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold">المنتج النهائي</label>
-                    <SearchCombobox
-                      value={bom.productItemId}
-                      className="h-10"
-                      openOnFocus={false}
-                      placeholder="اختر المنتج..."
-                      searchPlaceholder="ابحث برمز أو اسم المنتج..."
-                      items={[
-                        { value: "", label: "اختر المنتج..." },
-                        ...productPickerItems
-                          .filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature))
-                          .map(i => ({
-                            value: String(i.id),
-                            code: i.code,
-                            label: i.nameAr,
-                            labelEn: i.nameEn || undefined,
-                          })),
-                      ]}
-                      onValueChange={value => setBom({ ...bom, productItemId: value })}
-                      onSearchChange={productItemSearch.setSearch}
-                      loading={productItemSearch.isSearching}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <label className="text-sm font-semibold">الكمية الناتجة</label>
-                      <Input type="text" inputMode="decimal" value={bom.outputQty} onChange={e => setBom({ ...bom, outputQty: e.target.value })} placeholder="الكمية الافتراضية" />
+              <DialogContent
+                dir="rtl"
+                data-testid="dialog-simple-bom"
+                className="flex h-[min(94dvh,920px)] max-h-[94dvh] w-[calc(100vw-1rem)] max-w-[1440px] flex-col gap-0 overflow-hidden p-0 sm:w-[calc(100vw-2rem)] sm:max-w-[1440px]"
+              >
+                <DialogHeader className="shrink-0 border-b border-violet-100 bg-gradient-to-l from-violet-50/80 via-white to-white px-5 py-4 text-right sm:px-7 sm:text-right">
+                  <DialogTitle className="text-lg font-bold text-slate-900">
+                    {editingBomId ? "تعديل قائمة مكونات مبسطة" : "قائمة مكونات مبسطة"}
+                  </DialogTitle>
+                  <DialogDescription className="mt-1 text-sm text-slate-500">
+                    اربط المنتج النهائي بمواده، وحدد الكميات والوحدات بوضوح.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-6 lg:p-7">
+                  <div className="grid gap-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4 lg:grid-cols-12 lg:items-end">
+                    <div className="space-y-2 lg:col-span-6">
+                      <label className="text-sm font-semibold text-slate-700">المنتج النهائي</label>
+                      <SearchCombobox
+                        value={bom.productItemId}
+                        className="h-10 w-full"
+                        openOnFocus={false}
+                        placeholder="اختر المنتج..."
+                        searchPlaceholder="ابحث برمز أو اسم المنتج..."
+                        items={[
+                          { value: "", label: "اختر المنتج..." },
+                          ...productPickerItems
+                            .filter(i => !i.itemNature || ["finished", "semi", "merchandise"].includes(i.itemNature))
+                            .map(i => ({
+                              value: String(i.id),
+                              code: i.code,
+                              label: i.nameAr,
+                              labelEn: i.nameEn || undefined,
+                            })),
+                        ]}
+                        onValueChange={value => setBom({ ...bom, productItemId: value })}
+                        onSearchChange={productItemSearch.setSearch}
+                        loading={productItemSearch.isSearching}
+                      />
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-semibold">وحدة المنتج (اختياري)</label>
+                    <div className="space-y-2 lg:col-span-3">
+                      <label className="text-sm font-semibold text-slate-700">الكمية الناتجة</label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        value={bom.outputQty}
+                        onChange={e => setBom({ ...bom, outputQty: e.target.value })}
+                        placeholder="الكمية الافتراضية"
+                      />
+                    </div>
+                    <div className="space-y-2 lg:col-span-3">
+                      <label className="text-sm font-semibold text-slate-700">وحدة المنتج (اختياري)</label>
                       <SearchCombobox
                         value={bom.outputUnitCode}
-                        className="h-10"
+                        className="h-10 w-full"
                         openOnFocus={false}
                         placeholder="(افتراضي للصنف)"
                         searchPlaceholder="ابحث عن الوحدة..."
@@ -696,81 +714,135 @@ export function SimpleSetup({
                       />
                     </div>
                   </div>
+
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold">اسم القائمة</label>
-                    <Input value={bom.nameAr} onChange={e => setBom({ ...bom, nameAr: e.target.value })} placeholder="اسم القائمة (مثال: وصفة الخبز الأساسية)" />
+                    <label className="text-sm font-semibold text-slate-700">اسم القائمة</label>
+                    <Input
+                      value={bom.nameAr}
+                      onChange={e => setBom({ ...bom, nameAr: e.target.value })}
+                      placeholder="اسم القائمة (مثال: وصفة الخبز الأساسية)"
+                    />
                   </div>
-                   <div className="space-y-2">
-                     <div className="text-sm font-semibold text-slate-700">المواد المطلوبة للإنتاج</div>
-                     {bomLines.map((line, index) => (
-                       <div key={index} className="flex items-center gap-2">
-                          <SearchCombobox
-                            value={line.itemId}
-                            className="h-10 flex-[2]"
-                            openOnFocus={false}
-                            placeholder="اختر المادة..."
-                            searchPlaceholder="ابحث برمز أو اسم المادة..."
-                            items={[
-                              { value: "", label: "اختر المادة..." },
-                              ...materialPickerItems
-                                .filter(i => !i.itemNature || ["raw", "semi", "consumable"].includes(i.itemNature))
-                                .map(i => ({
-                                  value: String(i.id),
-                                  code: i.code,
-                                  label: i.nameAr,
-                                  labelEn: i.nameEn || undefined,
+
+                  <section className="space-y-4 rounded-xl border border-violet-100 bg-violet-50/25 p-4 sm:p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-800">المواد المطلوبة للإنتاج</h3>
+                        <p className="mt-1 text-xs text-slate-500">{bomLines.length} مادة في هذه القائمة</p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        data-testid="button-add-bom-line"
+                        onClick={() => setBomLines(lines => [...lines, { itemId: "", quantity: "1", unitCode: "" }])}
+                        disabled={!canEdit}
+                      >
+                        <Plus className="mr-1 h-4 w-4" /> إضافة مادة
+                      </Button>
+                    </div>
+
+                    <div className="space-y-3">
+                      {bomLines.map((line, index) => (
+                        <div
+                          key={index}
+                          data-testid={`row-bom-line-${index}`}
+                          className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm md:grid-cols-12 md:items-end"
+                        >
+                          <div className="space-y-2 md:col-span-6">
+                            <label className="text-xs font-semibold text-slate-600">المادة المطلوبة</label>
+                            <SearchCombobox
+                              value={line.itemId}
+                              className="h-10 w-full"
+                              openOnFocus={false}
+                              placeholder="اختر المادة..."
+                              searchPlaceholder="ابحث برمز أو اسم المادة..."
+                              items={[
+                                { value: "", label: "اختر المادة..." },
+                                ...materialPickerItems
+                                  .filter(i => !i.itemNature || ["raw", "semi", "consumable"].includes(i.itemNature))
+                                  .map(i => ({
+                                    value: String(i.id),
+                                    code: i.code,
+                                    label: i.nameAr,
+                                    labelEn: i.nameEn || undefined,
+                                  })),
+                              ]}
+                              onValueChange={value => setBomLines(lines => lines.map((current, i) => i === index
+                                ? { ...current, itemId: value }
+                                : current))}
+                              onSearchChange={materialItemSearch.setSearch}
+                              loading={materialItemSearch.isSearching}
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <label className="text-xs font-semibold text-slate-600">الكمية</label>
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              value={line.quantity}
+                              onChange={e => setBomLines(lines => lines.map((current, i) => i === index
+                                ? { ...current, quantity: e.target.value }
+                                : current))}
+                              placeholder="1"
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-3">
+                            <label className="text-xs font-semibold text-slate-600">الوحدة (اختياري)</label>
+                            <SearchCombobox
+                              value={line.unitCode}
+                              className="h-10 w-full"
+                              openOnFocus={false}
+                              placeholder="استخدم الوحدة الأساسية"
+                              searchPlaceholder="ابحث عن الوحدة..."
+                              items={[
+                                { value: "", label: "(افتراضي)" },
+                                ...(catalog.units ?? []).map(u => ({
+                                  value: u.code,
+                                  code: u.code,
+                                  label: u.nameAr,
                                 })),
-                            ]}
-                            onValueChange={value => setBomLines(lines => lines.map((current, i) => i === index
-                              ? { ...current, itemId: value }
-                              : current))}
-                            onSearchChange={materialItemSearch.setSearch}
-                            loading={materialItemSearch.isSearching}
-                          />
-                         <Input className="flex-[1] min-w-[80px]" type="text" inputMode="decimal" value={line.quantity}
-                           onChange={e => setBomLines(lines => lines.map((current, i) => i === index
-                             ? { ...current, quantity: e.target.value }
-                             : current))}
-                           placeholder="الكمية" />
-                          <SearchCombobox
-                            value={line.unitCode}
-                            className="h-10 flex-[1]"
-                            openOnFocus={false}
-                            placeholder="(افتراضي)"
-                            searchPlaceholder="ابحث عن الوحدة..."
-                            items={[
-                              { value: "", label: "(افتراضي)" },
-                              ...(catalog.units ?? []).map(u => ({
-                                value: u.code,
-                                code: u.code,
-                                label: u.nameAr,
-                              })),
-                            ]}
-                            onValueChange={value => setBomLines(lines => lines.map((current, i) => i === index
-                              ? { ...current, unitCode: value }
-                              : current))}
-                          />
-                         <Button type="button" variant="ghost" size="icon" className="text-destructive"
-                           disabled={bomLines.length <= 1}
-                           onClick={() => setBomLines(lines => lines.filter((_, i) => i !== index))}>
-                           ×
-                         </Button>
-                       </div>
-                     ))}
-                     <Button type="button" variant="outline" size="sm"
-                       onClick={() => setBomLines(lines => [...lines, { itemId: "", quantity: "1", unitCode: "" }])}
-                       disabled={!canEdit}>
-                       <Plus className="mr-1 h-4 w-4" /> إضافة مادة
-                     </Button>
-                   </div>
-                   <div className="bg-slate-50 p-2 text-xs text-slate-500 rounded border">ملاحظة: إذا تركت الوحدة فارغة سيتم استخدام وحدة القياس الأساسية للصنف.</div>
-                    <Button disabled={busy || !canEdit || !bom.productItemId || !bomLines.length || bomLines.some(line => !line.itemId || !(Number(line.quantity) > 0))}
-                     onClick={async () => {
-                        await onSaveBom({ ...bom, id: editingBomId ?? undefined, lines: bomLines });
-                        setOpenBom(false);
-                        resetBom();
-                     }} className="w-full">
-                     {editingBomId ? "تحديث القائمة" : "حفظ القائمة"}
+                              ]}
+                              onValueChange={value => setBomLines(lines => lines.map((current, i) => i === index
+                                ? { ...current, unitCode: value }
+                                : current))}
+                            />
+                          </div>
+                          <div className="flex justify-end md:col-span-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              aria-label={`حذف المادة ${index + 1}`}
+                              data-testid={`button-remove-bom-line-${index}`}
+                              disabled={bomLines.length <= 1}
+                              onClick={() => setBomLines(lines => lines.filter((_, i) => i !== index))}
+                            >
+                              ×
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+
+                <div className="flex shrink-0 flex-col gap-3 border-t border-slate-200 bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                    ملاحظة: إذا تركت الوحدة فارغة سيتم استخدام وحدة القياس الأساسية للصنف.
+                  </div>
+                  <Button
+                    data-testid="button-save-bom"
+                    disabled={busy || !canEdit || !bom.productItemId || !bomLines.length || bomLines.some(line => !line.itemId || !(Number(line.quantity) > 0))}
+                    onClick={async () => {
+                      await onSaveBom({ ...bom, id: editingBomId ?? undefined, lines: bomLines });
+                      setOpenBom(false);
+                      resetBom();
+                    }}
+                    className="w-full sm:w-auto sm:min-w-48"
+                  >
+                    {editingBomId ? "تحديث القائمة" : "حفظ القائمة"}
                   </Button>
                 </div>
               </DialogContent>

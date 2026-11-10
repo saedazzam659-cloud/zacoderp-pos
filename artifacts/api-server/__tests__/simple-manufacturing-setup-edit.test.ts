@@ -73,6 +73,19 @@ test("routing editor enables alternative-machine selection only with multiple ma
   assert.match(editor, /id: s\.id,/);
 });
 
+test("compact BOM dialog uses a wide responsive layout with a fixed save area", async () => {
+  const setup = await readFile(
+    new URL("../../zatca-invoicing/src/pages/simple-manufacturing/SimpleSetup.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(setup, /data-testid="dialog-simple-bom"/);
+  assert.match(setup, /max-w-\[1440px\].*sm:max-w-\[1440px\]/);
+  assert.match(setup, /min-h-0 flex-1 space-y-5 overflow-y-auto/);
+  assert.match(setup, /md:grid-cols-12 md:items-end/);
+  assert.match(setup, /data-testid="button-add-bom-line"/);
+  assert.match(setup, /data-testid="button-save-bom"/);
+});
+
 test("SimpleSetup opens the existing dialogs for double-click editing and sends stable ids", async () => {
   const [setup, controller] = await Promise.all([
     readFile(
