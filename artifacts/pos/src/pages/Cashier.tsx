@@ -1053,37 +1053,6 @@ export default function CashierPage() {
             <p className="truncate text-sm font-black leading-tight tracking-tight">
               زاكود <span className="text-primary">نقاط البيع</span>
             </p>
-            <p className="mt-0.5 max-w-48 truncate text-[10px] leading-tight text-muted-foreground">
-              {branchName} <span aria-hidden="true">·</span> {user?.company?.nameAr || ""}
-            </p>
-          </div>
-        </div>
-
-        <div className="min-w-0 flex-1 sm:max-w-md lg:max-w-lg">
-          <div className="relative">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              ref={searchInputRef}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="ابحث باسم المنتج أو الباركود..."
-              aria-label="البحث عن منتج بالاسم أو الرمز أو الباركود"
-              data-testid="input-pos-product-search"
-              className="h-11 rounded-xl border-border/80 bg-background pr-10 pl-12 text-sm font-medium shadow-inner shadow-foreground/[0.02] focus-visible:ring-primary/25"
-            />
-            <button
-              type="button"
-              title="مسح الباركود"
-              aria-label="تفعيل حقل البحث لمسح الباركود"
-              data-testid="button-focus-barcode-search"
-              onClick={() => {
-                searchInputRef.current?.focus();
-                searchInputRef.current?.select();
-              }}
-              className="absolute left-1 top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            >
-              <ScanBarcode className="w-4 h-4" />
-            </button>
           </div>
         </div>
 
@@ -1340,62 +1309,94 @@ export default function CashierPage() {
         </nav>
       )}
 
-      <div className="flex-1 grid lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem] 2xl:grid-cols-[minmax(0,1fr)_32rem] min-h-0">
+      <div className="flex-1 grid lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_25rem] 2xl:grid-cols-[minmax(0,1fr)_27rem] min-h-0">
         {/* LEFT — products */}
         <section className="flex flex-col min-h-0 min-w-0">
-          {/* Categories */}
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-background/80 px-4 py-3 lg:px-6">
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-primary">نقطة البيع</p>
-              <h1 className="mt-0.5 truncate text-base font-black tracking-tight sm:text-lg">الأصناف</h1>
-            </div>
-            <div className="hidden shrink-0 items-center gap-2 text-xs text-muted-foreground sm:flex">
-              <span className="rounded-full border border-border bg-card px-3 py-1.5 font-semibold">{filtered.length} منتج</span>
-              <span className="text-border">|</span>
-              <span className="font-semibold">{branchName}</span>
-            </div>
-          </div>
-
-          {categories.length > 1 && (
-            <div className="shrink-0 overflow-x-auto border-b border-border/70 bg-card/60 px-4 py-3 lg:px-6">
-              <div className="flex items-center gap-2 min-w-max">
-                {categories.map((c) => {
-                  const active = activeCat === c.id;
-                  return (
-                    <button
-                      key={String(c.id)}
-                      onClick={() => { setActiveCat(c.id as any); setActiveSubgroup("all"); }}
-                      aria-pressed={active}
-                      data-testid={`button-pos-display-group-${String(c.id)}`}
-                      className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-bold whitespace-nowrap transition-all ${
-                        active
-                          ? "border-primary bg-primary text-primary-foreground shadow-sm ring-2 ring-primary/10"
-                          : "border-border/80 bg-background text-foreground hover:border-primary/30 hover:bg-primary/[0.04]"
-                      }`}
-                    >
-                      {c.id !== "all" && (imageSrcFromUrl(c.imageUrl) ? (
-                        <img
-                          src={imageSrcFromUrl(c.imageUrl) ?? undefined}
-                          alt=""
-                          className="h-6 w-6 rounded-md object-cover"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <span className={`grid place-items-center text-[10px] font-black ${
-                           "h-6 w-6 rounded-md"
-                        } ${
-                         active ? "bg-primary-foreground/15 text-primary-foreground" : "bg-primary/10 text-primary"
-                        }`} aria-hidden="true">
-                          {c.nameAr.slice(0, 1)}
-                        </span>
-                      ))}
-                      <span>{c.nameAr}</span>
-                    </button>
-                  );
-                })}
+          {/* Compact product heading and catalog toolbar */}
+          <div className="shrink-0 border-b border-border/70 bg-background/90">
+            <div className="flex items-center justify-between gap-3 px-3 py-2 lg:px-5">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="rounded-lg bg-primary/10 px-2 py-1 text-[10px] font-black tracking-wide text-primary">
+                  نقطة البيع
+                </span>
+                <h1 className="truncate text-sm font-black tracking-tight sm:text-base">الأصناف</h1>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5 text-[10px] sm:gap-2 sm:text-xs">
+                <span className="rounded-full border border-primary/20 bg-primary/[0.06] px-2.5 py-1 font-bold text-primary">
+                  {filtered.length} منتج
+                </span>
+                <span aria-hidden="true" className="text-muted-foreground">|</span>
+                <span className="max-w-28 truncate font-semibold text-muted-foreground sm:max-w-44">
+                  {branchName}
+                </span>
               </div>
             </div>
-          )}
+
+            <div className="flex flex-col gap-2 border-t border-border/50 bg-card/50 px-3 py-2 lg:flex-row lg:items-center lg:px-5">
+              {categories.length > 1 && (
+                <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+                  {categories.map((c) => {
+                    const active = activeCat === c.id;
+                    return (
+                      <button
+                        key={String(c.id)}
+                        onClick={() => { setActiveCat(c.id as any); setActiveSubgroup("all"); }}
+                        aria-pressed={active}
+                        data-testid={`button-pos-display-group-${String(c.id)}`}
+                        className={`flex h-9 shrink-0 items-center gap-2 rounded-xl border px-3 text-xs font-bold whitespace-nowrap transition-all ${
+                          active
+                            ? "border-primary bg-primary text-primary-foreground shadow-sm ring-2 ring-primary/10"
+                            : "border-border/80 bg-background text-foreground hover:border-primary/30 hover:bg-primary/[0.04]"
+                        }`}
+                      >
+                        {c.id !== "all" && (imageSrcFromUrl(c.imageUrl) ? (
+                          <img
+                            src={imageSrcFromUrl(c.imageUrl) ?? undefined}
+                            alt=""
+                            className="h-5 w-5 rounded-md object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <span className={`grid h-5 w-5 place-items-center rounded-md text-[9px] font-black ${
+                            active ? "bg-primary-foreground/15 text-primary-foreground" : "bg-primary/10 text-primary"
+                          }`} aria-hidden="true">
+                            {c.nameAr.slice(0, 1)}
+                          </span>
+                        ))}
+                        <span>{c.nameAr}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="relative w-full shrink-0 lg:w-60 xl:w-72">
+                <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  ref={searchInputRef}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="ابحث باسم الصنف أو الباركود..."
+                  aria-label="البحث عن منتج بالاسم أو الرمز أو الباركود"
+                  data-testid="input-pos-product-search"
+                  className="h-9 rounded-xl border-border/80 bg-background pr-9 pl-11 text-xs font-medium shadow-sm focus-visible:ring-primary/25"
+                />
+                <button
+                  type="button"
+                  title="مسح الباركود"
+                  aria-label="تفعيل حقل البحث لمسح الباركود"
+                  data-testid="button-focus-barcode-search"
+                  onClick={() => {
+                    searchInputRef.current?.focus();
+                    searchInputRef.current?.select();
+                  }}
+                  className="absolute left-1 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <ScanBarcode className="size-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
 
           {availableSubgroups.length > 0 && (
             <div className="shrink-0 border-b border-border/70 bg-background px-4 py-2 lg:px-6">
@@ -2042,25 +2043,26 @@ function CartPanel(props: {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, x: 30 }}
-                  className="flex items-center gap-2 rounded-xl border border-border/80 bg-card p-2 shadow-[0_3px_12px_-12px_hsl(var(--foreground)/.5)]"
+                  className="flex min-h-11 items-center gap-1.5 rounded-xl border border-border/80 bg-card px-1.5 py-1 shadow-[0_3px_12px_-12px_hsl(var(--foreground)/.5)]"
                 >
-                  <div className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-primary/[0.06] text-primary">
+                  <div className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg bg-primary/[0.06] text-primary">
                     {imageSrc(l.item) ? (
                       <img src={imageSrc(l.item)!} alt="" className="h-full w-full object-cover" />
                     ) : (
-                      <Package2 className="size-5" />
+                      <Package2 className="size-4" />
                     )}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold leading-tight line-clamp-1">
-                      {l.item.nameAr}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                      {formatSAR(displayUnitPrice)} ر.س /{" "}
-                      {l.item.unit?.nameAr || "وحدة"}
-                    </p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-baseline justify-between gap-1">
+                      <p className="min-w-0 truncate text-xs font-bold leading-tight">
+                        {l.item.nameAr}
+                      </p>
+                      <span className="shrink-0 whitespace-nowrap text-[9px] font-semibold tabular-nums text-muted-foreground">
+                        {formatSAR(displayUnitPrice)} / {l.item.unit?.nameAr || "وحدة"}
+                      </span>
+                    </div>
                     {modifiers.length > 0 && (
-                      <p className="mt-1 text-[11px] leading-5 text-primary/80" data-testid={`text-cart-modifiers-${l.item.id}`}>
+                      <p className="mt-0.5 line-clamp-1 text-[9px] leading-4 text-primary/80" data-testid={`text-cart-modifiers-${l.item.id}`}>
                         {modifiers.map(({ group, option }) => `${group.nameAr}: ${option.nameAr}`).join(" · ")}
                       </p>
                     )}
@@ -2070,7 +2072,7 @@ function CartPanel(props: {
                         onChange={(event) => selectSalePriceOption(lineKey, event.target.value)}
                         aria-label={`اختيار سعر ${l.item.nameAr}`}
                         data-testid={`select-price-option-${l.item.id}`}
-                        className="mt-1 h-8 w-full rounded-md border border-primary/20 bg-background px-2 text-xs"
+                        className="mt-1 h-7 w-full max-w-48 rounded-md border border-primary/20 bg-background px-2 text-[10px]"
                       >
                         <option value="">السعر الأساسي · {formatSAR(Number(l.item.salePrice))} ر.س</option>
                         {getSalePriceOptions(l.item).map((option) => (
@@ -2080,46 +2082,42 @@ function CartPanel(props: {
                         ))}
                       </select>
                     )}
-                    <div className="mt-2 flex items-center justify-between">
-                      <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-                        <button
-                          onClick={() => updateQty(lineKey, -1)}
-                          type="button"
-                          className="grid size-8 place-items-center rounded-lg hover:bg-card hover:text-primary"
-                          aria-label="إنقاص"
-                          data-testid={`button-decrease-quantity-${lineKey}`}
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="min-w-7 text-center font-black text-sm">
-                          {l.qty}
-                        </span>
-                        <button
-                          onClick={() => updateQty(lineKey, 1)}
-                          type="button"
-                          className="grid size-8 place-items-center rounded-lg hover:bg-card hover:text-primary"
-                          aria-label="زيادة"
-                          data-testid={`button-increase-quantity-${lineKey}`}
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                      <p className="text-sm font-black text-primary">
-                        {formatSAR(displayUnitPrice * l.qty)}
-                        <span className="text-[10px] text-muted-foreground font-bold mr-0.5">
-                          ر.س
-                        </span>
-                      </p>
-                    </div>
                   </div>
+                  <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-muted/70 p-0.5">
+                    <button
+                      onClick={() => updateQty(lineKey, -1)}
+                      type="button"
+                      className="grid size-6 place-items-center rounded-md hover:bg-card hover:text-primary"
+                      aria-label={`إنقاص كمية ${l.item.nameAr}`}
+                      data-testid={`button-decrease-quantity-${lineKey}`}
+                    >
+                      <Minus className="size-3" />
+                    </button>
+                    <span className="min-w-5 text-center text-xs font-black tabular-nums">
+                      {l.qty}
+                    </span>
+                    <button
+                      onClick={() => updateQty(lineKey, 1)}
+                      type="button"
+                      className="grid size-6 place-items-center rounded-md hover:bg-card hover:text-primary"
+                      aria-label={`زيادة كمية ${l.item.nameAr}`}
+                      data-testid={`button-increase-quantity-${lineKey}`}
+                    >
+                      <Plus className="size-3" />
+                    </button>
+                  </div>
+                  <p className="shrink-0 whitespace-nowrap text-[11px] font-black tabular-nums text-primary">
+                    {formatSAR(displayUnitPrice * l.qty)}
+                    <span className="mr-0.5 text-[9px] font-bold text-muted-foreground">ر.س</span>
+                  </p>
                   <button
                     onClick={() => removeLine(lineKey)}
                     type="button"
-                    className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    aria-label="حذف"
+                    className="grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    aria-label={`حذف ${l.item.nameAr}`}
                     data-testid={`button-remove-cart-line-${lineKey}`}
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 className="size-3" />
                   </button>
                 </motion.li>
                 );
