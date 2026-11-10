@@ -54,3 +54,9 @@ Keep built-in estimated-cost presets fixed. Company-owned custom templates may b
 **Why:** The user chose to protect the standard presets while making company setup dynamic. Existing monthly pools must remain independent snapshots, and account mappings are company-specific.
 
 **How to apply:** Keep system presets read-only, scope custom template CRUD to the current company, validate referenced accounts on save and use, and never link template edits or deletion to existing monthly pools.
+
+For estimated machine-hour and labor-hour pools, freeze the monthly rate from the saved pool amount and denominator. Actual machine hours are completed-stage duration; actual labor person-hours are that duration multiplied by the stage's recorded worker count. Assign the full stage duration to its completion month. Month close adjusts only the difference between the original estimated amount and the actual-driver share; a later month may derive its planned driver from stage expected duration when no order allocation was saved for that period. Reconcile deltas to WIP, finished goods, or COGS using order status, and send canceled or otherwise unassigned actual cost to variance. Standard costing remains untouched.
+
+**Why:** The user selected per-worker labor duration and completion-month attribution, and required frozen rates, delta-only correction, and tests for completed, in-progress, and multi-month orders.
+
+**How to apply:** Keep the calculation inside the opt-in Estimated Costing closure; do not add another source expense or mutate prior allocation snapshots. Block closure when required actual duration, worker count, or planned stage duration is missing.

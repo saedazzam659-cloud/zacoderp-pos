@@ -155,6 +155,8 @@ import { assertWritableForDate } from "../lib/periodGuard.js";
 import { checkItemsUsable, usageViolationMessage } from "../lib/itemUsageControl.js";
 import {
   allocateEstimatedManufacturingPool,
+  allocateEstimatedManufacturingPoolByActualDriver,
+  summarizeEstimatedStageDrivers,
   type EstimatedManufacturingBasis,
 } from "../lib/estimatedManufacturingCosting.js";
 import { chat as aiChat, isAIAvailable } from "../lib/aiClient.js";
@@ -18453,9 +18455,17 @@ type EstimatedCostClosureSnapshot = {
   pools: Array<{
     poolId: number;
     code: string;
+    basis?: EstimatedManufacturingBasis;
     actualAmount: number;
     appliedAmount: number;
     varianceAmount: number;
+    hourlyRate?: number;
+    plannedDriverTotal?: number | null;
+    actualDriverTotal?: number;
+    usageVarianceDriver?: number | null;
+    usageVarianceAmount?: number | null;
+    unallocatedActualAmount?: number;
+    driverOrders?: Array<Record<string, unknown>>;
     actualExpenseAccountId: number;
     absorbedAccountId: number;
     varianceAccountId: number;
@@ -18529,39 +18539,134 @@ async function buildEstimatedCostClosureSnapshot(
 
   for (const pool of pools as any[]) {
     const actual = round2(num(pool.actualAmount));
-    const allocations = await tx.select().from(productionEstimatedCostAllocationsTable).where(and(
+    const originalAllocations = await tx.select().from(productionEstimatedCostAllocationsTable).where(and(
       eq(productionEstimatedCostAllocationsTable.companyId, cid),
       eq(productionEstimatedCostAllocationsTable.poolId, pool.id),
     )).orderBy(asc(productionEstimatedCostAllocationsTable.id)).for("update");
-    if (!allocations.length)
+    const hourlyBasis = pool.allocationBasis === "machine_hours" || pool.allocationBasis === "labor_hours";
+    if (!hourlyBasis && !originalAllocations.length)
       throw Object.assign(new Error(`مجمع ${pool.code} لا يحتوي على توزيعات أوامر محفوظة`), { status: 409 });
-    const recalculated = allocateEstimatedManufacturingPool({
-      estimatedAmount: num(pool.estimatedAmount),
-      basis: pool.allocationBasis as EstimatedManufacturingBasis,
-      denominator: pool.monthlyDenominator == null ? null : num(pool.monthlyDenominator),
-      allocations: allocations.map((row: any) => ({
-        orderId: Number(row.orderId),
-        driverValue: num(row.driverValue),
-      })),
-    });
-    if (recalculated.some((row, index) =>
-      Math.abs(round2(row.allocatedAmount) - round2(num(allocations[index].allocatedAmount))) > 0.01 ||
-      Math.abs(round2(row.sharePct) - round2(num(allocations[index].sharePct))) > 0.01,
-    )) {
-      throw Object.assign(new Error(`توزيعات مجمع ${pool.code} لا تطابق لقطات الأوامر المحفوظة`), { status: 409 });
+    if (!hourlyBasis) {
+      const recalculated = allocateEstimatedManufacturingPool({
+        estimatedAmount: num(pool.estimatedAmount),
+        basis: pool.allocationBasis as EstimatedManufacturingBasis,
+        denominator: pool.monthlyDenominator == null ? null : num(pool.monthlyDenominator),
+        allocations: originalAllocations.map((row: any) => ({
+          orderId: Number(row.orderId),
+          driverValue: num(row.driverValue),
+        })),
+      });
+      if (recalculated.some((row, index) =>
+        Math.abs(round2(row.allocatedAmount) - round2(num(originalAllocations[index].allocatedAmount))) > 0.01 ||
+        Math.abs(round2(row.sharePct) - round2(num(originalAllocations[index].sharePct))) > 0.01,
+      )) {
+        throw Object.assign(new Error(`توزيعات مجمع ${pool.code} لا تطابق لقطات الأوامر المحفوظة`), { status: 409 });
+      }
     }
-    const allocatedTotal = round2(allocations.reduce((sum: number, row: any) =>
+
+    let allocations: any[] = originalAllocations;
+    let actualDriverCalculation: ReturnType<typeof allocateEstimatedManufacturingPoolByActualDriver> | null = null;
+    if (hourlyBasis) {
+      const period = String(pool.periodStart).slice(0, 7);
+      const stageConditions = [
+        eq(productionOrdersTable.companyId, cid),
+        eq(productionOrdersTable.manufacturingCostingMethod, "estimated"),
+        eq(productionOrderStagesTable.status, "done"),
+        sql`to_char(${productionOrderStagesTable.completedAt}, 'YYYY-MM') = ${period}`,
+        ...(pool.branchId != null ? [eq(productionOrdersTable.branchId, Number(pool.branchId))] : []),
+      ];
+      const readDriverStages = () => tx.select({
+        orderId: productionOrdersTable.id,
+        stageId: productionOrderStagesTable.id,
+        stageName: productionOrderStagesTable.nameAr,
+        status: productionOrderStagesTable.status,
+        resourceMode: productionOrderStagesTable.resourceMode,
+        actualDurationMinutes: productionOrderStagesTable.actualDurationMinutes,
+        expectedDurationMinutes: productionOrderStagesTable.expectedDurationMinutes,
+        workerCount: productionOrderStagesTable.workerCount,
+        workerEmployeeIds: productionOrderStagesTable.workerEmployeeIds,
+        completedAt: productionOrderStagesTable.completedAt,
+      }).from(productionOrderStagesTable)
+        .innerJoin(productionOrdersTable, eq(
+          productionOrdersTable.id, productionOrderStagesTable.orderId,
+        ))
+        .where(and(...stageConditions))
+        .orderBy(asc(productionOrdersTable.id), asc(productionOrderStagesTable.sequence));
+      let stageRows = await readDriverStages();
+      const orderLocks = [...new Set<number>([
+        ...originalAllocations.map((row: any) => Number(row.orderId)),
+        ...stageRows.map((row: any) => Number(row.orderId)),
+      ])].sort((a, b) => a - b);
+      for (const orderId of orderLocks) {
+        await tx.execute(sql`select pg_advisory_xact_lock(${cid}, ${orderId})`);
+      }
+      // Re-read after taking the same order locks used by stage execution. A
+      // concurrent completion must either land before this snapshot or wait.
+      stageRows = await readDriverStages();
+      const stageDrivers = summarizeEstimatedStageDrivers(
+        pool.allocationBasis as "machine_hours" | "labor_hours",
+        period,
+        stageRows as any,
+      );
+      const originalByOrder = new Map<number, any>(
+        originalAllocations.map((row: any) => [Number(row.orderId), row]),
+      );
+      const orderIds = [...new Set<number>([
+        ...originalAllocations.map((row: any) => Number(row.orderId)),
+        ...stageDrivers.keys(),
+      ])].sort((a, b) => a - b);
+      allocations = orderIds.map((orderId) => {
+        const original = originalByOrder.get(orderId);
+        const driver = stageDrivers.get(orderId);
+        const plannedDriverValue = original
+          ? num(original.driverValue)
+          : driver?.plannedDriverValue ?? null;
+        if (!original && driver && plannedDriverValue == null) {
+          throw Object.assign(
+            new Error(`الوقت التقديري لإحدى مراحل الأمر ${orderId} غير محفوظ؛ لا يمكن احتساب انحراف الاستخدام لمجمع ${pool.code}`),
+            { status: 409 },
+          );
+        }
+        return {
+          ...(original ?? {}),
+          orderId,
+          allocatedAmount: original && !original.reversalJournalEntryId && !original.reversedAt
+            ? num(original.allocatedAmount) : 0,
+          driverValue: plannedDriverValue ?? 0,
+          plannedDriverValue,
+          actualDriverValue: driver?.actualDriverValue ?? 0,
+          stageDriverDetails: driver?.stages ?? [],
+          initialAllocation: Boolean(original),
+          reversalJournalEntryId: original?.reversalJournalEntryId ?? null,
+          reversedAt: original?.reversedAt ?? null,
+        };
+      });
+      actualDriverCalculation = allocateEstimatedManufacturingPoolByActualDriver({
+        estimatedAmount: num(pool.estimatedAmount),
+        denominator: num(pool.monthlyDenominator),
+        allocations: allocations.map((row: any) => ({
+          orderId: Number(row.orderId),
+          plannedDriverValue: row.plannedDriverValue == null
+            ? null : Number(row.plannedDriverValue),
+          actualDriverValue: num(row.actualDriverValue),
+        })),
+      });
+    }
+
+    const allocatedTotal = round2(originalAllocations.reduce((sum: number, row: any) =>
       sum + num(row.allocatedAmount), 0));
-    if (Math.abs(allocatedTotal - num(pool.estimatedAmount)) > 0.01)
+    if (!hourlyBasis && Math.abs(allocatedTotal - num(pool.estimatedAmount)) > 0.01)
       throw Object.assign(new Error(`لم يكتمل توزيع كامل مبلغ مجمع ${pool.code}`), { status: 409 });
 
     const orderIds: number[] = Array.from(new Set<number>(
       allocations.map((row: any) => Number(row.orderId)),
     ));
-    const orderRows = await tx.select().from(productionOrdersTable).where(and(
+    const orderRows = orderIds.length
+      ? await tx.select().from(productionOrdersTable).where(and(
       eq(productionOrdersTable.companyId, cid),
       inArray(productionOrdersTable.id, orderIds),
-    )).for("update");
+    )).for("update")
+      : [];
     const orderById = new Map<number, any>(
       orderRows.map((order: any) => [Number(order.id), order] as const),
     );
@@ -18617,16 +18722,34 @@ async function buildEstimatedCostClosureSnapshot(
       active.push({ allocation, order });
     }
 
-    const activeApplied = round2(active.reduce((sum, row) =>
+    const activeInitialEstimate = round2(active.reduce((sum, row) =>
       sum + num(row.allocation.allocatedAmount), 0));
+    const activeDriverTotal = active.reduce((sum, row) =>
+      sum + num(row.allocation.actualDriverValue), 0);
+    const allDriverTotal = actualDriverCalculation?.actualDriverTotal ?? 0;
+    const activeApplied = actualDriverCalculation
+      ? round2(actualDriverCalculation.rate * activeDriverTotal)
+      : activeInitialEstimate;
     const allEstimate = allocatedTotal;
-    const activeActual = allEstimate > 0
-      ? round2(actual * activeApplied / allEstimate)
+    const activeActual = actualDriverCalculation
+      ? allDriverTotal > 0
+        ? round2(actual * activeDriverTotal / allDriverTotal)
+        : 0
+      : allEstimate > 0
+        ? round2(actual * activeApplied / allEstimate)
       : 0;
     const canceledActual = round2(actual - activeActual);
     let activeAllocated = 0;
+    const actualCostShares = new Map<number, number>();
 
-    addLine(pool.absorbedAccountId, activeApplied, `إقفال امتصاص مجمع ${pool.code}`);
+    // Clear only the estimate originally credited at issue. Actual stage
+    // driver usage determines each order's final cost share below; it is not
+    // added on top of the original estimate.
+    addLine(
+      pool.absorbedAccountId,
+      actualDriverCalculation ? activeInitialEstimate : activeApplied,
+      `إقفال امتصاص مجمع ${pool.code}`,
+    );
     addLine(pool.actualExpenseAccountId, -actual, `إعادة تصنيف المصروف الفعلي لمجمع ${pool.code}`);
     if (canceledActual > 0)
       addLine(pool.varianceAccountId, canceledActual, `مصروف أوامر ملغاة — مجمع ${pool.code}`);
@@ -18636,10 +18759,15 @@ async function buildEstimatedCostClosureSnapshot(
       const estimate = num(allocation.allocatedAmount);
       const actualShare = index === active.length - 1
         ? round2(activeActual - activeAllocated)
-        : activeApplied > 0
-          ? round2(activeActual * estimate / activeApplied)
+        : actualDriverCalculation
+          ? activeDriverTotal > 0
+            ? round2(activeActual * num(allocation.actualDriverValue) / activeDriverTotal)
+            : 0
+          : activeApplied > 0
+            ? round2(activeActual * estimate / activeApplied)
           : 0;
       activeAllocated = round2(activeAllocated + actualShare);
+      actualCostShares.set(Number(order.id), actualShare);
       const delta = round2(actualShare - estimate);
       if (Math.abs(delta) < 0.01) continue;
       if (order.status !== "completed") {
@@ -18763,10 +18891,62 @@ async function buildEstimatedCostClosureSnapshot(
         }
       }
     }
+    const activePlannedDriverValues = active
+      .map((row) => row.allocation.plannedDriverValue)
+      .filter((value) => value != null)
+      .map(Number);
+    const plannedDriverComplete = !actualDriverCalculation ||
+      activePlannedDriverValues.length === active.length;
+    const plannedDriverTotal = actualDriverCalculation
+      ? plannedDriverComplete
+        ? Number(activePlannedDriverValues.reduce((sum, value) => sum + value, 0).toFixed(6))
+        : null
+      : undefined;
+    const actualActiveDriverTotal = actualDriverCalculation
+      ? Number(activeDriverTotal.toFixed(6))
+      : undefined;
+    const usageVarianceDriver = actualDriverCalculation && plannedDriverTotal != null
+      ? Number((actualActiveDriverTotal! - plannedDriverTotal).toFixed(6))
+      : null;
+    const usageVarianceAmount = actualDriverCalculation && plannedDriverTotal != null
+      ? round2(actualDriverCalculation.rate * usageVarianceDriver!)
+      : null;
     const variance = round2(actual - activeApplied);
     poolSummaries.push({
       poolId: Number(pool.id),
       code: String(pool.code),
+      ...(hourlyBasis ? {
+        basis: pool.allocationBasis as EstimatedManufacturingBasis,
+        hourlyRate: actualDriverCalculation?.rate ?? 0,
+        plannedDriverTotal,
+        actualDriverTotal: actualActiveDriverTotal,
+        usageVarianceDriver,
+        usageVarianceAmount,
+        unallocatedActualAmount: canceledActual,
+        driverOrders: allocations.map((allocation: any) => {
+          const order = orderById.get(Number(allocation.orderId));
+          const planned = allocation.plannedDriverValue == null
+            ? null : Number(allocation.plannedDriverValue);
+          const actualDriver = num(allocation.actualDriverValue);
+          return {
+            orderId: Number(allocation.orderId),
+            orderNumber: order?.orderNumber ?? null,
+            status: order?.status ?? null,
+            plannedDriverValue: planned,
+            actualDriverValue: actualDriver,
+            usageVarianceDriver: planned == null
+              ? null : Number((actualDriver - planned).toFixed(6)),
+            plannedAppliedAmount: planned == null || !actualDriverCalculation
+              ? null : round2(actualDriverCalculation.rate * planned),
+            appliedAmount: actualDriverCalculation
+              ? round2(actualDriverCalculation.rate * actualDriver)
+              : 0,
+            actualCostShare: actualCostShares.get(Number(allocation.orderId)) ?? null,
+            initialEstimatedAmount: num(allocation.allocatedAmount),
+            stages: allocation.stageDriverDetails ?? [],
+          };
+        }),
+      } : {}),
       actualAmount: actual,
       appliedAmount: activeApplied,
       varianceAmount: variance,

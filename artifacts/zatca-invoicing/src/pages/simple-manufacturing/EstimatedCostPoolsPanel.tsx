@@ -912,6 +912,7 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
           const allocationProgress = estimateAmount > 0
             ? Math.min(100, Math.max(0, (appliedAmount / estimateAmount) * 100))
             : 0;
+          const isHourlyPool = pool.allocationBasis === "machine_hours" || pool.allocationBasis === "labor_hours";
           return (
             <article key={pool.id} className="grid gap-4 rounded-xl border border-slate-200 p-4 xl:grid-cols-[1fr_1.5fr]">
               <div className="space-y-2">
@@ -928,7 +929,7 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
                 </p>
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] text-slate-500">
-                    <span>اكتمال التوزيع</span>
+                    <span>{isHourlyPool ? "التحميل التقديري الأولي" : "اكتمال التوزيع"}</span>
                     <span className="font-semibold tabular-nums text-teal-800">{allocationProgress.toFixed(0)}٪</span>
                   </div>
                   <div className="h-2 overflow-hidden rounded-full bg-slate-100" dir="rtl">
@@ -1022,6 +1023,71 @@ export function EstimatedCostPoolsPanel({ accounts, canManageCompanyPools, reque
                 {" · "}الفرق {Number(closure.varianceAmount).toLocaleString("ar-EG", { minimumFractionDigits: 2 })} ر.س
               </p>
             </div>
+            {(() => {
+              const snapshot = Array.isArray(closure.sourceSnapshot)
+                ? closure.sourceSnapshot[0] : null;
+              const hourlyPools = Array.isArray(snapshot?.pools)
+                ? snapshot.pools.filter((pool: any) => Array.isArray(pool.driverOrders))
+                : [];
+              if (!hourlyPools.length) return null;
+              return (
+                <div className="w-full space-y-3 rounded-lg bg-slate-50 p-3">
+                  <h4 className="text-sm font-semibold text-slate-800">محركات الساعات: التقديري مقابل الفعلي</h4>
+                  {hourlyPools.map((pool: any) => (
+                    <section key={pool.poolId} className="space-y-2">
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700">
+                        <span className="font-semibold">{pool.code}</span>
+                        <span>المعدل الثابت: {Number(pool.hourlyRate ?? 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} ر.س/ساعة</span>
+                        <span>الساعات المخططة: {pool.plannedDriverTotal == null ? "غير مكتملة" : Number(pool.plannedDriverTotal).toLocaleString("ar-EG", { maximumFractionDigits: 3 })}</span>
+                        <span>الساعات الفعلية: {Number(pool.actualDriverTotal ?? 0).toLocaleString("ar-EG", { maximumFractionDigits: 3 })}</span>
+                        <span>فرق الاستخدام: {pool.usageVarianceDriver == null ? "غير مكتمل" : Number(pool.usageVarianceDriver).toLocaleString("ar-EG", { maximumFractionDigits: 3 })} ساعة</span>
+                        <span>قيمة فرق الاستخدام: {pool.usageVarianceAmount == null ? "غير مكتملة" : `${Number(pool.usageVarianceAmount).toLocaleString("ar-EG", { minimumFractionDigits: 2 })} ر.س`}</span>
+                      </div>
+                      <div className="overflow-x-auto rounded border border-slate-200 bg-white">
+                        <table className="w-full min-w-[720px] text-xs">
+                          <thead className="bg-slate-100 text-slate-600">
+                            <tr>
+                              <th className="p-2 text-right font-medium">أمر التصنيع</th>
+                              <th className="p-2 text-left font-medium">الساعات التقديرية</th>
+                              <th className="p-2 text-left font-medium">الساعات الفعلية</th>
+                              <th className="p-2 text-left font-medium">فرق الساعات</th>
+                              <th className="p-2 text-left font-medium">المحمّل بالمعدل</th>
+                              <th className="p-2 text-left font-medium">حصة التكلفة الفعلية</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(pool.driverOrders as any[]).map((row) => (
+                              <tr key={`${pool.poolId}-${row.orderId}`} className="border-t border-slate-100">
+                                <td className="p-2 text-right">{row.orderNumber ?? `#${row.orderId}`}</td>
+                                <td className="p-2 text-left tabular-nums">
+                                  {row.plannedDriverValue == null ? "—" : Number(row.plannedDriverValue).toLocaleString("ar-EG", { maximumFractionDigits: 3 })}
+                                </td>
+                                <td className="p-2 text-left tabular-nums">{Number(row.actualDriverValue ?? 0).toLocaleString("ar-EG", { maximumFractionDigits: 3 })}</td>
+                                <td className="p-2 text-left tabular-nums">
+                                  {row.usageVarianceDriver == null ? "—" : Number(row.usageVarianceDriver).toLocaleString("ar-EG", { maximumFractionDigits: 3 })}
+                                </td>
+                                <td className="p-2 text-left tabular-nums">{Number(row.appliedAmount ?? 0).toLocaleString("ar-EG", { minimumFractionDigits: 2 })}</td>
+                                <td className="p-2 text-left tabular-nums">
+                                  {row.actualCostShare == null ? "ضمن الانحراف" : `${Number(row.actualCostShare).toLocaleString("ar-EG", { minimumFractionDigits: 2 })} ر.س`}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {Number(pool.unallocatedActualAmount ?? 0) > 0 && (
+                        <p className="text-xs text-amber-800">
+                          تكلفة غير موزعة على أوامر نشطة (إلغاء/عدم وجود ساعات): {Number(pool.unallocatedActualAmount).toLocaleString("ar-EG", { minimumFractionDigits: 2 })} ر.س، وتُرحّل إلى حساب الفروق.
+                        </p>
+                      )}
+                    </section>
+                  ))}
+                  <p className="text-[11px] leading-5 text-slate-500">
+                    فرق الاستخدام للمراجعة التشغيلية. التسوية المحاسبية الشهرية لا تضيفه مرة ثانية؛ بل تعدّل القيد التقديري السابق إلى الحصة الفعلية بحسب حالة الأمر.
+                  </p>
+                </div>
+              );
+            })()}
             <div className="flex gap-2">
               {closure.status === "draft" && (
                 <Button type="button" size="sm" disabled={saving || (!canManageCompanyPools && closure.branchId == null)} onClick={() => void actOnClosure(closure, "post")}>
