@@ -23,6 +23,7 @@ test("cost mode preferences keep only safe category modes", () => {
       payroll: "linked",
       fixed_asset_depreciation: "manual",
       prepaid_amortization: "linked",
+      cash_expense: "none",
     },
   });
   assert.equal("sourceRecordId" in payload.modes, false);
@@ -44,6 +45,7 @@ test("invalid or missing durable values fall back to safe defaults", () => {
     payroll: "linked",
     fixed_asset_depreciation: "linked",
     prepaid_amortization: "linked",
+    cash_expense: "none",
   });
 });
 
