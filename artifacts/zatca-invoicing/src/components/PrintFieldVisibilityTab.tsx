@@ -9,6 +9,8 @@ import { useToast } from "@/hooks/use-toast";
 type DocumentKey =
   | "sales_invoice"
   | "sales_quotation"
+  | "sales_return"
+  | "sales_order"
   | "purchase_order"
   | "purchase_invoice"
   | "receipt_voucher"
@@ -119,6 +121,8 @@ const documents: {
 }[] = [
   { key: "sales_invoice", label: "فاتورة مبيعات", type: "مبيعات", accent: "border-r-teal-600", fields: [...itemKeys, ...salesCommon.filter((key) => key !== "invoiceNumber")] },
   { key: "sales_quotation", label: "عرض سعر", type: "مبيعات", accent: "border-r-sky-600", fields: [...itemKeys, ...salesCommon.filter((key) => key !== "paymentMethod" && key !== "qr" && key !== "invoiceNumber"), "validUntil", "deliveryDate", "terms", "status"] },
+  { key: "sales_return", label: "مرتجع مبيعات", type: "مبيعات", accent: "border-r-rose-600", fields: [...itemKeys, ...salesCommon] },
+  { key: "sales_order", label: "أمر بيع", type: "مبيعات", accent: "border-r-indigo-600", fields: [...itemKeys, ...salesCommon.filter((key) => key !== "paymentMethod" && key !== "qr" && key !== "invoiceNumber"), "validUntil", "deliveryDate", "terms", "status"] },
   { key: "purchase_order", label: "أمر شراء", type: "مشتريات", accent: "border-r-amber-600", fields: [...itemKeys, ...purchaseCommon.filter((key) => key !== "paymentMethod" && key !== "invoiceNumber" && key !== "qr"), "validUntil", "deliveryDate"] },
   { key: "purchase_invoice", label: "فاتورة مشتريات", type: "مشتريات", accent: "border-r-orange-600", fields: [...itemKeys, ...purchaseCommon] },
   { key: "receipt_voucher", label: "سند قبض", type: "سندات", accent: "border-r-emerald-600", fields: voucherCommon },
@@ -182,6 +186,7 @@ const englishLabels: Record<string, string> = {
   "مشتريات": "Purchases",
   "سندات": "Vouchers",
   "إعدادات المستندات · على مستوى الشركة": "Document settings · company-wide",
+  "إعدادات قالب الطباعة المحدد": "Settings for this print template",
   "حقول الطباعة": "Print field visibility",
   "حدّد ما يظهر في النسخ المطبوعة لكل نوع مستند. إعداد الإخفاء يخص شكل الطباعة فقط ولا يغيّر أي قيمة محاسبية.": "Choose which fields appear on printed copies of each document type. Hiding a field changes print presentation only; it never changes accounting values.",
   "عرض افتراضي آمن": "Safe default display",
@@ -213,10 +218,12 @@ export default function PrintFieldVisibilityTab({
   user,
   token,
   setUser,
+  templateKey,
 }: {
   user: any;
   token: string;
   setUser: any;
+  templateKey?: string;
 }) {
   const { i18n } = useTranslation();
   const isArabic = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith("ar");
@@ -224,10 +231,20 @@ export default function PrintFieldVisibilityTab({
   const qc = useQueryClient();
   const { toast } = useToast();
   const companyId = user?.company?.id ?? user?.companyId;
-  const companySettings = user?.company?.printFieldVisibility;
+  const companySettings = templateKey
+    ? user?.company?.printTemplateFieldVisibility?.[templateKey]
+    : user?.company?.printFieldVisibility;
+  const availableDocuments = useMemo(
+    () => documents.filter((item) => templateKey
+      ? item.key.startsWith("sales_")
+      : !item.key.startsWith("sales_")),
+    [templateKey],
+  );
   const settingsSnapshot = JSON.stringify(companySettings ?? {});
   const [visibility, setVisibility] = useState<VisibilityMap>({});
-  const [selectedDocument, setSelectedDocument] = useState<DocumentKey>("sales_invoice");
+  const [selectedDocument, setSelectedDocument] = useState<DocumentKey>(
+    templateKey ? "sales_invoice" : "purchase_order",
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -238,7 +255,7 @@ export default function PrintFieldVisibilityTab({
     }
   }, [settingsSnapshot]);
 
-  const document = documents.find((item) => item.key === selectedDocument) ?? documents[0];
+  const document = availableDocuments.find((item) => item.key === selectedDocument) ?? availableDocuments[0] ?? documents[0]!;
   const groupsForDocument = useMemo(
     () => groups.map((group) => ({
       ...group,
@@ -271,17 +288,29 @@ export default function PrintFieldVisibilityTab({
     });
   }
 
+  function resetTemplateDefaults() {
+    if (templateKey) setVisibility({});
+  }
+
   async function saveSettings() {
     if (!companyId || saving || !hasChanges) return;
     setSaving(true);
     try {
+      const nextTemplateVisibility = templateKey
+        ? {
+            ...(user?.company?.printTemplateFieldVisibility ?? {}),
+            [templateKey]: visibility,
+          }
+        : undefined;
       const response = await fetch(`${API}/api/companies/${companyId}/general-settings`, {
         method: "PATCH",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ printFieldVisibility: visibility }),
+        body: JSON.stringify(templateKey
+          ? { printTemplateFieldVisibility: nextTemplateVisibility }
+          : { printFieldVisibility: visibility }),
       });
       const raw = await response.text();
       let result: any = {};
@@ -292,11 +321,21 @@ export default function PrintFieldVisibilityTab({
       }
       if (!response.ok) throw new Error(translate("تعذّر حفظ إعدادات حقول الطباعة."));
 
-      const savedVisibility = result?.printFieldVisibility ?? visibility;
+      const savedVisibility = templateKey
+        ? result?.printTemplateFieldVisibility?.[templateKey] ?? visibility
+        : result?.printFieldVisibility ?? visibility;
       setVisibility(savedVisibility);
       setUser?.((current: any) => current ? {
         ...current,
-        company: { ...current.company, printFieldVisibility: savedVisibility },
+        company: templateKey
+          ? {
+              ...current.company,
+              printTemplateFieldVisibility: {
+                ...(current.company?.printTemplateFieldVisibility ?? {}),
+                [templateKey]: savedVisibility,
+              },
+            }
+          : { ...current.company, printFieldVisibility: savedVisibility },
       } : current);
       qc.invalidateQueries({ queryKey: ["auth-me"] });
       toast({ title: translate("تم حفظ إعدادات حقول الطباعة") });
@@ -315,7 +354,9 @@ export default function PrintFieldVisibilityTab({
           <div className="max-w-2xl">
             <div className="mb-3 flex items-center gap-2 text-teal-100">
               <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/10"><Printer className="h-4 w-4" /></span>
-              <span className="text-xs font-semibold tracking-wide">{translate("إعدادات المستندات · على مستوى الشركة")}</span>
+              <span className="text-xs font-semibold tracking-wide">
+                {translate(templateKey ? "إعدادات قالب الطباعة المحدد" : "إعدادات المستندات · على مستوى الشركة")}
+              </span>
             </div>
             <h2 className="text-xl font-bold sm:text-2xl">{translate("حقول الطباعة")}</h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-teal-50/85">
@@ -342,7 +383,7 @@ export default function PrintFieldVisibilityTab({
             <FileText className="h-4 w-4 text-teal-700" />
           </div>
           <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
-            {documents.map((item, index) => {
+            {availableDocuments.map((item, index) => {
               const active = item.key === selectedDocument;
               const count = item.fields.filter((field) => visibility[item.key]?.[field] !== false).length;
               return (

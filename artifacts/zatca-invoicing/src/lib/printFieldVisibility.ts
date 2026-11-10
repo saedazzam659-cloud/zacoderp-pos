@@ -1,6 +1,8 @@
 export type PrintDocumentKey =
   | "sales_invoice"
   | "sales_quotation"
+  | "sales_return"
+  | "sales_order"
   | "purchase_order"
   | "purchase_invoice"
   | "receipt_voucher"

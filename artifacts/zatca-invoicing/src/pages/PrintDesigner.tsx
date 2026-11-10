@@ -880,12 +880,19 @@ export default function PrintDesigner() {
   function previewPrint() {
     const win = window.open("", "_blank", "width=900,height=1100");
     if (!win) return;
+    const quotationContext = {
+      fields: DESIGNER_SAMPLE_FIELDS,
+      rows: DESIGNER_SAMPLE_QUOTATION_ROWS,
+      showQr: false,
+    };
+    const quotationPage = { widthMm, heightMm, name: templateName };
+    const nativeBaseHtml = layout.baseTemplateVersion === 2
+      ? renderQuotationBaseTemplatePreviewHtml(baseTemplateId)
+      : "";
     const html = documentType === "sales_quotation"
-      ? renderQuotationCustomLayoutHtml(layout, {
-          fields: DESIGNER_SAMPLE_FIELDS,
-          rows: DESIGNER_SAMPLE_QUOTATION_ROWS,
-          showQr: false,
-        }, { widthMm, heightMm, name: templateName })
+      ? (nativeBaseHtml
+          ? composeQuotationBaseWithCustomLayout(nativeBaseHtml, layout, quotationContext, quotationPage)
+          : renderQuotationCustomLayoutHtml(layout, quotationContext, quotationPage))
           .replace("</body>", `<script>setTimeout(()=>window.print(),300)<\/script></body>`)
       : `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${templateName}</title>
       <style>body{margin:0;font-family:Tahoma,Arial,sans-serif;background:#eee;padding:20px;display:flex;justify-content:center}
@@ -1122,7 +1129,9 @@ export default function PrintDesigner() {
         className="relative flex-1 overflow-auto p-4 flex items-start justify-center bg-gradient-to-b from-slate-100 to-slate-200">
           <div className="pointer-events-none absolute start-6 top-5 z-10 flex items-center gap-2 rounded-full border border-emerald-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-sm">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            معاينة مباشرة — تتحدث مع كل تعديل
+            {layout.baseTemplateVersion === 2
+              ? "القالب الأصلي محفوظ — العناصر الجديدة تظهر فوقه"
+              : "معاينة مباشرة — تتحدث مع كل تعديل"}
           </div>
           <div
             ref={canvasRef}
@@ -1154,6 +1163,23 @@ export default function PrintDesigner() {
               position: "absolute", inset: 0, transform: `scale(${zoom})`,
               transformOrigin: "top right", width: widthMm * MM, height: heightMm * MM,
             }}>
+              {nativeQuotationPreviewHtml && (
+                <iframe
+                  title="معاينة قالب عرض السعر الأصلي"
+                  srcDoc={nativeQuotationPreviewHtml}
+                  tabIndex={-1}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: widthMm * MM,
+                    height: heightMm * MM,
+                    border: 0,
+                    pointerEvents: "none",
+                    zIndex: 0,
+                    background: "#fff",
+                  }}
+                />
+              )}
               {marquee && (
                 <div
                   style={{
