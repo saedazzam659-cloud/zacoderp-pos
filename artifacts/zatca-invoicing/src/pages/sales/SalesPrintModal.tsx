@@ -447,7 +447,7 @@ function sarEqRowsHtml(
   return `
     <div class="${rowClass}" style="border-top:1px dashed #cbd5e1;margin-top:4px;padding-top:6px;"><span>${tl("ضريبة القيمة المضافة (بالريال)", "VAT (in SAR)")}</span><span class="mono">${nf(t.vatAmountBase)} ${t.baseSym}</span></div>
     <div class="${rowClass}"><span>${tl("الإجمالي شامل الضريبة (بالريال)", "Total (in SAR)")}</span><span class="mono">${nf(t.grandTotalBase)} ${t.baseSym}</span></div>
-    <div class="${rowClass}" style="font-size:9px;opacity:.65;"><span>${tl("سعر الصرف", "Exchange rate")}</span><span class="mono">1 ${t.currency} = ${nf(t.exchangeRate)} ${t.baseSym}</span></div>`;
+    <div data-print-field="exchangeRate" class="${rowClass}" style="font-size:9px;opacity:.65;"><span>${tl("سعر الصرف", "Exchange rate")}</span><span class="mono">1 ${t.currency} = ${nf(t.exchangeRate)} ${t.baseSym}</span></div>`;
 }
 
 // Standardised 5‑row totals body matching the screenshot reference. Caller
@@ -2403,6 +2403,13 @@ export function template14(d: PrintData): string {
   const isReturn = d.type === "return";
   const isQuot   = d.type === "quotation";
   const isOrder  = d.type === "order";
+  const visibilityDocument = isQuot
+    ? "sales_quotation"
+    : isReturn
+      ? "sales_return"
+      : isOrder
+        ? "sales_order"
+        : "sales_invoice";
   // Standard vs Simplified — driven by buyer-VAT presence per ZATCA spec.
   // Fall back to the invoice snapshot's `buyerVatNumber` so the title stays
   // "ضريبية" even when the customer master record is missing or stale
@@ -2470,9 +2477,22 @@ export function template14(d: PrintData): string {
       : d.type === "invoice" && company?.printCustomNotesOnSales === true
   );
   const customNotesHtml = customNotesEnabled && customNotes
-    ? `<div class="print-notes-box"><div class="print-notes-title">${tl("ملاحظات", "Notes")}</div><div class="print-notes-body">${escapePrintHtml(customNotes)}</div></div>`
+    ? `<div class="print-notes-box" data-print-field="notes"><div class="print-notes-title">${tl("ملاحظات", "Notes")}</div><div class="print-notes-body">${escapePrintHtml(customNotes)}</div></div>`
     : "";
   const showQrColumn = showQrInDocument || !!bankText || !!customNotesHtml;
+  const hasLineDiscount = lines.some((line: any) =>
+    (Number(line.discount) || 0) > 0 || (Number(line.discountAmount) || 0) > 0,
+  );
+  const showDiscountPercent = hasLineDiscount && isPrintFieldVisible(
+    company?.printFieldVisibility,
+    visibilityDocument,
+    "discountPercent",
+  );
+  const showDiscountAmount = hasLineDiscount && isPrintFieldVisible(
+    company?.printFieldVisibility,
+    visibilityDocument,
+    "discountAmount",
+  );
   // Footer audit line — only render the "أنشئ بـ" line when we actually have
   // a timestamp; some legacy rows may not carry one.
   const createdAtRaw = doc.createdAt ?? doc.invoiceDate ?? doc.returnDate ?? doc.orderDate ?? doc.quotationDate ?? null;
@@ -2748,7 +2768,7 @@ export function template14(d: PrintData): string {
   const headerHtml = `
     <div class="hdr">
       <!-- COMPANY (right side in RTL — first in DOM) -->
-      <div class="col-co">
+      <div class="col-co" data-print-field="companyDetails">
         <div class="label">${L.companyInfo}</div>
         <div class="co-name-ar">${(isEn ? (company?.nameEn ?? company?.nameAr) : company?.nameAr) ?? L.companyNameFallback}</div>
         ${(!isEn && company?.nameEn) ? `<div class="co-name-en">${company?.nameEn}</div>` : ""}
@@ -2765,11 +2785,11 @@ export function template14(d: PrintData): string {
           ${(!isEn && t14ShowEnSub) ? `<span class="en">${titleSub}</span>` : ""}
         </div>
         <div class="meta-pills">
-          <span class="pill no"><b>${docNo}</b></span>
-          ${contracting || !isNonPaymentDoc(d.type) ? `<span class="pill pay"><b>${payLabel}</b></span>` : ""}
-          ${totals.isForeign ? `<span class="pill">${tl("العملة", "Currency")}: <b>${escapePrintHtml(totals.currency)}</b></span>` : ""}
-          <span class="pill">📅 <b>${dateStr}</b></span>
-          ${isQuot && doc.validUntil ? `<span class="pill">${L.validUntil} <b>${doc.validUntil}</b></span>` : ""}
+          <span class="pill no" data-print-field="documentNumber"><b>${docNo}</b></span>
+          ${contracting || !isNonPaymentDoc(d.type) ? `<span class="pill pay" data-print-field="paymentMethod"><b>${payLabel}</b></span>` : ""}
+          ${totals.isForeign ? `<span class="pill" data-print-field="currency">${tl("العملة", "Currency")}: <b>${escapePrintHtml(totals.currency)}</b></span>` : ""}
+          <span class="pill" data-print-field="date">📅 <b>${dateStr}</b></span>
+          ${isQuot && doc.validUntil ? `<span class="pill" data-print-field="validUntil">${L.validUntil} <b>${doc.validUntil}</b></span>` : ""}
           ${isReturn && doc.invoiceId ? `<span class="pill">${L.reference}: <b>${doc.invoiceId}</b></span>` : ""}
         </div>
       </div>
@@ -2777,28 +2797,28 @@ export function template14(d: PrintData): string {
       <!-- CUSTOMER (left side in RTL — last in DOM) -->
       <div class="col-cu">
         <div class="label">${contracting ? "الطرف المرتبط" : L.customerInfo}</div>
-        <div class="cu-name">${escapePrintHtml((isEn ? (customer?.nameEn ?? customer?.nameAr) : (customer?.nameAr ?? customer?.nameEn)) ?? doc.buyerName ?? L.none)}</div>
+        <div class="cu-name" data-print-field="partyName">${escapePrintHtml((isEn ? (customer?.nameEn ?? customer?.nameAr) : (customer?.nameAr ?? customer?.nameEn)) ?? doc.buyerName ?? L.none)}</div>
         ${isQuot ? `
           ${(customer?.vatNumber ?? doc.buyerVatNumber)
-            ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
+             ? `<div class="row" data-print-field="partyVat"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
           ${(acctCode && t14ShowAcct) ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
           ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
-          ${quotationAddress ? `<div class="row"><b>${L.customerAddress}</b><span>${escapePrintHtml(quotationAddress)}</span></div>` : ""}
+           ${quotationAddress ? `<div class="row" data-print-field="partyAddress"><b>${L.customerAddress}</b><span>${escapePrintHtml(quotationAddress)}</span></div>` : ""}
         ` : isForeignCust ? `
           ${custStreet ? `<div class="row"><b>${L.street}</b><span class="mono">${custStreet}</span></div>` : ""}
           ${custPostal ? `<div class="row"><b>${L.postalCode}</b><span class="mono">${custPostal}</span></div>` : ""}
           ${custCity ? `<div class="row"><b>${L.city}</b><span class="mono">${custCity}</span></div>` : ""}
           <div class="row"><b>${L.country}</b><span class="mono">${custCountryName}</span></div>
           ${(customer?.vatNumber ?? doc.buyerVatNumber)
-            ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
+             ? `<div class="row" data-print-field="partyVat"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
           ${(acctCode && t14ShowAcct) ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
           ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
         ` : `
           ${(customer?.vatNumber ?? doc.buyerVatNumber)
-            ? `<div class="row"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
+             ? `<div class="row" data-print-field="partyVat"><b>${L.vatNumber}</b><span class="mono">${customer?.vatNumber ?? doc.buyerVatNumber}</span></div>` : ""}
           ${(acctCode && t14ShowAcct) ? `<div class="row"><b>${L.accountCode}</b><span class="mono">${acctCode}</span></div>` : ""}
           ${customer?.phone ? `<div class="row"><b>${L.phone}</b><span class="mono">${customer.phone}</span></div>` : ""}
-          ${custAddress ? `<div class="row"><b>${L.customerAddress}</b><span>${escapePrintHtml(custAddress)}</span></div>` : ""}
+           ${custAddress ? `<div class="row" data-print-field="partyAddress"><b>${L.customerAddress}</b><span>${escapePrintHtml(custAddress)}</span></div>` : ""}
           <div class="row"><b>${L.country}</b><span class="mono">${custCountryName}</span></div>
         `}
       </div>
@@ -2809,11 +2829,11 @@ export function template14(d: PrintData): string {
   const footerHtml = !t14ShowFooter ? "" : `
     <div class="audit-footer">
       <div class="grp">
-        <span>${L.createdAtLbl}: <b>${createdAtStr}</b></span>
+        <span data-print-field="createdAt">${L.createdAtLbl}: <b>${createdAtStr}</b></span>
         <span>${L.byLbl}: <b>${userName}</b></span>
       </div>
       <div class="grp" style="text-align:left;">
-        <span>${L.printedLbl}: <b>${new Date().toLocaleString(locale, { dateStyle: "short", timeStyle: "short" })}</b></span>
+        <span data-print-field="printedAt">${L.printedLbl}: <b>${new Date().toLocaleString(locale, { dateStyle: "short", timeStyle: "short" })}</b></span>
         <span style="color:var(--gold);font-weight:700;">${contracting?.footerLabel ?? "ZATCA e-Invoice"}</span>
       </div>
     </div>`;
@@ -2824,7 +2844,9 @@ export function template14(d: PrintData): string {
   //   # / الصنف / الوحدة / سعر الوحدة / الكمية / الخصم / الكمية المجانية /
   //   المبلغ / الضريبة / قيمة الضريبة / الإجمالي
   // Total visible column count — needed for the per-line notes colspan.
-  const colCount = contracting ? 9 : 11;
+  const colCount = contracting
+    ? 9
+    : 10 + Number(showDiscountPercent) + Number(showDiscountAmount);
 
   const linesHeadHtml = contracting ? `
     <thead>
@@ -2843,16 +2865,17 @@ export function template14(d: PrintData): string {
     <thead>
       <tr>
         <th style="width:30px">#</th>
-        <th>${L.colItem}</th>
-        <th>${L.colUnit}</th>
-        <th>${L.colUnitPrice}</th>
-        <th>${L.colQty}</th>
-        <th>${L.colDiscount}</th>
-        <th style="color:#b45309;">${L.colFree}</th>
-        <th>${L.colAmount}</th>
-        <th>${L.colVat}</th>
-        <th>${L.colVatValue}</th>
-        <th>${L.colTotal}</th>
+        <th data-print-column="itemName">${L.colItem}</th>
+        <th data-print-column="unit">${L.colUnit}</th>
+        <th data-print-column="unitPrice">${L.colUnitPrice}</th>
+        <th data-print-column="quantity">${L.colQty}</th>
+        ${showDiscountPercent ? `<th data-print-column="discountPercent">${tl("نسبة الخصم", "Discount %")}</th>` : ""}
+        ${showDiscountAmount ? `<th data-print-column="discountAmount">${tl("قيمة الخصم", "Discount amount")}</th>` : ""}
+        <th data-print-column="freeQuantity" style="color:#b45309;">${L.colFree}</th>
+        <th data-print-column="subtotal">${L.colAmount}</th>
+        <th data-print-column="taxRate">${L.colVat}</th>
+        <th data-print-column="taxAmount">${L.colVatValue}</th>
+        <th data-print-column="lineTotal">${L.colTotal}</th>
       </tr>
     </thead>`;
 
@@ -2885,21 +2908,23 @@ export function template14(d: PrintData): string {
       const { qty, vat, tot } = f;
       const sub = f.netEx;
       const freeQ = Number(l.freeQty) || 0;
+      const discPct = Math.max(0, Math.min(100, Number(l.discount) || 0));
       const discValCell = f.disc > 0 ? nf(f.disc) : "—";
       const noteText = (l.notes ?? l.description ?? "").toString().trim();
       const itemRow = `
         <tr class="item-row">
           <td>${idx + 1}</td>
-          <td>${itemDisplayName(l)}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}${renderInventoryPrintDetailsHtml(l, d.type, lang)}</td>
-          <td>${unitDisplay(l)}</td>
-          <td class="mono">${nf(l.unitPrice)}</td>
-          <td class="mono">${Math.round(qty)}</td>
-          <td class="mono" style="color:#b91c1c;">${discValCell}</td>
-          <td class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>
-          <td class="mono">${nf(sub)}</td>
-          <td class="mono">${l.vatRate ?? 15}%</td>
-          <td class="mono">${nf(vat)}</td>
-          <td class="mono" style="font-weight:600;">${nf(tot)}</td>
+          <td data-print-column="itemName">${itemDisplayName(l)}${l.brandName ? `<div style="font-size:10px;color:#555;margin-top:1px;">العلامة التجارية: ${l.brandName}</div>` : ""}${renderInventoryPrintDetailsHtml(l, d.type, lang)}</td>
+          <td data-print-column="unit">${unitDisplay(l)}</td>
+          <td data-print-column="unitPrice" class="mono">${nf(l.unitPrice)}</td>
+          <td data-print-column="quantity" class="mono">${Math.round(qty)}</td>
+          ${showDiscountPercent ? `<td data-print-column="discountPercent" class="mono" style="color:#b91c1c;">${discPct > 0 ? `${nf(discPct)}%` : "—"}</td>` : ""}
+          ${showDiscountAmount ? `<td data-print-column="discountAmount" class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
+          <td data-print-column="freeQuantity" class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>
+          <td data-print-column="subtotal" class="mono">${nf(sub)}</td>
+          <td data-print-column="taxRate" class="mono">${l.vatRate ?? 15}%</td>
+          <td data-print-column="taxAmount" class="mono">${nf(vat)}</td>
+          <td data-print-column="lineTotal" class="mono" style="font-weight:600;">${nf(tot)}</td>
         </tr>`;
       const notesRow = noteText
         ? `<tr class="line-notes"><td colspan="${colCount}"><span class="nlbl">📝 ${L.lineNotesLbl}</span>${noteText}</td></tr>`
@@ -2934,11 +2959,11 @@ export function template14(d: PrintData): string {
     <div class="__totalsRow"><span>المدفوع</span><span class="mono">${nf(contracting.totals?.paid ?? 0)} ر.س</span></div>
     <div class="__totalsRow"><span>المتبقي للسداد</span><span class="mono">${nf(contracting.totals?.outstanding ?? 0)} ر.س</span></div>`
     : `
-              <div class="__totalsRow"><span>${tl("الإجمالي قبل الخصم", "Subtotal")}</span><span class="mono">${nf(totals.subtotalPreDiscount)} ${totals.currencySym}</span></div>
-              <div class="__totalsRow"><span>${tl("مبلغ الخصم", "Discount")}</span><span class="mono" style="color:#b91c1c;">${nf(totals.discountTotal)} ${totals.currencySym}</span></div>
+              <div class="__totalsRow" data-print-field="subtotal"><span>${tl("الإجمالي قبل الخصم", "Subtotal")}</span><span class="mono">${nf(totals.subtotalPreDiscount)} ${totals.currencySym}</span></div>
+              <div class="__totalsRow" data-print-field="discountTotal"><span>${tl("مبلغ الخصم", "Discount")}</span><span class="mono" style="color:#b91c1c;">${nf(totals.discountTotal)} ${totals.currencySym}</span></div>
               <div class="__totalsRow"><span>${tl("الصافي بدون الضريبة", "Net")}</span><span class="mono">${nf(totals.netPreVat)} ${totals.currencySym}</span></div>
-              <div class="__totalsRow"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono">${nf(totals.vatAmount)} ${totals.currencySym}</span></div>
-              <div class="__totalsRow grand"><span>${tl("الصافي شامل الضريبة", "Total")}${quotationCurrencyHtml}</span><span class="mono">${nf(totals.grandTotal)} ${totals.currencySym}</span></div>
+              <div class="__totalsRow" data-print-field="taxTotal"><span>${tl("ضريبة القيمة المضافة", "VAT")}</span><span class="mono">${nf(totals.vatAmount)} ${totals.currencySym}</span></div>
+              <div class="__totalsRow grand" data-print-field="grandTotal"><span>${tl("الصافي شامل الضريبة", "Total")}${quotationCurrencyHtml}</span><span class="mono">${nf(totals.grandTotal)} ${totals.currencySym}</span></div>
               ${sarEqRowsHtml(totals, "__totalsRow", tl, nf)}
               ${(company?.printShowItemsSummary !== false) ? (isEn ? summaryFooterHtmlEn(totals) : summaryFooterHtml(totals)) : ""}`;
 
@@ -2974,7 +2999,7 @@ export function template14(d: PrintData): string {
           ${anchorBottom ? `<div class="page-body">` : ""}
           <div class="lines-wrap">${chunkTablesHtml}</div>
 
-          ${doc.notes ? `<div class="notes-box"><b>${L.notesLbl}</b> ${doc.notes}</div>` : ""}
+          ${doc.notes ? `<div class="notes-box" data-print-field="notes"><b>${L.notesLbl}</b> ${doc.notes}</div>` : ""}
 
           <!-- Flexible spacer: on a short (single-page) invoice it pushes the
                totals/QR cluster to the bottom of the page (the empty area the

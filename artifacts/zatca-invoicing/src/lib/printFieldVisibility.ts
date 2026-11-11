@@ -182,6 +182,7 @@ export function inferPrintFieldFromLabel(
     "التاريخ", "تاريخ السند", "تاريخ الفاتورة", "تاريخ العرض", "تاريخ الأمر",
     "date", "invoice date", "document date", "voucher date", "order date",
   ])) return "date";
+  if (startsWithPrintLabel(value, ["تاريخ الإنشاء", "created at", "created"])) return "createdAt";
   if (startsWithPrintLabel(value, ["طريقة الدفع", "payment method"])) return "paymentMethod";
   if (startsWithPrintLabel(value, ["العملة", "currency"])) return "currency";
   if (startsWithPrintLabel(value, ["سعر الصرف", "exchange rate"])) return "exchangeRate";

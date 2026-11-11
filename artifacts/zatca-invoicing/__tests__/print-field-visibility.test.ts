@@ -56,6 +56,9 @@ test("sales quotation settings independently control both discount columns", () 
     sales_quotation: {
       discountPercent: true,
       discountAmount: false,
+      date: false,
+      createdAt: false,
+      printedAt: false,
     },
   };
 
@@ -71,10 +74,14 @@ test("sales quotation settings independently control both discount columns", () 
     shouldRenderPrintColumn(settings, "sales_invoice", "discountAmount", true),
     true,
   );
+  assert.equal(isPrintFieldVisible(settings, "sales_quotation", "date"), false);
+  assert.equal(isPrintFieldVisible(settings, "sales_quotation", "createdAt"), false);
+  assert.equal(isPrintFieldVisible(settings, "sales_quotation", "printedAt"), false);
 });
 
 test("Arabic print labels identify fields even when followed by values", () => {
   assert.equal(inferPrintFieldFromLabel("تاريخ الطباعة: 2026/11/11", "sales_quotation"), "printedAt");
+  assert.equal(inferPrintFieldFromLabel("تاريخ الإنشاء: 2026/11/11", "sales_quotation"), "createdAt");
   assert.equal(inferPrintFieldFromLabel("تاريخ العرض: 2026/11/11", "sales_quotation"), "date");
   assert.equal(inferPrintFieldFromLabel("ملاحظات: تسليم عاجل", "sales_quotation"), "notes");
 });

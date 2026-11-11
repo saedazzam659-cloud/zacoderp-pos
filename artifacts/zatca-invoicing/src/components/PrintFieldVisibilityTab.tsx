@@ -23,7 +23,7 @@ type FieldKey =
   | "partyAddress" | "branch" | "seller" | "paymentMethod" | "currency"
   | "exchangeRate" | "notes" | "qr" | "amountInWords" | "subtotal"
   | "discountTotal" | "taxTotal" | "grandTotal" | "validUntil" | "deliveryDate"
-  | "receiverDetails" | "terms" | "status" | "treasury" | "account"
+  | "receiverDetails" | "terms" | "status" | "createdAt" | "treasury" | "account"
   | "invoiceNumber" | "description" | "signatures" | "printedAt";
 
 type VisibilityMap = Partial<Record<DocumentKey, Partial<Record<FieldKey, boolean>>>>;
@@ -88,6 +88,7 @@ const extraFields: FieldGroup = {
     { key: "receiverDetails", label: "بيانات المستلم" },
     { key: "terms", label: "الشروط والأحكام" },
     { key: "status", label: "حالة المستند" },
+    { key: "createdAt", label: "تاريخ الإنشاء" },
     { key: "signatures", label: "التوقيعات" },
     { key: "printedAt", label: "وقت الطباعة" },
   ],
@@ -97,7 +98,7 @@ const salesCommon: FieldKey[] = [
   "companyDetails", "documentNumber", "date", "partyName", "partyVat", "partyAddress",
   "branch", "seller", "paymentMethod", "currency", "exchangeRate", "notes", "qr",
   "amountInWords", "subtotal", "discountTotal", "taxTotal", "grandTotal",
-  "invoiceNumber", "description", "signatures", "printedAt",
+  "invoiceNumber", "description", "createdAt", "signatures", "printedAt",
 ];
 const purchaseCommon: FieldKey[] = [
   "companyDetails", "documentNumber", "date", "partyName", "partyVat", "partyAddress",
@@ -174,6 +175,7 @@ const englishLabels: Record<string, string> = {
   "بيانات المستلم": "Receiver details",
   "الشروط والأحكام": "Terms and conditions",
   "حالة المستند": "Document status",
+  "تاريخ الإنشاء": "Created at",
   "التوقيعات": "Signatures",
   "وقت الطباعة": "Print time",
   "فاتورة مبيعات": "Sales invoice",
