@@ -96,8 +96,9 @@ export default function BanksAdmin() {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((b) => [b.code, b.name, b.nameEn, b.bankName, b.bankNameEn, b.accountNo, b.iban, b.swiftCode]
-      .some((v) => String(v ?? "").toLowerCase().includes(q)));
-  }, [rows, search]);
+      .some((v) => String(v ?? "").toLowerCase().includes(q))
+      || accounts.some((account) => account.id === b.accountId && `${account.code} ${account.nameAr} ${account.nameEn ?? ""}`.toLowerCase().includes(q)));
+  }, [rows, search, accounts]);
   const activeCount = rows.filter((b) => b.isActive !== false).length;
 
   return (
@@ -171,7 +172,7 @@ export default function BanksAdmin() {
         {visibleRows.length === 0 ? <Empty text={search ? text("لا توجد نتائج مطابقة", "No matching results") : text("لا توجد بنوك", "No bank accounts yet")} /> : (
           <Table>
             <thead><tr>
-              <Th>{text("الكود والحساب", "Code and account")}</Th><Th>{text("البنك", "Bank")}</Th>
+              <Th>{text("الكود والحساب", "Code and account")}</Th><Th>{text("الحساب المحاسبي", "Ledger account")}</Th><Th>{text("البنك", "Bank")}</Th>
               <Th>{text("رقم الحساب", "Account number")}</Th><Th>IBAN / SWIFT</Th><Th>{text("العملة", "Currency")}</Th>
               <Th>{text("الفروع", "Branches")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الرصيد", "Balance")}</Th>
               <Th>{text("الحالة", "Status")}</Th><Th>{text("إجراءات", "Actions")}</Th>
@@ -179,6 +180,7 @@ export default function BanksAdmin() {
             <tbody>{visibleRows.map((b) => (
               <tr key={b.id}>
                 <Td><div style={{ fontWeight: 700 }}>{language === "en" ? b.nameEn || b.name : b.name}</div><div style={{ color: "#64748b", fontSize: 11, fontFamily: "monospace" }}>{b.code ?? "—"}</div></Td>
+                <Td>{(() => { const account = accounts.find((candidate) => candidate.id === b.accountId); return account ? <><span style={{ fontFamily: "monospace", color: "#64748b" }}>{account.code}</span> — {language === "en" ? account.nameEn || account.nameAr : account.nameAr}</> : "—"; })()}</Td>
                 <Td>{language === "en" ? b.bankNameEn || b.bankName || "—" : b.bankName || "—"}</Td>
                 <Td mono>{b.accountNo || "—"}</Td>
                 <Td mono><div>{b.iban || "—"}</div><div style={{ color: "#64748b", fontSize: 11 }}>{b.swiftCode || ""}</div></Td>

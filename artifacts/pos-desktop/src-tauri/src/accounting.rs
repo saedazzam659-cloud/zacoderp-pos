@@ -1789,6 +1789,7 @@ pub fn cash_boxes_list() -> Result<Vec<CashBox>, String> {
 #[serde(rename_all = "camelCase")]
 pub struct CashBoxInput {
     pub name: String,
+    #[serde(default)]
     pub account_id: Option<i64>,
     #[serde(default)]
     pub currency_code: Option<String>,

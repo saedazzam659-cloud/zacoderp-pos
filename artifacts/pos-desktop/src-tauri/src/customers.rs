@@ -310,8 +310,14 @@ fn create_customer_receivables_account(
         [],
         |row| row.get(0),
     )?;
-    let parent_level: i64 = tx.query_row(
-        "SELECT level FROM accounts_local WHERE id=?1",
+    let parent_depth: i64 = tx.query_row(
+        "WITH RECURSIVE chain(id,parent_id,depth) AS (
+           SELECT id,parent_id,1 FROM accounts_local WHERE id=?1
+           UNION ALL
+           SELECT parent.id,parent.parent_id,chain.depth+1
+           FROM accounts_local parent JOIN chain ON chain.parent_id=parent.id
+         )
+         SELECT COALESCE(MAX(depth),1) FROM chain",
         rusqlite::params![parent_id],
         |row| row.get(0),
     )?;
@@ -332,7 +338,7 @@ fn create_customer_receivables_account(
     tx.execute(
         "INSERT INTO accounts_local(code,name_ar,type,parent_id,is_leaf,level,is_active)
          VALUES(?1,?2,'asset',?3,1,?4,1)",
-        rusqlite::params![code, customer_name.trim(), parent_id, parent_level + 1],
+        rusqlite::params![code, customer_name.trim(), parent_id, parent_depth + 1],
     )?;
     Ok(tx.last_insert_rowid())
 }

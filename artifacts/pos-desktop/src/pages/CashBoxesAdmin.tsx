@@ -78,8 +78,9 @@ export default function CashBoxesAdmin() {
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter((b) => [b.code, b.name, b.nameEn, b.currencyCode, b.notes].some((v) => String(v ?? "").toLowerCase().includes(q)));
-  }, [rows, search]);
+    return rows.filter((b) => [b.code, b.name, b.nameEn, b.currencyCode, b.notes].some((v) => String(v ?? "").toLowerCase().includes(q))
+      || accounts.some((account) => account.id === b.accountId && `${account.code} ${account.nameAr} ${account.nameEn ?? ""}`.toLowerCase().includes(q)));
+  }, [rows, search, accounts]);
 
   return (
     <div dir={language === "en" ? "ltr" : "rtl"}>
@@ -137,10 +138,11 @@ export default function CashBoxesAdmin() {
         </div>
         {visibleRows.length === 0 ? <Empty text={search ? text("لا توجد نتائج مطابقة", "No matching results") : text("لا توجد خزن", "No cashboxes yet")} /> : (
           <Table>
-            <thead><tr><Th>{text("الكود واسم الخزينة", "Code and cashbox")}</Th><Th>{text("العملة", "Currency")}</Th><Th>{text("الفروع", "Branches")}</Th><Th>{text("ملاحظات", "Notes")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الرصيد", "Balance")}</Th><Th>{text("الحالة", "Status")}</Th><Th>{text("إجراءات", "Actions")}</Th></tr></thead>
+            <thead><tr><Th>{text("الكود واسم الخزينة", "Code and cashbox")}</Th><Th>{text("الحساب المحاسبي", "Ledger account")}</Th><Th>{text("العملة", "Currency")}</Th><Th>{text("الفروع", "Branches")}</Th><Th>{text("ملاحظات", "Notes")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الرصيد", "Balance")}</Th><Th>{text("الحالة", "Status")}</Th><Th>{text("إجراءات", "Actions")}</Th></tr></thead>
             <tbody>{visibleRows.map((b) => (
               <tr key={b.id}>
                 <Td><div style={{ fontWeight: 700 }}>{language === "en" ? b.nameEn || b.name : b.name}</div><div style={{ color: "#64748b", fontSize: 11, fontFamily: "monospace" }}>{b.code ?? "—"}</div></Td>
+                <Td>{(() => { const account = accounts.find((candidate) => candidate.id === b.accountId); return account ? <><span style={{ fontFamily: "monospace", color: "#64748b" }}>{account.code}</span> — {language === "en" ? account.nameEn || account.nameAr : account.nameAr}</> : "—"; })()}</Td>
                 <Td><span style={{ background: "#eff6ff", color: "#1e40af", padding: "2px 8px", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>{b.currencyCode || baseCurrencyCode()}</span></Td>
                 <Td>{(b.branchIds ?? []).map((id) => branches.find((br) => br.id === id)?.nameAr).filter(Boolean).join("، ") || text("كل الفروع", "All branches")}</Td>
                 <Td>{b.notes || "—"}</Td>

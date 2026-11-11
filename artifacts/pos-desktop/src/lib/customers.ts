@@ -386,6 +386,7 @@ export async function createCustomer(input: CreateCustomerInput): Promise<LocalC
     },
   });
   emitData("customers");
+  if (input.createLedgerAccount && created.accountId) emitData("accounts");
   return created;
 }
 
