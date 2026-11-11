@@ -417,6 +417,7 @@ export default function PosShell({
   // consumed by SalesScreen to hydrate a NEW cart (the original signed invoice
   // is immutable — this duplicates its lines into a fresh sale).
   const [reuseInvoiceId, setReuseInvoiceId] = useState<number | null>(null);
+  const [salesInvoiceFormOpen, setSalesInvoiceFormOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [parkedCount, setParkedCount] = useState(0);
   const [pushSummary, setPushSummary] = useState<PushSummary | null>(null);
@@ -914,7 +915,15 @@ export default function PosShell({
             <div style={S.pagePad}><SalesOrdersAdmin /></div>
           )}
           {standalone && v === "sales_invoices" && (isAdmin || can("sales_invoices")) && (
-            <div style={S.pagePad}><SalesInvoicesAdmin onNavigate={setView} /></div>
+            <div style={{
+              ...S.pagePad,
+              ...(salesInvoiceFormOpen ? {
+                margin: 0, padding: 0, height: "100%", minHeight: 0,
+                display: "flex", flexDirection: "column", overflow: "hidden",
+              } : {}),
+            }}>
+              <SalesInvoicesAdmin onNavigate={setView} onFormOpenChange={setSalesInvoiceFormOpen} />
+            </div>
           )}
           {standalone && v === "sales_returns" && (isAdmin || can("sales_returns")) && (
             <div style={S.pagePad}><SalesReturnsAdmin /></div>

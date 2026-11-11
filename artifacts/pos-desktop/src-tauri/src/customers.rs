@@ -188,9 +188,11 @@ pub fn create_customer_local(
     enforce_credit_limit: Option<bool>,
     payment_terms_days: Option<i64>,
     profile: Option<CustomerProfile>,
+    create_ledger_account: Option<bool>,
 ) -> Result<LocalCustomer, String> {
     create(name_ar, name_en, phone, vat_number, currency_code, opening_balance, opening_nature, opening_date,
-           credit_limit, enforce_credit_limit, payment_terms_days, profile.unwrap_or_default())
+           credit_limit, enforce_credit_limit, payment_terms_days, profile.unwrap_or_default(),
+           create_ledger_account.unwrap_or(false))
         .map_err(|e| e.to_string())
 }
 
@@ -208,6 +210,7 @@ fn create(
     enforce_credit_limit: Option<bool>,
     payment_terms_days: Option<i64>,
     profile: CustomerProfile,
+    create_ledger_account: bool,
 ) -> Result<LocalCustomer> {
     let mut conn = db::open()?;
     let cur = currency_code.unwrap_or_else(|| "SAR".to_string());
@@ -224,11 +227,16 @@ fn create(
     };
     // 0 is the JS "clear" sentinel for account_id too (see toProfile); real
     // account ids start at 1, so collapse 0 → NULL on insert.
-    let account_id = match profile.account_id {
+    let requested_account_id = match profile.account_id {
         Some(0) => None,
         other => other,
     };
     let tx = conn.transaction()?;
+    let account_id = if create_ledger_account && requested_account_id.is_none() {
+        Some(create_customer_receivables_account(&tx, &name_ar)?)
+    } else {
+        requested_account_id
+    };
     tx.execute(
         "INSERT INTO customers_local (cloud_id, name_ar, name_en, phone, vat_number, currency_code,
                                       credit_limit, enforce_credit_limit, payment_terms_days,
@@ -288,6 +296,51 @@ fn create(
         branch_id,
         account_id,
     })
+}
+
+/// Create a dedicated customer account below the receivables control account.
+/// The caller owns the transaction so the account and customer link commit
+/// together, with no orphan account if the customer insert fails.
+fn create_customer_receivables_account(
+    tx: &rusqlite::Transaction<'_>,
+    customer_name: &str,
+) -> Result<i64> {
+    let parent_id: i64 = tx.query_row(
+        "SELECT id FROM accounts_local WHERE code='1500'",
+        [],
+        |row| row.get(0),
+    )?;
+    let parent_depth: i64 = tx.query_row(
+        "WITH RECURSIVE chain(id,parent_id,depth) AS (
+           SELECT id,parent_id,1 FROM accounts_local WHERE id=?1
+           UNION ALL
+           SELECT parent.id,parent.parent_id,chain.depth+1
+           FROM accounts_local parent JOIN chain ON chain.parent_id=parent.id
+         )
+         SELECT COALESCE(MAX(depth),1) FROM chain",
+        rusqlite::params![parent_id],
+        |row| row.get(0),
+    )?;
+
+    let mut suffix = 1_i64;
+    let code = loop {
+        let candidate = format!("15{suffix:04}");
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM accounts_local WHERE code=?1)",
+            rusqlite::params![candidate],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            break candidate;
+        }
+        suffix += 1;
+    };
+    tx.execute(
+        "INSERT INTO accounts_local(code,name_ar,type,parent_id,is_leaf,level,is_active)
+         VALUES(?1,?2,'asset',?3,1,?4,1)",
+        rusqlite::params![code, customer_name.trim(), parent_id, parent_depth + 1],
+    )?;
+    Ok(tx.last_insert_rowid())
 }
 
 /// Persist editable scalar fields (incl. credit control) to SQLite. Unlike the

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { listBanks, createBank, updateBank, deleteBank, listCurrencies, type Bank, type BankInput, type Currency } from "../lib/accounting";
+import { listBanks, createBank, updateBank, deleteBank, listCurrencies, listAccounts, type Account, type Bank, type BankInput, type Currency } from "../lib/accounting";
 import { listBranches, type Branch } from "../lib/branches";
 import { Page, Card, Table, Th, Td, Empty, input, btnPrimary, btnSecondary, btnLink, fmtCurrency, SearchCombobox, errText } from "./_adminUi";
 import { uiText, useUiLanguage } from "../lib/appSettings";
@@ -7,11 +7,11 @@ import { baseCurrencyCode } from "../lib/currency";
 
 type EditData = Required<Pick<BankInput, "name" | "currencyCode">> & {
   code: string; nameEn: string; bankName: string; bankNameEn: string; accountNo: string;
-  iban: string; swiftCode: string; branchIds: number[]; notes: string; isActive: boolean;
+  iban: string; swiftCode: string; accountId: number | null; branchIds: number[]; notes: string; isActive: boolean;
 };
 const blankData = (branchId?: number): EditData => ({
   code: "", name: "", nameEn: "", bankName: "", bankNameEn: "", accountNo: "", iban: "",
-  swiftCode: "", currencyCode: baseCurrencyCode(), branchIds: branchId ? [branchId] : [], notes: "", isActive: true,
+  swiftCode: "", currencyCode: baseCurrencyCode(), accountId: null, branchIds: branchId ? [branchId] : [], notes: "", isActive: true,
 });
 
 export default function BanksAdmin() {
@@ -19,6 +19,7 @@ export default function BanksAdmin() {
   const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<Bank[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [editId, setEditId] = useState<number | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -28,8 +29,8 @@ export default function BanksAdmin() {
   const [err, setErr] = useState<string | null>(null);
 
   async function refresh() {
-    const [bk, cur, br] = await Promise.all([listBanks(), listCurrencies(true), listBranches()]);
-    setRows(bk); setCurrencies(cur); setBranches(br);
+    const [bk, cur, br, ac] = await Promise.all([listBanks(), listCurrencies(true), listBranches(), listAccounts()]);
+    setRows(bk); setCurrencies(cur); setBranches(br); setAccounts(ac);
   }
   useEffect(() => { void refresh(); }, []);
 
@@ -44,6 +45,7 @@ export default function BanksAdmin() {
       code: b.code ?? "", name: b.name, nameEn: b.nameEn ?? "", bankName: b.bankName ?? "",
       bankNameEn: b.bankNameEn ?? "", accountNo: b.accountNo ?? "", iban: b.iban ?? "",
       swiftCode: b.swiftCode ?? "", currencyCode: b.currencyCode || baseCurrencyCode(),
+      accountId: b.accountId ?? null,
       branchIds: b.branchIds ?? [], notes: b.notes ?? "", isActive: b.isActive !== false,
     });
     setFormOpen(true);
@@ -52,6 +54,7 @@ export default function BanksAdmin() {
   function setField<K extends keyof EditData>(k: K, v: EditData[K]) { setData((current) => ({ ...current, [k]: v })); }
   async function save() {
     if (!data.name.trim()) { setErr(text("اسم الحساب بالعربية مطلوب", "Arabic account name is required.")); return; }
+    if (!data.accountId) { setErr(text("اختر حسابًا محاسبيًا من شجرة الحسابات", "Choose a ledger account from the chart.")); return; }
     if (!data.branchIds.length) { setErr(text("اختر فرعًا واحدًا على الأقل", "Select at least one branch.")); return; }
     setBusy(true); setErr(null);
     try {
@@ -61,6 +64,7 @@ export default function BanksAdmin() {
         accountNo: data.accountNo.trim() || null, code: data.code.trim() || null,
         iban: data.iban.trim().replace(/\s+/g, "").toUpperCase() || null,
         swiftCode: data.swiftCode.trim().toUpperCase() || null, currencyCode: data.currencyCode,
+        accountId: data.accountId,
         branchIds: data.branchIds, notes: data.notes.trim() || null, isActive: data.isActive,
       };
       if (editId == null) await createBank(payload); else await updateBank(editId, payload);
@@ -76,12 +80,25 @@ export default function BanksAdmin() {
   const currencyOpts = currencies.length > 0
     ? currencies.map(c => ({ value: c.code, label: `${c.code} — ${language === "en" ? c.nameEn || c.code : c.nameAr}`, hint: c.symbol ?? undefined }))
     : [{ value: "SAR", label: text("SAR — ريال سعودي", "SAR — Saudi riyal") }];
+  const accountOpts = useMemo(() => accounts
+    .filter((account) => account.type === "asset" && account.isLeaf && (account.isActive || account.id === data.accountId))
+    .map((account) => {
+      const parent = accounts.find((candidate) => candidate.id === account.parentId);
+      const name = language === "en" ? account.nameEn || account.nameAr : account.nameAr;
+      const parentName = parent ? (language === "en" ? parent.nameEn || parent.nameAr : parent.nameAr) : "";
+      return {
+        value: account.id,
+        label: `${"\u00a0\u00a0".repeat(Math.max(0, account.level - 2))}${account.code} — ${name}`,
+        hint: `${parentName}${!account.isActive ? ` · ${text("غير نشط", "Inactive")}` : ""}`.trim(),
+      };
+    }), [accounts, data.accountId, language]);
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((b) => [b.code, b.name, b.nameEn, b.bankName, b.bankNameEn, b.accountNo, b.iban, b.swiftCode]
-      .some((v) => String(v ?? "").toLowerCase().includes(q)));
-  }, [rows, search]);
+      .some((v) => String(v ?? "").toLowerCase().includes(q))
+      || accounts.some((account) => account.id === b.accountId && `${account.code} ${account.nameAr} ${account.nameEn ?? ""}`.toLowerCase().includes(q)));
+  }, [rows, search, accounts]);
   const activeCount = rows.filter((b) => b.isActive !== false).length;
 
   return (
@@ -108,7 +125,7 @@ export default function BanksAdmin() {
             </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: "10px 12px" }}>
-            <Labeled label={text("كود الحساب", "Account code")} hint={text("يُنشأ تلقائيًا عند تركه فارغًا", "Generated automatically when blank")}>
+            <Labeled label={text("كود البنك", "Bank code")} hint={text("كود تعريفي للبنك فقط", "Identification code only")}>
               <input value={data.code} onChange={(e) => setField("code", e.target.value)} placeholder="BA-0001" style={input} />
             </Labeled>
             <Labeled label={text("اسم الحساب بالعربية *", "Arabic account name *")}><input autoFocus value={data.name} onChange={(e) => setField("name", e.target.value)} style={input} /></Labeled>
@@ -121,6 +138,11 @@ export default function BanksAdmin() {
             <Labeled label={text("العملة", "Currency")}>
               <SearchCombobox value={data.currencyCode} onChange={(v) => setField("currencyCode", String(v))} options={currencyOpts} disabled={!!editingBank && Math.abs(editingBank.balance) > 0.001} style={input} />
             </Labeled>
+            <Labeled label={text("الحساب المحاسبي *", "Ledger account *")} hint={accountOpts.length ? undefined : text("أضف حساب أصول تفصيليًا ونشطًا أولًا", "Add an active leaf asset account first")}>
+              <SearchCombobox value={data.accountId} onChange={(v) => setField("accountId", Number(v) || null)} options={accountOpts}
+                placeholder={text("اختر حسابًا من شجرة الحسابات", "Choose a chart account")}
+                disabled={!!editingBank && Math.abs(editingBank.balance) > 0.001} style={input} />
+            </Labeled>
             <Labeled label={text("الفروع المرتبطة *", "Linked branches *")}>
               <BranchChecks branches={branches} value={data.branchIds} onChange={(v) => setField("branchIds", v)} />
             </Labeled>
@@ -132,7 +154,7 @@ export default function BanksAdmin() {
           </div>
           {editingBank && Math.abs(editingBank.balance) > 0.001 && (
             <div style={{ marginTop: 10, padding: "8px 11px", borderRadius: 8, background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", fontSize: 12 }}>
-              ⚠️ {text("لا يمكن تغيير عملة حساب لديه رصيد؛ نفّذ تحويلًا أولًا.", "Currency is locked while this account has a balance; transfer funds first.")}
+              ⚠️ {text("لا يمكن تغيير العملة أو الحساب المحاسبي لحساب لديه رصيد؛ نفّذ تحويلًا أولًا.", "Currency and ledger account are locked while this account has a balance; transfer funds first.")}
             </div>
           )}
           {err && <div role="alert" style={{ marginTop: 10, padding: "8px 11px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>{err}</div>}
@@ -150,7 +172,7 @@ export default function BanksAdmin() {
         {visibleRows.length === 0 ? <Empty text={search ? text("لا توجد نتائج مطابقة", "No matching results") : text("لا توجد بنوك", "No bank accounts yet")} /> : (
           <Table>
             <thead><tr>
-              <Th>{text("الكود والحساب", "Code and account")}</Th><Th>{text("البنك", "Bank")}</Th>
+              <Th>{text("الكود والحساب", "Code and account")}</Th><Th>{text("الحساب المحاسبي", "Ledger account")}</Th><Th>{text("البنك", "Bank")}</Th>
               <Th>{text("رقم الحساب", "Account number")}</Th><Th>IBAN / SWIFT</Th><Th>{text("العملة", "Currency")}</Th>
               <Th>{text("الفروع", "Branches")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الرصيد", "Balance")}</Th>
               <Th>{text("الحالة", "Status")}</Th><Th>{text("إجراءات", "Actions")}</Th>
@@ -158,6 +180,7 @@ export default function BanksAdmin() {
             <tbody>{visibleRows.map((b) => (
               <tr key={b.id}>
                 <Td><div style={{ fontWeight: 700 }}>{language === "en" ? b.nameEn || b.name : b.name}</div><div style={{ color: "#64748b", fontSize: 11, fontFamily: "monospace" }}>{b.code ?? "—"}</div></Td>
+                <Td>{(() => { const account = accounts.find((candidate) => candidate.id === b.accountId); return account ? <><span style={{ fontFamily: "monospace", color: "#64748b" }}>{account.code}</span> — {language === "en" ? account.nameEn || account.nameAr : account.nameAr}</> : "—"; })()}</Td>
                 <Td>{language === "en" ? b.bankNameEn || b.bankName || "—" : b.bankName || "—"}</Td>
                 <Td mono>{b.accountNo || "—"}</Td>
                 <Td mono><div>{b.iban || "—"}</div><div style={{ color: "#64748b", fontSize: 11 }}>{b.swiftCode || ""}</div></Td>

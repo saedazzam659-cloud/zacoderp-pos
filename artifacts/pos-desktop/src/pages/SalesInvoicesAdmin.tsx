@@ -206,10 +206,15 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
   }
 
   return (
-    <div dir={language === "en" ? "ltr" : "rtl"}>
+    <div
+      dir={language === "en" ? "ltr" : "rtl"}
+      style={formOpen ? { height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } : undefined}
+    >
     <Page
       title={text("فواتير المبيعات", "Sales invoices")}
       subtitle={text(`${rows.length} فاتورة — يتم ترحيل قيد المبيعات وتكلفة البضاعة المباعة تلقائياً عند الحفظ`, `${rows.length} invoices — sales and cost-of-goods-sold entries post automatically when saved`)}
+      hideHeader={formOpen}
+      fillHeight={formOpen}
       right={
         <button onClick={() => setCreating(true)} disabled={!deps || formOpen}
           style={{ ...btnPrimary, opacity: (!deps || formOpen) ? 0.5 : 1, cursor: (!deps || formOpen) ? "not-allowed" : "pointer" }}>
@@ -219,8 +224,8 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
     >
       <ErrorMsg text={err} />
       {formOpen && deps && (
-        <Card style={{ marginBottom: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <div style={{ padding: 10, flex: 1, minHeight: 0 }}>
+        <Card style={{ marginBottom: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ padding: 0, flex: 1, minHeight: 0, overflow: "hidden" }}>
             <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc} invoiceCount={rows.length}
               onRefreshDeps={reloadDeps}
               onCancel={() => { setCreating(false); setEditDoc(null); }}
@@ -655,6 +660,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         vatNumber: input.vatNumber.trim() || null,
         currencyCode: baseCurrencyCode(),
         openingBalance: 0,
+        createLedgerAccount: true,
       });
       await onRefreshDeps();
       setCustomerId(customer.id);
@@ -669,13 +675,14 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     } finally { setQuickCreateBusy(false); }
   }
 
-  async function createQuickItem(input: { nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service" }) {
+  async function createQuickItem(input: { nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number }) {
     if (!input.nameAr.trim()) { setQuickCreateError(text("اكتب اسم الصنف بالعربية", "Enter the item's Arabic name.")); return; }
     if (!Number.isFinite(input.salePrice) || input.salePrice < 0) { setQuickCreateError(text("أدخل سعرًا صحيحًا", "Enter a valid price.")); return; }
     if (!Number.isFinite(input.vatRate) || input.vatRate < 0 || input.vatRate > 100) { setQuickCreateError(text("نسبة الضريبة يجب أن تكون بين 0 و100", "Tax must be between 0 and 100.")); return; }
+    const uom = uoms.find((unit) => unit.id === input.uomId);
+    if (!uom) { setQuickCreateError(text("اختر وحدة قياس للصنف", "Choose a unit of measure.")); return; }
     setQuickCreateBusy(true); setQuickCreateError(null);
     try {
-      const uom = getDefaultUom();
       const item = await createItem({
         nameAr: input.nameAr.trim(),
         code: input.code.trim() || null,
@@ -683,12 +690,12 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         salePrice: input.salePrice,
         vatRate: selectedRate ?? input.vatRate,
         costPrice: 0,
-        uomId: uom?.id ?? null,
+        uomId: uom.id,
         nature: input.nature,
       });
       await onRefreshDeps();
       setLines((current) => {
-        const next = { ...blankLine(), itemId: item.id, itemName: item.nameAr, unitPrice: item.salePrice, vatRate: selectedRate ?? item.vatRate, uomId: item.uomId ?? uom?.id ?? null, uomName: uom?.nameAr ?? null, conversionFactor: uom?.baseQty ?? 1 };
+        const next = { ...blankLine(), itemId: item.id, itemName: item.nameAr, unitPrice: item.salePrice, vatRate: selectedRate ?? item.vatRate, uomId: item.uomId ?? uom.id, uomName: uom.nameAr, conversionFactor: uom.baseQty };
         const { net } = lineNet(next.qty, next.unitPrice, next.disc, next.discType);
         next.lineTotal = net + net * next.vatRate / 100;
         return [...current, next];
@@ -838,7 +845,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         .zline-detail-label{display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:5px;}
         .zsales-totals-grid{grid-template-columns:repeat(6,minmax(0,1fr)) !important;}
         .zsales-invoice-form .zlines-panel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
-        .zsales-invoice-form .zlines-wrap{flex:1;min-height:110px;overflow:auto !important;}
+        .zsales-invoice-form .zlines-wrap{flex:0 1 auto !important;min-height:0;max-height:286px;overflow:auto !important;}
         .zsales-invoice-form .zlines-wrap [data-testid="empty-items-state"] > td{height:140px !important;}
         .zsales-invoice-form .zlines-wrap [data-testid="empty-items-state"] > td > div{height:140px !important;}
         @media(max-width:1100px){.zsales-totals-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important;}}
@@ -846,16 +853,23 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         @media(max-width:700px){.zline-details-panel{grid-template-columns:1fr;}}
       `}</style>
       <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
-        padding: "9px 14px", marginBottom: 2, border: "1px solid #bfdbfe", borderRight: "4px solid #2563eb",
-        borderRadius: 9, background: "linear-gradient(100deg,#eff6ff 0%,#f8fbff 100%)",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+        padding: "6px 10px", marginBottom: 2, border: "1px solid #bfdbfe", borderRight: "4px solid #2563eb",
+        borderRadius: 9, background: "linear-gradient(100deg,#eff6ff 0%,#f8fbff 100%)", flexShrink: 0,
       }}>
-        <strong style={{ fontSize: 16, color: "#1e3a8a" }}>
-          {isEdit ? `${text("تعديل الفاتورة", "Edit invoice")} ${initial?.invoiceNo ?? ""}` : text("فاتورة مبيعات جديدة", "New sales invoice")}
-        </strong>
-        <span style={{ fontSize: 12, color: "#475569" }}>
-          {text(`${invoiceCount} فاتورة — يتم ترحيل قيد المبيعات وتكلفة البضاعة المباعة تلقائياً عند الحفظ`, `${invoiceCount} invoices — sales and cost-of-goods-sold entries post automatically when saved`)}
-        </span>
+        <div style={{ minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flex: 1 }}>
+          <strong style={{ fontSize: 15, color: "#1e3a8a", whiteSpace: "nowrap" }}>
+            {isEdit ? `${text("تعديل الفاتورة", "Edit invoice")} ${initial?.invoiceNo ?? ""}` : text("فاتورة مبيعات جديدة", "New sales invoice")}
+          </strong>
+          <span style={{ fontSize: 11, color: "#475569", textAlign: "end" }}>
+            {text(`${invoiceCount} فاتورة — يتم ترحيل القيد تلقائيًا عند الحفظ`, `${invoiceCount} invoices — entries post automatically when saved`)}
+          </span>
+        </div>
+        <button type="button" onClick={() => setActiveTab("basic")}
+          title={text("عرض بيانات الفاتورة", "Show invoice details")}
+          style={{ flex: "0 0 auto", padding: "5px 9px", border: "1px solid #93c5fd", borderRadius: 7, color: "#1d4ed8", background: "#fff", font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          + {text("فاتورة مبيعات", "Sales invoice")}
+        </button>
       </div>
       <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
         { key: "basic", label: text("البيانات الأساسية", "Basic information") },
@@ -1164,6 +1178,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
             if (payload.kind === "customer") void createQuickCustomer(payload);
             else void createQuickItem(payload);
           }}
+          uoms={uoms}
         />
       )}
     </div>
@@ -1172,7 +1187,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
 
 type QuickCreatePayload =
   | { kind: "customer"; nameAr: string; phone: string; vatNumber: string }
-  | { kind: "item"; nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service" };
+  | { kind: "item"; nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number };
 
 function quickAddButton(color: string): React.CSSProperties {
   return {
@@ -1182,13 +1197,14 @@ function quickAddButton(color: string): React.CSSProperties {
   };
 }
 
-function QuickCreateDialog({ kind, initialVatRate, busy, error, onCancel, onSubmit }: {
+function QuickCreateDialog({ kind, initialVatRate, busy, error, onCancel, onSubmit, uoms }: {
   kind: "customer" | "item";
   initialVatRate: number;
   busy: boolean;
   error: string | null;
   onCancel: () => void;
   onSubmit: (payload: QuickCreatePayload) => void;
+  uoms: Uom[];
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
@@ -1200,13 +1216,14 @@ function QuickCreateDialog({ kind, initialVatRate, busy, error, onCancel, onSubm
   const [salePrice, setSalePrice] = useState(0);
   const [vatRate, setVatRate] = useState(initialVatRate);
   const [nature, setNature] = useState<"stock" | "service">("stock");
+  const [uomId, setUomId] = useState(() => getDefaultUom()?.id ?? uoms[0]?.id ?? 0);
   const isCustomer = kind === "customer";
   const accent = isCustomer ? "#2563eb" : "#7c3aed";
   const fieldStyle: React.CSSProperties = { ...input, borderRadius: 9, padding: "9px 11px", background: "#fff" };
 
   function submit() {
     if (isCustomer) onSubmit({ kind, nameAr, phone, vatNumber });
-    else onSubmit({ kind, nameAr, code, barcode, salePrice, vatRate, nature });
+    else onSubmit({ kind, nameAr, code, barcode, salePrice, vatRate, nature, uomId });
   }
 
   return (
@@ -1276,13 +1293,22 @@ function QuickCreateDialog({ kind, initialVatRate, busy, error, onCancel, onSubm
                   <option value="service">{text("خدمة", "Service")}</option>
                 </select>
               </label>
+              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
+                {text("وحدة القياس *", "Unit of measure *")}
+                <select value={uomId || ""} onChange={(e) => setUomId(Number(e.target.value) || 0)} style={fieldStyle}>
+                  <option value="">{text("اختر وحدة القياس", "Choose a unit")}</option>
+                  {uoms.map((unit) => <option key={unit.id} value={unit.id}>
+                    {language === "en" ? unit.nameEn || unit.nameAr : unit.nameAr}{unit.shortCode ? ` (${unit.shortCode})` : ""}
+                  </option>)}
+                </select>
+              </label>
             </>
           )}
           {error && <div role="alert" style={{ padding: "9px 11px", borderRadius: 9, color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", fontSize: 13 }}>{error}</div>}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
             <button type="button" onClick={onCancel} disabled={busy} style={{ ...btnSecondary, borderRadius: 9, padding: "9px 14px" }}>{text("إلغاء", "Cancel")}</button>
-            <button type="button" onClick={submit} disabled={busy || !nameAr.trim()}
-              style={{ ...btnPrimary, borderRadius: 9, padding: "9px 16px", background: accent, opacity: busy || !nameAr.trim() ? 0.6 : 1 }}>
+            <button type="button" onClick={submit} disabled={busy || !nameAr.trim() || (!isCustomer && !uomId)}
+              style={{ ...btnPrimary, borderRadius: 9, padding: "9px 16px", background: accent, opacity: busy || !nameAr.trim() || (!isCustomer && !uomId) ? 0.6 : 1 }}>
               {busy ? text("جارٍ الحفظ…", "Saving…") : text("حفظ وإضافة للفاتورة", "Save and add to invoice")}
             </button>
           </div>

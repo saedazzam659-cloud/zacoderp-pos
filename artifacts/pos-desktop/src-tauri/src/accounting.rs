@@ -163,6 +163,22 @@ fn account_id_by_code(conn: &Connection, code: &str) -> Result<i64> {
     Ok(id)
 }
 
+fn customer_receivables_account_id(conn: &Connection, customer_id: Option<i64>) -> Result<i64> {
+    if let Some(customer_id) = customer_id.filter(|id| *id > 0) {
+        let linked: Option<Option<i64>> = conn
+            .query_row(
+                "SELECT account_id FROM customers_local WHERE id=?1",
+                params![customer_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(Some(account_id)) = linked {
+            return Ok(account_id);
+        }
+    }
+    account_id_by_code(conn, "1500")
+}
+
 // ── Document numbering ──
 // All document numbers flow through `next_doc_no`, which reads the operator-
 // configured series (prefix / next_number / padding) from number_series_local,
@@ -1649,7 +1665,7 @@ pub(crate) fn post_party_opening_balance(
             .flatten()
             .map(Ok)
             .unwrap_or_else(|| account_id_by_code(tx, "2100"))?,
-        "customer" => account_id_by_code(tx, "1500")?,
+        "customer" => customer_receivables_account_id(tx, Some(party_id))?,
         _ => return Err(anyhow!("نوع طرف غير معروف")),
     };
     let desc = "رصيد افتتاحي".to_string();
@@ -1754,6 +1770,7 @@ pub fn cash_boxes_list() -> Result<Vec<CashBox>, String> {
 #[serde(rename_all = "camelCase")]
 pub struct CashBoxInput {
     pub name: String,
+    #[serde(default)]
     pub account_id: Option<i64>,
     #[serde(default)]
     pub currency_code: Option<String>,
@@ -1769,31 +1786,60 @@ pub struct CashBoxInput {
     pub is_active: Option<bool>,
 }
 
+fn validate_treasury_account(
+    conn: &Connection,
+    requested_id: Option<i64>,
+    current_id: Option<i64>,
+) -> Result<i64, String> {
+    let id = requested_id.filter(|value| *value > 0)
+        .or(current_id.filter(|value| *value > 0))
+        .ok_or_else(|| "اختر حسابًا محاسبيًا من شجرة الحسابات".to_string())?;
+    let (kind, is_leaf, is_active): (String, i64, i64) = conn.query_row(
+        "SELECT type,is_leaf,is_active FROM accounts_local WHERE id=?1",
+        params![id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).map_err(|_| "الحساب المحاسبي المختار غير موجود".to_string())?;
+    if kind != "asset" || is_leaf == 0 || (is_active == 0 && current_id != Some(id)) {
+        return Err("اختر حساب أصول تفصيليًا ونشطًا".into());
+    }
+    Ok(id)
+}
+
+fn generated_treasury_code(conn: &Connection, table: &str, prefix: &str) -> Result<String, String> {
+    let mut suffix = 1_i64;
+    loop {
+        let candidate = format!("{prefix}-{suffix:04}");
+        let sql = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE code=?1)");
+        let exists: bool = conn.query_row(&sql, params![candidate], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Ok(candidate);
+        }
+        suffix += 1;
+    }
+}
+
+fn check_treasury_code(conn: &Connection, table: &str, code: &str, id: Option<i64>) -> Result<(), String> {
+    let sql = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE code=?1 AND (?2 IS NULL OR id<>?2))");
+    let exists: bool = conn.query_row(&sql, params![code, id], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    if exists {
+        return Err("هذا الكود مستخدم بالفعل".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn cash_boxes_create(input: CashBoxInput) -> Result<i64, String> {
     if input.name.trim().is_empty() { return Err("اسم الخزينة مطلوب".into()); }
     let conn = db::open().map_err(|e| e.to_string())?;
     let cur = input.currency_code.unwrap_or_else(|| "SAR".to_string());
-    let code = input.code.filter(|v| !v.trim().is_empty()).unwrap_or_else(|| {
-        let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM cash_boxes_local", [], |r| r.get(0)).unwrap_or(1);
-        format!("CB-{n:04}")
-    });
-    // Auto-create child account under 1100 if not provided.
-    let acc_id = match input.account_id {
-        Some(a) => a,
-        None => {
-            let parent = account_id_by_code(&conn, "1100").map_err(|e| e.to_string())?;
-            let n: i64 = conn.query_row("SELECT COUNT(*) FROM cash_boxes_local", [], |r| r.get(0))
-                .map_err(|e| e.to_string())?;
-            let code = format!("11{:02}", n + 2);
-            let label = if cur == "SAR" { format!("خزينة - {}", input.name) } else { format!("خزينة - {} ({cur})", input.name) };
-            conn.execute(
-                "INSERT INTO accounts_local(code,name_ar,type,parent_id,is_leaf) VALUES(?1,?2,'asset',?3,1)",
-                params![code, label, parent],
-            ).map_err(|e| e.to_string())?;
-            conn.last_insert_rowid()
-        }
+    let acc_id = validate_treasury_account(&conn, input.account_id, None)?;
+    let code = match input.code.filter(|v| !v.trim().is_empty()) {
+        Some(value) => value.trim().to_string(),
+        None => generated_treasury_code(&conn, "cash_boxes_local", "CB")?,
     };
+    check_treasury_code(&conn, "cash_boxes_local", &code, None)?;
     conn.execute(
         "INSERT INTO cash_boxes_local(name,account_id,currency_code,code,name_en,branch_ids_json,notes,is_active) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
         params![input.name, acc_id, cur, code, input.name_en, serde_json::to_string(&input.branch_ids.unwrap_or_default()).unwrap_or_else(|_| "[]".into()), input.notes, if input.is_active.unwrap_or(true) {1} else {0}],
@@ -1805,24 +1851,29 @@ pub fn cash_boxes_create(input: CashBoxInput) -> Result<i64, String> {
 pub fn cash_boxes_update(id: i64, input: CashBoxInput) -> Result<(), String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     // Lock currency once balance is non-zero (changing it after deposits would corrupt FX).
-    let (cur_now, bal): (String, f64) = conn.query_row(
-        "SELECT currency_code,balance FROM cash_boxes_local WHERE id=?1", params![id],
-        |r| Ok((r.get::<_, Option<String>>(0)?.unwrap_or_else(|| "SAR".to_string()), r.get(1)?)),
+    let (cur_now, bal, current_account_id): (String, f64, Option<i64>) = conn.query_row(
+        "SELECT currency_code,balance,account_id FROM cash_boxes_local WHERE id=?1", params![id],
+        |r| Ok((r.get::<_, Option<String>>(0)?.unwrap_or_else(|| "SAR".to_string()), r.get(1)?, r.get(2)?)),
     ).map_err(|e| e.to_string())?;
+    let account_id = validate_treasury_account(&conn, input.account_id, current_account_id)?;
+    if account_id != current_account_id.unwrap_or(0) && bal.abs() > 0.001 {
+        return Err("لا يمكن تغيير الحساب المحاسبي لخزينة لديها رصيد".into());
+    }
     let cur = input.currency_code.clone().unwrap_or_else(|| cur_now.clone());
     if cur != cur_now && bal.abs() > 0.001 {
         return Err("لا يمكن تغيير عملة خزينة لديها رصيد. أصدر تحويل خزينة لتفريغها أولاً.".into());
     }
     let current_code: String = conn.query_row("SELECT COALESCE(code,'') FROM cash_boxes_local WHERE id=?1", params![id], |r| r.get(0)).map_err(|e| e.to_string())?;
     let code = input.code.map(|v| if v.trim().is_empty() { current_code.clone() } else { v.trim().to_string() }).unwrap_or(current_code);
+    check_treasury_code(&conn, "cash_boxes_local", &code, Some(id))?;
     let old: (String, i64) = conn.query_row(
         "SELECT branch_ids_json,is_active FROM cash_boxes_local WHERE id=?1", params![id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     ).map_err(|e| e.to_string())?;
     let branch_ids = input.branch_ids.map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".into())).unwrap_or(old.0);
     conn.execute(
-        "UPDATE cash_boxes_local SET name=?1,currency_code=?2,code=?3,name_en=?4,branch_ids_json=?5,notes=?6,is_active=?7 WHERE id=?8",
-        params![input.name, cur, code, input.name_en, branch_ids, input.notes, if input.is_active.unwrap_or(old.1 != 0) {1} else {0}, id],
+        "UPDATE cash_boxes_local SET name=?1,account_id=?2,currency_code=?3,code=?4,name_en=?5,branch_ids_json=?6,notes=?7,is_active=?8 WHERE id=?9",
+        params![input.name, account_id, cur, code, input.name_en, branch_ids, input.notes, if input.is_active.unwrap_or(old.1 != 0) {1} else {0}, id],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -1883,6 +1934,8 @@ pub struct BankInput {
     pub name: String,
     pub account_no: Option<String>,
     #[serde(default)]
+    pub account_id: Option<i64>,
+    #[serde(default)]
     pub currency_code: Option<String>,
     #[serde(default)]
     pub code: Option<String>,
@@ -1909,20 +1962,12 @@ pub fn banks_create(input: BankInput) -> Result<i64, String> {
     if input.name.trim().is_empty() { return Err("اسم البنك مطلوب".into()); }
     let conn = db::open().map_err(|e| e.to_string())?;
     let cur = input.currency_code.unwrap_or_else(|| "SAR".to_string());
-    let code = input.code.filter(|v| !v.trim().is_empty()).unwrap_or_else(|| {
-        let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM banks_local", [], |r| r.get(0)).unwrap_or(1);
-        format!("BA-{n:04}")
-    });
-    let parent = account_id_by_code(&conn, "1200").map_err(|e| e.to_string())?;
-    let n: i64 = conn.query_row("SELECT COUNT(*) FROM banks_local", [], |r| r.get(0))
-        .map_err(|e| e.to_string())?;
-    let code = format!("12{:02}", n + 1);
-    let label = if cur == "SAR" { format!("بنك - {}", input.name) } else { format!("بنك - {} ({cur})", input.name) };
-    conn.execute(
-        "INSERT INTO accounts_local(code,name_ar,type,parent_id,is_leaf) VALUES(?1,?2,'asset',?3,1)",
-        params![code, label, parent],
-    ).map_err(|e| e.to_string())?;
-    let acc_id = conn.last_insert_rowid();
+    let acc_id = validate_treasury_account(&conn, input.account_id, None)?;
+    let code = match input.code.filter(|v| !v.trim().is_empty()) {
+        Some(value) => value.trim().to_string(),
+        None => generated_treasury_code(&conn, "banks_local", "BA")?,
+    };
+    check_treasury_code(&conn, "banks_local", &code, None)?;
     conn.execute(
         "INSERT INTO banks_local(name,account_no,account_id,currency_code,code,name_en,bank_name,bank_name_en,iban,swift_code,branch_ids_json,notes,is_active) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
         params![input.name, input.account_no, acc_id, cur, code, input.name_en, input.bank_name, input.bank_name_en, input.iban, input.swift_code, serde_json::to_string(&input.branch_ids.unwrap_or_default()).unwrap_or_else(|_| "[]".into()), input.notes, if input.is_active.unwrap_or(true) {1} else {0}],
@@ -1933,10 +1978,14 @@ pub fn banks_create(input: BankInput) -> Result<i64, String> {
 #[tauri::command]
 pub fn banks_update(id: i64, input: BankInput) -> Result<(), String> {
     let conn = db::open().map_err(|e| e.to_string())?;
-    let (cur_now, bal): (String, f64) = conn.query_row(
-        "SELECT currency_code,balance FROM banks_local WHERE id=?1", params![id],
-        |r| Ok((r.get::<_, Option<String>>(0)?.unwrap_or_else(|| "SAR".to_string()), r.get(1)?)),
+    let (cur_now, bal, current_account_id): (String, f64, Option<i64>) = conn.query_row(
+        "SELECT currency_code,balance,account_id FROM banks_local WHERE id=?1", params![id],
+        |r| Ok((r.get::<_, Option<String>>(0)?.unwrap_or_else(|| "SAR".to_string()), r.get(1)?, r.get(2)?)),
     ).map_err(|e| e.to_string())?;
+    let account_id = validate_treasury_account(&conn, input.account_id, current_account_id)?;
+    if account_id != current_account_id.unwrap_or(0) && bal.abs() > 0.001 {
+        return Err("لا يمكن تغيير الحساب المحاسبي لبنك لديه رصيد".into());
+    }
     let cur = input.currency_code.clone().unwrap_or_else(|| cur_now.clone());
     if cur != cur_now && bal.abs() > 0.001 {
         return Err("لا يمكن تغيير عملة بنك لديه رصيد. أصدر تحويل خزينة لتفريغه أولاً.".into());
@@ -1947,10 +1996,11 @@ pub fn banks_update(id: i64, input: BankInput) -> Result<(), String> {
     ).map_err(|e| e.to_string())?;
     let current_code: String = conn.query_row("SELECT COALESCE(code,'') FROM banks_local WHERE id=?1", params![id], |r| r.get(0)).map_err(|e| e.to_string())?;
     let code = input.code.map(|v| if v.trim().is_empty() { current_code.clone() } else { v.trim().to_string() }).unwrap_or(current_code);
+    check_treasury_code(&conn, "banks_local", &code, Some(id))?;
     let branch_ids = input.branch_ids.map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".into())).unwrap_or(old.0);
     conn.execute(
-        "UPDATE banks_local SET name=?1,account_no=?2,currency_code=?3,code=?4,name_en=?5,bank_name=?6,bank_name_en=?7,iban=?8,swift_code=?9,branch_ids_json=?10,notes=?11,is_active=?12 WHERE id=?13",
-        params![input.name, input.account_no, cur, code, input.name_en, input.bank_name, input.bank_name_en, input.iban, input.swift_code, branch_ids, input.notes, if input.is_active.unwrap_or(old.1 != 0) {1} else {0}, id],
+        "UPDATE banks_local SET name=?1,account_no=?2,account_id=?3,currency_code=?4,code=?5,name_en=?6,bank_name=?7,bank_name_en=?8,iban=?9,swift_code=?10,branch_ids_json=?11,notes=?12,is_active=?13 WHERE id=?14",
+        params![input.name, input.account_no, account_id, cur, code, input.name_en, input.bank_name, input.bank_name_en, input.iban, input.swift_code, branch_ids, input.notes, if input.is_active.unwrap_or(old.1 != 0) {1} else {0}, id],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -3376,13 +3426,14 @@ fn days_between(from: &str, to: &str) -> i64 {
 fn resolve_sales_debit_account(
     conn: &Connection,
     method: &str,
+    customer_id: Option<i64>,
     cash_box_id: Option<i64>,
     bank_id: Option<i64>,
 ) -> Result<i64> {
     match method {
-        // All customers share the AR control account 1500 (mirrors
-        // resolve_party_account's "customer" branch).
-        "credit" => account_id_by_code(conn, "1500"),
+        // An explicitly linked customer account takes precedence; customers
+        // without one continue to use the shared AR control account 1500.
+        "credit" => customer_receivables_account_id(conn, customer_id),
         "cash" => {
             let cb = cash_box_id.ok_or_else(|| anyhow!("اختر الخزينة"))?;
             let id: i64 = conn.query_row("SELECT account_id FROM cash_boxes_local WHERE id=?1", params![cb], |r| r.get(0))?;
@@ -3555,7 +3606,7 @@ fn apply_sales_invoice_impact(
     // Revenue JE: DR (AR|cash|bank)(grand) / CR Revenue(subtotal) + CR VAT-out(vat)
     let rev_acc = account_id_by_code(tx, "4100").map_err(|e| e.to_string())?;
     let vat_out_acc = account_id_by_code(tx, "2200").map_err(|e| e.to_string())?;
-    let dr_account_id = resolve_sales_debit_account(tx, &input.payment_method, input.cash_box_id, input.bank_id)
+    let dr_account_id = resolve_sales_debit_account(tx, &input.payment_method, input.customer_id, input.cash_box_id, input.bank_id)
         .map_err(|e| e.to_string())?;
 
     let mut lines = vec![
@@ -4766,7 +4817,7 @@ pub fn sales_return_create(input: SalesReturnInput) -> Result<i64, String> {
     // Reverse revenue JE: DR Revenue(subtotal) + DR VAT-out(vat) / CR (AR|cash|bank)(grand)
     let rev_acc = account_id_by_code(&tx, "4100").map_err(|e| e.to_string())?;
     let vat_out_acc = account_id_by_code(&tx, "2200").map_err(|e| e.to_string())?;
-    let cr_account_id = resolve_sales_debit_account(&tx, &input.payment_method, input.cash_box_id, input.bank_id)
+    let cr_account_id = resolve_sales_debit_account(&tx, &input.payment_method, input.customer_id, input.cash_box_id, input.bank_id)
         .map_err(|e| e.to_string())?;
 
     let mut lines = vec![
@@ -4939,8 +4990,7 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
             supplier_ap_account(&tx, pid)?
         }
         Some("customer") => {
-            // Use AR account 1500 for all customers (kept simple in standalone)
-            account_id_by_code(&tx, "1500").map_err(|e| e.to_string())?
+            customer_receivables_account_id(&tx, input.party_id).map_err(|e| e.to_string())?
         }
         _ => input.counter_account_id.ok_or("اختر الحساب المقابل")?,
     };
@@ -5007,7 +5057,7 @@ pub fn financial_tx_update(id: i64, input: FinancialTxInput) -> Result<(), Strin
     } else { unreachable!() };
     let counter_acc = match input.party_type.as_deref() {
         Some("supplier") => supplier_ap_account(&tx, input.party_id.ok_or("اختر المورد")?)?,
-        Some("customer") => account_id_by_code(&tx, "1500").map_err(|e| e.to_string())?,
+        Some("customer") => customer_receivables_account_id(&tx, input.party_id).map_err(|e| e.to_string())?,
         Some("none") | None => input.counter_account_id.ok_or("اختر الحساب المقابل")?,
         Some(_) => return Err("نوع الطرف غير صالح".into()),
     };
