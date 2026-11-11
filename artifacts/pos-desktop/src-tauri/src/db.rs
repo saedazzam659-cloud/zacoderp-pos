@@ -985,6 +985,20 @@ pub fn initialize() -> Result<()> {
     let alters: &[&str] = &[
         "ALTER TABLE cash_boxes_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
         "ALTER TABLE banks_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
+        "ALTER TABLE cash_boxes_local ADD COLUMN code TEXT",
+        "ALTER TABLE cash_boxes_local ADD COLUMN name_en TEXT",
+        "ALTER TABLE cash_boxes_local ADD COLUMN branch_ids_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE cash_boxes_local ADD COLUMN notes TEXT",
+        "ALTER TABLE cash_boxes_local ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE banks_local ADD COLUMN code TEXT",
+        "ALTER TABLE banks_local ADD COLUMN name_en TEXT",
+        "ALTER TABLE banks_local ADD COLUMN bank_name TEXT",
+        "ALTER TABLE banks_local ADD COLUMN bank_name_en TEXT",
+        "ALTER TABLE banks_local ADD COLUMN iban TEXT",
+        "ALTER TABLE banks_local ADD COLUMN swift_code TEXT",
+        "ALTER TABLE banks_local ADD COLUMN branch_ids_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE banks_local ADD COLUMN notes TEXT",
+        "ALTER TABLE banks_local ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE suppliers_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
         "ALTER TABLE customers_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
         "ALTER TABLE items_local ADD COLUMN currency_code TEXT NOT NULL DEFAULT 'SAR'",
@@ -1185,6 +1199,16 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE financial_transactions_local ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'",
     ];
     for sql in alters { let _ = conn.execute(sql, []); }
+    let _ = conn.execute(
+        "UPDATE cash_boxes_local SET code='CB-' || printf('%04d', id) WHERE code IS NULL OR trim(code)=''",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE banks_local SET code='BA-' || printf('%04d', id) WHERE code IS NULL OR trim(code)=''",
+        [],
+    );
+    let _ = conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_boxes_local_code ON cash_boxes_local(code) WHERE code IS NOT NULL", []);
+    let _ = conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_banks_local_code ON banks_local(code) WHERE code IS NOT NULL", []);
 
     // Seed a default branch on first run so documents have something to
     // tag against out of the box (idempotent — user edits never clobbered).

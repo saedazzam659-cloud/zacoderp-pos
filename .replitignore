@@ -20,6 +20,7 @@ exports/*.zip
 artifacts/*/.next
 artifacts/*/.vite
 artifacts/*/node_modules
+/artifacts/pos-desktop/src-tauri/target
 
 # Repo-wide caches that should never leave the dev container.
 node_modules

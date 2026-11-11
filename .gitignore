@@ -54,3 +54,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Rust/Tauri build output
+/artifacts/pos-desktop/src-tauri/target/
