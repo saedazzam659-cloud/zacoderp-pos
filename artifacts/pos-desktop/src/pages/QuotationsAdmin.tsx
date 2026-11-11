@@ -13,7 +13,7 @@ import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
 import { getCompanyProfile, useShowFreeQuantityColumn } from "../lib/appSettings";
 import {
-  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, EmptyItemsRow,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
@@ -462,9 +462,10 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         )}
       </div>
 
-      <div style={{ overflowX: "auto", marginTop: 10 }}>
+      <div style={{ overflow: "auto", marginTop: 10, maxHeight: 360 }}>
       <Table style={{ minWidth: 1250 }}>
-        <thead><tr>
+        <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
+        <tr>
           <Th style={{ minWidth: 240 }}>الصنف</Th>
           <Th style={{ width: 130 }}>الوحدة</Th>
           <Th style={{ width: 180 }}>الكمية</Th>
@@ -512,7 +513,6 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         </tbody>
       </Table>
       </div>
-      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
 
       <Field label="ملاحظات" style={{ marginTop: 12 }}>
@@ -520,10 +520,23 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </Field>
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
-      <Actions>
-        <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
-        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ"}</button>
-      </Actions>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button
+            onClick={addLine}
+            type="button"
+            title="إضافة سطر"
+            aria-label="إضافة سطر"
+            style={{ ...btnSecondary, padding: "5px 9px", color: "#087f69", borderColor: "#9bd6c9", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+          >
+            + إضافة صنف
+          </button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
+          <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ"}</button>
+        </div>
+      </div>
     </div>
   );
 }
