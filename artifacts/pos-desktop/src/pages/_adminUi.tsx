@@ -147,6 +147,54 @@ export function FormTabs<K extends string>({ tabs, active, onChange, accentColor
     </div>
   );
 }
+
+export function DocumentFormHeader({ title, hint, actionLabel, actionTitle, onAction }: {
+  title: string;
+  hint?: string;
+  actionLabel?: string;
+  actionTitle?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+      padding: "6px 10px", marginBottom: 2, border: "1px solid #bfdbfe", borderRight: "4px solid #2563eb",
+      borderRadius: 9, background: "linear-gradient(100deg,#eff6ff 0%,#f8fbff 100%)", flexShrink: 0,
+    }}>
+      <div style={{ minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flex: 1 }}>
+        <strong style={{ fontSize: 15, color: "#1e3a8a", whiteSpace: "nowrap" }}>{title}</strong>
+        {hint && <span style={{ fontSize: 11, color: "#475569", textAlign: "end" }}>{hint}</span>}
+      </div>
+      {actionLabel && onAction && (
+        <button type="button" onClick={onAction} title={actionTitle}
+          style={{ flex: "0 0 auto", padding: "5px 9px", border: "1px solid #93c5fd", borderRadius: 7, color: "#1d4ed8", background: "#fff", font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          + {actionLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
+export const documentFormStyles = `
+  .zdoc-form .zfield{transition:border-color .12s ease, box-shadow .12s ease;}
+  .zdoc-form .zfield:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.18);}
+  .zdoc-form .zrow:hover td{background:#eff6ff !important;}
+  .zdoc-form .zlines-wrap thead th{position:sticky;top:0;z-index:2;padding:8px 5px !important;font-size:11px !important;white-space:nowrap;}
+  .zdoc-form .zlines-wrap tbody td{padding:5px !important;vertical-align:middle;}
+  .zdoc-form .zlines-wrap .zfield{height:32px !important;padding:4px 6px !important;font-size:12px !important;}
+  .zdoc-form .zline-details td{background:#f2faf7 !important;border-top:0 !important;padding:10px 14px !important;}
+  .zdoc-form .zline-details-panel{display:grid;grid-template-columns:minmax(220px,1fr) minmax(280px,2fr);gap:12px;align-items:end;}
+  .zdoc-form .zline-detail-label{display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:5px;}
+  .zdoc-form .zlines-panel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
+  .zdoc-form .zlines-wrap{flex:0 1 auto !important;min-height:0;max-height:286px;overflow:auto !important;}
+  .zdoc-form .zlines-wrap [data-testid="empty-items-state"] > td{height:140px !important;}
+  .zdoc-form .zlines-wrap [data-testid="empty-items-state"] > td > div{height:140px !important;}
+  .zdoc-form .zsales-totals-grid{grid-template-columns:repeat(6,minmax(0,1fr)) !important;}
+  @media(max-width:1100px){.zdoc-form .zsales-totals-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important;}}
+  @media(max-width:700px){.zdoc-form .zsales-totals-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}}
+  @media(max-width:700px){.zdoc-form .zline-details-panel{grid-template-columns:1fr;}}
+`;
+
 // Hide an inactive tab panel without unmounting it (preserves controlled-input
 // focus + per-line state). Spread onto the panel wrapper's style.
 export function tabPanel(active: string, key: string): CSSProperties {
@@ -163,6 +211,9 @@ export function tabPanel(active: string, key: string): CSSProperties {
 // internal scroll) collapsed the grid to a tiny header-only box on smaller
 // windows, so it was removed.
 export const docFormShell: CSSProperties = { display: "block" };
+export const invoiceEditorShell: CSSProperties = {
+  ...docFormShell, display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden",
+};
 // Spread onto the «بنود الأصناف» tab panel: a normal block when active, hidden
 // (state preserved) when not.
 export function linesPanel(active: string): CSSProperties {

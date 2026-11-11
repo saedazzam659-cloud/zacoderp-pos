@@ -14,8 +14,9 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel, EmptyItemsRow,
-  docFormShell, linesPanel, linesScroll, docFormPinned, contentPanel,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, DocumentFormHeader,
+  documentFormStyles, invoiceEditorShell, tabPanel, EmptyItemsRow,
+  linesPanel, linesScroll, docFormPinned, contentPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
@@ -251,7 +252,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
       {creating && deps && form && (
         <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
-            <CreateForm deps={deps} seed={form} onCancel={() => setForm(null)} onDone={() => { setForm(null); void refresh(); }} />
+            <CreateForm deps={deps} seed={form} documentCount={rows.length} onCancel={() => setForm(null)} onDone={() => { setForm(null); void refresh(); }} />
           </div>
         </Card>
       )}
@@ -411,9 +412,10 @@ function PurchaseDetail({ p }: { p: Purchase }) {
   );
 }
 
-function CreateForm({ deps, seed, onCancel, onDone }: {
+function CreateForm({ deps, seed, documentCount, onCancel, onDone }: {
   deps: { suppliers: Supplier[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; lcs: LetterOfCredit[] };
   seed: FormSeed;
+  documentCount: number;
   onCancel: () => void; onDone: () => void;
 }) {
   const isEdit = seed.editId != null;
@@ -509,6 +511,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
     lines.map((l) => ({ qty: l.qty, unit: l.unitCost, vatRate: l.vatRate, disc: l.disc, discType: l.discType })),
     headerDisc, headerDiscType,
   );
+  const selectedLineCount = lines.filter((line) => line.itemId > 0).length;
 
   async function save() {
     setBusy(true); setErr(null); setIssues([]);
@@ -563,12 +566,18 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
   }
 
   return (
-    <div style={docFormShell}>
-      <h3 style={{ marginTop: 0, flexShrink: 0 }}>{isEdit ? `تعديل فاتورة الشراء` : "فاتورة شراء جديدة"}</h3>
-      <style>{`.zlines-wrap thead th{position:sticky;top:0;z-index:2;}`}</style>
-      <FormTabs active={activeTab} onChange={setActiveTab} tabs={[
+    <div className="zdoc-form" style={invoiceEditorShell}>
+      <style>{documentFormStyles}</style>
+      <DocumentFormHeader
+        title={isEdit ? "تعديل فاتورة الشراء" : "فاتورة شراء جديدة"}
+        hint={`${documentCount} فاتورة — يتم ترحيل القيد تلقائيًا عند الحفظ`}
+        actionLabel="فاتورة شراء"
+        actionTitle="عرض بيانات الفاتورة"
+        onAction={() => setActiveTab("basic")}
+      />
+      <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
         { key: "basic", label: "البيانات الأساسية" },
-        { key: "lines", label: `بنود الأصناف${lines.length ? ` (${lines.length})` : ""}` },
+        { key: "lines", label: `بنود الأصناف (${selectedLineCount})` },
         { key: "payments", label: "المدفوعات" },
       ]} />
 
@@ -626,28 +635,37 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
       </div>
       </div>
 
-      <div style={linesPanel(activeTab)}>
-      <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 10 }}>
-      <Table style={{ minWidth: 1250 }}>
+      <div className="zlines-panel" style={linesPanel(activeTab)}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
+        <strong style={{ fontSize: 15 }}>بنود الأصناف</strong>
+        <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>
+          {selectedLineCount} صنف
+        </span>
+      </div>
+      <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 8 }}>
+      <Table style={{ width: "100%", minWidth: 900, tableLayout: "fixed" }}>
         <thead><tr>
-          <Th style={{ minWidth: 240 }}>الصنف</Th>
-          <Th style={{ width: 130 }}>الوحدة</Th>
-          <Th style={{ width: 180 }}>الكمية</Th>
-          <Th style={{ width: 240 }}>سعر الوحدة</Th>
-          <Th style={{ width: 170 }}>الخصم</Th>
-          <Th style={{ width: 80 }}>ض. %</Th>
-          <Th style={{ width: 120, textAlign: "left" }}>الإجمالي</Th>
-          <Th style={{ width: 40 }}></Th>
+          <Th style={{ width: "4%", textAlign: "center" }}>#</Th>
+          <Th style={{ width: "24%" }}>الصنف</Th>
+          <Th style={{ width: "11%" }}>الوحدة</Th>
+          <Th style={{ width: "8%", textAlign: "center" }}>الكمية</Th>
+          <Th style={{ width: "14%", textAlign: "center" }}>سعر الوحدة</Th>
+          <Th style={{ width: "13%", textAlign: "center" }}>الخصم</Th>
+          <Th style={{ width: "7%", textAlign: "center" }}>ض. %</Th>
+          <Th style={{ width: "12%", textAlign: "left" }}>الإجمالي</Th>
+          <Th style={{ width: "7%", textAlign: "center" }}>إجراءات</Th>
         </tr></thead>
         <tbody>
-          {lines.length === 0 && <EmptyItemsRow colSpan={8} />}
+          {lines.length === 0 && <EmptyItemsRow colSpan={9} />}
           {lines.map((l, i) => (
-            <tr key={i}>
+            <tr key={i} className="zrow" style={{ background: i % 2 ? "#fbfdff" : "#fff" }}>
+              <Td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</Td>
               <Td>
                 <SearchCombobox
                   value={l.itemId}
                   onChange={(v) => setLine(i, { itemId: Number(v) })}
                   style={input}
+                  inputClassName="zfield"
                   options={[
                     { value: 0, label: "— اختر —" },
                     ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
@@ -659,23 +677,30 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
                   value={l.uomId ?? 0}
                   onChange={(v) => setLine(i, { uomId: Number(v) })}
                   style={input}
+                  inputClassName="zfield"
                   options={uoms.map((u) => ({ value: u.id, label: u.baseQty !== 1 ? `${u.nameAr} (×${u.baseQty})` : u.nameAr }))}
                 />
               </Td>
-              <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={input} /></Td>
-              <Td><input type="number" step="0.01" value={l.unitCost} onChange={(e) => setLine(i, { unitCost: Number(e.target.value) || 0 })} style={input} /></Td>
-              <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitCost) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} /></Td>
-              <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={input} /></Td>
-              <Td num>{fmt(l.lineTotal)}</Td>
-              <Td><button onClick={() => removeLine(i)} style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
+              <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} className="zfield" /></Td>
+              <Td><input type="number" step="0.01" value={l.unitCost} onChange={(e) => setLine(i, { unitCost: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} className="zfield" /></Td>
+              <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitCost) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} inputClassName="zfield" /></Td>
+              <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} className="zfield" /></Td>
+              <Td num style={{ fontWeight: 700, color: "#0f172a" }}>{docSym} {fmt(l.lineTotal)}</Td>
+              <Td>
+                <button onClick={() => removeLine(i)} type="button" aria-label="حذف السطر" title="حذف السطر" style={{ ...btnLink, color: "#dc2626", fontSize: 17, padding: "2px 5px" }}>×</button>
+              </Td>
             </tr>
           ))}
         </tbody>
       </Table>
       </div>
-      <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8, flexShrink: 0 }}>+ سطر</button>
+      <div style={{ display: "flex", justifyContent: "flex-start", gap: 8, marginTop: 8 }}>
+        <button onClick={addLine} type="button" style={{ padding: "7px 14px", background: "#fff", color: "#087f69", border: "1px solid #9bd6c9", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
+          + إضافة صنف
+        </button>
+      </div>
       <div style={docFormPinned}>
-      <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       </div>
       </div>
 

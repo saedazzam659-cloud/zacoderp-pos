@@ -20,8 +20,9 @@ import { getCompanyProfile, useHideZeros, blankIfZero, uiText, useUiLanguage } f
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, tabPanel, EmptyItemsRow,
-  docFormShell, linesPanel, linesScroll, docFormPinned, contentPanel,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, DocumentFormHeader,
+  documentFormStyles, invoiceEditorShell, tabPanel, EmptyItemsRow,
+  linesPanel, linesScroll, docFormPinned, contentPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
@@ -829,48 +830,15 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   }
 
   return (
-    <div ref={formRef} className="zsales-invoice-form" style={{
-      ...docFormShell, display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden",
-    }}>
-      <style>{`
-        .zfield{transition:border-color .12s ease, box-shadow .12s ease;}
-        .zfield:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.18);}
-        .zrow:hover td{background:#eff6ff !important;}
-        .zlines-wrap thead th{position:sticky;top:0;z-index:2;}
-        .zlines-wrap thead th{padding:8px 5px !important;font-size:11px !important;white-space:nowrap;}
-        .zlines-wrap tbody td{padding:5px !important;vertical-align:middle;}
-        .zlines-wrap .zfield{height:32px !important;padding:4px 6px !important;font-size:12px !important;}
-        .zline-details td{background:#f2faf7 !important;border-top:0 !important;padding:10px 14px !important;}
-        .zline-details-panel{display:grid;grid-template-columns:minmax(220px,1fr) minmax(280px,2fr);gap:12px;align-items:end;}
-        .zline-detail-label{display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:5px;}
-        .zsales-totals-grid{grid-template-columns:repeat(6,minmax(0,1fr)) !important;}
-        .zsales-invoice-form .zlines-panel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
-        .zsales-invoice-form .zlines-wrap{flex:0 1 auto !important;min-height:0;max-height:286px;overflow:auto !important;}
-        .zsales-invoice-form .zlines-wrap [data-testid="empty-items-state"] > td{height:140px !important;}
-        .zsales-invoice-form .zlines-wrap [data-testid="empty-items-state"] > td > div{height:140px !important;}
-        @media(max-width:1100px){.zsales-totals-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important;}}
-        @media(max-width:700px){.zsales-totals-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}}
-        @media(max-width:700px){.zline-details-panel{grid-template-columns:1fr;}}
-      `}</style>
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-        padding: "6px 10px", marginBottom: 2, border: "1px solid #bfdbfe", borderRight: "4px solid #2563eb",
-        borderRadius: 9, background: "linear-gradient(100deg,#eff6ff 0%,#f8fbff 100%)", flexShrink: 0,
-      }}>
-        <div style={{ minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flex: 1 }}>
-          <strong style={{ fontSize: 15, color: "#1e3a8a", whiteSpace: "nowrap" }}>
-            {isEdit ? `${text("تعديل الفاتورة", "Edit invoice")} ${initial?.invoiceNo ?? ""}` : text("فاتورة مبيعات جديدة", "New sales invoice")}
-          </strong>
-          <span style={{ fontSize: 11, color: "#475569", textAlign: "end" }}>
-            {text(`${invoiceCount} فاتورة — يتم ترحيل القيد تلقائيًا عند الحفظ`, `${invoiceCount} invoices — entries post automatically when saved`)}
-          </span>
-        </div>
-        <button type="button" onClick={() => setActiveTab("basic")}
-          title={text("عرض بيانات الفاتورة", "Show invoice details")}
-          style={{ flex: "0 0 auto", padding: "5px 9px", border: "1px solid #93c5fd", borderRadius: 7, color: "#1d4ed8", background: "#fff", font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-          + {text("فاتورة مبيعات", "Sales invoice")}
-        </button>
-      </div>
+    <div ref={formRef} className="zdoc-form" style={invoiceEditorShell}>
+      <style>{documentFormStyles}</style>
+      <DocumentFormHeader
+        title={isEdit ? `${text("تعديل الفاتورة", "Edit invoice")} ${initial?.invoiceNo ?? ""}` : text("فاتورة مبيعات جديدة", "New sales invoice")}
+        hint={text(`${invoiceCount} فاتورة — يتم ترحيل القيد تلقائيًا عند الحفظ`, `${invoiceCount} invoices — entries post automatically when saved`)}
+        actionLabel={text("فاتورة مبيعات", "Sales invoice")}
+        actionTitle={text("عرض بيانات الفاتورة", "Show invoice details")}
+        onAction={() => setActiveTab("basic")}
+      />
       <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
         { key: "basic", label: text("البيانات الأساسية", "Basic information") },
         { key: "lines", label: `${text("بنود الأصناف", "Items")} (${selectedLineCount})` },
