@@ -59,8 +59,24 @@ export type SupplierInput = {
   groupId?: number | null;
 };
 
-export type CashBox = { id: number; name: string; balance: number; accountId: number | null; currencyCode: string };
-export type Bank = { id: number; name: string; accountNo: string | null; balance: number; accountId: number | null; currencyCode: string };
+export type CashBox = {
+  id: number; name: string; balance: number; accountId: number | null; currencyCode: string;
+  code?: string | null; nameEn?: string | null; branchIds?: number[]; notes?: string | null; isActive?: boolean;
+};
+export type CashBoxInput = {
+  name: string; code?: string | null; nameEn?: string | null; currencyCode?: string;
+  branchIds?: number[]; notes?: string | null; isActive?: boolean;
+};
+export type Bank = {
+  id: number; name: string; accountNo: string | null; balance: number; accountId: number | null; currencyCode: string;
+  code?: string | null; nameEn?: string | null; bankName?: string | null; bankNameEn?: string | null;
+  iban?: string | null; swiftCode?: string | null; branchIds?: number[]; notes?: string | null; isActive?: boolean;
+};
+export type BankInput = {
+  name: string; accountNo?: string | null; code?: string | null; nameEn?: string | null;
+  bankName?: string | null; bankNameEn?: string | null; iban?: string | null; swiftCode?: string | null;
+  currencyCode?: string; branchIds?: number[]; notes?: string | null; isActive?: boolean;
+};
 
 // ─── POS payment methods + GL account overrides ──────────────────────
 // Dynamic register payment methods (نقداً / بطاقة / آجل / …). Each maps to a
@@ -363,6 +379,8 @@ export type FinancialTx = {
   partyType: PartyType | null; partyId: number | null; partyName: string | null;
   cashBoxId: number | null; bankId: number | null; counterAccountId: number | null;
   amount: number; description: string | null; jeId: number | null;
+  status: "draft" | "posted" | string; currencyCode: string; exchangeRate: number;
+  branchId?: number | null; costCenterId?: number | null;
   /** Optional link to the settled document ("sales_invoice" | "purchase") so an
    *  invoice list can surface its paid amount. */
   appliedDocType?: string | null; appliedDocId?: number | null;
@@ -485,17 +503,21 @@ export async function listCashBoxes(): Promise<CashBox[]> {
   if (!hasTauri()) return [];
   return await invoke<CashBox[]>("cash_boxes_list");
 }
-export async function createCashBox(name: string, currencyCode = "SAR"): Promise<number> {
+export async function createCashBox(input: CashBoxInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("cash_boxes_create", { input: { name, accountId: null, currencyCode } });
+  const id = await invoke<number>("cash_boxes_create", { input: { ...input, accountId: null } });
+  emitData("cashboxes");
+  return id;
 }
-export async function updateCashBox(id: number, name: string, currencyCode = "SAR"): Promise<void> {
+export async function updateCashBox(id: number, input: CashBoxInput): Promise<void> {
   if (!hasTauri()) notImpl();
-  await invoke("cash_boxes_update", { id, input: { name, accountId: null, currencyCode } });
+  await invoke("cash_boxes_update", { id, input: { ...input, accountId: null } });
+  emitData("cashboxes");
 }
 export async function deleteCashBox(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("cash_boxes_delete", { id });
+  emitData("cashboxes");
 }
 
 // ─── Banks ───────────────────────────────────────────────────────────
@@ -503,17 +525,21 @@ export async function listBanks(): Promise<Bank[]> {
   if (!hasTauri()) return [];
   return await invoke<Bank[]>("banks_list");
 }
-export async function createBank(name: string, accountNo: string | null, currencyCode = "SAR"): Promise<number> {
+export async function createBank(input: BankInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("banks_create", { input: { name, accountNo, currencyCode } });
+  const id = await invoke<number>("banks_create", { input });
+  emitData("banks");
+  return id;
 }
-export async function updateBank(id: number, name: string, accountNo: string | null, currencyCode = "SAR"): Promise<void> {
+export async function updateBank(id: number, input: BankInput): Promise<void> {
   if (!hasTauri()) notImpl();
-  await invoke("banks_update", { id, input: { name, accountNo, currencyCode } });
+  await invoke("banks_update", { id, input });
+  emitData("banks");
 }
 export async function deleteBank(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("banks_delete", { id });
+  emitData("banks");
 }
 
 // ─── Currencies (Task #209) ──────────────────────────────────────────
@@ -859,19 +885,31 @@ export async function listFinancialTx(limit = 200): Promise<FinancialTx[]> {
 }
 export async function createFinancialTx(input: FinancialTxInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("financial_tx_create", { input });
+  const id = await invoke<number>("financial_tx_create", { input });
+  emitData("vouchers", "journal", "customers", "suppliers", "cashboxes", "banks");
+  return id;
+}
+export async function updateFinancialTx(id: number, input: FinancialTxInput): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("financial_tx_update", { id, input });
+  emitData("vouchers", "journal", "customers", "suppliers", "cashboxes", "banks");
+}
+export async function deleteFinancialTx(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("financial_tx_delete", { id });
+  emitData("vouchers", "journal", "customers", "suppliers", "cashboxes", "banks");
 }
 // ترحيل / فك ترحيل سند قبض/صرف. Post writes a journal entry + applies the
 // cash/bank/party shadow balances; unpost deletes the JE + reverses the shadow.
 export async function financialTxPost(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("financial_tx_post", { id });
-  emitData("vouchers", "journal");
+  emitData("vouchers", "journal", "customers", "suppliers", "cashboxes", "banks");
 }
 export async function financialTxUnpost(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("financial_tx_unpost", { id });
-  emitData("vouchers", "journal");
+  emitData("vouchers", "journal", "customers", "suppliers", "cashboxes", "banks");
 }
 
 // ─── Journal entries ─────────────────────────────────────────────────

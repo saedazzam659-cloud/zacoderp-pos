@@ -568,6 +568,8 @@ fn main() {
             accounting::sales_return_create,
             accounting::financial_tx_list,
             accounting::financial_tx_create,
+            accounting::financial_tx_update,
+            accounting::financial_tx_delete,
             accounting::financial_tx_post,
             accounting::financial_tx_unpost,
             accounting::journal_entries_list,

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
-  listFinancialTx, createFinancialTx, listSuppliers, listCashBoxes, listBanks, listAccounts,
+  listFinancialTx, createFinancialTx, deleteFinancialTx, financialTxPost, financialTxUnpost,
+  listSuppliers, listCashBoxes, listBanks, listAccounts,
   type FinancialTx, type TxType, type PartyType, type Supplier, type CashBox, type Bank, type Account,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
@@ -27,13 +28,19 @@ function txWalletName(
 export default function FinancialTransactionsAdmin() {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
+  const { branches, costCenters } = useDimensions();
   const [rows, setRows] = useState<FinancialTx[]>([]);
   const [creating, setCreating] = useState<null | { type: TxType }>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
   const [deps, setDeps] = useState<{ suppliers: Supplier[]; customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; accounts: Account[] } | null>(null);
 
   const sel = useRowSelect(rows);
 
   async function refresh() { setRows(await listFinancialTx()); }
+  function refreshAfterVoucherChange() {
+    emitData("vouchers", "journal", "customers", "suppliers", "cashboxes", "banks");
+    void refresh();
+  }
   async function loadDeps() {
     const [suppliers, customers, cashBoxes, banks, accounts] = await Promise.all([
       listSuppliers(), listCustomers(), listCashBoxes(), listBanks(), listAccounts(),
@@ -92,6 +99,36 @@ export default function FinancialTransactionsAdmin() {
                 walletName: txWalletName(deps, f),
               });
             }} />
+          <ActionBtn label={text("حذف المسودة", "Delete draft")} icon="🗑" tone="danger"
+            disabled={!sel.selected || sel.selected.status !== "draft" || busyId != null}
+            onClick={() => {
+              const f = sel.selected;
+              if (!f || f.status !== "draft" || !confirm(text(`حذف مسودة السند ${f.txNo}؟`, `Delete draft ${f.txNo}?`))) return;
+              setBusyId(f.id);
+              void deleteFinancialTx(f.id).then(refreshAfterVoucherChange)
+                .catch((e) => alert(e?.message ?? text("تعذر حذف المسودة", "Could not delete draft.")))
+                .finally(() => setBusyId(null));
+            }} />
+          <ActionBtn label={text("ترحيل", "Post")} icon="✔" tone="success"
+            disabled={!sel.selected || sel.selected.status !== "draft" || busyId != null}
+            onClick={() => {
+              const f = sel.selected;
+              if (!f || f.status !== "draft" || !confirm(text(`ترحيل السند ${f.txNo}؟`, `Post voucher ${f.txNo}?`))) return;
+              setBusyId(f.id);
+              void financialTxPost(f.id).then(refreshAfterVoucherChange)
+                .catch((e) => alert(e?.message ?? text("تعذر ترحيل السند", "Could not post voucher.")))
+                .finally(() => setBusyId(null));
+            }} />
+          <ActionBtn label={text("فك الترحيل", "Unpost")} icon="↺" tone="warn"
+            disabled={!sel.selected || sel.selected.status === "draft" || busyId != null}
+            onClick={() => {
+              const f = sel.selected;
+              if (!f || f.status === "draft" || !confirm(text(`فك ترحيل السند ${f.txNo}؟`, `Unpost voucher ${f.txNo}?`))) return;
+              setBusyId(f.id);
+              void financialTxUnpost(f.id).then(refreshAfterVoucherChange)
+                .catch((e) => alert(e?.message ?? text("تعذر فك الترحيل", "Could not unpost voucher.")))
+                .finally(() => setBusyId(null));
+            }} />
         </ActionBar>
       )}
       <Card>
@@ -100,7 +137,8 @@ export default function FinancialTransactionsAdmin() {
             <thead><tr>
               <SelectTh />
               <Th>{text("الرقم", "Number")}</Th><Th>{text("التاريخ", "Date")}</Th><Th>{text("النوع", "Type")}</Th><Th>{text("الطرف", "Party")}</Th><Th>{text("البيان", "Description")}</Th>
-              <Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المبلغ", "Amount")}</Th>
+              <Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المبلغ", "Amount")}</Th><Th>{text("العملة / السعر", "Currency / Rate")}</Th>
+              <Th>{text("الفرع", "Branch")}</Th><Th>{text("مركز التكلفة", "Cost center")}</Th><Th>{text("الحالة", "Status")}</Th>
             </tr></thead>
             <tbody>
               {rows.map((f) => (
@@ -115,6 +153,10 @@ export default function FinancialTransactionsAdmin() {
                   <Td>{f.partyName ?? "—"}</Td>
                   <Td>{f.description ?? "—"}</Td>
                   <Td num style={{ fontWeight: 600, color: f.txType === "receipt" ? "#15803d" : "#b91c1c" }}>{fmt(f.amount)}</Td>
+                  <Td>{f.currencyCode} · {fmt(f.exchangeRate)}</Td>
+                  <Td>{branches.find((b) => b.id === f.branchId)?.nameAr ?? "—"}</Td>
+                  <Td>{costCenters.find((c) => c.id === f.costCenterId)?.nameAr ?? "—"}</Td>
+                  <Td><VoucherStatus status={f.status} /></Td>
                 </tr>
               ))}
             </tbody>
@@ -124,6 +166,14 @@ export default function FinancialTransactionsAdmin() {
     </Page>
     </div>
   );
+}
+
+function VoucherStatus({ status }: { status: string }) {
+  const language = useUiLanguage();
+  const draft = status === "draft";
+  return <span style={{ background: draft ? "#fef3c7" : "#dcfce7", color: draft ? "#92400e" : "#166534", padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+    {draft ? uiText("مسودة", "Draft", language) : uiText("مرحّل", "Posted", language)}
+  </span>;
 }
 
 function CreateForm({ type, deps, onCancel, onDone }: {

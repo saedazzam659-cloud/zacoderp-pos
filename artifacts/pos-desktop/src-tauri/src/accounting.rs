@@ -1726,16 +1726,24 @@ pub struct CashBox {
     pub balance: f64,
     pub account_id: Option<i64>,
     pub currency_code: String,
+    pub code: Option<String>,
+    pub name_en: Option<String>,
+    pub branch_ids: Vec<i64>,
+    pub notes: Option<String>,
+    pub is_active: bool,
 }
 
 #[tauri::command]
 pub fn cash_boxes_list() -> Result<Vec<CashBox>, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT id,name,balance,account_id,currency_code FROM cash_boxes_local ORDER BY id")
+    let mut stmt = conn.prepare("SELECT id,name,balance,account_id,currency_code,code,name_en,branch_ids_json,notes,is_active FROM cash_boxes_local ORDER BY id")
         .map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |r| Ok(CashBox {
         id: r.get(0)?, name: r.get(1)?, balance: r.get(2)?, account_id: r.get(3)?,
         currency_code: r.get::<_, Option<String>>(4)?.unwrap_or_else(|| "SAR".to_string()),
+        code: r.get(5)?, name_en: r.get(6)?,
+        branch_ids: serde_json::from_str::<Vec<i64>>(&r.get::<_, String>(7)?).unwrap_or_default(),
+        notes: r.get(8)?, is_active: r.get::<_, i64>(9)? != 0,
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -1749,6 +1757,16 @@ pub struct CashBoxInput {
     pub account_id: Option<i64>,
     #[serde(default)]
     pub currency_code: Option<String>,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub name_en: Option<String>,
+    #[serde(default)]
+    pub branch_ids: Option<Vec<i64>>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub is_active: Option<bool>,
 }
 
 #[tauri::command]
@@ -1756,6 +1774,10 @@ pub fn cash_boxes_create(input: CashBoxInput) -> Result<i64, String> {
     if input.name.trim().is_empty() { return Err("اسم الخزينة مطلوب".into()); }
     let conn = db::open().map_err(|e| e.to_string())?;
     let cur = input.currency_code.unwrap_or_else(|| "SAR".to_string());
+    let code = input.code.filter(|v| !v.trim().is_empty()).unwrap_or_else(|| {
+        let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM cash_boxes_local", [], |r| r.get(0)).unwrap_or(1);
+        format!("CB-{n:04}")
+    });
     // Auto-create child account under 1100 if not provided.
     let acc_id = match input.account_id {
         Some(a) => a,
@@ -1772,8 +1794,10 @@ pub fn cash_boxes_create(input: CashBoxInput) -> Result<i64, String> {
             conn.last_insert_rowid()
         }
     };
-    conn.execute("INSERT INTO cash_boxes_local(name,account_id,currency_code) VALUES(?1,?2,?3)",
-        params![input.name, acc_id, cur]).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO cash_boxes_local(name,account_id,currency_code,code,name_en,branch_ids_json,notes,is_active) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+        params![input.name, acc_id, cur, code, input.name_en, serde_json::to_string(&input.branch_ids.unwrap_or_default()).unwrap_or_else(|_| "[]".into()), input.notes, if input.is_active.unwrap_or(true) {1} else {0}],
+    ).map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
 }
 
@@ -1789,8 +1813,17 @@ pub fn cash_boxes_update(id: i64, input: CashBoxInput) -> Result<(), String> {
     if cur != cur_now && bal.abs() > 0.001 {
         return Err("لا يمكن تغيير عملة خزينة لديها رصيد. أصدر تحويل خزينة لتفريغها أولاً.".into());
     }
-    conn.execute("UPDATE cash_boxes_local SET name=?1,currency_code=?2 WHERE id=?3",
-        params![input.name, cur, id]).map_err(|e| e.to_string())?;
+    let current_code: String = conn.query_row("SELECT COALESCE(code,'') FROM cash_boxes_local WHERE id=?1", params![id], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let code = input.code.map(|v| if v.trim().is_empty() { current_code.clone() } else { v.trim().to_string() }).unwrap_or(current_code);
+    let old: (String, i64) = conn.query_row(
+        "SELECT branch_ids_json,is_active FROM cash_boxes_local WHERE id=?1", params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|e| e.to_string())?;
+    let branch_ids = input.branch_ids.map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".into())).unwrap_or(old.0);
+    conn.execute(
+        "UPDATE cash_boxes_local SET name=?1,currency_code=?2,code=?3,name_en=?4,branch_ids_json=?5,notes=?6,is_active=?7 WHERE id=?8",
+        params![input.name, cur, code, input.name_en, branch_ids, input.notes, if input.is_active.unwrap_or(old.1 != 0) {1} else {0}, id],
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1815,16 +1848,29 @@ pub struct Bank {
     pub balance: f64,
     pub account_id: Option<i64>,
     pub currency_code: String,
+    pub code: Option<String>,
+    pub name_en: Option<String>,
+    pub bank_name: Option<String>,
+    pub bank_name_en: Option<String>,
+    pub iban: Option<String>,
+    pub swift_code: Option<String>,
+    pub branch_ids: Vec<i64>,
+    pub notes: Option<String>,
+    pub is_active: bool,
 }
 
 #[tauri::command]
 pub fn banks_list() -> Result<Vec<Bank>, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT id,name,account_no,balance,account_id,currency_code FROM banks_local ORDER BY id")
+    let mut stmt = conn.prepare("SELECT id,name,account_no,balance,account_id,currency_code,code,name_en,bank_name,bank_name_en,iban,swift_code,branch_ids_json,notes,is_active FROM banks_local ORDER BY id")
         .map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |r| Ok(Bank {
         id: r.get(0)?, name: r.get(1)?, account_no: r.get(2)?, balance: r.get(3)?, account_id: r.get(4)?,
         currency_code: r.get::<_, Option<String>>(5)?.unwrap_or_else(|| "SAR".to_string()),
+        code: r.get(6)?, name_en: r.get(7)?, bank_name: r.get(8)?, bank_name_en: r.get(9)?,
+        iban: r.get(10)?, swift_code: r.get(11)?,
+        branch_ids: serde_json::from_str::<Vec<i64>>(&r.get::<_, String>(12)?).unwrap_or_default(),
+        notes: r.get(13)?, is_active: r.get::<_, i64>(14)? != 0,
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -1838,6 +1884,24 @@ pub struct BankInput {
     pub account_no: Option<String>,
     #[serde(default)]
     pub currency_code: Option<String>,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub name_en: Option<String>,
+    #[serde(default)]
+    pub bank_name: Option<String>,
+    #[serde(default)]
+    pub bank_name_en: Option<String>,
+    #[serde(default)]
+    pub iban: Option<String>,
+    #[serde(default)]
+    pub swift_code: Option<String>,
+    #[serde(default)]
+    pub branch_ids: Option<Vec<i64>>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub is_active: Option<bool>,
 }
 
 #[tauri::command]
@@ -1845,6 +1909,10 @@ pub fn banks_create(input: BankInput) -> Result<i64, String> {
     if input.name.trim().is_empty() { return Err("اسم البنك مطلوب".into()); }
     let conn = db::open().map_err(|e| e.to_string())?;
     let cur = input.currency_code.unwrap_or_else(|| "SAR".to_string());
+    let code = input.code.filter(|v| !v.trim().is_empty()).unwrap_or_else(|| {
+        let n: i64 = conn.query_row("SELECT COALESCE(MAX(id),0)+1 FROM banks_local", [], |r| r.get(0)).unwrap_or(1);
+        format!("BA-{n:04}")
+    });
     let parent = account_id_by_code(&conn, "1200").map_err(|e| e.to_string())?;
     let n: i64 = conn.query_row("SELECT COUNT(*) FROM banks_local", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
@@ -1855,8 +1923,10 @@ pub fn banks_create(input: BankInput) -> Result<i64, String> {
         params![code, label, parent],
     ).map_err(|e| e.to_string())?;
     let acc_id = conn.last_insert_rowid();
-    conn.execute("INSERT INTO banks_local(name,account_no,account_id,currency_code) VALUES(?1,?2,?3,?4)",
-        params![input.name, input.account_no, acc_id, cur]).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO banks_local(name,account_no,account_id,currency_code,code,name_en,bank_name,bank_name_en,iban,swift_code,branch_ids_json,notes,is_active) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+        params![input.name, input.account_no, acc_id, cur, code, input.name_en, input.bank_name, input.bank_name_en, input.iban, input.swift_code, serde_json::to_string(&input.branch_ids.unwrap_or_default()).unwrap_or_else(|_| "[]".into()), input.notes, if input.is_active.unwrap_or(true) {1} else {0}],
+    ).map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
 }
 
@@ -1871,8 +1941,17 @@ pub fn banks_update(id: i64, input: BankInput) -> Result<(), String> {
     if cur != cur_now && bal.abs() > 0.001 {
         return Err("لا يمكن تغيير عملة بنك لديه رصيد. أصدر تحويل خزينة لتفريغه أولاً.".into());
     }
-    conn.execute("UPDATE banks_local SET name=?1,account_no=?2,currency_code=?3 WHERE id=?4",
-        params![input.name, input.account_no, cur, id]).map_err(|e| e.to_string())?;
+    let old: (String, i64) = conn.query_row(
+        "SELECT branch_ids_json,is_active FROM banks_local WHERE id=?1", params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|e| e.to_string())?;
+    let current_code: String = conn.query_row("SELECT COALESCE(code,'') FROM banks_local WHERE id=?1", params![id], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let code = input.code.map(|v| if v.trim().is_empty() { current_code.clone() } else { v.trim().to_string() }).unwrap_or(current_code);
+    let branch_ids = input.branch_ids.map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".into())).unwrap_or(old.0);
+    conn.execute(
+        "UPDATE banks_local SET name=?1,account_no=?2,currency_code=?3,code=?4,name_en=?5,bank_name=?6,bank_name_en=?7,iban=?8,swift_code=?9,branch_ids_json=?10,notes=?11,is_active=?12 WHERE id=?13",
+        params![input.name, input.account_no, cur, code, input.name_en, input.bank_name, input.bank_name_en, input.iban, input.swift_code, branch_ids, input.notes, if input.is_active.unwrap_or(old.1 != 0) {1} else {0}, id],
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -4759,6 +4838,11 @@ pub struct FinancialTx {
     pub applied_doc_type: Option<String>,
     #[serde(default)]
     pub applied_doc_id: Option<i64>,
+    pub status: String,
+    pub currency_code: String,
+    pub exchange_rate: f64,
+    pub branch_id: Option<i64>,
+    pub cost_center_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -4798,7 +4882,8 @@ pub fn financial_tx_list(limit: Option<i64>) -> Result<Vec<FinancialTx>, String>
                 CASE f.party_type WHEN 'customer' THEN (SELECT name_ar FROM customers_local WHERE id=f.party_id)
                                   WHEN 'supplier' THEN (SELECT name_ar FROM suppliers_local WHERE id=f.party_id)
                                   ELSE NULL END,
-                f.cash_box_id,f.bank_id,f.counter_account_id,f.amount,f.description,f.je_id,f.applied_doc_type,f.applied_doc_id
+                f.cash_box_id,f.bank_id,f.counter_account_id,f.amount,f.description,f.je_id,f.applied_doc_type,f.applied_doc_id,
+                f.status,f.currency_code,f.exchange_rate,f.branch_id,f.cost_center_id
          FROM financial_transactions_local f ORDER BY f.id DESC LIMIT ?1"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([lim], |r| Ok(FinancialTx {
@@ -4806,6 +4891,9 @@ pub fn financial_tx_list(limit: Option<i64>) -> Result<Vec<FinancialTx>, String>
         party_name: r.get(6)?, cash_box_id: r.get(7)?, bank_id: r.get(8)?, counter_account_id: r.get(9)?,
         amount: r.get(10)?, description: r.get(11)?, je_id: r.get(12)?,
         applied_doc_type: r.get(13)?, applied_doc_id: r.get(14)?,
+        status: r.get(15)?, currency_code: r.get::<_, Option<String>>(16)?.unwrap_or_else(|| "SAR".to_string()),
+        exchange_rate: r.get(17)?,
+        branch_id: r.get(18)?, cost_center_id: r.get(19)?,
     })).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows { out.push(r.map_err(|e| e.to_string())?); }
@@ -4887,6 +4975,65 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
     tx.commit().map_err(|e| e.to_string())?;
     let _ = now_iso(); let _ = today_iso(); // keep helpers referenced
     Ok(ftx_id)
+}
+
+#[tauri::command]
+pub fn financial_tx_update(id: i64, input: FinancialTxInput) -> Result<(), String> {
+    if input.amount <= 0.0 { return Err("المبلغ يجب أن يكون أكبر من صفر".into()); }
+    if !["receipt","payment"].contains(&input.tx_type.as_str()) { return Err("نوع المعاملة غير صالح".into()); }
+    match (input.cash_box_id.is_some(), input.bank_id.is_some()) {
+        (false, false) => return Err("اختر خزينة أو بنك".into()),
+        (true, true) => return Err("اختر خزينة أو بنك — وليس كليهما".into()),
+        _ => {}
+    }
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, je_id): (String, Option<i64>) = tx.query_row(
+        "SELECT status,je_id FROM financial_transactions_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|e| e.to_string())?;
+    if status != "draft" || je_id.is_some() {
+        return Err("لا يمكن تعديل سند مرحّل؛ فك الترحيل أولاً".into());
+    }
+    guard_period_open_for_date(&tx, &input.tx_date)?;
+    let (endpoint_currency, rate_to_base): (String, f64) = if let Some(cb) = input.cash_box_id {
+        let cur: String = tx.query_row("SELECT COALESCE(currency_code,'SAR') FROM cash_boxes_local WHERE id=?1", params![cb], |r| r.get(0)).map_err(|e| e.to_string())?;
+        let rate = current_rate_to_base(&tx, &cur).map_err(|e| e.to_string())?;
+        (cur, rate)
+    } else if let Some(bank) = input.bank_id {
+        let cur: String = tx.query_row("SELECT COALESCE(currency_code,'SAR') FROM banks_local WHERE id=?1", params![bank], |r| r.get(0)).map_err(|e| e.to_string())?;
+        let rate = current_rate_to_base(&tx, &cur).map_err(|e| e.to_string())?;
+        (cur, rate)
+    } else { unreachable!() };
+    let counter_acc = match input.party_type.as_deref() {
+        Some("supplier") => supplier_ap_account(&tx, input.party_id.ok_or("اختر المورد")?)?,
+        Some("customer") => account_id_by_code(&tx, "1500").map_err(|e| e.to_string())?,
+        Some("none") | None => input.counter_account_id.ok_or("اختر الحساب المقابل")?,
+        Some(_) => return Err("نوع الطرف غير صالح".into()),
+    };
+    tx.execute(
+        "UPDATE financial_transactions_local SET tx_date=?1,tx_type=?2,party_type=?3,party_id=?4,cash_box_id=?5,bank_id=?6,counter_account_id=?7,amount=?8,description=?9,branch_id=?10,cost_center_id=?11,applied_doc_type=?12,applied_doc_id=?13,currency_code=?14,exchange_rate=?15 WHERE id=?16 AND status='draft' AND je_id IS NULL",
+        params![input.tx_date,input.tx_type,input.party_type,input.party_id,input.cash_box_id,input.bank_id,counter_acc,input.amount,input.description,input.branch_id,input.cost_center_id,input.applied_doc_type,input.applied_doc_id,endpoint_currency,rate_to_base,id],
+    ).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn financial_tx_delete(id: i64) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (status, je_id): (String, Option<i64>) = tx.query_row(
+        "SELECT status,je_id FROM financial_transactions_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|e| e.to_string())?;
+    if status != "draft" || je_id.is_some() {
+        return Err("لا يمكن حذف سند مرحّل؛ فك الترحيل أولاً".into());
+    }
+    let changed = tx.execute("DELETE FROM financial_transactions_local WHERE id=?1 AND status='draft' AND je_id IS NULL", params![id]).map_err(|e| e.to_string())?;
+    if changed == 0 { return Err("لم يتم العثور على المسودة".into()); }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Builds the voucher's two-line journal entry in base currency:
