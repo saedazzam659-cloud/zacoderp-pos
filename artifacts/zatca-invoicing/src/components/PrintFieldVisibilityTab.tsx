@@ -189,6 +189,7 @@ const englishLabels: Record<string, string> = {
   "سندات": "Vouchers",
   "إعدادات المستندات · على مستوى الشركة": "Document settings · company-wide",
   "إعدادات قالب الطباعة المحدد": "Settings for this print template",
+  "هذا الإعداد يخص نوع المستند المحدد والقالب الحالي فقط.": "This setting applies only to the selected document type and current template.",
   "حقول الطباعة": "Print field visibility",
   "حدّد ما يظهر في النسخ المطبوعة لكل نوع مستند. إعداد الإخفاء يخص شكل الطباعة فقط ولا يغيّر أي قيمة محاسبية.": "Choose which fields appear on printed copies of each document type. Hiding a field changes print presentation only; it never changes accounting values.",
   "عرض افتراضي آمن": "Safe default display",
@@ -446,7 +447,7 @@ export default function PrintFieldVisibilityTab({
         </aside>
 
         <main className="min-w-0 rounded-2xl border border-border/70 bg-card shadow-sm">
-          <div className="flex flex-col gap-4 border-b border-border/70 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div className="sticky top-0 z-20 flex flex-col gap-4 rounded-t-2xl border-b border-border/70 bg-card px-4 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-lg font-bold">{translate(document.label)}</h3>
@@ -454,9 +455,25 @@ export default function PrintFieldVisibilityTab({
                   {shownCount} {translate("من")} {document.fields.length} {translate("ظاهرة")}
                 </span>
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">{translate("تظهر الحقول المفعّلة في المخرجات المطبوعة لهذا النوع.")}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {translate(templateKey
+                  ? "هذا الإعداد يخص نوع المستند المحدد والقالب الحالي فقط."
+                  : "تظهر الحقول المفعّلة في المخرجات المطبوعة لهذا النوع.")}
+              </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="sr-only" htmlFor="print-field-document-select">{translate("نوع المستند")}</label>
+              <select
+                id="print-field-document-select"
+                value={selectedDocument}
+                onChange={(event) => setSelectedDocument(event.target.value as DocumentKey)}
+                data-testid="print-field-document-select"
+                className="h-9 min-w-40 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                {availableDocuments.map((item) => (
+                  <option key={item.key} value={item.key}>{translate(item.label)}</option>
+                ))}
+              </select>
               <Button type="button" variant="outline" size="sm" onClick={() => setAllFields(true)} data-testid={`show-all-print-fields-${selectedDocument}`}>
                 <Eye className="ms-1.5 h-4 w-4" /> {translate("إظهار الكل")}
               </Button>

@@ -41,7 +41,11 @@ import {
   renderQuotationCustomLayoutHtml,
   type CustomPrintContext,
 } from "@/lib/quotationCustomPrint";
-import { applyPrintFieldVisibility, isPrintFieldVisible } from "@/lib/printFieldVisibility";
+import {
+  applyPrintFieldVisibility,
+  isPrintFieldVisible,
+  shouldRenderPrintColumn,
+} from "@/lib/printFieldVisibility";
 import {
   getEnabledSalesPrintTemplates,
   SALES_PRINT_TEMPLATE_CATALOG,
@@ -817,6 +821,16 @@ function withManualSalesPrintPartyName(data: PrintData): PrintData {
 }
 
 function linesTable(doc: any, lines: any[], headerStyle = "", rowEvenStyle = "", inc = false) {
+  const printData = doc?.__pd;
+  const visibilityDocument = printData?.type === "quotation"
+    ? "sales_quotation"
+    : printData?.type === "return"
+      ? "sales_return"
+      : printData?.type === "order"
+        ? "sales_order"
+        : printData?.type === "invoice"
+          ? "sales_invoice"
+          : undefined;
   // Discount column appears when ANY line has either a percentage discount
   // (`discount`) OR a value-based discount (`discountAmount`). Previously
   // only the % path was checked, so amount-only discounts were hidden in
@@ -826,7 +840,24 @@ function linesTable(doc: any, lines: any[], headerStyle = "", rowEvenStyle = "",
   );
   // Only render the "مجاني" column when at least one line has free qty —
   // keeps the printed table clean for invoices that don't use the feature.
-  const showFree = lines.some(l => (Number(l.freeQty) || 0) > 0);
+  const showFree = shouldRenderPrintColumn(
+    printData?.company?.printFieldVisibility,
+    visibilityDocument,
+    "freeQuantity",
+    lines.some(l => (Number(l.freeQty) || 0) > 0),
+  );
+  const showDiscountPercent = shouldRenderPrintColumn(
+    printData?.company?.printFieldVisibility,
+    visibilityDocument,
+    "discountPercent",
+    showDisc,
+  );
+  const showDiscountAmount = shouldRenderPrintColumn(
+    printData?.company?.printFieldVisibility,
+    visibilityDocument,
+    "discountAmount",
+    showDisc,
+  );
   const rows = lines.map((l, i) => {
     // Honors the doc's tax mode: when `inc`, unit price already contains VAT
     // and the VAT column shows the extracted portion (total stays qty×price−خصم).
@@ -845,8 +876,8 @@ function linesTable(doc: any, lines: any[], headerStyle = "", rowEvenStyle = "",
         ${showFree ? `<td data-print-column="freeQuantity" class="mono" style="color:#b45309;font-weight:600;">${freeQ > 0 ? Math.round(freeQ) : "—"}</td>` : ""}
         <td data-print-column="unit">${l.unit ?? "—"}</td>
         <td data-print-column="unitPrice" class="mono">${fmt(l.unitPrice)}</td>
-        ${showDisc ? `<td data-print-column="discountPercent" class="mono" style="color:#b91c1c;">${discPctCell}</td>` : ""}
-        ${showDisc ? `<td data-print-column="discountAmount" class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
+        ${showDiscountPercent ? `<td data-print-column="discountPercent" class="mono" style="color:#b91c1c;">${discPctCell}</td>` : ""}
+        ${showDiscountAmount ? `<td data-print-column="discountAmount" class="mono" style="color:#b91c1c;">${discValCell}</td>` : ""}
         <td data-print-column="taxRate" class="mono">${l.vatRate ?? 15}%</td>
         <td data-print-column="taxAmount" class="mono">${fmt(vat)}</td>
         <td data-print-column="lineTotal" class="mono" style="font-weight:600;">${fmt(tot)}</td>
@@ -863,8 +894,8 @@ function linesTable(doc: any, lines: any[], headerStyle = "", rowEvenStyle = "",
           ${showFree ? `<th data-print-column="freeQuantity" style="color:#b45309;">مجاني</th>` : ""}
           <th data-print-column="unit">الوحدة</th>
           <th data-print-column="unitPrice">سعر الوحدة</th>
-          ${showDisc ? `<th data-print-column="discountPercent">الخصم</th>` : ""}
-          ${showDisc ? `<th data-print-column="discountAmount">قيمة الخصم</th>` : ""}
+          ${showDiscountPercent ? `<th data-print-column="discountPercent">الخصم</th>` : ""}
+          ${showDiscountAmount ? `<th data-print-column="discountAmount">قيمة الخصم</th>` : ""}
           <th data-print-column="taxRate">الضريبة</th>
           <th data-print-column="taxAmount">قيمة الضريبة</th>
           <th data-print-column="lineTotal">الإجمالي</th>

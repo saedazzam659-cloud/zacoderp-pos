@@ -22,6 +22,17 @@ export function isPrintFieldVisible(
   return typeof value === "boolean" ? value : fallback;
 }
 
+export function shouldRenderPrintColumn(
+  settings: PrintFieldVisibility | null | undefined,
+  document: PrintDocumentKey | undefined,
+  field: string,
+  hasData: boolean,
+): boolean {
+  return hasData && (
+    !document || isPrintFieldVisible(settings, document, field)
+  );
+}
+
 /**
  * Removes explicitly hidden fields and table columns from generated print
  * HTML. Existing templates opt in with data-print-field/data-print-column
