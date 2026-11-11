@@ -918,7 +918,8 @@ export default function PosShell({
             <div style={{
               ...S.pagePad,
               ...(salesInvoiceFormOpen ? {
-                padding: 8, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden",
+                margin: 0, padding: 0, height: "100%", minHeight: 0,
+                display: "flex", flexDirection: "column", overflow: "hidden",
               } : {}),
             }}>
               <SalesInvoicesAdmin onNavigate={setView} onFormOpenChange={setSalesInvoiceFormOpen} />

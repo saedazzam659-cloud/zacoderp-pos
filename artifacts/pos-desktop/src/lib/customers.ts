@@ -249,6 +249,8 @@ export interface CreateCustomerInput {
   includeInStatements?: boolean;
   branchId?: number | null;
   accountId?: number | null;
+  /** Create and link a customer-specific receivables account in the local COA. */
+  createLedgerAccount?: boolean;
 }
 
 /** Build the Rust `profile` struct arg from a customer input (camelCase keys). */
@@ -320,6 +322,7 @@ export async function createCustomer(input: CreateCustomerInput): Promise<LocalC
         enforceCreditLimit: input.enforceCreditLimit ?? null,
         paymentTermsDays: input.paymentTermsDays ?? null,
         profile: toProfile(input),
+        createLedgerAccount: input.createLedgerAccount ?? false,
       });
       created = fromRust(r);
     } catch {
@@ -343,13 +346,21 @@ export async function createCustomer(input: CreateCustomerInput): Promise<LocalC
           enforceCreditLimit: input.enforceCreditLimit ?? null,
           paymentTermsDays: input.paymentTermsDays ?? null,
           profile: toProfile(input),
+          createLedgerAccount: input.createLedgerAccount ?? false,
         });
         created = fromRust(r);
-      } catch {
+      } catch (retryError) {
+        if (input.createLedgerAccount) {
+          const detail = retryError instanceof Error ? `: ${retryError.message}` : "";
+          throw new Error(`تعذر إنشاء العميل وحسابه المحاسبي${detail}`);
+        }
         created = createInLocalStorage(input, now);
       }
     }
   } else {
+    if (input.createLedgerAccount) {
+      throw new Error("إنشاء حساب محاسبي للعميل متاح داخل برنامج سطح المكتب فقط.");
+    }
     created = createInLocalStorage(input, now);
   }
   // Seed the statement's opening overlay regardless of whether the JE posted —

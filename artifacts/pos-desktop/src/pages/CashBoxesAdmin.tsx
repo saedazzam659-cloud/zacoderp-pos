@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { listCashBoxes, createCashBox, updateCashBox, deleteCashBox, listCurrencies, type CashBox, type CashBoxInput, type Currency } from "../lib/accounting";
+import { listCashBoxes, createCashBox, updateCashBox, deleteCashBox, listCurrencies, listAccounts, type Account, type CashBox, type CashBoxInput, type Currency } from "../lib/accounting";
 import { listBranches, type Branch } from "../lib/branches";
 import { Page, Card, Table, Th, Td, Empty, input, btnPrimary, btnSecondary, btnLink, fmtCurrency, SearchCombobox, errText } from "./_adminUi";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 import { baseCurrencyCode } from "../lib/currency";
 
 type EditData = Required<Pick<CashBoxInput, "name" | "currencyCode">> & {
-  code: string; nameEn: string; branchIds: number[]; notes: string; isActive: boolean;
+  code: string; nameEn: string; accountId: number | null; branchIds: number[]; notes: string; isActive: boolean;
 };
 const blankData = (branchId?: number): EditData => ({
   code: "", name: "", nameEn: "", currencyCode: baseCurrencyCode(),
-  branchIds: branchId ? [branchId] : [], notes: "", isActive: true,
+  accountId: null, branchIds: branchId ? [branchId] : [], notes: "", isActive: true,
 });
 
 export default function CashBoxesAdmin() {
@@ -18,6 +18,7 @@ export default function CashBoxesAdmin() {
   const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<CashBox[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [editId, setEditId] = useState<number | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -27,8 +28,8 @@ export default function CashBoxesAdmin() {
   const [err, setErr] = useState<string | null>(null);
 
   async function refresh() {
-    const [cb, cur, br] = await Promise.all([listCashBoxes(), listCurrencies(true), listBranches()]);
-    setRows(cb); setCurrencies(cur); setBranches(br);
+    const [cb, cur, br, ac] = await Promise.all([listCashBoxes(), listCurrencies(true), listBranches(), listAccounts()]);
+    setRows(cb); setCurrencies(cur); setBranches(br); setAccounts(ac);
   }
   useEffect(() => { void refresh(); }, []);
 
@@ -37,17 +38,18 @@ export default function CashBoxesAdmin() {
   function startEdit(b: CashBox) {
     setErr(null);
     setEditId(b.id);
-    setData({ code: b.code ?? "", name: b.name, nameEn: b.nameEn ?? "", currencyCode: b.currencyCode || baseCurrencyCode(), branchIds: b.branchIds ?? [], notes: b.notes ?? "", isActive: b.isActive !== false });
+    setData({ code: b.code ?? "", name: b.name, nameEn: b.nameEn ?? "", currencyCode: b.currencyCode || baseCurrencyCode(), accountId: b.accountId ?? null, branchIds: b.branchIds ?? [], notes: b.notes ?? "", isActive: b.isActive !== false });
     setFormOpen(true);
   }
   function cancel() { setFormOpen(false); setEditId(null); setErr(null); }
   function setField<K extends keyof EditData>(k: K, v: EditData[K]) { setData((current) => ({ ...current, [k]: v })); }
   async function save() {
     if (!data.name.trim()) { setErr(text("اسم الخزينة بالعربية مطلوب", "Arabic cashbox name is required.")); return; }
+    if (!data.accountId) { setErr(text("اختر حسابًا محاسبيًا من شجرة الحسابات", "Choose a ledger account from the chart.")); return; }
     if (!data.branchIds.length) { setErr(text("اختر فرعًا واحدًا على الأقل", "Select at least one branch.")); return; }
     setBusy(true); setErr(null);
     try {
-      const payload: CashBoxInput = { name: data.name.trim(), nameEn: data.nameEn.trim() || null, code: data.code.trim() || null, currencyCode: data.currencyCode, branchIds: data.branchIds, notes: data.notes.trim() || null, isActive: data.isActive };
+      const payload: CashBoxInput = { name: data.name.trim(), nameEn: data.nameEn.trim() || null, code: data.code.trim() || null, currencyCode: data.currencyCode, accountId: data.accountId, branchIds: data.branchIds, notes: data.notes.trim() || null, isActive: data.isActive };
       if (editId == null) await createCashBox(payload); else await updateCashBox(editId, payload);
       setFormOpen(false); setEditId(null); await refresh();
     } catch (e: any) { setErr(errText(e, text("تعذر حفظ بيانات الخزينة", "Could not save cashbox."))); }
@@ -61,6 +63,18 @@ export default function CashBoxesAdmin() {
   const currencyOpts = currencies.length > 0
     ? currencies.map(c => ({ value: c.code, label: `${c.code} — ${language === "en" ? c.nameEn || c.code : c.nameAr}`, hint: c.symbol ?? undefined }))
     : [{ value: "SAR", label: text("SAR — ريال سعودي", "SAR — Saudi riyal") }];
+  const accountOpts = useMemo(() => accounts
+    .filter((account) => account.type === "asset" && account.isLeaf && (account.isActive || account.id === data.accountId))
+    .map((account) => {
+      const parent = accounts.find((candidate) => candidate.id === account.parentId);
+      const name = language === "en" ? account.nameEn || account.nameAr : account.nameAr;
+      const parentName = parent ? (language === "en" ? parent.nameEn || parent.nameAr : parent.nameAr) : "";
+      return {
+        value: account.id,
+        label: `${"\u00a0\u00a0".repeat(Math.max(0, account.level - 2))}${account.code} — ${name}`,
+        hint: `${parentName}${!account.isActive ? ` · ${text("غير نشط", "Inactive")}` : ""}`.trim(),
+      };
+    }), [accounts, data.accountId, language]);
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
@@ -93,6 +107,11 @@ export default function CashBoxesAdmin() {
             <Labeled label={text("اسم الخزينة بالعربية *", "Arabic cashbox name *")}><input autoFocus value={data.name} onChange={(e) => setField("name", e.target.value)} style={input} /></Labeled>
             <Labeled label={text("اسم الخزينة بالإنجليزية", "English cashbox name")}><input dir="ltr" value={data.nameEn} onChange={(e) => setField("nameEn", e.target.value)} style={input} /></Labeled>
             <Labeled label={text("العملة", "Currency")}><SearchCombobox value={data.currencyCode} onChange={(v) => setField("currencyCode", String(v))} options={currencyOpts} disabled={!!editingCashBox && Math.abs(editingCashBox.balance) > 0.001} style={input} /></Labeled>
+            <Labeled label={text("الحساب المحاسبي *", "Ledger account *")} hint={accountOpts.length ? undefined : text("أضف حساب أصول تفصيليًا ونشطًا أولًا", "Add an active leaf asset account first")}>
+              <SearchCombobox value={data.accountId} onChange={(v) => setField("accountId", Number(v) || null)} options={accountOpts}
+                placeholder={text("اختر حسابًا من شجرة الحسابات", "Choose a chart account")}
+                disabled={!!editingCashBox && Math.abs(editingCashBox.balance) > 0.001} style={input} />
+            </Labeled>
             <Labeled label={text("الفروع المرتبطة *", "Linked branches *")}><BranchChecks branches={branches} value={data.branchIds} onChange={(v) => setField("branchIds", v)} /></Labeled>
             <Labeled label={text("ملاحظات", "Notes")}><input value={data.notes} onChange={(e) => setField("notes", e.target.value)} style={input} /></Labeled>
             <label style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 20, fontSize: 13, fontWeight: 600, color: "#334155" }}>
@@ -101,7 +120,7 @@ export default function CashBoxesAdmin() {
           </div>
           {editingCashBox && Math.abs(editingCashBox.balance) > 0.001 && (
             <div style={{ marginTop: 10, padding: "8px 11px", borderRadius: 8, background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", fontSize: 12 }}>
-              ⚠️ {text("لا يمكن تغيير عملة خزينة لديها رصيد؛ نفّذ تحويلًا أولًا.", "Currency is locked while this cashbox has a balance; transfer funds first.")}
+              ⚠️ {text("لا يمكن تغيير العملة أو الحساب المحاسبي لخزينة لديها رصيد؛ نفّذ تحويلًا أولًا.", "Currency and ledger account are locked while this cashbox has a balance; transfer funds first.")}
             </div>
           )}
           {err && <div role="alert" style={{ marginTop: 10, padding: "8px 11px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", fontSize: 13 }}>{err}</div>}

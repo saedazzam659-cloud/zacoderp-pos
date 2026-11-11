@@ -65,6 +65,7 @@ export type CashBox = {
 };
 export type CashBoxInput = {
   name: string; code?: string | null; nameEn?: string | null; currencyCode?: string;
+  accountId?: number | null;
   branchIds?: number[]; notes?: string | null; isActive?: boolean;
 };
 export type Bank = {
@@ -75,13 +76,13 @@ export type Bank = {
 export type BankInput = {
   name: string; accountNo?: string | null; code?: string | null; nameEn?: string | null;
   bankName?: string | null; bankNameEn?: string | null; iban?: string | null; swiftCode?: string | null;
-  currencyCode?: string; branchIds?: number[]; notes?: string | null; isActive?: boolean;
+  currencyCode?: string; accountId?: number | null; branchIds?: number[]; notes?: string | null; isActive?: boolean;
 };
 
 // ─── POS payment methods + GL account overrides ──────────────────────
 // Dynamic register payment methods (نقداً / بطاقة / آجل / …). Each maps to a
-// GL account; kind="credit" always debits receivables (1500) + the customer
-// sub-ledger, ignoring accountId. Backs `post_pos_invoice_je` on the Rust side.
+// GL account; credit sales use a linked customer account when set, then
+// fall back to receivables (1500). Backs `post_pos_invoice_je` on the Rust side.
 export type PosPaymentMethodKind = "cash" | "bank" | "credit" | "other";
 export type PosPaymentMethod = {
   id: number; nameAr: string; kind: PosPaymentMethodKind;
@@ -505,13 +506,13 @@ export async function listCashBoxes(): Promise<CashBox[]> {
 }
 export async function createCashBox(input: CashBoxInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  const id = await invoke<number>("cash_boxes_create", { input: { ...input, accountId: null } });
+  const id = await invoke<number>("cash_boxes_create", { input });
   emitData("cashboxes");
   return id;
 }
 export async function updateCashBox(id: number, input: CashBoxInput): Promise<void> {
   if (!hasTauri()) notImpl();
-  await invoke("cash_boxes_update", { id, input: { ...input, accountId: null } });
+  await invoke("cash_boxes_update", { id, input });
   emitData("cashboxes");
 }
 export async function deleteCashBox(id: number): Promise<void> {
