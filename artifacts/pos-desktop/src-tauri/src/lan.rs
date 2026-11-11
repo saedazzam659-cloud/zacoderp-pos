@@ -452,6 +452,7 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             b_opt("enforceCreditLimit"),
             i_opt("paymentTermsDays"),
             args.get("profile").and_then(|v| serde_json::from_value(v.clone()).ok()),
+            b_opt("createLedgerAccount"),
         )
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "update_customer_local" => crate::customers::update_customer_local(
