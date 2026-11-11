@@ -8,6 +8,7 @@ import {
 import { createCustomer, listCustomers, type LocalCustomer } from "../lib/customers";
 import { emitData } from "../lib/dataBus";
 import { createItem, listItems, type LocalItem } from "../lib/items";
+import QuickCreateDialog from "../components/QuickCreateDialog";
 import {
   listItemBrands, itemHasBrands, saveInvoiceLineBrands, getInvoiceLineBrands, dropInvoiceLineBrands,
 } from "../lib/brands";
@@ -16,7 +17,7 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
-import { getCompanyProfile, useHideZeros, blankIfZero, uiText, useUiLanguage } from "../lib/appSettings";
+import { getCompanyProfile, useHideZeros, useShowFreeQuantityColumn, blankIfZero, uiText, useUiLanguage } from "../lib/appSettings";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
@@ -452,6 +453,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   const text = (ar: string, en: string) => uiText(ar, en, language);
   const isEdit = !!initial;
   const hideZeros = useHideZeros();
+  const showFreeQuantityColumn = useShowFreeQuantityColumn();
   const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.invoiceDate ?? todayStr());
@@ -979,14 +981,14 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           {selectedLineCount} {text("صنف", "items")}
         </span>
       </div>
-      <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 8 }}>
+      <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 8, maxHeight: 360 }}>
       <Table style={{ width: "100%", minWidth: 900, tableLayout: "fixed" }}>
         <thead><tr>
           <Th style={{ width: "3%", textAlign: "center" }}>#</Th>
-          <Th style={{ width: "23%" }}>{text("الصنف", "Item")}</Th>
+          <Th style={{ width: showFreeQuantityColumn ? "23%" : "29%" }}>{text("الصنف", "Item")}</Th>
           <Th style={{ width: "10%" }}>{text("الوحدة", "Unit")}</Th>
           <Th style={{ width: "8%", textAlign: "center" }}>{text("الكمية", "Quantity")}</Th>
-          <Th style={{ width: "6%", textAlign: "center" }}>{text("مجاني", "Free")}</Th>
+          {showFreeQuantityColumn && <Th style={{ width: "6%", textAlign: "center" }}>{text("مجاني", "Free")}</Th>}
           <Th style={{ width: "13%", textAlign: "center" }}>{text("سعر الوحدة", "Unit price")}</Th>
           <Th style={{ width: "12%" }}>{text("الخصم", "Discount")}</Th>
           <Th style={{ width: "6%", textAlign: "center" }}>{text("ض. %", "Tax %")}</Th>
@@ -994,7 +996,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           <Th style={{ width: "7%", textAlign: "center" }}>{text("إجراءات", "Actions")}</Th>
         </tr></thead>
         <tbody>
-          {lines.length === 0 && <EmptyItemsRow colSpan={10} />}
+          {lines.length === 0 && <EmptyItemsRow colSpan={showFreeQuantityColumn ? 10 : 9} />}
           {lines.map((l, i) => {
             const expanded = expandedLineIndices.has(i);
             return (
@@ -1037,7 +1039,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                     })()}
                   </Td>
                   <Td><input type="number" step="0.001" value={blankIfZero(l.qty, hideZeros)} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
-                  <Td><input type="number" step="0.001" value={blankIfZero(l.freeQty ?? 0, hideZeros)} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
+                  {showFreeQuantityColumn && <Td><input type="number" step="0.001" value={blankIfZero(l.freeQty ?? 0, hideZeros)} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>}
                   <Td><input type="number" step="0.01" value={blankIfZero(l.unitPrice, hideZeros)} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
                   <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} navAttr="1" inputClassName="zfield" onEnterNavigate={(el) => advanceFrom(el)} /></Td>
                   <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
@@ -1063,7 +1065,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                 </tr>
                 {expanded && (
                   <tr className="zline-details">
-                    <Td colSpan={10}>
+                    <Td colSpan={showFreeQuantityColumn ? 10 : 9}>
                       <div className="zline-details-panel">
                         {itemHasBrands(l.itemId) && (
                           <div>
@@ -1170,6 +1172,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         <QuickCreateDialog
           key={quickCreate}
           kind={quickCreate}
+          documentLabel={{ ar: "الفاتورة", en: "invoice" }}
           initialVatRate={selectedRate ?? 0}
           busy={quickCreateBusy}
           error={quickCreateError}
@@ -1185,135 +1188,10 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   );
 }
 
-type QuickCreatePayload =
-  | { kind: "customer"; nameAr: string; phone: string; vatNumber: string }
-  | { kind: "item"; nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number };
-
 function quickAddButton(color: string): React.CSSProperties {
   return {
     width: 35, height: 35, flex: "0 0 35px", borderRadius: 9, border: `1px solid ${color}35`,
     background: `${color}12`, color, fontSize: 23, lineHeight: 1, fontWeight: 700,
     cursor: "pointer", boxShadow: "0 1px 2px #0f172a12",
   };
-}
-
-function QuickCreateDialog({ kind, initialVatRate, busy, error, onCancel, onSubmit, uoms }: {
-  kind: "customer" | "item";
-  initialVatRate: number;
-  busy: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onSubmit: (payload: QuickCreatePayload) => void;
-  uoms: Uom[];
-}) {
-  const language = useUiLanguage();
-  const text = (ar: string, en: string) => uiText(ar, en, language);
-  const [nameAr, setNameAr] = useState("");
-  const [phone, setPhone] = useState("");
-  const [vatNumber, setVatNumber] = useState("");
-  const [code, setCode] = useState("");
-  const [barcode, setBarcode] = useState("");
-  const [salePrice, setSalePrice] = useState(0);
-  const [vatRate, setVatRate] = useState(initialVatRate);
-  const [nature, setNature] = useState<"stock" | "service">("stock");
-  const [uomId, setUomId] = useState(() => getDefaultUom()?.id ?? uoms[0]?.id ?? 0);
-  const isCustomer = kind === "customer";
-  const accent = isCustomer ? "#2563eb" : "#7c3aed";
-  const fieldStyle: React.CSSProperties = { ...input, borderRadius: 9, padding: "9px 11px", background: "#fff" };
-
-  function submit() {
-    if (isCustomer) onSubmit({ kind, nameAr, phone, vatNumber });
-    else onSubmit({ kind, nameAr, code, barcode, salePrice, vatRate, nature, uomId });
-  }
-
-  return (
-    <div role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}
-      style={{ position: "fixed", inset: 0, zIndex: 10000, display: "grid", placeItems: "center", padding: 18, background: "#0f172a75", backdropFilter: "blur(3px)" }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="quick-create-title"
-        dir={language === "en" ? "ltr" : "rtl"}
-        style={{ width: "min(100%, 480px)", borderRadius: 18, overflow: "hidden", background: "#fff", boxShadow: "0 24px 80px #02061755", border: "1px solid #ffffffaa" }}>
-        <div style={{ padding: "18px 20px", color: "#fff", background: `linear-gradient(120deg, ${accent}, ${isCustomer ? "#06b6d4" : "#a855f7"})` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 42, height: 42, borderRadius: 13, display: "grid", placeItems: "center", fontSize: 22, background: "#ffffff25", border: "1px solid #ffffff45" }}>
-              {isCustomer ? "👤" : "📦"}
-            </div>
-            <div>
-              <h3 id="quick-create-title" style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>
-                {isCustomer ? text("إضافة عميل جديد", "Add a customer") : text("إضافة صنف جديد", "Add an item")}
-              </h3>
-              <div style={{ marginTop: 3, fontSize: 12, opacity: 0.9 }}>
-                {text("أدخل البيانات الأساسية فقط، وسيظهر مباشرة في الفاتورة", "Enter only the essentials; it will be available in this invoice")}
-              </div>
-            </div>
-            <button type="button" onClick={onCancel} disabled={busy} aria-label={text("إغلاق", "Close")}
-              style={{ marginInlineStart: "auto", width: 30, height: 30, border: 0, borderRadius: 9, color: "#fff", background: "#ffffff25", cursor: "pointer", fontSize: 19 }}>×</button>
-          </div>
-        </div>
-        <div style={{ padding: 20, display: "grid", gap: 12 }}>
-          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-            {text("الاسم بالعربية *", "Arabic name *")}
-            <input autoFocus value={nameAr} onChange={(e) => setNameAr(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }}
-              placeholder={isCustomer ? text("مثال: أحمد محمد", "Example: Ahmed Mohamed") : text("مثال: مياه معدنية", "Example: Mineral water")} style={fieldStyle} />
-          </label>
-          {isCustomer ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                {text("رقم الهاتف", "Phone")}
-                <input value={phone} onChange={(e) => setPhone(e.target.value)} dir="ltr" placeholder="01xxxxxxxxx" style={fieldStyle} />
-              </label>
-              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                {text("الرقم الضريبي", "Tax number")}
-                <input value={vatNumber} onChange={(e) => setVatNumber(e.target.value)} dir="ltr" inputMode="numeric" placeholder={text("اختياري", "Optional")} style={fieldStyle} />
-              </label>
-            </div>
-          ) : (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                  {text("سعر البيع", "Sale price")}
-                  <input type="number" min="0" step="0.01" value={salePrice} onChange={(e) => setSalePrice(Number(e.target.value) || 0)} style={fieldStyle} />
-                </label>
-                <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                  {text("الضريبة %", "Tax %")}
-                  <input type="number" min="0" max="100" step="0.01" value={vatRate} onChange={(e) => setVatRate(Number(e.target.value) || 0)} style={fieldStyle} />
-                </label>
-                <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                  {text("الكود (اختياري)", "Code (optional)")}
-                  <input value={code} onChange={(e) => setCode(e.target.value)} dir="ltr" style={fieldStyle} />
-                </label>
-                <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                  {text("الباركود (اختياري)", "Barcode (optional)")}
-                  <input value={barcode} onChange={(e) => setBarcode(e.target.value)} dir="ltr" style={fieldStyle} />
-                </label>
-              </div>
-              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                {text("نوع الصنف", "Item type")}
-                <select value={nature} onChange={(e) => setNature(e.target.value as "stock" | "service")} style={fieldStyle}>
-                  <option value="stock">{text("صنف مخزني", "Stock item")}</option>
-                  <option value="service">{text("خدمة", "Service")}</option>
-                </select>
-              </label>
-              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                {text("وحدة القياس *", "Unit of measure *")}
-                <select value={uomId || ""} onChange={(e) => setUomId(Number(e.target.value) || 0)} style={fieldStyle}>
-                  <option value="">{text("اختر وحدة القياس", "Choose a unit")}</option>
-                  {uoms.map((unit) => <option key={unit.id} value={unit.id}>
-                    {language === "en" ? unit.nameEn || unit.nameAr : unit.nameAr}{unit.shortCode ? ` (${unit.shortCode})` : ""}
-                  </option>)}
-                </select>
-              </label>
-            </>
-          )}
-          {error && <div role="alert" style={{ padding: "9px 11px", borderRadius: 9, color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", fontSize: 13 }}>{error}</div>}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
-            <button type="button" onClick={onCancel} disabled={busy} style={{ ...btnSecondary, borderRadius: 9, padding: "9px 14px" }}>{text("إلغاء", "Cancel")}</button>
-            <button type="button" onClick={submit} disabled={busy || !nameAr.trim() || (!isCustomer && !uomId)}
-              style={{ ...btnPrimary, borderRadius: 9, padding: "9px 16px", background: accent, opacity: busy || !nameAr.trim() || (!isCustomer && !uomId) ? 0.6 : 1 }}>
-              {busy ? text("جارٍ الحفظ…", "Saving…") : text("حفظ وإضافة للفاتورة", "Save and add to invoice")}
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
 }

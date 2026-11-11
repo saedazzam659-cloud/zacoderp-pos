@@ -24,6 +24,7 @@ const LS_CR = "pos_desktop_company_cr";
 const LS_PHONE = "pos_desktop_company_phone";
 const LS_DECIMALS = "pos_desktop_decimal_places";
 const LS_HIDE_ZEROS = "pos_desktop_hide_zeros";
+const LS_SHOW_FREE_QTY_COLUMN = "pos_desktop_show_free_qty_column";
 const LS_NUMBER_SYSTEM = "pos_desktop_number_system";
 const LS_UI_LANGUAGE = "pos_desktop_ui_language";
 
@@ -265,6 +266,32 @@ export function useHideZeros(): boolean {
     };
   }, []);
   return v;
+}
+
+// ─── Free-quantity column visibility ─────────────────────────────────
+// Hidden by default; saved quantities and document calculations are unchanged.
+export function getShowFreeQuantityColumn(): boolean {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem(LS_SHOW_FREE_QTY_COLUMN) === "1";
+}
+
+export function setShowFreeQuantityColumn(show: boolean): void {
+  writeKey(LS_SHOW_FREE_QTY_COLUMN, show ? "1" : "0");
+  window.dispatchEvent(new Event(EVT));
+}
+
+export function useShowFreeQuantityColumn(): boolean {
+  const [show, setShow] = useState<boolean>(() => getShowFreeQuantityColumn());
+  useEffect(() => {
+    const refresh = () => setShow(getShowFreeQuantityColumn());
+    window.addEventListener(EVT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(EVT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return show;
 }
 
 /** Input-value helper: returns "" for a zero amount when `hide` is on. */
