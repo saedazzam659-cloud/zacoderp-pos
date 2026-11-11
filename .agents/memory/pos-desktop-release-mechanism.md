@@ -27,3 +27,16 @@ the workflow produces a draft, so build verification does not change the live do
 **How to apply:** keep `package.json`, `Cargo.toml`, and `tauri.conf.json` versions aligned; verify
 the frontend build and manually review Rust column/parameter mappings because Cargo is available
 only in Windows CI; confirm the Actions result before claiming an MSI exists.
+
+## Verify final release visibility
+Do not infer release visibility from the workflow's `draft: true` setting or action logs. In one
+successful build, the release later appeared as published even though the action logged
+`draft: true`; changing it back to draft preserved the assets and their zero-download counts. The
+cause was not identified.
+
+**Why:** draft status is an explicit release requirement and a published release can expose
+download links before the user approves it.
+
+**How to apply:** after each tagged build, query the release itself and confirm `draft: true`
+before reporting completion. If it is published against the user's instruction, restore draft
+status and verify the assets and download counts afterward.
