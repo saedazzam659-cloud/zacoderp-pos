@@ -6,8 +6,9 @@ import {
   type Quotation, type QuotationStatus, type SalesLine,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
-import { listItems, type LocalItem } from "../lib/items";
+import { createItem, listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
+import QuickCreateDialog from "../components/QuickCreateDialog";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
@@ -53,12 +54,13 @@ export default function QuotationsAdmin() {
   const formOpen = creating || editDoc !== null;
 
   async function refresh() { setRows(await listQuotations(5000)); }
+  async function refreshDeps() {
+    const [customers, items, warehouses, salespersons] = await Promise.all([listCustomers(), listItems(), listWarehouses(), listSalespersons(false)]);
+    setDeps({ customers, items, warehouses, salespersons });
+  }
   useEffect(() => {
     void refresh();
-    void (async () => {
-      const [customers, items, warehouses, salespersons] = await Promise.all([listCustomers(), listItems(), listWarehouses(), listSalespersons(false)]);
-      setDeps({ customers, items, warehouses, salespersons });
-    })();
+    void refreshDeps();
   }, []);
 
   const sel = useRowSelect(rows);
@@ -122,6 +124,9 @@ export default function QuotationsAdmin() {
         <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
             <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc}
+              onItemCreated={(item) => setDeps((current) => current
+                ? { ...current, items: current.items.some((existing) => existing.id === item.id) ? current.items : [...current.items, item] }
+                : current)}
               onCancel={() => { setCreating(false); setEditDoc(null); }}
               onDone={() => { setCreating(false); setEditDoc(null); void refresh(); }} />
           </div>
@@ -226,10 +231,11 @@ function DocDetail({ p }: { p: Quotation }) {
   );
 }
 
-function CreateForm({ deps, initial, onCancel, onDone }: {
+function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
   deps: { customers: LocalCustomer[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] };
   initial?: Quotation | null;
   onCancel: () => void; onDone: () => void;
+  onItemCreated: (item: LocalItem) => void;
 }) {
   const isEdit = !!initial;
   const showFreeQuantityColumn = useShowFreeQuantityColumn();
@@ -271,6 +277,9 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const [err, setErr] = useState<string | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  const [quickCreateBusy, setQuickCreateBusy] = useState(false);
+  const [quickCreateError, setQuickCreateError] = useState<string | null>(null);
   const { taxes, taxId, setTaxId, taxOptions, selectedRate } = useInvoiceTaxes("sales");
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
@@ -321,6 +330,48 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       if (selectedRate != null) nl.vatRate = selectedRate;
       return [...ls, nl];
     });
+  }
+  async function createQuickItem(itemInput: { nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number }) {
+    if (!itemInput.nameAr.trim()) { setQuickCreateError("اكتب اسم الصنف بالعربية"); return; }
+    if (!Number.isFinite(itemInput.salePrice) || itemInput.salePrice < 0) { setQuickCreateError("أدخل سعرًا صحيحًا"); return; }
+    if (!Number.isFinite(itemInput.vatRate) || itemInput.vatRate < 0 || itemInput.vatRate > 100) { setQuickCreateError("نسبة الضريبة يجب أن تكون بين 0 و100"); return; }
+    const uom = uoms.find((unit) => unit.id === itemInput.uomId);
+    if (!uom) { setQuickCreateError("اختر وحدة قياس للصنف"); return; }
+    setQuickCreateBusy(true);
+    setQuickCreateError(null);
+    try {
+      const item = await createItem({
+        nameAr: itemInput.nameAr.trim(),
+        code: itemInput.code.trim() || null,
+        barcode: itemInput.barcode.trim() || null,
+        salePrice: itemInput.salePrice,
+        vatRate: selectedRate ?? itemInput.vatRate,
+        costPrice: 0,
+        uomId: uom.id,
+        nature: itemInput.nature,
+      });
+      onItemCreated(item);
+      setLines((current) => {
+        const next: FLine = {
+          ...blankLine(),
+          itemId: item.id,
+          itemName: item.nameAr,
+          unitPrice: item.salePrice,
+          vatRate: selectedRate ?? item.vatRate,
+          uomId: item.uomId ?? uom.id,
+          uomName: uom.nameAr,
+          conversionFactor: uom.baseQty,
+        };
+        const { net } = lineNet(next.qty, next.unitPrice, next.disc, next.discType);
+        next.lineTotal = net + net * (Number(next.vatRate) || 0) / 100;
+        return [...current, next];
+      });
+      setQuickCreateOpen(false);
+    } catch (e: any) {
+      setQuickCreateError(e?.message ?? "تعذر إضافة الصنف");
+    } finally {
+      setQuickCreateBusy(false);
+    }
   }
   function removeLine(i: number) { setLines((ls) => ls.filter((_, k) => k !== i)); }
   function onSelectTax(v: string | number) {
@@ -531,12 +582,33 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           >
             + إضافة صنف
           </button>
+          <button
+            onClick={() => { setQuickCreateError(null); setQuickCreateOpen(true); }}
+            type="button"
+            title="إضافة صنف جديد سريعًا"
+            aria-label="إضافة صنف جديد سريعًا"
+            style={{ ...btnSecondary, padding: "5px 9px", color: "#7c3aed", borderColor: "#c4b5fd", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+          >
+            ✨ صنف جديد
+          </button>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
           <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ"}</button>
         </div>
       </div>
+      {quickCreateOpen && (
+        <QuickCreateDialog
+          kind="item"
+          documentLabel={{ ar: "عرض السعر", en: "quotation" }}
+          initialVatRate={selectedRate ?? 0}
+          busy={quickCreateBusy}
+          error={quickCreateError}
+          onCancel={() => { if (!quickCreateBusy) setQuickCreateOpen(false); }}
+          onSubmit={(payload) => { if (payload.kind === "item") void createQuickItem(payload); }}
+          uoms={uoms}
+        />
+      )}
     </div>
   );
 }
