@@ -224,11 +224,13 @@ export default function PrintFieldVisibilityTab({
   token,
   setUser,
   templateKey,
+  initialDocumentKey,
 }: {
   user: any;
   token: string;
   setUser: any;
   templateKey?: string;
+  initialDocumentKey?: DocumentKey;
 }) {
   const { i18n } = useTranslation();
   const isArabic = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith("ar");
@@ -250,7 +252,8 @@ export default function PrintFieldVisibilityTab({
   const settingsSnapshot = JSON.stringify(companySettings ?? {});
   const [visibility, setVisibility] = useState<VisibilityMap>({});
   const [selectedDocument, setSelectedDocument] = useState<DocumentKey>(
-    templateKey?.startsWith("custom:") ? "sales_quotation" : templateKey ? "sales_invoice" : "purchase_order",
+    initialDocumentKey
+      ?? (templateKey?.startsWith("custom:") ? "sales_quotation" : templateKey ? "sales_invoice" : "purchase_order"),
   );
   const [saving, setSaving] = useState(false);
 

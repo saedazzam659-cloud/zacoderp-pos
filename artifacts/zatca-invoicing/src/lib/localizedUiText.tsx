@@ -40,6 +40,7 @@ const sharedLabels: Record<string, string> = {
   "الكمية المجانية": "Free quantity",
   "المجموع": "Subtotal",
   "الخصم": "Discount",
+  "نسبة الخصم": "Discount %",
   "الضريبة": "Tax",
   "الإجمالي": "Total",
   "الإجمالي بعد الخصم": "Total after discount",

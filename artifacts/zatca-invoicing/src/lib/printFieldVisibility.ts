@@ -166,30 +166,43 @@ function inferPrintColumnFromLabel(text: string): string | undefined {
   return undefined;
 }
 
-function inferPrintFieldFromLabel(
+export function inferPrintFieldFromLabel(
   text: string,
   document: PrintDocumentKey,
 ): string | undefined {
-  const value = text.toLocaleLowerCase();
-  if (/^(?:صالح حتى|تاريخ الانتهاء|valid until|valid through)\b/.test(value)) return "validUntil";
-  if (/^(?:تاريخ التسليم|التسليم المتوقع|expected delivery)\b/.test(value)) return "deliveryDate";
-  if (/^(?:رقم الفاتورة المرتبطة|linked invoice(?:\s*(?:no\.?|number))?)\b/.test(value)) return "invoiceNumber";
-  if (/^(?:رقم (?:المستند|السند|الفاتورة|عرض(?: السعر)?|الأمر)|(?:invoice|document|voucher)\s*(?:no\.?|number))\b/.test(value)) return "documentNumber";
-  if (/^(?:التاريخ|تاريخ (?:السند|الفاتورة|العرض|الأمر)|(?:invoice|document|voucher|order)?\s*date)\b/.test(value)) return "date";
-  if (/^(?:طريقة الدفع|payment method)\b/.test(value)) return "paymentMethod";
-  if (/^(?:العملة|currency)\b/.test(value)) return "currency";
-  if (/^(?:سعر الصرف|exchange rate)\b/.test(value)) return "exchangeRate";
-  if (/^(?:الفرع|branch)\b/.test(value)) return "branch";
-  if (/^(?:مندوب المبيعات|مندوب|salesperson|sales representative)\b/.test(value)) return "seller";
-  if (/^(?:ملاحظات|notes)\b/.test(value)) return "notes";
-  if (/^(?:الشروط والأحكام|الشروط|terms(?:\s*&\s*conditions)?)\b/.test(value)) return "terms";
-  if (/^(?:الحالة|status)\b/.test(value)) return "status";
-  if (/^(?:رمز النقدية|اسم النقدية|الخزينة|cash box|treasury)\b/.test(value)) return "treasury";
-  if (/^(?:حساب البنك|الحساب|account)\b/.test(value)) return "account";
-  if (/^(?:بيان السند|البيان|الوصف|description)\b/.test(value)) return "description";
-  if (/^(?:تاريخ الطباعة|وقت الطباعة|printed at)\b/.test(value)) return "printedAt";
-  if (/^(?:توقيع|المدير المالي|مدير الحسابات|signature)\b/.test(value)) return "signatures";
+  const value = text.toLocaleLowerCase().replace(/\s+/g, " ").trim();
+  if (startsWithPrintLabel(value, ["صالح حتى", "تاريخ الانتهاء", "valid until", "valid through"])) return "validUntil";
+  if (startsWithPrintLabel(value, ["تاريخ التسليم", "التسليم المتوقع", "expected delivery"])) return "deliveryDate";
+  if (startsWithPrintLabel(value, ["رقم الفاتورة المرتبطة", "linked invoice", "linked invoice no", "linked invoice number"])) return "invoiceNumber";
+  if (startsWithPrintLabel(value, [
+    "رقم المستند", "رقم السند", "رقم الفاتورة", "رقم عرض", "رقم عرض السعر", "رقم الأمر",
+    "invoice no", "invoice number", "document no", "document number", "voucher no", "voucher number",
+  ])) return "documentNumber";
+  if (startsWithPrintLabel(value, [
+    "التاريخ", "تاريخ السند", "تاريخ الفاتورة", "تاريخ العرض", "تاريخ الأمر",
+    "date", "invoice date", "document date", "voucher date", "order date",
+  ])) return "date";
+  if (startsWithPrintLabel(value, ["طريقة الدفع", "payment method"])) return "paymentMethod";
+  if (startsWithPrintLabel(value, ["العملة", "currency"])) return "currency";
+  if (startsWithPrintLabel(value, ["سعر الصرف", "exchange rate"])) return "exchangeRate";
+  if (startsWithPrintLabel(value, ["الفرع", "branch"])) return "branch";
+  if (startsWithPrintLabel(value, ["مندوب المبيعات", "مندوب", "salesperson", "sales representative"])) return "seller";
+  if (startsWithPrintLabel(value, ["ملاحظات", "notes"])) return "notes";
+  if (startsWithPrintLabel(value, ["الشروط والأحكام", "الشروط", "terms", "terms & conditions"])) return "terms";
+  if (startsWithPrintLabel(value, ["الحالة", "status"])) return "status";
+  if (startsWithPrintLabel(value, ["رمز النقدية", "اسم النقدية", "الخزينة", "cash box", "treasury"])) return "treasury";
+  if (startsWithPrintLabel(value, ["حساب البنك", "الحساب", "account"])) return "account";
+  if (startsWithPrintLabel(value, ["بيان السند", "البيان", "الوصف", "description"])) return "description";
+  if (startsWithPrintLabel(value, ["تاريخ الطباعة", "وقت الطباعة", "printed at"])) return "printedAt";
+  if (startsWithPrintLabel(value, ["توقيع", "المدير المالي", "مدير الحسابات", "signature"])) return "signatures";
   return undefined;
+}
+
+function startsWithPrintLabel(value: string, labels: string[]): boolean {
+  return labels.some((label) => {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`^${escaped}(?=$|[\\s:：#.–-])`, "i").test(value);
+  });
 }
 
 const PRINT_COLUMN_FIELDS = new Set([

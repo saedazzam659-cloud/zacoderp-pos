@@ -894,7 +894,7 @@ function linesTable(doc: any, lines: any[], headerStyle = "", rowEvenStyle = "",
           ${showFree ? `<th data-print-column="freeQuantity" style="color:#b45309;">مجاني</th>` : ""}
           <th data-print-column="unit">الوحدة</th>
           <th data-print-column="unitPrice">سعر الوحدة</th>
-          ${showDiscountPercent ? `<th data-print-column="discountPercent">الخصم</th>` : ""}
+          ${showDiscountPercent ? `<th data-print-column="discountPercent">نسبة الخصم</th>` : ""}
           ${showDiscountAmount ? `<th data-print-column="discountAmount">قيمة الخصم</th>` : ""}
           <th data-print-column="taxRate">الضريبة</th>
           <th data-print-column="taxAmount">قيمة الضريبة</th>
@@ -1183,7 +1183,7 @@ function template4(d: PrintData): string {
     </div>
     <div style="text-align:left;">
       <div>نظام الفاتورة الإلكترونية المتوافق مع ZATCA</div>
-      <div style="margin-top:2px;">تاريخ الطباعة: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</div>
+      <div data-print-field="printedAt" style="margin-top:2px;">تاريخ الطباعة: ${new Date().toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</div>
     </div>
   </div>
   </body></html>`;
@@ -4289,11 +4289,12 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
             </DialogHeader>
             {fieldSettingsTemplate && (
               <PrintFieldVisibilityTab
-                key={fieldSettingsTemplate.key}
+                key={`${fieldSettingsTemplate.key}:${salesVisibilityDocument}`}
                 user={user}
                 token={token ?? ""}
                 setUser={setUser}
                 templateKey={fieldSettingsTemplate.key}
+                initialDocumentKey={salesVisibilityDocument}
               />
             )}
           </DialogContent>

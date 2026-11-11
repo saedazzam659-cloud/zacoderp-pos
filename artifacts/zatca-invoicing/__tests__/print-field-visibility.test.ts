@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  inferPrintFieldFromLabel,
   isPrintFieldVisible,
   shouldRenderPrintColumn,
 } from "../src/lib/printFieldVisibility.ts";
@@ -48,4 +49,32 @@ test("unset print-column preferences preserve the existing template output", () 
   assert.equal(shouldRenderPrintColumn(undefined, "sales_quotation", "freeQuantity", true), true);
   assert.equal(shouldRenderPrintColumn(undefined, undefined, "discountAmount", true), true);
   assert.equal(shouldRenderPrintColumn(undefined, "sales_quotation", "freeQuantity", false), false);
+});
+
+test("sales quotation settings independently control both discount columns", () => {
+  const settings = {
+    sales_quotation: {
+      discountPercent: true,
+      discountAmount: false,
+    },
+  };
+
+  assert.equal(
+    shouldRenderPrintColumn(settings, "sales_quotation", "discountPercent", true),
+    true,
+  );
+  assert.equal(
+    shouldRenderPrintColumn(settings, "sales_quotation", "discountAmount", true),
+    false,
+  );
+  assert.equal(
+    shouldRenderPrintColumn(settings, "sales_invoice", "discountAmount", true),
+    true,
+  );
+});
+
+test("Arabic print labels identify fields even when followed by values", () => {
+  assert.equal(inferPrintFieldFromLabel("تاريخ الطباعة: 2026/11/11", "sales_quotation"), "printedAt");
+  assert.equal(inferPrintFieldFromLabel("تاريخ العرض: 2026/11/11", "sales_quotation"), "date");
+  assert.equal(inferPrintFieldFromLabel("ملاحظات: تسليم عاجل", "sales_quotation"), "notes");
 });
