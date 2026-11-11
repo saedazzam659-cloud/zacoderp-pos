@@ -17,11 +17,11 @@ import {
   Plus, Trash2, Save, Copy, FileText, Image as ImageIcon, Type, Square,
   Minus, Table as TableIcon, Tag, Star, Download, Printer, ZoomIn, ZoomOut,
   LayoutTemplate, X, CheckCircle2, Maximize2, PanelLeftOpen, PanelRightOpen,
-  Box, MousePointer2, Undo2, Redo2,
+  Box, MousePointer2, Undo2, Redo2, RotateCcw,
 } from "lucide-react";
 import { createQuotationBaseLayout, PRESETS_BY_DOC, type PresetDescriptor } from "./printDesigner/presets";
 import {
-  getDefaultQuotationBaseTemplateId,
+  getDefaultSalesPrintTemplateId,
   getEnabledSalesPrintTemplates,
 } from "@/lib/salesPrintTemplateCatalog";
 import {
@@ -33,7 +33,7 @@ import {
   composeQuotationBaseWithCustomLayout,
   renderQuotationCustomLayoutHtml,
 } from "@/lib/quotationCustomPrint";
-import { renderQuotationBaseTemplatePreviewHtml } from "@/pages/sales/SalesPrintModal";
+import { renderSalesBaseTemplatePreviewHtml } from "@/pages/sales/SalesPrintModal";
 
 // ───────────────────────────── Types ─────────────────────────────
 
@@ -108,6 +108,22 @@ interface Template {
   layoutJson: Layout;
   createdAt: string;
   updatedAt: string;
+}
+
+interface DesignSnapshot {
+  selectedTemplateId: number | null;
+  layout: Layout;
+  templateName: string;
+  paperSize: string;
+  widthMm: number;
+  heightMm: number;
+  saved: boolean;
+}
+
+type SalesDesignerDocument = "sales_invoice" | "sales_quotation" | "sales_return";
+
+function isSalesDesignerDocument(value: DocumentType): value is SalesDesignerDocument {
+  return value === "sales_invoice" || value === "sales_quotation" || value === "sales_return";
 }
 
 const PRINT_FIELD_LABELS: Record<string, string> = {
@@ -467,31 +483,40 @@ export default function PrintDesigner() {
     () => getEnabledSalesPrintTemplates(company),
     [company.printEnabledTemplates],
   );
-  const defaultQuotationBaseId = getDefaultQuotationBaseTemplateId(company, quotationBaseTemplates);
+  const defaultSalesBaseId = getDefaultSalesPrintTemplateId(company, quotationBaseTemplates, "sales_invoice");
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   const [documentType, setDocumentType] = useState<DocumentType>("sales_invoice");
-  const [baseTemplateId, setBaseTemplateId] = useState<number>(defaultQuotationBaseId);
+  const [baseTemplateId, setBaseTemplateId] = useState<number>(defaultSalesBaseId);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [layout, setLayout] = useState<Layout>(emptyLayout);
   const previewBaseTemplateId = Number(layout.baseTemplateId) || baseTemplateId;
-  const nativeQuotationPreviewHtml = useMemo(
-    () => documentType === "sales_quotation" && layout.baseTemplateVersion === 2
-      ? renderQuotationBaseTemplatePreviewHtml(previewBaseTemplateId)
+  const nativeSalesPreviewHtml = useMemo(
+    () => isSalesDesignerDocument(documentType) && layout.baseTemplateVersion === 2
+      ? renderSalesBaseTemplatePreviewHtml(previewBaseTemplateId, documentType)
       : "",
     [documentType, layout.baseTemplateVersion, previewBaseTemplateId],
   );
-  const visibleNativeQuotationPreviewHtml = useMemo(() => {
+  const visibleNativeSalesPreviewHtml = useMemo(() => {
     const hiddenFields = layout.hiddenBaseFields ?? [];
-    if (!nativeQuotationPreviewHtml || hiddenFields.length === 0) return nativeQuotationPreviewHtml;
-    return applyPrintFieldVisibility(nativeQuotationPreviewHtml, "sales_quotation", {
-      sales_quotation: Object.fromEntries(hiddenFields.map(field => [field, false])),
+    if (!nativeSalesPreviewHtml || hiddenFields.length === 0 || !isSalesDesignerDocument(documentType)) return nativeSalesPreviewHtml;
+    return applyPrintFieldVisibility(nativeSalesPreviewHtml, documentType, {
+      [documentType]: Object.fromEntries(hiddenFields.map(field => [field, false])),
     });
-  }, [nativeQuotationPreviewHtml, layout.hiddenBaseFields]);
+  }, [nativeSalesPreviewHtml, layout.hiddenBaseFields, documentType]);
   const [paperSize, setPaperSize] = useState<string>("A4");
   const [widthMm, setWidthMm]   = useState(210);
   const [heightMm, setHeightMm] = useState(297);
   const [templateName, setTemplateName] = useState("قالب جديد");
+  const designOriginRef = useRef<DesignSnapshot>({
+    selectedTemplateId: null,
+    layout: emptyLayout(),
+    templateName: "قالب جديد",
+    paperSize: "A4",
+    widthMm: 210,
+    heightMm: 297,
+    saved: false,
+  });
   const [selectedElId, setSelectedElId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -551,8 +576,12 @@ export default function PrintDesigner() {
   const canvasRef = useRef<HTMLDivElement>(null);
 
   // Fetch templates for the current doc type ------------------------------
-  const { data: templates = [] } = useQuery<Template[]>({
-    queryKey: ["print-designer", "templates", documentType],
+  const {
+    data: templates = [],
+    isLoading: templatesLoading,
+    isError: templatesError,
+  } = useQuery<Template[]>({
+    queryKey: ["print-designer", "templates", company?.id, documentType],
     queryFn: async () => {
       const r = await fetch(`${API}/api/print-designer/templates?documentType=${documentType}`, { headers });
       if (!r.ok) throw new Error(await r.text());
@@ -562,11 +591,15 @@ export default function PrintDesigner() {
 
   // When templates list changes (or doc type changes), pick default or create-new state.
   useEffect(() => {
+    if (templatesLoading || templatesError) return;
     if (templates.length === 0) {
       setSelectedTemplateId(null);
-      // Auto-apply the first preset so the user sees a ready-to-edit
-      // design immediately instead of a blank canvas. The "فارغ جديد"
-      // button still gives them a blank starting point on demand.
+      if (isSalesDesignerDocument(documentType)) {
+        const defaultBaseId = getDefaultSalesPrintTemplateId(company, quotationBaseTemplates, documentType);
+        setBaseTemplateId(defaultBaseId);
+        startFromSalesBase(defaultBaseId, false);
+        return;
+      }
       const presets = PRESETS_BY_DOC[documentType] ?? [];
       if (presets.length > 0 && !autoOpenedRef.current.has(documentType)) {
         autoOpenedRef.current.add(documentType);
@@ -581,7 +614,7 @@ export default function PrintDesigner() {
     }
     const preferred = templates.find(t => t.isDefault) ?? templates[0];
     setSelectedTemplateId(preferred.id);
-  }, [templates.length, documentType]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [templates.length, documentType, templatesLoading, templatesError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function analyzeRegionSelection(selection: {
     x1: number;
@@ -594,7 +627,7 @@ export default function PrintDesigner() {
     const tableColumns: Record<string, string[]> = {};
     const elementIds: string[] = [];
 
-    if (nativeQuotationPreviewHtml) {
+    if (nativeSalesPreviewHtml) {
       const previewDocument = nativePreviewFrameRef.current?.contentDocument;
       const page = previewDocument?.querySelector<HTMLElement>(".sheet, .page, .doc, .print-page")
         ?? previewDocument?.body;
@@ -625,7 +658,9 @@ export default function PrintDesigner() {
       }
       for (const node of Array.from(previewDocument.querySelectorAll<HTMLElement>("div,span,p,td,th,label,strong,b,small"))) {
         if (node.children.length > 0) continue;
-        const key = inferPrintFieldFromLabel(node.textContent ?? "", "sales_quotation");
+        const key = isSalesDesignerDocument(documentType)
+          ? inferPrintFieldFromLabel(node.textContent ?? "", documentType)
+          : undefined;
         if (key && selectionIntersects(bounds, toPageBounds(node))) hiddenBaseFields.add(key);
       }
       for (const image of Array.from(previewDocument.querySelectorAll<HTMLImageElement>('img[alt*="qr" i], img[alt*="zatca" i]'))) {
@@ -691,7 +726,7 @@ export default function PrintDesigner() {
     if (selectedCount === 0) {
       toast({
         title: "لم يتم تحديد حقول قابلة للحذف",
-        description: nativeQuotationPreviewHtml
+        description: nativeSalesPreviewHtml
           ? "اسحب التحديد فوق عنوان العمود أو الحقل المطلوب إخفاؤه."
           : "اسحب التحديد فوق الأعمدة أو العناصر المطلوب حذفها.",
       });
@@ -750,7 +785,7 @@ export default function PrintDesigner() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [marquee, zoom, layout, regionDeleteMode, nativeQuotationPreviewHtml]);
+  }, [marquee, zoom, layout, regionDeleteMode, nativeSalesPreviewHtml, documentType]);
 
   // Esc closes the preset gallery modal.
   useEffect(() => {
@@ -789,7 +824,8 @@ export default function PrintDesigner() {
     if (selectedTemplateId == null) return;
     const t = templates.find(x => x.id === selectedTemplateId);
     if (!t) return;
-    setLayout(t.layoutJson ?? emptyLayout());
+    const savedLayout = structuredClone(t.layoutJson ?? emptyLayout());
+    setLayout(savedLayout);
     if (Number.isInteger(Number(t.layoutJson?.baseTemplateId))) {
       setBaseTemplateId(Number(t.layoutJson.baseTemplateId));
     }
@@ -798,13 +834,22 @@ export default function PrintDesigner() {
     setWidthMm(t.widthMm);
     setHeightMm(t.heightMm);
     setDirty(false);
+    designOriginRef.current = {
+      selectedTemplateId: t.id,
+      layout: structuredClone(savedLayout),
+      templateName: t.name,
+      paperSize: t.paperSize,
+      widthMm: t.widthMm,
+      heightMm: t.heightMm,
+      saved: true,
+    };
   }, [selectedTemplateId, templates]);
 
   // Mutations -------------------------------------------------------------
-  function invalidateQuotationPrintChoices() {
-    if (documentType === "sales_quotation" && company?.id != null) {
+  function invalidateSalesPrintChoices() {
+    if (isSalesDesignerDocument(documentType) && company?.id != null) {
       qc.invalidateQueries({
-        queryKey: ["print-designer", "templates", company.id, "sales_quotation"],
+        queryKey: ["print-designer", "templates", company.id, documentType],
       });
     }
   }
@@ -818,8 +863,8 @@ export default function PrintDesigner() {
       return r.json() as Promise<Template>;
     },
     onSuccess: (row) => {
-      qc.invalidateQueries({ queryKey: ["print-designer", "templates", documentType] });
-      if (row.documentType === "sales_quotation") invalidateQuotationPrintChoices();
+      qc.invalidateQueries({ queryKey: ["print-designer", "templates", company?.id, documentType] });
+      if (isSalesDesignerDocument(row.documentType)) invalidateSalesPrintChoices();
       setSelectedTemplateId(row.id);
       setDirty(false);
       toast({ title: "تم إنشاء القالب" });
@@ -836,8 +881,8 @@ export default function PrintDesigner() {
       return r.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["print-designer", "templates", documentType] });
-      invalidateQuotationPrintChoices();
+      qc.invalidateQueries({ queryKey: ["print-designer", "templates", company?.id, documentType] });
+      invalidateSalesPrintChoices();
       setDirty(false);
       toast({ title: "تم الحفظ" });
     },
@@ -851,8 +896,8 @@ export default function PrintDesigner() {
       return r.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["print-designer", "templates", documentType] });
-      invalidateQuotationPrintChoices();
+      qc.invalidateQueries({ queryKey: ["print-designer", "templates", company?.id, documentType] });
+      invalidateSalesPrintChoices();
       setSelectedTemplateId(null);
       toast({ title: "تم الحذف" });
     },
@@ -866,8 +911,8 @@ export default function PrintDesigner() {
       return r.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["print-designer", "templates", documentType] });
-      invalidateQuotationPrintChoices();
+      qc.invalidateQueries({ queryKey: ["print-designer", "templates", company?.id, documentType] });
+      invalidateSalesPrintChoices();
       toast({ title: "تم تعيينه افتراضياً" });
     },
   });
@@ -1062,14 +1107,73 @@ export default function PrintDesigner() {
 
   function createNew() {
     setSelectedTemplateId(null);
-    setLayout({
+    const blankLayout = {
       ...emptyLayout(),
       ...(documentType === "sales_quotation" ? { baseTemplateId } : {}),
-    });
-    setTemplateName(`قالب ${DOC_TYPES.find(d => d.value === documentType)?.label ?? ""}`);
+    };
+    const newName = `قالب ${DOC_TYPES.find(d => d.value === documentType)?.label ?? ""}`;
+    setLayout(blankLayout);
+    setTemplateName(newName);
     setPaperSize("A4"); setWidthMm(210); setHeightMm(297);
     setSelectedElId(null);
     setDirty(true);
+    designOriginRef.current = {
+      selectedTemplateId: null,
+      layout: structuredClone(blankLayout),
+      templateName: newName,
+      paperSize: "A4",
+      widthMm: 210,
+      heightMm: 297,
+      saved: false,
+    };
+  }
+
+  function restoreDesign() {
+    const origin = designOriginRef.current;
+    if (!origin) return;
+    if (!window.confirm("سيتم إلغاء كل تعديلاتك الحالية والعودة إلى التصميم الأصلي. هل تريد المتابعة؟")) return;
+    if (isSalesDesignerDocument(documentType) && layout.baseTemplateVersion === 2) {
+      const baseId = Number(layout.baseTemplateId) || baseTemplateId;
+      const base = quotationBaseTemplates.find(template => template.id === baseId);
+      if (base) {
+        const restoredLayout = createQuotationBaseLayout(base.id, base.color, base.thermal);
+        setLayout(restoredLayout);
+        setBaseTemplateId(base.id);
+        setPaperSize(base.thermal ? "80mm" : "A4");
+        setWidthMm(base.thermal ? 80 : 210);
+        setHeightMm(base.thermal ? 200 : 297);
+        setSelectedElId(null);
+        setSelectedIds([]);
+        setPendingRegionSelection(null);
+        setDirty(true);
+        setPast([]);
+        setFuture([]);
+        designOriginRef.current = {
+          selectedTemplateId,
+          layout: structuredClone(restoredLayout),
+          templateName,
+          paperSize: base.thermal ? "80mm" : "A4",
+          widthMm: base.thermal ? 80 : 210,
+          heightMm: base.thermal ? 200 : 297,
+          saved: false,
+        };
+        toast({ title: "تمت استعادة نموذج النظام الأصلي" });
+        return;
+      }
+    }
+    setSelectedTemplateId(origin.selectedTemplateId);
+    setLayout(structuredClone(origin.layout));
+    setTemplateName(origin.templateName);
+    setPaperSize(origin.paperSize);
+    setWidthMm(origin.widthMm);
+    setHeightMm(origin.heightMm);
+    setSelectedElId(null);
+    setSelectedIds([]);
+    setPendingRegionSelection(null);
+    setDirty(!origin.saved);
+    setPast([]);
+    setFuture([]);
+    toast({ title: "تمت استعادة التصميم الأصلي" });
   }
 
   // Apply a starter preset: deep-clone the layout (presets may reuse element
@@ -1105,32 +1209,53 @@ export default function PrintDesigner() {
     setSelectedElId(null);
     setDirty(true);
     setShowPresets(false);
+    designOriginRef.current = {
+      selectedTemplateId: null,
+      layout: structuredClone(cloned),
+      templateName: quotationBase
+        ? `${quotationBase.name} — عرض سعر مخصص`
+        : `${p.name} — ${DOC_TYPES.find(d => d.value === documentType)?.label ?? ""}`,
+      paperSize: targetPaperSize,
+      widthMm: targetWidthMm,
+      heightMm: targetHeightMm,
+      saved: false,
+    };
     toast({ title: "تم تحميل القالب الجاهز", description: "يمكنك الآن التعديل ثم الحفظ" });
   }
 
-  function startFromQuotationBase(id: number) {
+  function startFromSalesBase(id: number, confirmUnsaved = true) {
     const base = quotationBaseTemplates.find(template => template.id === id);
     if (!base) return;
-    if (dirty && !window.confirm("سيتم استبدال التعديلات غير المحفوظة. هل تريد المتابعة؟")) return;
+    if (confirmUnsaved && dirty && !window.confirm("سيتم استبدال التعديلات غير المحفوظة. هل تريد المتابعة؟")) return;
     const raw = createQuotationBaseLayout(base.id, base.color, base.thermal);
     const cloned: Layout = {
       ...raw,
       baseTemplateId: id,
       elements: raw.elements.map(el => ({ ...el, id: uid() })),
     };
+    const newName = `${base.name} — ${DOC_TYPES.find(d => d.value === documentType)?.label ?? "مبيعات"} مخصص`;
     setBaseTemplateId(id);
     setSelectedTemplateId(null);
     setLayout(cloned);
-    setTemplateName(`${base.name} — عرض سعر مخصص`);
+    setTemplateName(newName);
     setPaperSize(base.thermal ? "80mm" : "A4");
     setWidthMm(base.thermal ? 80 : 210);
     setHeightMm(base.thermal ? 200 : 297);
     setSelectedElId(null);
     setSelectedIds([]);
     setDirty(true);
+    designOriginRef.current = {
+      selectedTemplateId: null,
+      layout: structuredClone(cloned),
+      templateName: newName,
+      paperSize: base.thermal ? "80mm" : "A4",
+      widthMm: base.thermal ? 80 : 210,
+      heightMm: base.thermal ? 200 : 297,
+      saved: false,
+    };
     toast({
       title: "تم إنشاء نسخة قابلة للتعديل",
-      description: "القالب الأصلي في الإعدادات العامة لم يتغير.",
+      description: "تم تحميل نموذج النظام كنسخة قابلة للتعديل، والقالب الأصلي لم يتغير.",
     });
   }
 
@@ -1151,12 +1276,12 @@ export default function PrintDesigner() {
       showQr: false,
     };
     const quotationPage = { widthMm, heightMm, name: templateName };
-    const nativeBaseHtml = layout.baseTemplateVersion === 2
-      ? renderQuotationBaseTemplatePreviewHtml(previewBaseTemplateId)
+    const nativeBaseHtml = isSalesDesignerDocument(documentType) && layout.baseTemplateVersion === 2
+      ? renderSalesBaseTemplatePreviewHtml(previewBaseTemplateId, documentType)
       : "";
-    const html = documentType === "sales_quotation"
+    const html = isSalesDesignerDocument(documentType)
       ? (nativeBaseHtml
-          ? composeQuotationBaseWithCustomLayout(nativeBaseHtml, layout, quotationContext, quotationPage)
+          ? composeQuotationBaseWithCustomLayout(nativeBaseHtml, layout, quotationContext, quotationPage, documentType)
           : renderQuotationCustomLayoutHtml(layout, quotationContext, quotationPage))
           .replace("</body>", `<script>setTimeout(()=>window.print(),300)<\/script></body>`)
       : `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${templateName}</title>
@@ -1183,15 +1308,17 @@ export default function PrintDesigner() {
         >
           {DOC_TYPES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
         </select>
-        {documentType === "sales_quotation" && (
+        {isSalesDesignerDocument(documentType) && (
           <label className="flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/70 px-2 py-1">
-            <span className="text-xs font-semibold text-indigo-900">ابدأ من قالب مفعّل</span>
+            <span className="text-xs font-semibold text-indigo-900">نموذج النظام</span>
             <select
-              data-testid="select-quotation-base-template"
-              value={quotationBaseTemplates.some(item => item.id === baseTemplateId) ? baseTemplateId : defaultQuotationBaseId}
-              onChange={e => startFromQuotationBase(Number(e.target.value))}
+              data-testid="select-sales-base-template"
+              value={quotationBaseTemplates.some(item => item.id === baseTemplateId)
+                ? baseTemplateId
+                : getDefaultSalesPrintTemplateId(company, quotationBaseTemplates, documentType)}
+              onChange={e => startFromSalesBase(Number(e.target.value))}
               className="max-w-[190px] rounded border border-indigo-200 bg-white px-2 py-1 text-xs"
-              aria-label="اختر قالب عرض السعر الأساسي"
+              aria-label="اختر نموذج المبيعات الأساسي"
             >
               {quotationBaseTemplates.map(template => (
                 <option key={template.id} value={template.id}>{template.name}</option>
@@ -1233,6 +1360,13 @@ export default function PrintDesigner() {
           className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
           title="إعادة (Ctrl+Y)">
           <Redo2 className="w-3.5 h-3.5" /> إعادة
+        </button>
+        <button
+          data-testid="button-restore-original-design"
+          onClick={restoreDesign}
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-amber-50 text-amber-800 hover:bg-amber-100"
+          title="استعادة التصميم كما كان عند تحميله">
+          <RotateCcw className="w-3.5 h-3.5" /> استعادة التصميم
         </button>
         <button onClick={save} disabled={updateMut.isPending || createMut.isPending}
           className="flex items-center gap-1 px-3 py-1 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
@@ -1408,13 +1542,18 @@ export default function PrintDesigner() {
           <div className="pointer-events-none absolute start-6 top-5 z-10 flex items-center gap-2 rounded-full border border-emerald-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-sm">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
             {regionDeleteMode
-              ? nativeQuotationPreviewHtml
+              ? nativeSalesPreviewHtml
                 ? "اسحب فوق حقول أو أعمدة القالب الأصلي، ثم راجعها قبل الحذف"
                 : "اسحب فوق العناصر أو أعمدة الجدول، ثم راجعها قبل الحذف"
               : layout.baseTemplateVersion === 2
               ? "القالب الأصلي محفوظ — العناصر الجديدة تظهر فوقه"
               : "معاينة مباشرة — تتحدث مع كل تعديل"}
           </div>
+          {templatesError && (
+            <div role="alert" className="absolute start-1/2 top-14 z-20 -translate-x-1/2 rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs text-rose-800 shadow">
+              تعذر تحميل القوالب المحفوظة. أعد تحميل الصفحة للمحاولة مرة أخرى.
+            </div>
+          )}
           {pendingRegionSelection && (
             <div
               role="status"
@@ -1475,11 +1614,11 @@ export default function PrintDesigner() {
               position: "absolute", inset: 0, transform: `scale(${zoom})`,
               transformOrigin: "top right", width: widthMm * MM, height: heightMm * MM,
             }}>
-              {visibleNativeQuotationPreviewHtml && (
+              {visibleNativeSalesPreviewHtml && (
                 <iframe
                   ref={nativePreviewFrameRef}
-                  title="معاينة قالب عرض السعر الأصلي"
-                  srcDoc={visibleNativeQuotationPreviewHtml}
+                  title="معاينة نموذج المبيعات الأصلي"
+                  srcDoc={visibleNativeSalesPreviewHtml}
                   tabIndex={-1}
                   style={{
                     position: "absolute",

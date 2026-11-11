@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  getDefaultSalesPrintTemplateId,
   getDefaultQuotationBaseTemplateId,
   getEnabledSalesPrintTemplates,
 } from "../src/lib/salesPrintTemplateCatalog";
@@ -27,16 +28,37 @@ test("quotation base templates respect enabled IDs and quotation default precede
   );
 });
 
-test("quotation base layouts are independent editable copies with the selected style", () => {
+test("sales base template defaults follow each document setting and enabled template list", () => {
+  const company = {
+    printEnabledTemplates: [6, 7],
+    printDefaultTemplate: 7,
+    printDefaultTemplateReturn: 6,
+    printDefaultTemplateQuotation: 6,
+  };
+  const enabled = getEnabledSalesPrintTemplates(company);
+  assert.equal(getDefaultSalesPrintTemplateId(company, enabled, "sales_invoice"), 7);
+  assert.equal(getDefaultSalesPrintTemplateId(company, enabled, "sales_quotation"), 6);
+  assert.equal(getDefaultSalesPrintTemplateId(company, enabled, "sales_return"), 6);
+  assert.equal(
+    getDefaultSalesPrintTemplateId(
+      { ...company, printDefaultTemplate: 14 },
+      enabled,
+      "sales_invoice",
+    ),
+    6,
+  );
+});
+
+test("sales base layouts retain the native system template as a protected source", () => {
   const original = createQuotationBaseLayout(2, "#059669");
   const copy = createQuotationBaseLayout(6, "#111111", true);
 
   assert.equal(original.baseTemplateId, 2);
-  assert.ok(original.elements.some(element => element.fieldKey === "quotation.validUntil"));
-  assert.ok(original.elements.some(element => element.type === "table"));
-  assert.notEqual(original.elements[0], copy.elements[0]);
+  assert.equal(original.baseTemplateVersion, 2);
+  assert.deepEqual(original.elements, []);
   assert.equal(copy.baseTemplateId, 6);
-  assert.ok(copy.elements.some(element => element.fieldKey === "quotation.number"));
+  assert.equal(copy.baseTemplateVersion, 2);
+  assert.deepEqual(copy.elements, []);
 });
 
 test("custom quotation layout renders real field and line values safely", () => {
@@ -99,10 +121,12 @@ test("designer copies enabled bases and the sales print chooser keeps custom tem
     "utf8",
   );
 
-  assert.match(designerSource, /getDefaultQuotationBaseTemplateId/);
-  assert.match(designerSource, /startFromQuotationBase/);
-  assert.match(designerSource, /القالب الأصلي في الإعدادات العامة لم يتغير/);
-  assert.match(salesPrintSource, /customQuotationTemplatesQuery/);
+  assert.match(designerSource, /getDefaultSalesPrintTemplateId/);
+  assert.match(designerSource, /startFromSalesBase/);
+  assert.match(designerSource, /button-restore-original-design/);
+  assert.match(designerSource, /select-sales-base-template/);
+  assert.match(salesPrintSource, /customSalesTemplatesQuery/);
+  assert.match(salesPrintSource, /renderSalesBaseTemplatePreviewHtml/);
   assert.match(salesPrintSource, /renderQuotationCustomLayoutHtml/);
   assert.match(salesPrintSource, /orderedVisibleTemplates\.map/);
   assert.match(settingsSource, /SALES_PRINT_TEMPLATE_CATALOG/);

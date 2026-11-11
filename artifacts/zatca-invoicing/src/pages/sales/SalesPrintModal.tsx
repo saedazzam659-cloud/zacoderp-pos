@@ -696,36 +696,51 @@ function quotationCustomerAddressText(
   return buildQuotationCustomerAddress(d.customer, d.doc, language, countryName);
 }
 
-function customQuotationPrintContext(d: PrintData): CustomPrintContext {
+function customSalesPrintContext(d: PrintData): CustomPrintContext {
   const doc = d.doc ?? {};
   const company = d.company ?? {};
   const customer = d.customer ?? {};
+  const visibilityDocument = d.type === "quotation"
+    ? "sales_quotation"
+    : d.type === "return"
+      ? "sales_return"
+      : "sales_invoice";
   const isEnglish = (d as any)._lang === "en";
   const enNames: Map<string, string> = (d as any)._enNames instanceof Map ? (d as any)._enNames : new Map();
   const enUnits: Map<string, string> = (d as any)._enUnits instanceof Map ? (d as any)._enUnits : new Map();
-  const totals = computeFullTotals(doc, d.lines ?? [], "quotation");
+  const totals = computeFullTotals(doc, d.lines ?? [], d.type);
   const customerName = isEnglish
     ? customer.nameEn ?? customer.nameAr ?? customer.name ?? doc.manualPrintPartyName ?? doc.buyerName ?? "—"
     : customer.nameAr ?? customer.nameEn ?? customer.name ?? doc.manualPrintPartyName ?? doc.buyerName ?? "—";
   const currency = totals.currencySym;
-  const quotationOptions = getQuotationPrintOptions(company);
+  const quotationOptions = d.type === "quotation" ? getQuotationPrintOptions(company) : undefined;
   const showCustomerAddress = isPrintFieldVisible(
     company.printFieldVisibility,
-    "sales_quotation",
+    visibilityDocument,
     "partyAddress",
-    quotationOptions.showCustomerAddress,
+    d.type === "quotation" ? quotationOptions!.showCustomerAddress : true,
   );
-  const showQuotationQr = isPrintFieldVisible(
+  const showQr = isPrintFieldVisible(
     company.printFieldVisibility,
-    "sales_quotation",
+    visibilityDocument,
     "qr",
-    quotationOptions.showQr,
+    shouldShowQr(d),
   );
-  const currencyName = quotationOptions.showCurrencyName
+  const currencyName = quotationOptions?.showCurrencyName
     ? resolveQuotationCurrencyName(company, d.currency ?? doc.currency, isEnglish ? "en" : "ar")
     : "";
   const currencyText = currencyName ? `${currency} (${currencyName})` : currency;
   const amount = (value: number) => `${fmt(value)} ${currencyText}`;
+  const documentNumberKey = d.type === "quotation"
+    ? "quotation.number"
+    : d.type === "return"
+      ? "return.number"
+      : "invoice.number";
+  const documentDateKey = d.type === "quotation"
+    ? "quotation.date"
+    : d.type === "return"
+      ? "return.date"
+      : "invoice.date";
   const fields: Record<string, string> = {
     "company.name": isEnglish ? company.nameEn ?? company.nameAr ?? "—" : company.nameAr ?? company.nameEn ?? "—",
     "company.vat": company.vatNumber ?? "—",
@@ -733,12 +748,16 @@ function customQuotationPrintContext(d: PrintData): CustomPrintContext {
       ? company.addressEn ?? company.address ?? company.addressAr ?? company.city ?? "—"
       : company.addressAr ?? company.address ?? company.city ?? "—",
     "company.phone": company.phone ?? company.phoneNumber ?? "—",
-    "quotation.number": doc.docNumber ?? `SQ-${doc.id ?? ""}`,
-    "quotation.date": doc.quotationDate ?? "—",
+    [documentNumberKey]: doc.docNumber ?? `${docPrefix(d.type)}-${doc.id ?? ""}`,
+    [documentDateKey]: docDate(doc, d.type),
     "quotation.validUntil": doc.validUntil ?? "—",
     "customer.name": customerName,
     "customer.vat": customer.vatNumber ?? doc.buyerVatNumber ?? "—",
-    "customer.address": showCustomerAddress ? quotationCustomerAddressText(d) || "—" : "",
+    "customer.address": showCustomerAddress
+      ? d.type === "quotation"
+        ? quotationCustomerAddressText(d) || "—"
+        : [customer.city, customer.country].filter(Boolean).join("، ") || "—"
+      : "",
     "totals.subtotal": amount(totals.subtotalPreDiscount),
     "totals.discount": amount(totals.discountTotal),
     "totals.vat": amount(totals.vatAmount),
@@ -777,7 +796,7 @@ function customQuotationPrintContext(d: PrintData): CustomPrintContext {
     fields,
     rows,
     qrDataUrl: (d as any)._qrDataUrl,
-    showQr: showQuotationQr,
+    showQr,
     hiddenFields: showCustomerAddress ? [] : ["customer.address"],
   };
 }
@@ -3458,13 +3477,23 @@ const TEMPLATES = [
   { id: 7,  name: "حراري عصري",    desc: "إيصال 80mm ملوّن",         color: "#0f766e", fn: template7,  thermal: true  },
 ];
 
-export function renderQuotationBaseTemplatePreviewHtml(templateId: number): string {
+export function renderSalesBaseTemplatePreviewHtml(
+  templateId: number,
+  documentType: "sales_invoice" | "sales_quotation" | "sales_return" = "sales_quotation",
+): string {
   const template = TEMPLATES.find(item => item.id === templateId);
   if (!template) return "";
+  const printType = documentType === "sales_quotation"
+    ? "quotation"
+    : documentType === "sales_return"
+      ? "return"
+      : "invoice";
   const previewData = {
-    type: "quotation",
+    type: printType,
     doc: {
-      docNumber: "QT-2026-001",
+      docNumber: printType === "quotation" ? "QT-2026-001" : printType === "return" ? "SR-2026-001" : "INV-2026-001",
+      invoiceDate: "2026-11-10",
+      returnDate: "2026-11-10",
       quotationDate: "2026-11-10",
       validUntil: "2026-12-10",
       currencyCode: "SAR",
@@ -3505,12 +3534,16 @@ export function renderQuotationBaseTemplatePreviewHtml(templateId: number): stri
     currency: { code: "SAR", symbol: "ر.س" },
     _lang: "ar",
   } as unknown as PrintData;
-  (previewData.doc as any).__printType = "quotation";
+  (previewData.doc as any).__printType = printType;
   (previewData.doc as any).__pd = previewData;
   return withCompanyPrintPrecision(
     { decimalPlaces: previewData.company?.decimalPlaces },
     () => template.fn(previewData),
   );
+}
+
+export function renderQuotationBaseTemplatePreviewHtml(templateId: number): string {
+  return renderSalesBaseTemplatePreviewHtml(templateId, "sales_quotation");
 }
 
 function forceThermalPaperSize(html: string): string {
@@ -3652,26 +3685,33 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   // Live inventory catalogue → English item-name lookup. Only fetched when
   // we're actually printing in English (and the modal is open).
   const itemsCompanyId = companyCfg?.id ?? user?.company?.id;
-  const customQuotationTemplatesQuery = useQuery<any[]>({
-    queryKey: ["print-designer", "templates", itemsCompanyId, "sales_quotation"],
-    enabled: !!open && data?.type === "quotation" && !!itemsCompanyId && !!token,
+  const customTemplateDocumentType =
+    data?.type === "invoice" ? "sales_invoice"
+      : data?.type === "quotation" ? "sales_quotation"
+        : data?.type === "return" ? "sales_return"
+          : undefined;
+  const supportsCustomPrintTemplate = customTemplateDocumentType !== undefined;
+  const customSalesTemplatesQuery = useQuery<any[]>({
+    queryKey: ["print-designer", "templates", itemsCompanyId, customTemplateDocumentType],
+    enabled: !!open && supportsCustomPrintTemplate && !!itemsCompanyId && !!token,
     staleTime: 30_000,
     queryFn: async () => {
-      const params = new URLSearchParams({ documentType: "sales_quotation", companyId: String(itemsCompanyId) });
+      if (!customTemplateDocumentType) return [];
+      const params = new URLSearchParams({ documentType: customTemplateDocumentType, companyId: String(itemsCompanyId) });
       const response = await fetch(`${API}/api/print-designer/templates?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) throw new Error("تعذر تحميل قوالب عروض الأسعار المخصصة");
+      if (!response.ok) throw new Error("تعذر تحميل القوالب المخصصة");
       const result = await response.json();
       return Array.isArray(result) ? result : [];
     },
   });
-  const customQuotationTemplates = customQuotationTemplatesQuery.data ?? [];
-  const orderedCustomQuotationTemplates = [...customQuotationTemplates].sort(
+  const customSalesTemplates = customSalesTemplatesQuery.data ?? [];
+  const orderedCustomSalesTemplates = [...customSalesTemplates].sort(
     (a, b) => Number(b.isDefault) - Number(a.isDefault),
   );
   const selectedCustomTemplate = typeof selected === "string"
-    ? customQuotationTemplates.find(template => `custom:${template.id}` === selected)
+    ? customSalesTemplates.find(template => `custom:${template.id}` === selected)
     : undefined;
   const selectedCustomBaseId = Number(selectedCustomTemplate?.layoutJson?.baseTemplateId);
   const selectedIsThermal = typeof selected === "number"
@@ -3683,8 +3723,8 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
       ? selectedCustomBaseId
       : resolveInitialId();
   function resolveInitialSelection(): number | `custom:${number}` {
-    const customDefault = data?.type === "quotation"
-      ? customQuotationTemplates.find(template => template.isDefault)
+    const customDefault = supportsCustomPrintTemplate
+      ? customSalesTemplates.find(template => template.isDefault)
       : undefined;
     return customDefault ? `custom:${customDefault.id}` : resolveInitialId();
   }
@@ -3764,7 +3804,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     }
     if (!selectionChangedByUserRef.current) setSelected(resolveInitialSelection());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, customQuotationTemplatesQuery.data, defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate, companyCfg.printDefaultTemplateQuotation, companyCfg.printDefaultTemplateOrder, companyCfg.printDefaultTemplateReturn, (data as any)?.type]);
+  }, [open, customSalesTemplatesQuery.data, defaultTemplate, companyCfg.printEnabledTemplates, companyCfg.printDefaultTemplate, companyCfg.printDefaultTemplateQuotation, companyCfg.printDefaultTemplateOrder, companyCfg.printDefaultTemplateReturn, (data as any)?.type]);
   useEffect(() => {
     setThermalScale(readThermalPrintScale(companyCfg.id, thermalSettingsTemplateId));
     setThermalBoldness(readThermalPrintBold(companyCfg.id, thermalSettingsTemplateId));
@@ -3784,7 +3824,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
   const printedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!open || !autoPrintOnOpen || !data) { printedKeyRef.current = null; return; }
-    if (data.type === "quotation" && customQuotationTemplatesQuery.isFetching && !customQuotationTemplatesQuery.data) return;
+    if (supportsCustomPrintTemplate && customSalesTemplatesQuery.isFetching && !customSalesTemplatesQuery.data) return;
     const key = `${(data as any)?.doc?.id ?? ""}-${defaultTemplate ?? "a4"}`;
     if (printedKeyRef.current === key) return;
     printedKeyRef.current = key;
@@ -3794,7 +3834,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     const t = setTimeout(() => { handlePrint(); }, 100);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, autoPrintOnOpen, data, defaultTemplate, customQuotationTemplatesQuery.isFetching, customQuotationTemplatesQuery.data]);
+  }, [open, autoPrintOnOpen, data, defaultTemplate, supportsCustomPrintTemplate, customSalesTemplatesQuery.isFetching, customSalesTemplatesQuery.data]);
 
   // Intercept Ctrl+P / Cmd+P while the modal is open so the user gets the
   // selected template's print preview (a clean, properly-styled invoice
@@ -3829,7 +3869,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     const tmpl = typeof selected === "number" ? TEMPLATES.find(t => t.id === selected) : undefined;
     const customTemplate = typeof selected === "string" ? selectedCustomTemplate : undefined;
     if (!tmpl && !customTemplate) return;
-    if (customTemplate && data.type !== "quotation") return;
+    if (customTemplate && !supportsCustomPrintTemplate) return;
     // The detail endpoint does not include settlement figures. Template 20
     // reads the invoice list's authoritative batch settlement fields instead
     // of guessing that cash was paid or treating a credit invoice as unpaid.
@@ -3946,7 +3986,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     const nativeQuotationTemplate = customTemplate?.layoutJson?.baseTemplateVersion === 2
       ? TEMPLATES.find(template => template.id === customBaseId)
       : undefined;
-    const customContext = customTemplate ? customQuotationPrintContext(printData) : undefined;
+    const customContext = customTemplate ? customSalesPrintContext(printData) : undefined;
     const customPage = customTemplate
       ? {
           widthMm: customTemplate.widthMm ?? 210,
@@ -3963,6 +4003,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
               customTemplate.layoutJson,
               customContext,
               customPage,
+              customTemplateDocumentType!,
             )
           : renderQuotationCustomLayoutHtml(customTemplate.layoutJson, customContext!, customPage!)
         : tmpl!.fn(printData)
@@ -4224,7 +4265,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
               </Button>
             </div>
           ))}
-          {data.type === "quotation" && orderedCustomQuotationTemplates.map(template => {
+          {supportsCustomPrintTemplate && orderedCustomSalesTemplates.map(template => {
             const selectedKey = `custom:${template.id}` as `custom:${number}`;
             const isSelected = selected === selectedKey;
             const baseId = Number(template.layoutJson?.baseTemplateId);
@@ -4291,12 +4332,12 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
             );
           })}
         </div>
-        {data.type === "quotation" && customQuotationTemplatesQuery.isLoading && (
+        {supportsCustomPrintTemplate && customSalesTemplatesQuery.isLoading && (
           <p role="status" className="text-center text-xs text-muted-foreground">
-            جارٍ تحميل قوالب عروض الأسعار المخصصة…
+            جارٍ تحميل نماذج الطباعة المخصصة…
           </p>
         )}
-        {data.type === "quotation" && customQuotationTemplatesQuery.isError && (
+        {supportsCustomPrintTemplate && customSalesTemplatesQuery.isError && (
           <p role="alert" className="text-center text-xs text-destructive">
             تعذر تحميل القوالب المخصصة؛ يمكنك إعادة فتح نافذة الطباعة للمحاولة مرة أخرى.
           </p>

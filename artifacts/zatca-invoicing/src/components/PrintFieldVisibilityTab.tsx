@@ -246,7 +246,7 @@ export default function PrintFieldVisibilityTab({
   const availableDocuments = useMemo(
     () => documents.filter((item) => templateKey
       ? templateKey.startsWith("custom:")
-        ? item.key === "sales_quotation"
+        ? item.key.startsWith("sales_")
         : item.key.startsWith("sales_")
       : !item.key.startsWith("sales_")),
     [templateKey],

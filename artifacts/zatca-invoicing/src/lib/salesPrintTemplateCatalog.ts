@@ -53,3 +53,27 @@ export function getDefaultQuotationBaseTemplateId(
   }
   return available[0]?.id ?? 14;
 }
+
+export function getDefaultSalesPrintTemplateId(
+  company: {
+    printEnabledTemplates?: unknown;
+    printDefaultTemplate?: unknown;
+    printDefaultTemplateQuotation?: unknown;
+    printDefaultTemplateReturn?: unknown;
+  } | null | undefined,
+  available: SalesPrintTemplateOption[],
+  documentType: "sales_invoice" | "sales_quotation" | "sales_return",
+): number {
+  if (documentType === "sales_quotation") {
+    return getDefaultQuotationBaseTemplateId(company, available);
+  }
+  const configured = Number(
+    documentType === "sales_return"
+      ? company?.printDefaultTemplateReturn
+      : company?.printDefaultTemplate,
+  );
+  if (Number.isInteger(configured) && available.some(item => item.id === configured)) {
+    return configured;
+  }
+  return available[0]?.id ?? 14;
+}

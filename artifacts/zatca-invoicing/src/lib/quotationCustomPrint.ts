@@ -1,5 +1,5 @@
 import type { Element, Layout } from "@/pages/printDesigner/types";
-import { applyPrintFieldVisibility } from "./printFieldVisibility";
+import { applyPrintFieldVisibility, type PrintDocumentKey } from "./printFieldVisibility";
 
 export interface CustomPrintRow {
   [key: string]: string;
@@ -232,6 +232,7 @@ export function composeQuotationBaseWithCustomLayout(
   layout: Layout,
   context: CustomPrintContext,
   page: { widthMm: number; heightMm: number; name: string },
+  document: PrintDocumentKey = "sales_quotation",
 ): string {
   const widthMm = cssNumber(page.widthMm, 210, 40, 1000);
   const heightMm = cssNumber(page.heightMm, 297, 60, 2000);
@@ -240,8 +241,8 @@ export function composeQuotationBaseWithCustomLayout(
     ? layout.hiddenBaseFields.filter(field => typeof field === "string" && field.length > 0)
     : [];
   const nativeTemplateHtml = hiddenBaseFields.length > 0
-    ? applyPrintFieldVisibility(nativeHtml, "sales_quotation", {
-        sales_quotation: Object.fromEntries(hiddenBaseFields.map(field => [field, false])),
+    ? applyPrintFieldVisibility(nativeHtml, document, {
+        [document]: Object.fromEntries(hiddenBaseFields.map(field => [field, false])),
       })
     : nativeHtml;
   const elements = (Array.isArray(layout.elements) ? layout.elements : [])
