@@ -6,7 +6,7 @@
 // ZATCA QR is rendered from the stored TLV (base64) via the `qrcode` lib, the
 // same way the web builds it.
 import QRCode from "qrcode";
-import { formatUiDate, getCompanyProfile, getDecimals, getUiLanguage, uiText, type CompanyProfile } from "./appSettings";
+import { formatUiDate, getCompanyProfile, getDecimals, getShowFreeQuantityColumn, getUiLanguage, uiText, type CompanyProfile } from "./appSettings";
 import { currencySymbol, baseCurrencyCode, currencyByCode } from "./currency";
 import { isZatcaCountry } from "./zatcaBridge";
 import { applyNumberSystemToDocument } from "./numberDisplay";
@@ -87,7 +87,7 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
     : (zatca ? (isSimplified ? "Simplified Tax Invoice" : "Tax Invoice") : "Sales Invoice");
 
   // Only show the discount/free columns when at least one line uses them.
-  const showFree = doc.lines.some((l) => (Number(l.freeQty) || 0) > 0);
+  const showFree = getShowFreeQuantityColumn() && doc.lines.some((l) => (Number(l.freeQty) || 0) > 0);
   // Rendered columns: #, item, qty, [free], uom, unit price, [vat%, vat value], total.
   // The two tax columns are dropped entirely outside Saudi Arabia.
   const colCount = 6 + (zatca ? 2 : 0) + (showFree ? 1 : 0);

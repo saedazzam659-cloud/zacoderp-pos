@@ -11,7 +11,7 @@ import { listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
-import { getCompanyProfile } from "../lib/appSettings";
+import { getCompanyProfile, useShowFreeQuantityColumn } from "../lib/appSettings";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
@@ -232,6 +232,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   onCancel: () => void; onDone: () => void;
 }) {
   const isEdit = !!initial;
+  const showFreeQuantityColumn = useShowFreeQuantityColumn();
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.quotationDate ?? todayStr());
   const [validUntil, setValidUntil] = useState(initial?.validUntil ?? "");
@@ -467,7 +468,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           <Th style={{ minWidth: 240 }}>الصنف</Th>
           <Th style={{ width: 130 }}>الوحدة</Th>
           <Th style={{ width: 180 }}>الكمية</Th>
-          <Th style={{ width: 80 }}>مجاني</Th>
+          {showFreeQuantityColumn && <Th style={{ width: 80 }}>مجاني</Th>}
           <Th style={{ width: 240 }}>سعر الوحدة</Th>
           <Th style={{ width: 170 }}>الخصم</Th>
           <Th style={{ width: 80 }}>ض. %</Th>
@@ -476,7 +477,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           <Th style={{ width: 40 }}></Th>
         </tr></thead>
         <tbody>
-          {lines.length === 0 && <EmptyItemsRow colSpan={10} />}
+          {lines.length === 0 && <EmptyItemsRow colSpan={showFreeQuantityColumn ? 10 : 9} />}
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>
@@ -499,7 +500,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
                 />
               </Td>
               <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={input} /></Td>
-              <Td><input type="number" step="0.001" value={l.freeQty ?? 0} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={input} /></Td>
+              {showFreeQuantityColumn && <Td><input type="number" step="0.001" value={l.freeQty ?? 0} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={input} /></Td>}
               <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={input} /></Td>
               <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} /></Td>
               <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={input} /></Td>

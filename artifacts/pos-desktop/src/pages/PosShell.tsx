@@ -19,7 +19,7 @@ import { SearchCombobox } from "./_adminUi";
 import { TAURI_MODE, type CashierContext } from "../lib/tauri-shim";
 import NumberSystemControl from "./NumberSystemControl";
 import LanguageControl from "../components/LanguageControl";
-import { uiText, useUiLanguage } from "../lib/appSettings";
+import { setShowFreeQuantityColumn, uiText, useShowFreeQuantityColumn, useUiLanguage } from "../lib/appSettings";
 import PeripheralsSettings from "./PeripheralsSettings";
 import SalesScreen from "./SalesScreen";
 import RegisterScreen from "./RegisterScreen";
@@ -1593,6 +1593,8 @@ function StandaloneDashboardView({
 
       {isAdmin && <TaxSettingsCard />}
 
+      {isAdmin && <FreeQuantityColumnSettingsCard />}
+
       {license && (
         <section style={S.card}>
           <h2 style={S.h2}>معلومات الترخيص</h2>
@@ -1619,6 +1621,40 @@ function StandaloneDashboardView({
         </section>
       )}
     </div>
+  );
+}
+
+function FreeQuantityColumnSettingsCard() {
+  const show = useShowFreeQuantityColumn();
+  const [saved, setSaved] = useState<"" | "ok">("");
+
+  function toggle(next: boolean) {
+    setShowFreeQuantityColumn(next);
+    setSaved("ok");
+    setTimeout(() => setSaved(""), 1500);
+  }
+
+  return (
+    <section style={S.card}>
+      <h2 style={S.h2}>إعدادات عرض الفواتير</h2>
+      <p style={{ color: "#64748b", fontSize: 13, marginBottom: 12 }}>
+        يمكنك إظهار عمود «مجاني» في فواتير المبيعات وعروض الأسعار. عند إخفائه لا يظهر في طباعة فاتورة المبيعات أيضًا، ويكون مخفيًا افتراضيًا عند تثبيت البرنامج.
+      </p>
+      <label style={{ display: "flex", alignItems: "center", gap: 10, width: "fit-content", cursor: "pointer", fontSize: 14, fontWeight: 600 }}>
+        <input
+          type="checkbox"
+          checked={show}
+          onChange={(event) => toggle(event.target.checked)}
+          style={{ width: 18, height: 18, accentColor: "#087f69" }}
+        />
+        إظهار عمود مجاني
+      </label>
+      {saved === "ok" && (
+        <span style={{ display: "inline-block", marginTop: 10, color: "#16a34a", fontSize: 13, fontWeight: 600 }}>
+          ✓ تم حفظ الإعداد
+        </span>
+      )}
+    </section>
   );
 }
 

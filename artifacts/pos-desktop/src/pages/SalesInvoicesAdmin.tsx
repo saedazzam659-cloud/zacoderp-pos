@@ -16,9 +16,9 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
-import { getCompanyProfile, useHideZeros, blankIfZero, uiText, useUiLanguage } from "../lib/appSettings";
+import { getCompanyProfile, useHideZeros, useShowFreeQuantityColumn, blankIfZero, uiText, useUiLanguage } from "../lib/appSettings";
 import {
-  Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
+  Page, Card, Table, Th, Td, Field, ErrorMsg, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, DocumentFormHeader,
   documentFormStyles, invoiceEditorShell, tabPanel, EmptyItemsRow,
@@ -453,6 +453,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   const text = (ar: string, en: string) => uiText(ar, en, language);
   const isEdit = !!initial;
   const hideZeros = useHideZeros();
+  const showFreeQuantityColumn = useShowFreeQuantityColumn();
   const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.invoiceDate ?? todayStr());
@@ -936,7 +937,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       </div>
 
       <div
-        className="zlines-panel"
+        className="zlines-panel zsales-invoice-lines"
         style={activeTab === "lines"
           ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }
           : linesPanel(activeTab)}
@@ -951,10 +952,10 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       <Table style={{ width: "100%", minWidth: 900, tableLayout: "fixed" }}>
         <thead><tr>
           <Th style={{ width: "3%", textAlign: "center" }}>#</Th>
-          <Th style={{ width: "23%" }}>{text("الصنف", "Item")}</Th>
+          <Th style={{ width: showFreeQuantityColumn ? "23%" : "29%" }}>{text("الصنف", "Item")}</Th>
           <Th style={{ width: "10%" }}>{text("الوحدة", "Unit")}</Th>
           <Th style={{ width: "8%", textAlign: "center" }}>{text("الكمية", "Quantity")}</Th>
-          <Th style={{ width: "6%", textAlign: "center" }}>{text("مجاني", "Free")}</Th>
+          {showFreeQuantityColumn && <Th style={{ width: "6%", textAlign: "center" }}>{text("مجاني", "Free")}</Th>}
           <Th style={{ width: "13%", textAlign: "center" }}>{text("سعر الوحدة", "Unit price")}</Th>
           <Th style={{ width: "12%" }}>{text("الخصم", "Discount")}</Th>
           <Th style={{ width: "6%", textAlign: "center" }}>{text("ض. %", "Tax %")}</Th>
@@ -962,7 +963,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           <Th style={{ width: "7%", textAlign: "center" }}>{text("إجراءات", "Actions")}</Th>
         </tr></thead>
         <tbody>
-          {lines.length === 0 && <EmptyItemsRow colSpan={10} />}
+          {lines.length === 0 && <EmptyItemsRow colSpan={showFreeQuantityColumn ? 10 : 9} />}
           {lines.map((l, i) => {
             const expanded = expandedLineIndices.has(i);
             return (
@@ -1005,7 +1006,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                     })()}
                   </Td>
                   <Td><input type="number" step="0.001" value={blankIfZero(l.qty, hideZeros)} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
-                  <Td><input type="number" step="0.001" value={blankIfZero(l.freeQty ?? 0, hideZeros)} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
+                  {showFreeQuantityColumn && <Td><input type="number" step="0.001" value={blankIfZero(l.freeQty ?? 0, hideZeros)} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>}
                   <Td><input type="number" step="0.01" value={blankIfZero(l.unitPrice, hideZeros)} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
                   <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} navAttr="1" inputClassName="zfield" onEnterNavigate={(el) => advanceFrom(el)} /></Td>
                   <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
@@ -1031,7 +1032,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                 </tr>
                 {expanded && (
                   <tr className="zline-details">
-                    <Td colSpan={10}>
+                    <Td colSpan={showFreeQuantityColumn ? 10 : 9}>
                       <div className="zline-details-panel">
                         {itemHasBrands(l.itemId) && (
                           <div>
@@ -1060,15 +1061,6 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           })}
         </tbody>
       </Table>
-      </div>
-      <div style={{ display: "flex", justifyContent: "flex-start", gap: 8, marginTop: 8 }}>
-        <button onClick={addLine} type="button" style={{ padding: "7px 14px", background: "#fff", color: "#087f69", border: "1px solid #9bd6c9", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
-          + {text("إضافة صنف", "Add item")}
-        </button>
-        <button onClick={() => { setQuickCreateError(null); setQuickCreate("item"); }} type="button"
-          style={{ padding: "7px 14px", background: "linear-gradient(135deg,#eff6ff,#f5f3ff)", color: "#4338ca", border: "1px solid #c7d2fe", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
-          ✨ {text("صنف جديد سريع", "Quick new item")}
-        </button>
       </div>
       <div style={docFormPinned}>
       <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
@@ -1129,10 +1121,36 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       <div style={docFormPinned}>
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
-      <Actions>
-        <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
-        <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : (isEdit ? text("حفظ التعديل", "Save changes") : text("حفظ وترحيل", "Save and post"))}</button>
-      </Actions>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {activeTab === "lines" && (
+            <>
+              <button
+                onClick={addLine}
+                type="button"
+                title={text("إضافة صنف", "Add item")}
+                aria-label={text("إضافة صنف", "Add item")}
+                style={{ ...btnSecondary, padding: "5px 7px", color: "#087f69", borderColor: "#9bd6c9", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}
+              >
+                + {text("إضافة صنف", "Add item")}
+              </button>
+              <button
+                onClick={() => { setQuickCreateError(null); setQuickCreate("item"); }}
+                type="button"
+                title={text("صنف جديد سريع", "Quick new item")}
+                aria-label={text("صنف جديد سريع", "Quick new item")}
+                style={{ ...btnSecondary, padding: "5px 7px", color: "#4338ca", borderColor: "#c7d2fe", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}
+              >
+                ✨ {text("صنف جديد", "New item")}
+              </button>
+            </>
+          )}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
+          <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : (isEdit ? text("حفظ التعديل", "Save changes") : text("حفظ وترحيل", "Save and post"))}</button>
+        </div>
+      </div>
       </div>
       {quickCreate && (
         <QuickCreateDialog

@@ -187,6 +187,7 @@ export const documentFormStyles = `
   .zdoc-form .zline-detail-label{display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:5px;}
   .zdoc-form .zlines-panel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
   .zdoc-form .zlines-wrap{flex:0 1 auto !important;min-height:0;max-height:286px;overflow:auto !important;}
+  .zdoc-form .zsales-invoice-lines .zlines-wrap{max-height:360px;}
   .zdoc-form .zlines-wrap [data-testid="empty-items-state"] > td{height:140px !important;}
   .zdoc-form .zlines-wrap [data-testid="empty-items-state"] > td > div{height:140px !important;}
   .zdoc-form .zsales-totals-grid{grid-template-columns:repeat(6,minmax(0,1fr)) !important;}
