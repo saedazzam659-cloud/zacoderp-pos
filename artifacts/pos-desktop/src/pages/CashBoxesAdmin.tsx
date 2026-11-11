@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { listCashBoxes, createCashBox, updateCashBox, deleteCashBox, listCurrencies, type CashBox, type Currency } from "../lib/accounting";
-import { Page, Card, Table, Th, Td, Empty, input, btnPrimary, btnSecondary, btnLink, fmtCurrency, SearchCombobox } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, input, btnPrimary, btnSecondary, btnLink, fmtCurrency, SearchCombobox, errText } from "./_adminUi";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type EditData = { name: string; currencyCode: string };
@@ -39,12 +39,12 @@ export default function CashBoxesAdmin() {
       if (edit.mode === "new") await createCashBox(edit.data.name, edit.data.currencyCode);
       else await updateCashBox(edit.id, edit.data.name, edit.data.currencyCode);
       setEdit(null); await refresh();
-    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save cashbox.")); }
+    } catch (e: any) { setErr(errText(e, text("تعذر حفظ بيانات الخزينة", "Could not save cashbox."))); }
     finally { setBusy(false); }
   }
   async function remove(b: CashBox) {
     if (!confirm(text(`حذف الخزينة ${b.name}؟`, `Delete cashbox “${b.name}”?`))) return;
-    try { await deleteCashBox(b.id); await refresh(); } catch (e: any) { alert(e?.message ?? text("فشل", "Could not delete cashbox.")); }
+    try { await deleteCashBox(b.id); await refresh(); } catch (e: any) { alert(errText(e, text("تعذر حذف الخزينة", "Could not delete cashbox."))); }
   }
 
   const currencyOpts = currencies.length > 0

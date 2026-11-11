@@ -9,19 +9,25 @@ import { getDecimals, useUiLanguage } from "../lib/appSettings";
 import type { DiscType, DiscountResult } from "../lib/discount";
 import { exportToExcel, exportToPdf, type ExportColumn } from "../lib/exporters";
 
-export function Page({ title, subtitle, right, children }: {
+export function Page({ title, subtitle, right, children, hideHeader = false, fillHeight = false }: {
   title: string; subtitle?: string; right?: ReactNode; children: ReactNode;
+  hideHeader?: boolean; fillHeight?: boolean;
 }) {
   const language = useUiLanguage();
   return (
-    <div dir={language === "en" ? "ltr" : "rtl"} style={{ padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16, minWidth: 0 }}>
-        <div>
-          <h2 style={{ margin: 0 }}>{title}</h2>
-          {subtitle && <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>{subtitle}</div>}
+    <div dir={language === "en" ? "ltr" : "rtl"} style={{
+      padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box",
+      ...(fillHeight ? { height: "100%", minHeight: 0, display: "flex", flexDirection: "column" } : {}),
+    }}>
+      {!hideHeader && (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16, minWidth: 0 }}>
+          <div>
+            <h2 style={{ margin: 0 }}>{title}</h2>
+            {subtitle && <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>{subtitle}</div>}
+          </div>
+          <div>{right}</div>
         </div>
-        <div>{right}</div>
-      </div>
+      )}
       {children}
     </div>
   );

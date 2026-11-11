@@ -52,7 +52,7 @@ export default function FinancialTransactionsAdmin() {
   return (
     <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title={text("المعاملات المالية", "Financial transactions")}
+      title={text("سندات القبض والصرف", "Receipt and payment vouchers")}
       subtitle={text("سندات القبض والصرف — يتم ترحيل القيد المحاسبي تلقائياً", "Receipts and payments — journal entries post automatically")}
       right={<div style={{ display: "flex", gap: 8 }}>
         <button onClick={() => setCreating({ type: "receipt" })}

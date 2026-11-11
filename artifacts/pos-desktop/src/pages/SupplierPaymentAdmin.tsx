@@ -8,7 +8,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
-  ExportButtons, gridToExportCols,
+  ExportButtons, gridToExportCols, errText,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -74,8 +74,8 @@ export default function SupplierPaymentAdmin() {
   return (
     <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title={text("سند صرف للموردين", "Supplier payment vouchers")}
-      subtitle={text("سند صرف مرتبط بالمورد — يخصم من رصيد المورد ويظهر في كشف حسابه", "Supplier payments reduce the supplier balance and appear on the supplier statement")}
+      title={text("سند الصرف", "Payment vouchers")}
+      subtitle={text("سند صرف للمورد — يُخصم من رصيده ويظهر في كشف حسابه", "Supplier payments reduce the supplier balance and appear on the supplier statement")}
       right={
         <button onClick={() => setCreating(true)}
           style={{ ...btnPrimary, background: "#b91c1c", opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}
@@ -216,13 +216,17 @@ function PayForm({ deps, allTx, onCancel, onDone }: {
       });
       emitData("vouchers", "journal", "suppliers", "cashboxes", "banks");
       onDone();
-    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save payment voucher.")); }
+      } catch (e: any) { setErr(errText(e, text("تعذر حفظ سند الصرف", "Could not save payment voucher."))); }
     finally { setBusy(false); }
   }
 
   return (
     <div>
-      <h3 style={{ marginTop: 0, color: "#b91c1c" }}>{text("سند صرف جديد", "New payment voucher")}</h3>
+      <div style={{ marginBottom: 12, padding: "10px 14px", background: "#fff1f2", border: "1px solid #fecdd3", borderRight: "4px solid #e11d48", borderRadius: 8 }}>
+        <h3 style={{ margin: 0, color: "#9f1239", fontSize: 16 }}>{text("سند صرف جديد", "New payment voucher")}</h3>
+        <div style={{ marginTop: 3, color: "#4b5563", fontSize: 12 }}>{text("يسجل المبلغ المصروف ويحدّث رصيد المورد", "Records the payment and updates the supplier balance")}</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, alignItems: "end" }}>
       <Field label={text("المورد", "Supplier")}>
         <SearchCombobox
           value={supplierId ?? ""}
@@ -234,7 +238,6 @@ function PayForm({ deps, allTx, onCancel, onDone }: {
           ]}
         />
       </Field>
-
       {supplierId != null && (
         <Field label={text("ربط بفاتورة شراء (اختياري)", "Link to purchase invoice (optional)")}>
           <SearchCombobox
@@ -248,18 +251,16 @@ function PayForm({ deps, allTx, onCancel, onDone }: {
           />
         </Field>
       )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-        <Field label={text("المبلغ", "Amount")}><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} /></Field>
-        <Field label={text("المحفظة", "Wallet")}>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? btnPrimary : btnSecondary}>{text("خزينة", "Cashbox")}</button>
-            <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? btnPrimary : btnSecondary}>{text("بنك", "Bank")}</button>
+      <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+      <Field label={text("المبلغ", "Amount")}><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} /></Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, alignItems: "end", marginTop: 2 }}>
+        <Field label={text("طريقة الصرف", "Payment method")}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? { ...btnPrimary, background: "#b91c1c" } : btnSecondary}>{text("نقدي", "Cash")}</button>
+            <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? { ...btnPrimary, background: "#b91c1c" } : btnSecondary}>{text("بنكي", "Bank")}</button>
           </div>
         </Field>
-      </div>
-
       {walletKind === "cash" ? (
         <Field label={text("الخزينة", "Cashbox")}>
           <SearchCombobox value={cashBoxId ?? ""} onChange={(v) => setCashBoxId(Number(v) || null)} style={input}
@@ -271,8 +272,6 @@ function PayForm({ deps, allTx, onCancel, onDone }: {
             options={deps.banks.map((b) => ({ value: b.id, label: `${b.name} (${fmt(b.balance)})` }))} />
         </Field>
       )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <Field label={text("الفرع", "Branch")}>
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
         </Field>
@@ -280,7 +279,7 @@ function PayForm({ deps, allTx, onCancel, onDone }: {
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
       </div>
-      <Field label={text("البيان", "Description")}><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
+      <Field label={text("البيان", "Description")} style={{ marginTop: 2 }}><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 44, resize: "vertical" }} /></Field>
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>

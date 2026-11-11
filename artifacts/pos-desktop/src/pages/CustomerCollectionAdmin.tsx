@@ -9,7 +9,7 @@ import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
-  ExportButtons, gridToExportCols,
+  ExportButtons, gridToExportCols, errText,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -76,12 +76,12 @@ export default function CustomerCollectionAdmin() {
   return (
     <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
-      title={text("تحصيل من العملاء", "Customer receipts")}
+      title={text("سند القبض", "Receipt vouchers")}
       subtitle={text("سند قبض مرتبط بالعميل — يخصم من رصيد العميل ويظهر في كشف حسابه", "Customer receipts reduce the customer balance and appear on the customer statement")}
       right={
         <button onClick={() => setCreating(true)}
           style={{ ...btnPrimary, background: "#15803d", opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}
-          disabled={!deps || creating}>+ {text("سند تحصيل", "Receipt voucher")}</button>
+          disabled={!deps || creating}>+ {text("سند قبض", "Receipt voucher")}</button>
       }
     >
       {creating && deps && (
@@ -91,7 +91,7 @@ export default function CustomerCollectionAdmin() {
           </div>
         </Card>
       )}
-      {rows.length > 0 && <GridToolbar grid={grid} placeholder={text("🔍 بحث في سندات التحصيل…", "🔍 Search receipt vouchers…")} extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="customer-receipts" title={text("سندات التحصيل من العملاء", "Customer receipt vouchers")} />} />}
+      {rows.length > 0 && <GridToolbar grid={grid} placeholder={text("🔍 بحث في سندات القبض…", "🔍 Search receipt vouchers…")} extra={<ExportButtons columns={gridToExportCols(columns)} rows={grid.view} filenameBase="customer-receipts" title={text("سندات القبض من العملاء", "Customer receipt vouchers")} />} />}
       {rows.length > 0 && (
         <ActionBar selectedLabel={sel.selected ? sel.selected.txNo : null}>
           <ActionBtn label={text("طباعة", "Print")} icon="🖨️" tone="primary" disabled={!sel.selected}
@@ -100,7 +100,7 @@ export default function CustomerCollectionAdmin() {
               const inv = invByApplied(f);
               printVoucher({
                 kind: "receipt",
-                title: text("سند تحصيل", "Receipt voucher"),
+                title: text("سند قبض", "Receipt voucher"),
                 docNo: f.txNo,
                 date: f.txDate,
                 partyName: f.partyName ?? null,
@@ -114,7 +114,7 @@ export default function CustomerCollectionAdmin() {
         </ActionBar>
       )}
       <Card>
-        {rows.length === 0 && !creating ? <Empty text={text("لا توجد سندات تحصيل", "No receipt vouchers")} /> : grid.view.length === 0 ? <Empty text={text("لا نتائج مطابقة للبحث", "No matching results")} /> : (
+        {rows.length === 0 && !creating ? <Empty text={text("لا توجد سندات قبض", "No receipt vouchers")} /> : grid.view.length === 0 ? <Empty text={text("لا نتائج مطابقة للبحث", "No matching results")} /> : (
           <Table>
             <thead>
               <tr>
@@ -219,13 +219,17 @@ function CollectForm({ deps, allTx, onCancel, onDone }: {
       });
       emitData("vouchers", "journal", "customers", "cashboxes", "banks");
       onDone();
-    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save receipt voucher.")); }
+      } catch (e: any) { setErr(errText(e, text("تعذر حفظ سند القبض", "Could not save receipt voucher."))); }
     finally { setBusy(false); }
   }
 
   return (
     <div>
-      <h3 style={{ marginTop: 0, color: "#15803d" }}>{text("سند تحصيل جديد", "New receipt voucher")}</h3>
+      <div style={{ marginBottom: 12, padding: "10px 14px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRight: "4px solid #16a34a", borderRadius: 8 }}>
+        <h3 style={{ margin: 0, color: "#166534", fontSize: 16 }}>{text("سند قبض جديد", "New receipt voucher")}</h3>
+        <div style={{ marginTop: 3, color: "#4b5563", fontSize: 12 }}>{text("يسجل المبلغ في الخزينة أو البنك ويحدّث رصيد العميل", "Records the receipt in cash or bank and updates the customer balance")}</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, alignItems: "end" }}>
       <Field label={text("العميل", "Customer")}>
         <SearchCombobox
           value={customerId ?? ""}
@@ -251,18 +255,16 @@ function CollectForm({ deps, allTx, onCancel, onDone }: {
           />
         </Field>
       )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-        <Field label={text("المبلغ", "Amount")}><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} /></Field>
-        <Field label={text("المحفظة", "Wallet")}>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? btnPrimary : btnSecondary}>{text("خزينة", "Cashbox")}</button>
-            <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? btnPrimary : btnSecondary}>{text("بنك", "Bank")}</button>
+      <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+      <Field label={text("المبلغ", "Amount")}><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} /></Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, alignItems: "end", marginTop: 2 }}>
+        <Field label={text("طريقة القبض", "Receipt method")}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? { ...btnPrimary, background: "#15803d" } : btnSecondary}>{text("نقدي", "Cash")}</button>
+            <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? { ...btnPrimary, background: "#15803d" } : btnSecondary}>{text("بنكي", "Bank")}</button>
           </div>
         </Field>
-      </div>
-
       {walletKind === "cash" ? (
         <Field label={text("الخزينة", "Cashbox")}>
           <SearchCombobox value={cashBoxId ?? ""} onChange={(v) => setCashBoxId(Number(v) || null)} style={input}
@@ -274,8 +276,6 @@ function CollectForm({ deps, allTx, onCancel, onDone }: {
             options={deps.banks.map((b) => ({ value: b.id, label: `${b.name} (${fmt(b.balance)})` }))} />
         </Field>
       )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <Field label={text("الفرع", "Branch")}>
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
         </Field>
@@ -283,7 +283,7 @@ function CollectForm({ deps, allTx, onCancel, onDone }: {
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
       </div>
-      <Field label={text("البيان", "Description")}><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
+      <Field label={text("البيان", "Description")} style={{ marginTop: 2 }}><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 44, resize: "vertical" }} /></Field>
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>

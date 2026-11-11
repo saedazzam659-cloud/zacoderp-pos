@@ -40,7 +40,10 @@ import { type WindowsView } from "../lib/moduleRegistry";
 
 type FLine = SalesLine & DiscFields & { unitKey?: string; brandId?: number | null; brandName?: string | null };
 
-export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: WindowsView) => void }) {
+export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
+  onNavigate?: (v: WindowsView) => void;
+  onFormOpenChange?: (open: boolean) => void;
+}) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<SalesInvoice[]>([]);
@@ -49,6 +52,7 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
   const [creating, setCreating] = useState(false);
   const [editDoc, setEditDoc] = useState<SalesInvoice | null>(null);
   const formOpen = creating || editDoc != null;
+  useEffect(() => { onFormOpenChange?.(formOpen); }, [formOpen, onFormOpenChange]);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] } | null>(null);
@@ -206,6 +210,8 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
     <Page
       title={text("فواتير المبيعات", "Sales invoices")}
       subtitle={text(`${rows.length} فاتورة — يتم ترحيل قيد المبيعات وتكلفة البضاعة المباعة تلقائياً عند الحفظ`, `${rows.length} invoices — sales and cost-of-goods-sold entries post automatically when saved`)}
+      hideHeader={formOpen}
+      fillHeight={formOpen}
       right={
         <button onClick={() => setCreating(true)} disabled={!deps || formOpen}
           style={{ ...btnPrimary, opacity: (!deps || formOpen) ? 0.5 : 1, cursor: (!deps || formOpen) ? "not-allowed" : "pointer" }}>
@@ -215,9 +221,9 @@ export default function SalesInvoicesAdmin({ onNavigate }: { onNavigate?: (v: Wi
     >
       <ErrorMsg text={err} />
       {formOpen && deps && (
-        <Card style={{ marginBottom: 12 }}>
-          <div style={{ padding: 16 }}>
-            <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc}
+        <Card style={{ marginBottom: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: 10, flex: 1, minHeight: 0 }}>
+            <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc} invoiceCount={rows.length}
               onCancel={() => { setCreating(false); setEditDoc(null); }}
               onDone={() => { setCreating(false); setEditDoc(null); void refresh(); }} />
           </div>
@@ -431,9 +437,10 @@ function invoiceToPrintDoc(p: SalesInvoice): PrintDoc {
   };
 }
 
-function CreateForm({ deps, initial, onCancel, onDone }: {
+function CreateForm({ deps, initial, invoiceCount, onCancel, onDone }: {
   deps: { customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] };
   initial?: SalesInvoice | null;
+  invoiceCount: number;
   onCancel: () => void; onDone: () => void;
 }) {
   const language = useUiLanguage();
@@ -745,7 +752,9 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   }
 
   return (
-    <div ref={formRef} style={docFormShell}>
+    <div ref={formRef} className="zsales-invoice-form" style={{
+      ...docFormShell, display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden",
+    }}>
       <style>{`
         .zfield{transition:border-color .12s ease, box-shadow .12s ease;}
         .zfield:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.18);}
@@ -758,11 +767,26 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         .zline-details-panel{display:grid;grid-template-columns:minmax(220px,1fr) minmax(280px,2fr);gap:12px;align-items:end;}
         .zline-detail-label{display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:5px;}
         .zsales-totals-grid{grid-template-columns:repeat(6,minmax(0,1fr)) !important;}
+        .zsales-invoice-form .zlines-panel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
+        .zsales-invoice-form .zlines-wrap{flex:1;min-height:110px;overflow:auto !important;}
+        .zsales-invoice-form .zlines-wrap [data-testid="empty-items-state"] > td{height:140px !important;}
+        .zsales-invoice-form .zlines-wrap [data-testid="empty-items-state"] > td > div{height:140px !important;}
         @media(max-width:1100px){.zsales-totals-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important;}}
         @media(max-width:700px){.zsales-totals-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}}
         @media(max-width:700px){.zline-details-panel{grid-template-columns:1fr;}}
       `}</style>
-      <h3 style={{ marginTop: 0 }}>{isEdit ? `${text("تعديل الفاتورة", "Edit invoice")} ${initial?.invoiceNo ?? ""}` : text("فاتورة مبيعات جديدة", "New sales invoice")}</h3>
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
+        padding: "9px 14px", marginBottom: 2, border: "1px solid #bfdbfe", borderRight: "4px solid #2563eb",
+        borderRadius: 9, background: "linear-gradient(100deg,#eff6ff 0%,#f8fbff 100%)",
+      }}>
+        <strong style={{ fontSize: 16, color: "#1e3a8a" }}>
+          {isEdit ? `${text("تعديل الفاتورة", "Edit invoice")} ${initial?.invoiceNo ?? ""}` : text("فاتورة مبيعات جديدة", "New sales invoice")}
+        </strong>
+        <span style={{ fontSize: 12, color: "#475569" }}>
+          {text(`${invoiceCount} فاتورة — يتم ترحيل قيد المبيعات وتكلفة البضاعة المباعة تلقائياً عند الحفظ`, `${invoiceCount} invoices — sales and cost-of-goods-sold entries post automatically when saved`)}
+        </span>
+      </div>
       <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
         { key: "basic", label: text("البيانات الأساسية", "Basic information") },
         { key: "lines", label: `${text("بنود الأصناف", "Items")} (${selectedLineCount})` },
@@ -851,7 +875,12 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </div>
       </div>
 
-      <div style={linesPanel(activeTab)}>
+      <div
+        className="zlines-panel"
+        style={activeTab === "lines"
+          ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }
+          : linesPanel(activeTab)}
+      >
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
         <strong style={{ fontSize: 15 }}>{text("بنود الأصناف", "Invoice items")}</strong>
         <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>

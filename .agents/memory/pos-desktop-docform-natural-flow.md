@@ -3,13 +3,13 @@ name: POS Desktop document-form layout
 description: Why back-office doc forms must use natural page flow, not a fixed-height internal-scroll shell.
 ---
 
-The 4 shared-helper document forms (SalesInvoicesAdmin, PurchasesAdmin, SalesReturnsAdmin, PurchaseReturnsAdmin) render inside PosShell `pagePad`, which already owns the vertical scroll (`overflowY:auto`). Their shared layout helpers live in `_adminUi.tsx` (`docFormShell`, `linesPanel`, `contentPanel`, `linesScroll`) and MUST be plain natural block flow — the page wrapper scrolls the whole form as one, web-parity.
+The 4 shared-helper document forms (SalesInvoicesAdmin, PurchasesAdmin, SalesReturnsAdmin, PurchaseReturnsAdmin) normally use natural page flow inside PosShell `pagePad`; don't impose a fixed-height inner shell on all of them.
 
-**Rule:** never give these doc-form helpers a fixed viewport height + internal scroll.
+**Rule:** the Windows sales-invoice create/edit screen is an explicit exception: it must fit the available viewport with no outer vertical scroll, and only the invoice-items grid may scroll vertically. Keep its heading and posting note together in the blue header. Other document forms retain natural flow unless the user requests the same treatment.
 
-**Why:** a `docFormShell: height calc(100vh-200px) + overflow:hidden` with `linesScroll: flex:1/overflow:auto` collapsed the lines grid to a tiny header-only scroll box on the (shorter) Windows window — the title + add-line button + totals ate the height and flexbox shrank the flex:1 grid first. Two nested scroll owners (pagePad + inner shell) fight; the inner one wins and starves the grid. Users saw "شكل بايظ".
+**Why:** on November 11, 2026, the user explicitly asked that Windows invoices appear complete without an outer scrollbar and that scrolling stay inside the item grid. The previous shared fixed-height approach was rejected because it collapsed the grid on shorter windows.
 
-**How to apply:** keep `linesScroll` to `overflowX:auto` only (the table is ~1290px wide → needs horizontal scroll); let vertical scrolling belong to `pagePad`. The POS register (SalesScreen/ReturnsScreen) uses its OWN local `S.linesScroll`, so it is unaffected by these shared helpers — don't confuse the two.
+**How to apply:** scope the bounded flex layout to the sales-invoice screen only; use `min-height:0` through its flex ancestors and give the active items panel a flexible `overflow:auto` grid. Keep other screens' normal page scrolling unchanged. The POS register (SalesScreen/ReturnsScreen) has its own local `S.linesScroll`.
 
 New item tabs should open with no editable blank lines and a calm empty-state area about six item-row heights tall. Add an actual line only when the user requests one; preserve real prefilled lines when editing or converting a source document.
 

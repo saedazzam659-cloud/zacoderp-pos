@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { listBanks, createBank, updateBank, deleteBank, listCurrencies, type Bank, type Currency } from "../lib/accounting";
-import { Page, Card, Table, Th, Td, Empty, input, btnPrimary, btnSecondary, btnLink, fmtCurrency, SearchCombobox } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, input, btnPrimary, btnSecondary, btnLink, fmtCurrency, SearchCombobox, errText } from "./_adminUi";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 
 type EditData = { name: string; accountNo: string; currencyCode: string };
@@ -40,12 +40,12 @@ export default function BanksAdmin() {
       if (edit.mode === "new") await createBank(name, accountNo || null, currencyCode);
       else await updateBank(edit.id, name, accountNo || null, currencyCode);
       setEdit(null); await refresh();
-    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save bank.")); }
+    } catch (e: any) { setErr(errText(e, text("تعذر حفظ بيانات البنك", "Could not save bank."))); }
     finally { setBusy(false); }
   }
   async function remove(b: Bank) {
     if (!confirm(text(`حذف البنك ${b.name}؟`, `Delete bank “${b.name}”?`))) return;
-    try { await deleteBank(b.id); await refresh(); } catch (e: any) { alert(e?.message ?? text("فشل", "Could not delete bank.")); }
+    try { await deleteBank(b.id); await refresh(); } catch (e: any) { alert(errText(e, text("تعذر حذف البنك", "Could not delete bank."))); }
   }
 
   const currencyOpts = currencies.length > 0
