@@ -47,4 +47,6 @@ export interface Layout {
   margins?: { top: number; right: number; bottom: number; left: number };
   baseTemplateId?: number;
   baseTemplateVersion?: number;
+  /** Native quotation fields removed from this editable copy of the base template. */
+  hiddenBaseFields?: string[];
 }

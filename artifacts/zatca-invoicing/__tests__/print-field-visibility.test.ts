@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   inferPrintFieldFromLabel,
+  inferPrintColumnFromLabel,
   isPrintFieldVisible,
   shouldRenderPrintColumn,
 } from "../src/lib/printFieldVisibility.ts";
@@ -84,4 +85,10 @@ test("Arabic print labels identify fields even when followed by values", () => {
   assert.equal(inferPrintFieldFromLabel("تاريخ الإنشاء: 2026/11/11", "sales_quotation"), "createdAt");
   assert.equal(inferPrintFieldFromLabel("تاريخ العرض: 2026/11/11", "sales_quotation"), "date");
   assert.equal(inferPrintFieldFromLabel("ملاحظات: تسليم عاجل", "sales_quotation"), "notes");
+});
+
+test("print designer table headers map to independently hideable columns", () => {
+  assert.equal(inferPrintColumnFromLabel("الخصم"), "discountAmount");
+  assert.equal(inferPrintColumnFromLabel("الكمية المجانية"), "freeQuantity");
+  assert.equal(inferPrintColumnFromLabel("قيمة الخصم"), "discountAmount");
 });

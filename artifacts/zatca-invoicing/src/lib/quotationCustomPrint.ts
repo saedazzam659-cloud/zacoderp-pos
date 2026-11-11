@@ -1,4 +1,5 @@
 import type { Element, Layout } from "@/pages/printDesigner/types";
+import { applyPrintFieldVisibility } from "./printFieldVisibility";
 
 export interface CustomPrintRow {
   [key: string]: string;
@@ -235,12 +236,20 @@ export function composeQuotationBaseWithCustomLayout(
   const widthMm = cssNumber(page.widthMm, 210, 40, 1000);
   const heightMm = cssNumber(page.heightMm, 297, 60, 2000);
   const offsets = nativePageOffsetsMm(nativeHtml);
+  const hiddenBaseFields = Array.isArray(layout.hiddenBaseFields)
+    ? layout.hiddenBaseFields.filter(field => typeof field === "string" && field.length > 0)
+    : [];
+  const nativeTemplateHtml = hiddenBaseFields.length > 0
+    ? applyPrintFieldVisibility(nativeHtml, "sales_quotation", {
+        sales_quotation: Object.fromEntries(hiddenBaseFields.map(field => [field, false])),
+      })
+    : nativeHtml;
   const elements = (Array.isArray(layout.elements) ? layout.elements : [])
     .map(element => renderElement(element, context))
     .join("");
   const overlay = `<div aria-hidden="true" style="position:absolute;top:-${offsets.top}mm;left:-${offsets.left}mm;width:${widthMm}mm;height:${heightMm}mm;overflow:hidden;background:transparent;z-index:2147483647;pointer-events:none;margin:0;padding:0;box-sizing:border-box">${elements}</div>`;
   const bodyClose = /<\/body\s*>/i;
-  return bodyClose.test(nativeHtml)
-    ? nativeHtml.replace(bodyClose, `${overlay}</body>`)
-    : `${nativeHtml}${overlay}`;
+  return bodyClose.test(nativeTemplateHtml)
+    ? nativeTemplateHtml.replace(bodyClose, `${overlay}</body>`)
+    : `${nativeTemplateHtml}${overlay}`;
 }

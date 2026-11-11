@@ -8,6 +8,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import {
+  normalizeDragSelection,
+  selectionContainsCenter,
+  selectionIntersects,
+  type SelectionBounds,
+} from "./printDesigner/selection";
+import {
   Plus, Trash2, Save, Copy, FileText, Image as ImageIcon, Type, Square,
   Minus, Table as TableIcon, Tag, Star, Download, Printer, ZoomIn, ZoomOut,
   LayoutTemplate, X, CheckCircle2, Maximize2, PanelLeftOpen, PanelRightOpen,
@@ -18,6 +24,11 @@ import {
   getDefaultQuotationBaseTemplateId,
   getEnabledSalesPrintTemplates,
 } from "@/lib/salesPrintTemplateCatalog";
+import {
+  applyPrintFieldVisibility,
+  inferPrintColumnFromLabel,
+  inferPrintFieldFromLabel,
+} from "@/lib/printFieldVisibility";
 import {
   composeQuotationBaseWithCustomLayout,
   renderQuotationCustomLayoutHtml,
@@ -75,6 +86,14 @@ interface Layout {
   margins?: { top: number; right: number; bottom: number; left: number };
   baseTemplateId?: number;
   baseTemplateVersion?: number;
+  hiddenBaseFields?: string[];
+}
+
+interface PendingRegionSelection {
+  bounds: SelectionBounds;
+  hiddenBaseFields: string[];
+  tableColumns: Record<string, string[]>;
+  elementIds: string[];
 }
 
 interface Template {
@@ -89,6 +108,64 @@ interface Template {
   layoutJson: Layout;
   createdAt: string;
   updatedAt: string;
+}
+
+const PRINT_FIELD_LABELS: Record<string, string> = {
+  companyDetails: "بيانات الشركة",
+  documentNumber: "رقم المستند",
+  date: "التاريخ",
+  createdAt: "تاريخ الإنشاء",
+  printedAt: "وقت الطباعة",
+  partyName: "اسم العميل أو المورد",
+  partyVat: "الرقم الضريبي",
+  partyAddress: "العنوان",
+  branch: "الفرع",
+  seller: "مندوب المبيعات",
+  paymentMethod: "طريقة الدفع",
+  currency: "العملة",
+  exchangeRate: "سعر الصرف",
+  notes: "ملاحظات",
+  qr: "رمز QR",
+  amountInWords: "المبلغ كتابةً",
+  subtotal: "المجموع قبل الضريبة",
+  discountTotal: "إجمالي الخصم",
+  taxTotal: "إجمالي الضريبة",
+  grandTotal: "الإجمالي النهائي",
+  validUntil: "صالح حتى",
+  deliveryDate: "تاريخ التسليم",
+  terms: "الشروط والأحكام",
+  status: "حالة المستند",
+  invoiceNumber: "رقم الفاتورة المرتبطة",
+  description: "الوصف",
+  signatures: "التوقيعات",
+  itemCode: "رمز الصنف",
+  itemName: "اسم الصنف",
+  quantity: "الكمية",
+  freeQuantity: "الكمية المجانية",
+  unit: "الوحدة",
+  unitPrice: "سعر الوحدة",
+  discountPercent: "نسبة الخصم",
+  discountAmount: "قيمة الخصم",
+  taxRate: "نسبة الضريبة",
+  taxAmount: "قيمة الضريبة",
+  lineTotal: "إجمالي السطر",
+};
+
+function designerColumnVisibilityKey(key: string): string | undefined {
+  if (key === "name" || key === "itemName") return "itemName";
+  if (key === "code" || key === "itemCode") return "itemCode";
+  if (key === "qty" || key === "quantity") return "quantity";
+  if (key === "freeQty" || key === "freeQuantity") return "freeQuantity";
+  if (key === "unit") return "unit";
+  if (key === "price" || key === "unitPrice") return "unitPrice";
+  if (key === "discount") return "discountAmount";
+  if (key === "discountPercent") return "discountPercent";
+  if (key === "vat" || key === "tax") return "taxAmount";
+  if (key === "taxRate") return "taxRate";
+  if (key === "total" || key === "lineTotal") return "lineTotal";
+  if (key === "description") return "description";
+  if (key === "account") return "account";
+  return undefined;
 }
 
 // ───────────────────────────── Catalog ───────────────────────────
@@ -404,6 +481,13 @@ export default function PrintDesigner() {
       : "",
     [documentType, layout.baseTemplateVersion, previewBaseTemplateId],
   );
+  const visibleNativeQuotationPreviewHtml = useMemo(() => {
+    const hiddenFields = layout.hiddenBaseFields ?? [];
+    if (!nativeQuotationPreviewHtml || hiddenFields.length === 0) return nativeQuotationPreviewHtml;
+    return applyPrintFieldVisibility(nativeQuotationPreviewHtml, "sales_quotation", {
+      sales_quotation: Object.fromEntries(hiddenFields.map(field => [field, false])),
+    });
+  }, [nativeQuotationPreviewHtml, layout.hiddenBaseFields]);
   const [paperSize, setPaperSize] = useState<string>("A4");
   const [widthMm, setWidthMm]   = useState(210);
   const [heightMm, setHeightMm] = useState(297);
@@ -411,8 +495,11 @@ export default function PrintDesigner() {
   const [selectedElId, setSelectedElId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [regionDeleteMode, setRegionDeleteMode] = useState(false);
+  const [pendingRegionSelection, setPendingRegionSelection] = useState<PendingRegionSelection | null>(null);
   const [zoom, setZoom] = useState(0.85);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const nativePreviewFrameRef = useRef<HTMLIFrameElement>(null);
   // Undo / redo history — every call to patchLayout pushes the BEFORE state
   // onto `past` and clears `future`. Direct setLayout calls (template load,
   // first mount) intentionally do NOT touch the stacks so Ctrl+Z cannot
@@ -496,11 +583,132 @@ export default function PrintDesigner() {
     setSelectedTemplateId(preferred.id);
   }, [templates.length, documentType]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Marquee drag — once started by mousedown on the empty canvas, we attach
-  // window-level move/up listeners so the rect keeps tracking even if the
-  // cursor leaves the canvas. On release we pick every element whose bounding
-  // box intersects the marquee rect and (depending on `additive`) either
-  // replace or extend the current selection.
+  function analyzeRegionSelection(selection: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  }) {
+    const bounds = normalizeDragSelection(selection);
+    const hiddenBaseFields = new Set<string>();
+    const tableColumns: Record<string, string[]> = {};
+    const elementIds: string[] = [];
+
+    if (nativeQuotationPreviewHtml) {
+      const previewDocument = nativePreviewFrameRef.current?.contentDocument;
+      const page = previewDocument?.querySelector<HTMLElement>(".sheet, .page, .doc, .print-page")
+        ?? previewDocument?.body;
+      if (!previewDocument || !page) {
+        toast({
+          title: "المعاينة لم تكتمل",
+          description: "انتظر لحظة حتى يكتمل تحميل النموذج ثم أعد التحديد.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const pageRect = page.getBoundingClientRect();
+      const toPageBounds = (node: HTMLElement): SelectionBounds => {
+        const rect = node.getBoundingClientRect();
+        return {
+          left: rect.left - pageRect.left,
+          top: rect.top - pageRect.top,
+          right: rect.right - pageRect.left,
+          bottom: rect.bottom - pageRect.top,
+        };
+      };
+
+      for (const node of Array.from(previewDocument.querySelectorAll<HTMLElement>("[data-print-field]"))) {
+        if (!selectionIntersects(bounds, toPageBounds(node))) continue;
+        for (const key of (node.dataset.printField ?? "").split(/\s+/).filter(Boolean)) {
+          hiddenBaseFields.add(key);
+        }
+      }
+      for (const node of Array.from(previewDocument.querySelectorAll<HTMLElement>("div,span,p,td,th,label,strong,b,small"))) {
+        if (node.children.length > 0) continue;
+        const key = inferPrintFieldFromLabel(node.textContent ?? "", "sales_quotation");
+        if (key && selectionIntersects(bounds, toPageBounds(node))) hiddenBaseFields.add(key);
+      }
+      for (const image of Array.from(previewDocument.querySelectorAll<HTMLImageElement>('img[alt*="qr" i], img[alt*="zatca" i]'))) {
+        if (selectionIntersects(bounds, toPageBounds(image))) hiddenBaseFields.add("qr");
+      }
+
+      for (const table of Array.from(previewDocument.querySelectorAll<HTMLTableElement>("table"))) {
+        const header = Array.from(table.rows).find(row =>
+          Array.from(row.cells).some(cell => cell.tagName === "TH"),
+        );
+        if (!header) continue;
+        for (const [columnIndex, cell] of Array.from(header.cells).entries()) {
+          const key = cell.dataset.printColumn || inferPrintColumnFromLabel(cell.textContent ?? "");
+          if (!key) continue;
+          const columnWasSelected = Array.from(table.rows)
+            .map(row => row.cells.item(columnIndex))
+            .filter((candidate): candidate is HTMLTableCellElement => candidate !== null && candidate.colSpan <= 1)
+            .some(candidate => selectionIntersects(bounds, toPageBounds(candidate)));
+          if (columnWasSelected) hiddenBaseFields.add(key);
+        }
+      }
+    } else {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const canvasRect = canvas.getBoundingClientRect();
+      const toPageBounds = (node: HTMLElement): SelectionBounds => {
+        const rect = node.getBoundingClientRect();
+        return {
+          left: (rect.left - canvasRect.left) / zoom,
+          top: (rect.top - canvasRect.top) / zoom,
+          right: (rect.right - canvasRect.left) / zoom,
+          bottom: (rect.bottom - canvasRect.top) / zoom,
+        };
+      };
+      for (const cell of Array.from(canvas.querySelectorAll<HTMLElement>("[data-designer-element-id][data-designer-column-key]"))) {
+        if (!selectionIntersects(bounds, toPageBounds(cell))) continue;
+        const elementId = cell.dataset.designerElementId;
+        const columnKey = cell.dataset.designerColumnKey;
+        if (!elementId || !columnKey) continue;
+        tableColumns[elementId] = Array.from(new Set([...(tableColumns[elementId] ?? []), columnKey]));
+      }
+      for (const element of layout.elements) {
+        const elementBounds = {
+          left: element.x,
+          top: element.y,
+          right: element.x + element.width,
+          bottom: element.y + element.height,
+        };
+        if (element.type === "table" && (tableColumns[element.id]?.length ?? 0) > 0) continue;
+        if (
+          element.type === "table"
+            ? selectionContainsCenter(bounds, elementBounds)
+            : selectionIntersects(bounds, elementBounds)
+        ) {
+          elementIds.push(element.id);
+        }
+      }
+    }
+
+    const selectedCount = hiddenBaseFields.size
+      + Object.values(tableColumns).reduce((total, keys) => total + keys.length, 0)
+      + elementIds.length;
+    if (selectedCount === 0) {
+      toast({
+        title: "لم يتم تحديد حقول قابلة للحذف",
+        description: nativeQuotationPreviewHtml
+          ? "اسحب التحديد فوق عنوان العمود أو الحقل المطلوب إخفاؤه."
+          : "اسحب التحديد فوق الأعمدة أو العناصر المطلوب حذفها.",
+      });
+      setPendingRegionSelection(null);
+      return;
+    }
+    setPendingRegionSelection({
+      bounds,
+      hiddenBaseFields: Array.from(hiddenBaseFields),
+      tableColumns,
+      elementIds,
+    });
+  }
+
+  // Track a drag anywhere on the page. In region-delete mode, the selection
+  // targets native template fields/columns or editable table cells. Otherwise
+  // it retains the existing multi-element marquee behavior.
   useEffect(() => {
     if (!marquee) return;
     const onMove = (ev: MouseEvent) => {
@@ -512,27 +720,29 @@ export default function PrintDesigner() {
       setMarquee(m => (m ? { ...m, x2: x, y2: y } : m));
     };
     const onUp = () => {
-      setMarquee(m => {
-        if (!m) return null;
-        const x1 = Math.min(m.x1, m.x2), x2 = Math.max(m.x1, m.x2);
-        const y1 = Math.min(m.y1, m.y2), y2 = Math.max(m.y1, m.y2);
-        // Tiny rects (a stray click) shouldn't change selection.
-        if (x2 - x1 < 3 && y2 - y1 < 3) return null;
-        const hit = layout.elements
-          .filter(el => {
-            const ex2 = el.x + el.width, ey2 = el.y + el.height;
-            return el.x < x2 && ex2 > x1 && el.y < y2 && ey2 > y1;
-          })
-          .map(el => el.id);
-        if (hit.length === 0) return null;
-        if (m.additive) {
-          setSelectedIds(prev => Array.from(new Set([...prev, ...hit])));
-        } else {
-          setSelectedIds(hit);
-        }
-        setSelectedElId(hit[hit.length - 1]);
-        return null;
-      });
+      const current = marquee;
+      setMarquee(null);
+      const bounds = normalizeDragSelection(current);
+      if (bounds.right - bounds.left < 3 && bounds.bottom - bounds.top < 3) return;
+      if (regionDeleteMode) {
+        analyzeRegionSelection(current);
+        return;
+      }
+      const hit = layout.elements
+        .filter(el => selectionIntersects(bounds, {
+          left: el.x,
+          top: el.y,
+          right: el.x + el.width,
+          bottom: el.y + el.height,
+        }))
+        .map(el => el.id);
+      if (hit.length === 0) return;
+      if (current.additive) {
+        setSelectedIds(prev => Array.from(new Set([...prev, ...hit])));
+      } else {
+        setSelectedIds(hit);
+      }
+      setSelectedElId(hit[hit.length - 1]);
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -540,7 +750,7 @@ export default function PrintDesigner() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [marquee, zoom, layout]);
+  }, [marquee, zoom, layout, regionDeleteMode, nativeQuotationPreviewHtml]);
 
   // Esc closes the preset gallery modal.
   useEffect(() => {
@@ -559,6 +769,8 @@ export default function PrintDesigner() {
       if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedIds.length > 0) { e.preventDefault(); deleteSelected(); }
       } else if (e.key === "Escape") {
+        if (pendingRegionSelection) setPendingRegionSelection(null);
+        else if (regionDeleteMode) setRegionDeleteMode(false);
         clearSelection();
       } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
@@ -570,7 +782,7 @@ export default function PrintDesigner() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedIds, layout]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedIds, layout, pendingRegionSelection, regionDeleteMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load selected template into editor state ------------------------------
   useEffect(() => {
@@ -665,6 +877,26 @@ export default function PrintDesigner() {
     () => layout.elements.find(e => e.id === selectedElId) ?? null,
     [layout, selectedElId],
   );
+  const pendingRegionLabels = useMemo(() => {
+    if (!pendingRegionSelection) return [];
+    const labels = pendingRegionSelection.hiddenBaseFields.map(
+      field => PRINT_FIELD_LABELS[field] ?? field,
+    );
+    for (const [elementId, keys] of Object.entries(pendingRegionSelection.tableColumns)) {
+      const table = layout.elements.find(element => element.id === elementId);
+      for (const key of keys) {
+        const column = table?.tableSpec?.columns.find(item => item.key === key);
+        labels.push(column?.label ?? PRINT_FIELD_LABELS[designerColumnVisibilityKey(key) ?? ""] ?? key);
+      }
+    }
+    for (const id of pendingRegionSelection.elementIds) {
+      const element = layout.elements.find(item => item.id === id);
+      labels.push(element?.text
+        || (element?.type === "field" ? element.fieldKey : element?.type)
+        || "عنصر");
+    }
+    return labels;
+  }, [pendingRegionSelection, layout.elements]);
 
   function patchLayout(next: Layout) {
     // Snapshot the BEFORE state so Ctrl+Z can roll back to it. Any new edit
@@ -772,6 +1004,37 @@ export default function PrintDesigner() {
     const set = new Set(selectedIds);
     patchLayout({ ...layout, elements: layout.elements.filter(e => !set.has(e.id)) });
     clearSelection();
+  }
+
+  function deletePendingRegionSelection() {
+    if (!pendingRegionSelection) return;
+    const removedElementIds = new Set(pendingRegionSelection.elementIds);
+    const selectedTableColumns = pendingRegionSelection.tableColumns;
+    const elements = layout.elements.flatMap(element => {
+      if (removedElementIds.has(element.id)) return [];
+      const selectedColumns = new Set(selectedTableColumns[element.id] ?? []);
+      if (element.type !== "table" || !element.tableSpec || selectedColumns.size === 0) {
+        return [element];
+      }
+      const columns = element.tableSpec.columns.filter(column => !selectedColumns.has(column.key));
+      return columns.length === 0
+        ? []
+        : [{ ...element, tableSpec: { ...element.tableSpec, columns } }];
+    });
+    const hiddenBaseFields = Array.from(new Set([
+      ...(layout.hiddenBaseFields ?? []),
+      ...pendingRegionSelection.hiddenBaseFields,
+    ]));
+    patchLayout({ ...layout, elements, hiddenBaseFields });
+    const removedCount = pendingRegionSelection.hiddenBaseFields.length
+      + Object.values(selectedTableColumns).reduce((total, keys) => total + keys.length, 0)
+      + pendingRegionSelection.elementIds.length;
+    setPendingRegionSelection(null);
+    clearSelection();
+    toast({
+      title: `تم حذف ${removedCount} عنصر من نسخة القالب`,
+      description: "تقدر ترجع التعديل بزر التراجع أو Ctrl+Z قبل الحفظ.",
+    });
   }
 
   function duplicateElement(id: string) {
@@ -1032,6 +1295,19 @@ export default function PrintDesigner() {
           <MousePointer2 className="w-3.5 h-3.5"/>
           {multiSelectMode ? `تحديد متعدد (${selectedIds.length})` : "تحديد متعدد"}
         </button>
+        <button
+          data-testid="button-region-delete-mode"
+          aria-pressed={regionDeleteMode}
+          onClick={() => {
+            setRegionDeleteMode(value => !value);
+            setPendingRegionSelection(null);
+            setMarquee(null);
+          }}
+          className={`flex items-center gap-1 px-2 py-1 text-xs rounded ${regionDeleteMode ? "bg-rose-600 text-white hover:bg-rose-700" : "bg-rose-50 hover:bg-rose-100 text-rose-700"}`}
+          title="اسحب مستطيلاً فوق حقل أو عمود، راجع التحديد ثم احذفه">
+          <MousePointer2 className="w-3.5 h-3.5"/>
+          {regionDeleteMode ? "إلغاء أداة الحذف" : "تحديد للحذف"}
+        </button>
         {selectedIds.length > 1 && (
           <span className="text-xs text-indigo-700 bg-indigo-50 px-2 py-1 rounded">
             {selectedIds.length} عناصر محددة — اسحب أحدها لتحريك الكل
@@ -1131,10 +1407,44 @@ export default function PrintDesigner() {
         className="relative flex-1 overflow-auto p-4 flex items-start justify-center bg-gradient-to-b from-slate-100 to-slate-200">
           <div className="pointer-events-none absolute start-6 top-5 z-10 flex items-center gap-2 rounded-full border border-emerald-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-sm">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            {layout.baseTemplateVersion === 2
+            {regionDeleteMode
+              ? nativeQuotationPreviewHtml
+                ? "اسحب فوق حقول أو أعمدة القالب الأصلي، ثم راجعها قبل الحذف"
+                : "اسحب فوق العناصر أو أعمدة الجدول، ثم راجعها قبل الحذف"
+              : layout.baseTemplateVersion === 2
               ? "القالب الأصلي محفوظ — العناصر الجديدة تظهر فوقه"
               : "معاينة مباشرة — تتحدث مع كل تعديل"}
           </div>
+          {pendingRegionSelection && (
+            <div
+              role="status"
+              data-testid="region-selection-review"
+              className="absolute start-1/2 top-14 z-20 flex max-w-[min(92%,760px)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white/95 px-3 py-2 shadow-lg"
+            >
+              <span className="text-xs font-semibold text-slate-800">سيتم حذف:</span>
+              <div className="flex max-w-[420px] flex-wrap gap-1">
+                {pendingRegionLabels.map((label, index) => (
+                  <span key={`${label}-${index}`} className="rounded-full bg-rose-50 px-2 py-1 text-[11px] text-rose-800">
+                    {label}
+                  </span>
+                ))}
+              </div>
+              <button
+                data-testid="button-confirm-region-delete"
+                onClick={deletePendingRegionSelection}
+                className="flex items-center gap-1 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> حذف المحدد
+              </button>
+              <button
+                data-testid="button-cancel-region-delete"
+                onClick={() => setPendingRegionSelection(null)}
+                className="rounded-lg px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-100"
+              >
+                إلغاء
+              </button>
+            </div>
+          )}
           <div
             ref={canvasRef}
             onMouseDown={e => {
@@ -1165,10 +1475,11 @@ export default function PrintDesigner() {
               position: "absolute", inset: 0, transform: `scale(${zoom})`,
               transformOrigin: "top right", width: widthMm * MM, height: heightMm * MM,
             }}>
-              {nativeQuotationPreviewHtml && (
+              {visibleNativeQuotationPreviewHtml && (
                 <iframe
+                  ref={nativePreviewFrameRef}
                   title="معاينة قالب عرض السعر الأصلي"
-                  srcDoc={nativeQuotationPreviewHtml}
+                  srcDoc={visibleNativeQuotationPreviewHtml}
                   tabIndex={-1}
                   style={{
                     position: "absolute",
@@ -1230,6 +1541,25 @@ export default function PrintDesigner() {
                   }}
                 />
               ))}
+              {regionDeleteMode && (
+                <div
+                  data-testid="overlay-region-selector"
+                  className="absolute inset-0 z-[9000] cursor-crosshair"
+                  style={{ touchAction: "none" }}
+                  onMouseDown={event => {
+                    if (event.button !== 0) return;
+                    const canvas = canvasRef.current;
+                    if (!canvas) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const rect = canvas.getBoundingClientRect();
+                    const x = (event.clientX - rect.left) / zoom;
+                    const y = (event.clientY - rect.top) / zoom;
+                    setPendingRegionSelection(null);
+                    setMarquee({ x1: x, y1: y, x2: x, y2: y, additive: false });
+                  }}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -1455,14 +1785,18 @@ function ElementView({ el }: { el: Element }) {
   if (el.type === "table") {
     const spec = el.tableSpec!;
     return (
-      <table style={{ ...common, borderCollapse: "collapse", tableLayout: "fixed" }}>
+      <table
+        data-designer-element-id={el.id}
+        style={{ ...common, borderCollapse: "collapse", tableLayout: "fixed" }}
+      >
         <thead>
           <tr>{spec.columns.map(c => (
             <th key={c.key} style={{
               background: spec.headerBg, color: spec.headerColor,
               border: `${spec.borderWidth ?? 1}px solid ${spec.borderColor ?? "#e5e7eb"}`,
               padding: 5, textAlign: c.align ?? "start", width: c.width,
-            }}>{c.label}</th>
+            }} data-designer-element-id={el.id}
+              data-designer-column-key={c.key}>{c.label}</th>
           ))}</tr>
         </thead>
         <tbody>
@@ -1472,7 +1806,8 @@ function ElementView({ el }: { el: Element }) {
                 <td key={c.key} style={{
                   border: `${spec.borderWidth ?? 1}px solid ${spec.borderColor ?? "#e5e7eb"}`,
                   padding: 5, textAlign: c.align ?? "start",
-                }}>{sampleTableCell(c.key, r)}</td>
+                }} data-designer-element-id={el.id}
+                  data-designer-column-key={c.key}>{sampleTableCell(c.key, r)}</td>
               ))}
             </tr>
           ))}

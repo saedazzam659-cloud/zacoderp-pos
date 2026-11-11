@@ -146,7 +146,7 @@ function markTableColumns(parsed: Document): void {
   }
 }
 
-function inferPrintColumnFromLabel(text: string): string | undefined {
+export function inferPrintColumnFromLabel(text: string): string | undefined {
   const value = text.toLocaleLowerCase().replace(/\s+/g, " ").trim();
   if (/^(?:رمز الصنف|كود الصنف|item code|sku)$/.test(value)) return "itemCode";
   if (/^(?:الصنف(?:\s*\/\s*الخدمة)?|اسم الصنف|المنتج|item(?: name)?|product)$/.test(value)) return "itemName";
@@ -155,13 +155,13 @@ function inferPrintColumnFromLabel(text: string): string | undefined {
   if (/^(?:الوحدة|وحدة القياس|unit)$/.test(value)) return "unit";
   if (/^(?:سعر الوحدة|السعر|unit price|price)$/.test(value)) return "unitPrice";
   if (/^(?:نسبة الخصم|discount %|discount percent(?:age)?)$/.test(value)) return "discountPercent";
-  if (/^(?:قيمة الخصم|discount amount)$/.test(value)) return "discountAmount";
+  if (/^(?:قيمة الخصم|الخصم|خصم|discount amount)$/.test(value)) return "discountAmount";
   if (/^(?:نسبة الضريبة|tax rate|vat rate)$/.test(value)) return "taxRate";
   if (/^(?:قيمة الضريبة|الضريبة|tax amount|vat amount)$/.test(value)) return "taxAmount";
   if (/^(?:إجمالي السطر|إجمالي الصنف|الإجمالي|line total|total)$/.test(value)) return "lineTotal";
   if (/^(?:الوصف|البيان|description)$/.test(value)) return "description";
   if (/^(?:الحساب|اسم الحساب|account)$/.test(value)) return "account";
-  if (/^(?:الإجمالي قبل الخصم|subtotal)$/.test(value)) return "subtotal";
+  if (/^(?:الإجمالي قبل الخصم|المبلغ|subtotal)$/.test(value)) return "subtotal";
   if (/^(?:الإجمالي النهائي|الصافي شامل الضريبة|grand total)$/.test(value)) return "grandTotal";
   return undefined;
 }
