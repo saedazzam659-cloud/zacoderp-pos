@@ -185,6 +185,56 @@ export default function PostingControl() {
             </div>
           </Card>
 
+          <Card style={{ padding: 20, marginBottom: 16 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#0f172a" }}>سلوك فك الترحيل</div>
+            <div style={{ fontSize: 13, color: "#64748b", marginTop: 6, marginBottom: 14, lineHeight: 1.8 }}>
+              اختر ما يحدث للمستند عند فك ترحيله. ينطبق الإعداد على كل المستندات القابلة للفك؛
+              السجلات المرتبطة أو المحمية لا تُحذف إذا كان ذلك سيكسر روابطها.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {([
+                { value: "draft", label: "الاحتفاظ كمسودة" },
+                { value: "delete", label: "الحذف النهائي" },
+              ] as const).map((option) => {
+                const selected = state.unpostBehavior === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => patch({ unpostBehavior: option.value })}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${selected ? (option.value === "delete" ? "#dc2626" : "#2563eb") : "#cbd5e1"}`,
+                      background: selected ? (option.value === "delete" ? "#fef2f2" : "#eff6ff") : "#fff",
+                      color: selected ? (option.value === "delete" ? "#b91c1c" : "#1d4ed8") : "#475569",
+                      fontFamily: "inherit",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{
+              marginTop: 12,
+              padding: "9px 11px",
+              borderRadius: 7,
+              background: state.unpostBehavior === "delete" ? "#fef2f2" : "#f8fafc",
+              color: state.unpostBehavior === "delete" ? "#b91c1c" : "#475569",
+              fontSize: 12,
+              lineHeight: 1.7,
+            }}>
+              {state.unpostBehavior === "delete"
+                ? "تحذير: فك الترحيل سيحذف المستند نهائيًا بعد عكس آثاره. لا يمكن استعادته، وقد تمنع الروابط المحمية الحذف."
+                : "الخيار الآمن: فك الترحيل يعكس الآثار ويحتفظ بالمستند كمسودة قابلة للتعديل."}
+            </div>
+          </Card>
+
           <Card style={{ padding: 20 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>تخصيص حسب نوع المستند</div>
             <div style={{ fontSize: 13, color: "#64748b", marginBottom: 16, lineHeight: 1.8 }}>

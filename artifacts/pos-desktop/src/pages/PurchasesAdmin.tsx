@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useDataRefresh } from "../lib/dataBus";
 import {
   listPurchases, getPurchase, createPurchase, updatePurchase, deletePurchase,
-  unpostPurchase, postPurchase, listFinancialTx,
+  unpostPurchase, postPurchase, listFinancialTx, confirmUnpostAction, getPostingSettings,
   listSuppliers, listCashBoxes, listBanks, listLettersOfCredit,
   type Purchase, type PurchaseLine, type PaymentMethod, type Supplier, type CashBox, type Bank,
   type LetterOfCredit,
@@ -18,7 +18,7 @@ import {
   documentFormStyles, invoiceEditorShell, tabPanel, EmptyItemsRow,
   linesPanel, linesScroll, docFormPinned, contentPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
-  ExportButtons, gridToExportCols,
+  ExportButtons, gridToExportCols, errText,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
@@ -180,13 +180,17 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
 
   // فك الترحيل / ترحيل: reverse or re-apply a non-GR purchase's GL/stock/AP
   // impact. GR-sourced invoices are rejected at the Rust layer (no draft cycle).
-  async function unpost(id: number) {
-    if (!confirm("فك ترحيل فاتورة الشراء؟ سيتم عكس القيد والمخزون وتتحول إلى مسودة قابلة للتعديل.")) return;
+  async function unpost(id: number, invoiceNo: string) {
+    let deleteMode: boolean;
+    try { deleteMode = (await getPostingSettings()).unpostBehavior === "delete"; }
+    catch (e: any) { alert(errText(e, "تعذر قراءة إعداد فك الترحيل")); return; }
+    if (!(await confirmUnpostAction("فاتورة الشراء", invoiceNo))) return;
     try {
       await unpostPurchase(id);
+      if (deleteMode) clearDocDiscount("purchase", id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
-    } catch (e: any) { alert(e?.message ?? "تعذّر فك الترحيل"); }
+    } catch (e: any) { alert(errText(e, "تعذّر فك الترحيل")); }
   }
   async function post(id: number) {
     if (!confirm("ترحيل فاتورة الشراء؟ سيتم توليد القيد المحاسبي وإضافة المخزون.")) return;
@@ -289,7 +293,7 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
                 </>
               );
             }
-            return <ActionBtn label="فك الترحيل" icon="↺" tone="warn" onClick={() => void unpost(s.id)} />;
+            return <ActionBtn label="فك الترحيل" icon="↺" tone="warn" onClick={() => void unpost(s.id, s.invoiceNo)} />;
           })()}
         </ActionBar>
       )}

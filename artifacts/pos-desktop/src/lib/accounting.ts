@@ -315,7 +315,11 @@ export type SalesReturn = {
   invoiceId: number | null; returnDate: string;
   subtotal: number; vatTotal: number; grandTotal: number; cogsTotal: number;
   paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
-  jeId: number | null; notes: string | null; lines: SalesLine[];
+  jeId: number | null; warehouseId: number | null; status: "draft" | "posted";
+  notes: string | null; lines: SalesLine[];
+};
+export type SalesReturnAvailability = {
+  itemId: number; soldBaseQty: number; returnedBaseQty: number; remainingBaseQty: number;
 };
 export type SalesReturnInput = {
   customerId: number | null; invoiceId: number | null; returnDate: string;
@@ -612,8 +616,8 @@ export async function deletePurchase(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("purchase_delete", { id });
 }
-/** فك الترحيل: reverse a posted purchase's GL/stock/AP impact, keep header+lines
- *  as a draft (status='draft', je_id NULL). Rejected for GR-sourced invoices. */
+/** فك الترحيل: reverse a posted purchase's effects and apply the saved global
+ *  policy (retain as draft or permanently delete). Rejected for GR invoices. */
 export async function unpostPurchase(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("purchase_unpost", { id });
@@ -778,8 +782,8 @@ export async function deleteSalesInvoice(id: number): Promise<void> {
   await invoke("sales_invoice_delete", { id });
   emitData("invoices", "journal", "stock");
 }
-/** فك الترحيل: reverse a posted sales invoice's GL/stock/AR impact, keep
- *  header+lines as a draft (status='draft', je_id NULL). */
+/** فك الترحيل: reverse a posted sales invoice's effects and apply the global
+ *  policy (retain as draft or permanently delete). */
 export async function unpostSalesInvoice(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("sales_invoice_unpost", { id });
@@ -881,6 +885,25 @@ export async function createSalesReturn(input: SalesReturnInput): Promise<number
   const result = await invoke<number>("sales_return_create", { input });
   emitData("invoices", "journal", "stock");
   return result;
+}
+export async function salesInvoiceReturnAvailability(invoiceId: number): Promise<SalesReturnAvailability[]> {
+  if (!hasTauri()) return [];
+  return await invoke<SalesReturnAvailability[]>("sales_invoice_return_availability", { invoiceId });
+}
+export async function postSalesReturn(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("sales_return_post", { id });
+  emitData("invoices", "journal", "stock", "customers", "cashboxes", "banks");
+}
+export async function unpostSalesReturn(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("sales_return_unpost", { id });
+  emitData("invoices", "journal", "stock", "customers", "cashboxes", "banks");
+}
+export async function deleteSalesReturn(id: number): Promise<void> {
+  if (!hasTauri()) notImpl();
+  await invoke("sales_return_delete", { id });
+  emitData("invoices");
 }
 
 // ─── Financial transactions ──────────────────────────────────────────
@@ -993,6 +1016,7 @@ export async function updateNumberSeries(s: NumberSeries): Promise<void> {
 // the general ledger once posted from مركز الترحيل.
 export type PostingSettings = {
   autoPostingEnabled: boolean;
+  unpostBehavior: "draft" | "delete";
   sale: boolean | null;
   purchase: boolean | null;
   saleReturn: boolean | null;
@@ -1004,12 +1028,58 @@ export async function getPostingSettings(): Promise<PostingSettings> {
   if (!hasTauri()) {
     return {
       autoPostingEnabled: false,
+      unpostBehavior: "draft",
       sale: null, purchase: null, saleReturn: null,
       purchaseReturn: null, voucher: null, treasuryTransfer: null,
     };
   }
   return await invoke<PostingSettings>("posting_settings_get");
 }
+
+export async function confirmUnpostAction(
+  documentLabel: string,
+  documentNo: string,
+  english = false,
+): Promise<boolean> {
+  let behavior: PostingSettings["unpostBehavior"];
+  try {
+    behavior = (await getPostingSettings()).unpostBehavior;
+  } catch {
+    alert(english
+      ? "Could not read the unpost policy. Nothing was changed."
+      : "تعذر قراءة إعداد فك الترحيل؛ لم يتم إجراء أي تغيير.");
+    return false;
+  }
+  const message = english
+    ? behavior === "delete"
+      ? `Unpost ${documentLabel} ${documentNo}? Its effects will be reversed and the document will be permanently deleted. This cannot be undone.`
+      : `Unpost ${documentLabel} ${documentNo}? Its effects will be reversed and it will be kept as an editable draft.`
+    : behavior === "delete"
+      ? `فك ترحيل ${documentLabel} ${documentNo}؟ ستُعكس آثاره وسيُحذف المستند نهائيًا. لا يمكن التراجع عن الحذف.`
+      : `فك ترحيل ${documentLabel} ${documentNo}؟ ستُعكس آثاره وسيُحتفظ به كمسودة قابلة للتعديل.`;
+  return window.confirm(message);
+}
+
+export async function confirmBulkUnpostAction(count: number, english = false): Promise<boolean> {
+  let behavior: PostingSettings["unpostBehavior"];
+  try {
+    behavior = (await getPostingSettings()).unpostBehavior;
+  } catch {
+    alert(english
+      ? "Could not read the unpost policy. Nothing was changed."
+      : "تعذر قراءة إعداد فك الترحيل؛ لم يتم إجراء أي تغيير.");
+    return false;
+  }
+  const message = english
+    ? behavior === "delete"
+      ? `Unpost ${count} selected document(s)? Their effects will be reversed and source documents or manual entries will be permanently deleted. Protected linked records may be rejected.`
+      : `Unpost ${count} selected document(s)? Their effects will be reversed and documents will be kept as editable drafts.`
+    : behavior === "delete"
+      ? `فك ترحيل ${count} مستند محدد؟ ستُعكس الآثار وسيُحذف المستند أو القيد اليدوي نهائيًا. قد يُرفض الحذف للسجلات المرتبطة المحمية.`
+      : `فك ترحيل ${count} مستند محدد؟ ستُعكس الآثار وسيُحتفظ بالمستندات كمسودات قابلة للتعديل.`;
+  return window.confirm(message);
+}
+
 export async function setPostingSettings(input: PostingSettings): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("posting_settings_set", { input });
@@ -1032,12 +1102,12 @@ export async function postingCenterUnpost(ids: number[]): Promise<number> {
   return result;
 }
 
-// Unposted SOURCE documents (draft sales/purchase invoices + vouchers) that
+// Unposted SOURCE documents (draft sales/purchase invoices, returns + vouchers) that
 // carry NO journal entry until posted — surfaced separately from draft manual
 // JEs (which live in journal_entries_list).
 export type UnpostedDoc = {
-  docType: "sale" | "purchase" | "voucher";
-  sourceType: "sale" | "purchase" | "receipt" | "payment";
+  docType: "sale" | "purchase" | "sale_return" | "voucher";
+  sourceType: "sale" | "purchase" | "sale_return" | "receipt" | "payment";
   id: number;
   docNo: string;
   docDate: string;

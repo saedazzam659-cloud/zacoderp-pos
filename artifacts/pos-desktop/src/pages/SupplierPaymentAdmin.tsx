@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   listFinancialTx, createFinancialTx, updateFinancialTx, deleteFinancialTx, financialTxPost, financialTxUnpost,
+  confirmUnpostAction,
   listSuppliers, listCashBoxes, listBanks, listPurchases, type FinancialTxInput,
   type FinancialTx, type Supplier, type CashBox, type Bank, type Purchase,
 } from "../lib/accounting";
@@ -128,6 +129,7 @@ export default function SupplierPaymentAdmin() {
             selected={sel.selected}
             busy={busyId != null}
             text={text}
+            english={language === "en"}
             onEdit={(f) => setEditingVoucher(f)}
             onDelete={(f) => {
               setBusyId(f.id);
@@ -196,10 +198,11 @@ export default function SupplierPaymentAdmin() {
   );
 }
 
-function VoucherActions({ selected, busy, text, onEdit, onDelete, onPost, onUnpost }: {
+function VoucherActions({ selected, busy, text, english, onEdit, onDelete, onPost, onUnpost }: {
   selected: FinancialTx | null;
   busy: boolean;
   text: (ar: string, en: string) => string;
+  english: boolean;
   onEdit: (f: FinancialTx) => void;
   onDelete: (f: FinancialTx) => void;
   onPost: (f: FinancialTx) => void;
@@ -213,7 +216,10 @@ function VoucherActions({ selected, busy, text, onEdit, onDelete, onPost, onUnpo
     <ActionBtn label={text("ترحيل", "Post")} icon="✔" tone="success" disabled={!selected || !draft || busy}
       onClick={() => { if (selected && confirm(text(`ترحيل السند ${selected.txNo}؟`, `Post voucher ${selected.txNo}?`))) onPost(selected); }} />
     <ActionBtn label={text("فك الترحيل", "Unpost")} icon="↺" tone="warn" disabled={!selected || draft || busy}
-      onClick={() => { if (selected && confirm(text(`فك ترحيل السند ${selected.txNo}؟`, `Unpost voucher ${selected.txNo}?`))) onUnpost(selected); }} />
+      onClick={() => {
+        if (!selected) return;
+        void confirmUnpostAction(text("السند", "voucher"), selected.txNo, english).then((ok) => { if (ok) onUnpost(selected); });
+      }} />
   </>;
 }
 

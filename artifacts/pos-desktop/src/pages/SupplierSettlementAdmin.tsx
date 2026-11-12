@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import {
   listSupplierSettlements, createSupplierSettlement, updateSupplierSettlement,
   postSupplierSettlement, unpostSupplierSettlement, deleteSupplierSettlement,
+  confirmUnpostAction,
   listSuppliers, listCashBoxes, listBanks,
   type SupplierSettlement, type SupplierSettlementInput,
   type Supplier, type CashBox, type Bank,
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
-  input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
+  input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox, errText,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -42,9 +43,9 @@ export default function SupplierSettlementAdmin() {
     catch (e: any) { alert(e?.message ?? "فشل الترحيل"); }
   }
   async function unpost(r: SupplierSettlement) {
-    if (!confirm(`إلغاء ترحيل السند ${r.docNo}؟`)) return;
+    if (!(await confirmUnpostAction("سند التسوية", r.docNo))) return;
     try { await unpostSupplierSettlement(r.id); await refresh(); }
-    catch (e: any) { alert(e?.message ?? "فشل إلغاء الترحيل"); }
+    catch (e: any) { alert(errText(e, "فشل إلغاء الترحيل")); }
   }
   async function remove(r: SupplierSettlement) {
     if (!confirm(`حذف السند ${r.docNo}؟`)) return;

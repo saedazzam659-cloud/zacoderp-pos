@@ -477,6 +477,7 @@ export function SearchCombobox({
       || (o.hint ?? "").toLowerCase().includes(s)
       || String(o.value).toLowerCase().includes(s));
   }, [options, q]);
+  const visibleOptions = useMemo(() => filtered.slice(0, 100), [filtered]);
 
   const selected = useMemo(
     () => options.find((o) => o.value === value) ?? null,
@@ -520,7 +521,9 @@ export function SearchCombobox({
     };
   }, [open]);
 
-  useEffect(() => { if (open) setHi(Math.max(0, filtered.findIndex((o) => o.value === value))); }, [open]);
+  useEffect(() => {
+    if (open) setHi(Math.min(99, Math.max(0, filtered.findIndex((o) => o.value === value))));
+  }, [open]);
   useEffect(() => { setHi(0); }, [q]);
 
   useEffect(() => {
@@ -539,7 +542,7 @@ export function SearchCombobox({
   }
 
   function onKey(e: React.KeyboardEvent) {
-    if (e.key === "ArrowDown") { e.preventDefault(); if (!open) { setOpen(true); return; } setHi((h) => Math.min(filtered.length - 1, h + 1)); }
+    if (e.key === "ArrowDown") { e.preventDefault(); if (!open) { setOpen(true); return; } setHi((h) => Math.min(visibleOptions.length - 1, h + 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(0, h - 1)); }
     else if (e.key === "Enter") {
       e.preventDefault();
@@ -552,7 +555,7 @@ export function SearchCombobox({
         if (onEnterNavigate && selected != null) { onEnterNavigate(inputRef.current); return; }
         setOpen(true); return;
       }
-      const o = filtered[hi];
+      const o = visibleOptions[hi];
       if (o) { pick(o); if (onEnterNavigate) onEnterNavigate(inputRef.current); }
     }
     else if (e.key === "Escape") { e.preventDefault(); closeAndReset(); inputRef.current?.blur(); }
@@ -613,7 +616,7 @@ export function SearchCombobox({
           <div ref={listRef}>
             {filtered.length === 0 ? (
               <div style={{ padding: 14, textAlign: "center", color: "#94a3b8", fontSize: 13 }}>لا توجد نتائج</div>
-            ) : filtered.map((o, idx) => {
+            ) : visibleOptions.map((o, idx) => {
               const isSel = o.value === value;
               const isHi = idx === hi;
               return (
@@ -634,6 +637,11 @@ export function SearchCombobox({
                 </div>
               );
             })}
+            {filtered.length > visibleOptions.length && (
+              <div style={{ padding: "7px 10px", textAlign: "center", color: "#64748b", fontSize: 11, borderTop: "1px solid #e2e8f0" }}>
+                {`تظهر أول ${visibleOptions.length} نتيجة — اكتب لتضييق البحث`}
+              </div>
+            )}
           </div>
         </div>
       )}

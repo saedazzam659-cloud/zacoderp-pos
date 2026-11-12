@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useDataRefresh } from "../lib/dataBus";
 import {
   createJournalEntry, getJournalEntryDetail, listAccounts, listJournalEntriesByType,
-  unpostJournalEntry, updateJournalEntry,
+  unpostJournalEntry, updateJournalEntry, confirmUnpostAction,
   type Account, type ManualJeDetail, type ManualJeLine,
 } from "../lib/accounting";
 import { Page, Card, Table, Th, Td, Field, Empty, ErrorMsg, Actions, ExportButtons, input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox } from "./_adminUi";
@@ -211,7 +211,11 @@ export default function OpeningBalancesAdmin() {
 
   async function unpost() {
     if (!entry || entry.status !== "posted") return;
-    if (!confirm(t("فك ترحيل قيد الأرصدة الافتتاحية؟ سيؤثر ذلك على أرصدة الحسابات.", "Unpost the opening entry? This changes account balances."))) return;
+    if (!(await confirmUnpostAction(
+      t("قيد الأرصدة الافتتاحية", "opening balance entry"),
+      entry.entryNo,
+      language === "en",
+    ))) return;
     setBusy(true);
     dirtyRef.current = true;
     setErr(null);

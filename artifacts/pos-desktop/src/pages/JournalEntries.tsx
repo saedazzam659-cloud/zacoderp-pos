@@ -4,14 +4,14 @@ import { applyNumberSystemToDocument } from "../lib/numberDisplay";
 import {
   listJournalEntries, getJournalEntry, getJournalEntryDetail,
   createJournalEntry, updateJournalEntry, postJournalEntry, unpostJournalEntry,
-  deleteJournalEntry, peekJournalEntryNumber, listAccounts,
+  deleteJournalEntry, peekJournalEntryNumber, listAccounts, confirmUnpostAction,
   type JournalEntry, type ManualJeLine, type ManualJeDetail,
   type JeEntryType, type JeStatus, type Account,
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnDanger, btnLink, fmt, todayStr, SearchCombobox,
-  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn, errText,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { getTaxRate } from "../lib/taxSettings";
@@ -130,11 +130,11 @@ export default function JournalEntries() {
     catch (e: any) { alert(e?.message ?? "فشل الترحيل"); }
     finally { setBusyId(null); }
   }
-  async function doUnpost(id: number) {
-    if (!confirm("فك ترحيل هذا القيد؟ سيُعاد لحالة مسودة وتُلغى آثاره على الأرصدة.")) return;
+  async function doUnpost(id: number, entryNo: string) {
+    if (!(await confirmUnpostAction("القيد", entryNo))) return;
     setBusyId(id);
     try { await unpostJournalEntry(id); await refresh(); }
-    catch (e: any) { alert(e?.message ?? "فشل فك الترحيل"); }
+    catch (e: any) { alert(errText(e, "فشل فك الترحيل")); }
     finally { setBusyId(null); }
   }
   async function doDelete(id: number, entryNo: string) {
@@ -325,7 +325,7 @@ export default function JournalEntries() {
                 <ActionBtn label="ترحيل" icon="✔" tone="success" disabled={!s || !manual || s?.status !== "draft" || rowBusy}
                   onClick={() => { if (s) void doPost(s.id); }} />
                 <ActionBtn label="فك ترحيل" icon="↺" tone="warn" disabled={!s || !manual || s?.status !== "posted" || rowBusy}
-                  onClick={() => { if (s) void doUnpost(s.id); }} />
+                  onClick={() => { if (s) void doUnpost(s.id, s.entryNo); }} />
                 <ActionBtn label="حذف" icon="🗑" tone="danger" disabled={!s || !manual || rowBusy}
                   onClick={() => { if (s) void doDelete(s.id, s.entryNo); }} />
               </>

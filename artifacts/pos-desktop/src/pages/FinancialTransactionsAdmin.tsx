@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   listFinancialTx, createFinancialTx, deleteFinancialTx, financialTxPost, financialTxUnpost,
+  confirmUnpostAction,
   listSuppliers, listCashBoxes, listBanks, listAccounts,
   type FinancialTx, type TxType, type PartyType, type Supplier, type CashBox, type Bank, type Account,
 } from "../lib/accounting";
@@ -9,7 +10,7 @@ import { emitData, useDataRefresh } from "../lib/dataBus";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox,
-  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn, errText,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { printVoucher } from "../lib/invoicePrint";
@@ -123,11 +124,14 @@ export default function FinancialTransactionsAdmin() {
             disabled={!sel.selected || sel.selected.status === "draft" || busyId != null}
             onClick={() => {
               const f = sel.selected;
-              if (!f || f.status === "draft" || !confirm(text(`فك ترحيل السند ${f.txNo}؟`, `Unpost voucher ${f.txNo}?`))) return;
-              setBusyId(f.id);
-              void financialTxUnpost(f.id).then(refreshAfterVoucherChange)
-                .catch((e) => alert(e?.message ?? text("تعذر فك الترحيل", "Could not unpost voucher.")))
-                .finally(() => setBusyId(null));
+              if (!f || f.status === "draft") return;
+              void (async () => {
+                if (!(await confirmUnpostAction(text("السند", "voucher"), f.txNo, language === "en"))) return;
+                setBusyId(f.id);
+                try { await financialTxUnpost(f.id); await refreshAfterVoucherChange(); }
+                catch (e: any) { alert(errText(e, text("تعذر فك الترحيل", "Could not unpost voucher."))); }
+                finally { setBusyId(null); }
+              })();
             }} />
         </ActionBar>
       )}

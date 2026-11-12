@@ -775,11 +775,13 @@ pub fn initialize() -> Result<()> {
             return_no       TEXT NOT NULL UNIQUE,
             customer_id     INTEGER REFERENCES customers_local(id),
             invoice_id      INTEGER REFERENCES sales_invoices_local(id),
+            warehouse_id    INTEGER REFERENCES warehouses_local(id),
             return_date     TEXT NOT NULL,
             subtotal        REAL NOT NULL DEFAULT 0,
             vat_total       REAL NOT NULL DEFAULT 0,
             grand_total     REAL NOT NULL DEFAULT 0,
             cogs_total      REAL NOT NULL DEFAULT 0,
+            status          TEXT NOT NULL DEFAULT 'posted',
             payment_method  TEXT NOT NULL DEFAULT 'credit' CHECK (payment_method IN ('credit','cash','bank')),
             cash_box_id     INTEGER REFERENCES cash_boxes_local(id),
             bank_id         INTEGER REFERENCES banks_local(id),
@@ -1164,6 +1166,8 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE sales_invoices_local ADD COLUMN zatca_offline_uuid TEXT",
         "ALTER TABLE sales_returns_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE sales_returns_local ADD COLUMN cost_center_id INTEGER",
+        "ALTER TABLE sales_returns_local ADD COLUMN warehouse_id INTEGER",
+        "ALTER TABLE sales_returns_local ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'",
         "ALTER TABLE purchases_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE purchases_local ADD COLUMN cost_center_id INTEGER",
         "ALTER TABLE purchase_returns_local ADD COLUMN branch_id INTEGER",
@@ -1245,6 +1249,10 @@ pub fn initialize() -> Result<()> {
     for sql in alters {
         let _ = conn.execute(sql, []);
     }
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sret_invoice_status ON sales_returns_local(invoice_id,status)",
+        [],
+    );
     let _ = conn.execute(
         "UPDATE cash_boxes_local SET code='CB-' || printf('%04d', id) WHERE code IS NULL OR trim(code)=''",
         [],

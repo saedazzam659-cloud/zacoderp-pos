@@ -3,6 +3,7 @@ import { useDataRefresh } from "../lib/dataBus";
 import {
   listSalesInvoices, getSalesInvoice, createSalesInvoice, updateSalesInvoice, deleteSalesInvoice,
   unpostSalesInvoice, postSalesInvoice, listCashBoxes, listBanks, listFinancialTx,
+  confirmUnpostAction, getPostingSettings,
   type SalesInvoice, type SalesLine, type PaymentMethod, type CashBox, type Bank,
 } from "../lib/accounting";
 import { createCustomer, listCustomers, type LocalCustomer } from "../lib/customers";
@@ -26,6 +27,7 @@ import {
   linesPanel, linesScroll, docFormPinned, contentPanel,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
+  errText,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
@@ -34,7 +36,7 @@ import { useInvoiceTaxes } from "./_invoiceTax";
 import { baseCurrencyCode, currencyByCode } from "../lib/currency";
 import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
-  type DiscType, type DiscFields,
+  clearDocDiscount, type DiscType, type DiscFields,
 } from "../lib/discount";
 import { isZatcaCountry, bridgeSalesInvoiceToZatca } from "../lib/zatcaBridge";
 import { setSalesReturnPrefill } from "../lib/returnPrefill";
@@ -58,6 +60,9 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] } | null>(null);
+  const [depsLoading, setDepsLoading] = useState(false);
+  const depsLoadedRef = useRef(false);
+  const depsLoadRef = useRef<Promise<void> | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   // Paid-so-far per invoice: Σ posted receipts tagged appliedDocType=sales_invoice.
@@ -86,12 +91,16 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
     setErr(null);
     setBusyId(id);
     try {
+      if (!depsLoadedRef.current) {
+        setDepsLoading(true);
+        await reloadDeps(true);
+      }
       const inv = await getSalesInvoice(id);
       if (inv.zatcaStatus) { setErr(bridgedMsg()); return; }
       setCreating(false);
       setEditDoc(inv);
-    } catch (e: any) { setErr(e?.message ?? text("تعذّر تحميل الفاتورة", "Could not load invoice.")); }
-    finally { setBusyId(null); }
+    } catch (e: any) { setErr(errText(e, text("تعذّر تحميل الفاتورة", "Could not load invoice."))); }
+    finally { setBusyId(null); setDepsLoading(false); }
   }
 
   async function remove(id: number, invoiceNo: string, zatcaStatus?: string | null) {
@@ -101,10 +110,11 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
     setBusyId(id);
     try {
       await deleteSalesInvoice(id);
+      clearDocDiscount("sales_invoice", id);
       dropInvoiceLineBrands(id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? text("تعذّر حذف الفاتورة", "Could not delete invoice.")); }
+    } catch (e: any) { setErr(errText(e, text("تعذّر حذف الفاتورة", "Could not delete invoice."))); }
     finally { setBusyId(null); }
   }
 
@@ -112,13 +122,29 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
   // editable draft. ترحيل: re-apply a draft's impact. Both refresh the list.
   async function unpost(id: number, invoiceNo: string) {
     setErr(null);
-    if (!confirm(text(`فك ترحيل الفاتورة ${invoiceNo}؟ سيتم عكس القيد المحاسبي والمخزون وتتحول إلى مسودة قابلة للتعديل.`, `Unpost invoice ${invoiceNo}? Its journal and stock effects will be reversed and it will become an editable draft.`))) return;
+    let deleteMode: boolean;
+    try { deleteMode = (await getPostingSettings()).unpostBehavior === "delete"; }
+    catch (e: any) { setErr(errText(e, text("تعذر قراءة إعداد فك الترحيل", "Could not read the unpost policy."))); return; }
+    if (!(await confirmUnpostAction(text("الفاتورة", "invoice"), invoiceNo, language === "en"))) return;
     setBusyId(id);
     try {
       await unpostSalesInvoice(id);
+      if (deleteMode) {
+        clearDocDiscount("sales_invoice", id);
+        dropInvoiceLineBrands(id);
+      }
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? text("تعذّر فك الترحيل", "Could not unpost invoice.")); }
+      if (!deleteMode) {
+        try {
+          const draft = await getSalesInvoice(id);
+          setCreating(false);
+          setEditDoc(draft);
+        } catch (e: any) {
+          setErr(errText(e, text("تم فك الترحيل لكن تعذر فتح المسودة", "Invoice was unposted, but the draft editor could not be opened.")));
+        }
+      }
+    } catch (e: any) { setErr(errText(e, text("تعذّر فك الترحيل", "Could not unpost invoice."))); }
     finally { setBusyId(null); }
   }
   async function post(id: number, invoiceNo: string) {
@@ -129,7 +155,7 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
       await postSalesInvoice(id);
       if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); }
       await refresh();
-    } catch (e: any) { setErr(e?.message ?? text("تعذّر الترحيل", "Could not post invoice.")); }
+    } catch (e: any) { setErr(errText(e, text("تعذّر الترحيل", "Could not post invoice."))); }
     finally { setBusyId(null); }
   }
   // Per-row A4 print: list rows don't carry lines, so load the full invoice first.
@@ -139,16 +165,37 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
     try {
       const inv = await getSalesInvoice(id);
       await printSalesDoc("a4", invoiceToPrintDoc(inv));
-    } catch (e: any) { setErr(e?.message ?? text("تعذّر طباعة الفاتورة", "Could not print invoice.")); }
+    } catch (e: any) { setErr(errText(e, text("تعذّر طباعة الفاتورة", "Could not print invoice."))); }
     finally { setBusyId(null); }
   }
-  async function reloadDeps() {
-    const [customers, cashBoxes, banks, items, warehouses, salespersons] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses(), listSalespersons(false)]);
-    setDeps({ customers, cashBoxes, banks, items, warehouses, salespersons });
+  async function reloadDeps(force = false) {
+    if (!force && !depsLoadedRef.current) return;
+    if (depsLoadRef.current) return depsLoadRef.current;
+    const pending = (async () => {
+      const [customers, cashBoxes, banks, items, warehouses, salespersons] = await Promise.all([
+        listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses(), listSalespersons(false),
+      ]);
+      setDeps({ customers, cashBoxes, banks, items, warehouses, salespersons });
+      depsLoadedRef.current = true;
+    })();
+    depsLoadRef.current = pending;
+    try { await pending; }
+    finally { if (depsLoadRef.current === pending) depsLoadRef.current = null; }
+  }
+  async function startCreate() {
+    setErr(null);
+    try {
+      if (!depsLoadedRef.current) {
+        setDepsLoading(true);
+        await reloadDeps(true);
+      }
+      setCreating(true);
+    } catch (e: any) {
+      setErr(errText(e, text("تعذّر تحميل بيانات النموذج", "Could not load form data.")));
+    } finally { setDepsLoading(false); }
   }
   useEffect(() => {
     void refresh();
-    void reloadDeps();
   }, []);
   useDataRefresh(["invoices", "vouchers"], refresh);
   // Keep the item/customer pickers live: another tab adding an item or customer
@@ -218,9 +265,9 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
       hideHeader={formOpen}
       fillHeight={formOpen}
       right={
-        <button onClick={() => setCreating(true)} disabled={!deps || formOpen}
-          style={{ ...btnPrimary, opacity: (!deps || formOpen) ? 0.5 : 1, cursor: (!deps || formOpen) ? "not-allowed" : "pointer" }}>
-          + {text("فاتورة مبيعات", "Sales invoice")}
+        <button onClick={() => void startCreate()} disabled={depsLoading || formOpen}
+          style={{ ...btnPrimary, opacity: (depsLoading || formOpen) ? 0.5 : 1, cursor: (depsLoading || formOpen) ? "not-allowed" : "pointer" }}>
+          {depsLoading ? text("جارٍ تحميل البيانات...", "Loading form data…") : `+ ${text("فاتورة مبيعات", "Sales invoice")}`}
         </button>
       }
     >
@@ -243,7 +290,7 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
           <ActionBtn label={text("طباعة الفاتورة", "Print invoice")} icon="🖨️" tone="primary" disabled={!sel.selected || busyId === sel.selectedId}
             onClick={() => { if (sel.selectedId != null) void printRow(sel.selectedId); }} />
           {onNavigate && (
-            <ActionBtn label={text("إرجاع", "Return")} icon="↩" tone="warn" disabled={!sel.selected}
+            <ActionBtn label={text("إرجاع", "Return")} icon="↩" tone="warn" disabled={!sel.selected || sel.selected.status !== "posted"}
               onClick={() => { if (sel.selectedId != null) void startReturn(sel.selectedId); }} />
           )}
           {sel.selected?.zatcaStatus ? (
@@ -452,6 +499,18 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
+  const customerOptions = useMemo(() => [
+    { value: 0, label: text("— بدون عميل —", "— No customer —") },
+    ...deps.customers.map((customer) => ({ value: customer.id, label: customer.nameAr })),
+  ], [deps.customers, language]);
+  const warehouseOptions = useMemo(() => [
+    { value: 0, label: text("— المستودع الافتراضي —", "— Default warehouse —") },
+    ...deps.warehouses.map((warehouse) => ({ value: warehouse.id, label: warehouse.name })),
+  ], [deps.warehouses, language]);
+  const itemOptions = useMemo(() => [
+    { value: 0, label: text("— اختر —", "— Select —") },
+    ...deps.items.map((item) => ({ value: item.id, label: item.nameAr })),
+  ], [deps.items, language]);
   const isEdit = !!initial;
   const hideZeros = useHideZeros();
   const showFreeQuantityColumn = useShowFreeQuantityColumn();
@@ -822,12 +881,13 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
             customerVat: selectedCustomer?.vatNumber ?? null,
           });
         } catch (e: any) {
-          setErr(text(`تم حفظ الفاتورة لكن تعذّر ربطها بزاتكا. اضغط «حفظ» مرة أخرى لإعادة المحاولة. (${e?.message ?? "خطأ"})`, `Invoice saved, but the ZATCA link failed. Select “Save” again to retry. (${e?.message ?? "Error"})`));
+          const detail = errText(e, text("خطأ غير معروف", "Unknown error"));
+          setErr(text(`تم حفظ الفاتورة لكن تعذّر ربطها بزاتكا. اضغط «حفظ» مرة أخرى لإعادة المحاولة. (${detail})`, `Invoice saved, but the ZATCA link failed. Select “Save” again to retry. (${detail})`));
           return;
         }
       }
       onDone();
-    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save invoice.")); }
+    } catch (e: any) { setErr(errText(e, text("فشل", "Could not save invoice."))); }
     finally { setBusy(false); }
   }
 
@@ -857,10 +917,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                 onChange={(v) => setCustomerId(Number(v))}
                 {...navCombo}
                 style={input}
-                options={[
-                  { value: 0, label: text("— بدون عميل —", "— No customer —") },
-                  ...deps.customers.map((c) => ({ value: c.id, label: c.nameAr })),
-                ]}
+                  options={customerOptions}
               />
             </div>
             <button type="button" onClick={() => { setQuickCreateError(null); setQuickCreate("customer"); }}
@@ -876,10 +933,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
             onChange={(v) => setWarehouseId(Number(v))}
             {...navCombo}
             style={input}
-            options={[
-              { value: 0, label: text("— المستودع الافتراضي —", "— Default warehouse —") },
-              ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
-            ]}
+              options={warehouseOptions}
           />
         </Field>
         <Field label={text("الضريبة", "Tax")}>
@@ -977,10 +1031,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                       onChange={(v) => setLine(i, { itemId: Number(v) })}
                       {...navCombo}
                       style={input}
-                      options={[
-                        { value: 0, label: text("— اختر —", "— Select —") },
-                        ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
-                      ]}
+                      options={itemOptions}
                     />
                   </Td>
                   <Td>

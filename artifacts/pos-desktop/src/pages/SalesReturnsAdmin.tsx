@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useDataRefresh } from "../lib/dataBus";
 import {
   listSalesReturns, getSalesReturn, createSalesReturn, listCashBoxes, listBanks,
+  postSalesReturn, unpostSalesReturn, deleteSalesReturn, confirmUnpostAction,
+  salesInvoiceReturnAvailability, getPostingSettings,
   type SalesReturn, type SalesLine, type PaymentMethod, type CashBox, type Bank,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
@@ -16,6 +18,7 @@ import {
   documentFormStyles, invoiceEditorShell, tabPanel, EmptyItemsRow,
   linesPanel, linesScroll, docFormPinned, contentPanel,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
+  errText,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -23,6 +26,7 @@ import { useInvoiceTaxes } from "./_invoiceTax";
 import { baseCurrencyCode, currencyByCode } from "../lib/currency";
 import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
+  clearDocDiscount,
   type DiscType, type DiscFields,
 } from "../lib/discount";
 import { takeSalesReturnPrefill, type SalesReturnPrefill } from "../lib/returnPrefill";
@@ -37,30 +41,64 @@ export default function SalesReturnsAdmin() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<SalesReturn | null>(null);
   const [creating, setCreating] = useState(false);
+  const [depsLoading, setDepsLoading] = useState(false);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   // Prefill handed over from the sales-invoice list ("إرجاع"). Taken ONCE on
   // mount; when present the create form opens automatically.
   const [prefill, setPrefill] = useState<SalesReturnPrefill | null>(null);
   const [deps, setDeps] = useState<{ customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[] } | null>(null);
+  const depsLoadedRef = useRef(false);
+  const depsLoadRef = useRef<Promise<void> | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
   async function refresh() { setRows(await listSalesReturns(5000)); }
+  async function reloadDeps(force = false) {
+    if (!force && !depsLoadedRef.current) return;
+    if (depsLoadRef.current) return depsLoadRef.current;
+    const pending = (async () => {
+      const [customers, cashBoxes, banks, items, warehouses] = await Promise.all([
+        listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses(),
+      ]);
+      setDeps({ customers, cashBoxes, banks, items, warehouses });
+      depsLoadedRef.current = true;
+    })();
+    depsLoadRef.current = pending;
+    try { await pending; }
+    finally { if (depsLoadRef.current === pending) depsLoadRef.current = null; }
+  }
+  async function openCreate() {
+    setErr(null);
+    try {
+      if (!depsLoadedRef.current) {
+        setDepsLoading(true);
+        await reloadDeps(true);
+      }
+      setCreating(true);
+    } catch (e: any) {
+      setErr(errText(e, text("تعذر تحميل بيانات النموذج", "Could not load form data.")));
+    } finally { setDepsLoading(false); }
+  }
   useEffect(() => {
     const pf = takeSalesReturnPrefill();
-    if (pf) { setPrefill(pf); setCreating(true); }
+    if (pf) {
+      setPrefill(pf);
+      setCreating(true);
+      setDepsLoading(true);
+      void reloadDeps(true).catch((e: any) => setErr(errText(e, text("تعذر تحميل بيانات النموذج", "Could not load form data."))))
+        .finally(() => setDepsLoading(false));
+    }
     void refresh();
-    void (async () => {
-      const [customers, cashBoxes, banks, items, warehouses] = await Promise.all([listCustomers(), listCashBoxes(), listBanks(), listItems(), listWarehouses()]);
-      setDeps({ customers, cashBoxes, banks, items, warehouses });
-    })();
   }, []);
 
-  function closeForm() { setCreating(false); setPrefill(null); }
+  function closeForm() { setCreating(false); setPrefill(null); setErr(null); }
 
   const sel = useRowSelect(rows);
   const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
   const pageRows = rows.slice(start, end);
   useDataRefresh(["invoices"], refresh);
+  useDataRefresh(["items", "customers"], () => { void reloadDeps(); });
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
 
   async function toggleView(id: number) {
@@ -70,18 +108,51 @@ export default function SalesReturnsAdmin() {
     setExpandedId((cur) => { if (cur === id) setExpandedDetail(fetched); return cur; });
   }
 
+  async function post(r: SalesReturn) {
+    if (!confirm(text(`ترحيل المرتجع ${r.returnNo}؟`, `Post return ${r.returnNo}?`))) return;
+    setBusyId(r.id);
+    setErr(null);
+    try { await postSalesReturn(r.id); await refresh(); }
+    catch (e: any) { setErr(errText(e, text("تعذر ترحيل المرتجع", "Could not post return."))); }
+    finally { setBusyId(null); }
+  }
+  async function unpost(r: SalesReturn) {
+    let deleteMode: boolean;
+    try { deleteMode = (await getPostingSettings()).unpostBehavior === "delete"; }
+    catch (e: any) { setErr(errText(e, text("تعذر قراءة إعداد فك الترحيل", "Could not read the unpost policy."))); return; }
+    if (!(await confirmUnpostAction(text("مرتجع المبيعات", "sales return"), r.returnNo, language === "en"))) return;
+    setBusyId(r.id);
+    setErr(null);
+    try {
+      await unpostSalesReturn(r.id);
+      if (deleteMode) clearDocDiscount("sales_return", r.id);
+      await refresh();
+    }
+    catch (e: any) { setErr(errText(e, text("تعذر فك ترحيل المرتجع", "Could not unpost return."))); }
+    finally { setBusyId(null); }
+  }
+  async function removeDraft(r: SalesReturn) {
+    if (!confirm(text(`حذف مسودة المرتجع ${r.returnNo}؟`, `Delete return draft ${r.returnNo}?`))) return;
+    setBusyId(r.id);
+    setErr(null);
+    try { await deleteSalesReturn(r.id); clearDocDiscount("sales_return", r.id); await refresh(); }
+    catch (e: any) { setErr(errText(e, text("تعذر حذف المسودة", "Could not delete draft."))); }
+    finally { setBusyId(null); }
+  }
+
   return (
     <div dir={language === "en" ? "ltr" : "rtl"}>
     <Page
       title={text("مرتجع المبيعات", "Sales returns")}
       subtitle={text(`${rows.length} مرتجع — يتم عكس قيد المبيعات وإرجاع المخزون تلقائياً`, `${rows.length} returns — the sales entry is reversed and stock is restored automatically`)}
       right={
-        <button onClick={() => setCreating(true)} disabled={!deps || creating}
-          style={{ ...btnPrimary, opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}>
-          + {text("مرتجع مبيعات", "Sales return")}
+        <button onClick={() => void openCreate()} disabled={depsLoading || creating}
+          style={{ ...btnPrimary, opacity: (depsLoading || creating) ? 0.5 : 1, cursor: (depsLoading || creating) ? "not-allowed" : "pointer" }}>
+          {depsLoading ? text("جارٍ تحميل البيانات...", "Loading form data…") : `+ ${text("مرتجع مبيعات", "Sales return")}`}
         </button>
       }
     >
+      <ErrorMsg text={err} />
       {creating && deps && (
         <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
@@ -93,6 +164,15 @@ export default function SalesReturnsAdmin() {
         <ActionBar selectedLabel={sel.selected ? sel.selected.returnNo : null}>
           <ActionBtn label={expandedId === sel.selectedId ? text("إخفاء", "Hide") : text("عرض", "View")} icon="▼" disabled={!sel.selected}
             onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
+          <ActionBtn label={text("ترحيل", "Post")} icon="✔" tone="success"
+            disabled={!sel.selected || sel.selected.status !== "draft" || busyId === sel.selectedId}
+            onClick={() => { if (sel.selected) void post(sel.selected); }} />
+          <ActionBtn label={text("حذف المسودة", "Delete draft")} icon="🗑" tone="danger"
+            disabled={!sel.selected || sel.selected.status !== "draft" || busyId === sel.selectedId}
+            onClick={() => { if (sel.selected) void removeDraft(sel.selected); }} />
+          <ActionBtn label={text("فك الترحيل", "Unpost")} icon="↺" tone="warn"
+            disabled={!sel.selected || sel.selected.status !== "posted" || busyId === sel.selectedId}
+            onClick={() => { if (sel.selected) void unpost(sel.selected); }} />
         </ActionBar>
       )}
       {!creating && <Card>
@@ -101,6 +181,7 @@ export default function SalesReturnsAdmin() {
             <thead><tr>
               <SelectTh />
               <Th>{text("رقم المرتجع", "Return number")}</Th><Th>{text("التاريخ", "Date")}</Th><Th>{text("العميل", "Customer")}</Th><Th>{text("طريقة الدفع", "Payment method")}</Th>
+              <Th>{text("الحالة", "Status")}</Th>
               <Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المجموع", "Subtotal")}</Th><Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الضريبة", "Tax")}</Th>
               <Th style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</Th>
             </tr></thead>
@@ -110,13 +191,13 @@ export default function SalesReturnsAdmin() {
                   <tr>
                     <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{p.returnNo}</Td><Td>{p.returnDate}</Td><Td>{p.customerName ?? text("نقدي/بدون عميل", "Cash / no customer")}</Td>
-                    <Td><PayBadge m={p.paymentMethod} /></Td>
+                    <Td><PayBadge m={p.paymentMethod} /></Td><Td><ReturnStatus status={p.status} /></Td>
                     <Td num>{fmt(p.subtotal)}</Td><Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
-                      <Td colSpan={8 as any}>
+                      <Td colSpan={9 as any}>
                         {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>{text("... جاري التحميل", "Loading…")}</div> : (
                           <ReturnDetail r={expandedDetail} />
                         )}
@@ -135,6 +216,23 @@ export default function SalesReturnsAdmin() {
       </Card>}
     </Page>
     </div>
+  );
+}
+
+function ReturnStatus({ status }: { status: SalesReturn["status"] }) {
+  const language = useUiLanguage();
+  const posted = status === "posted";
+  return (
+    <span style={{
+      background: posted ? "#dcfce7" : "#fef3c7",
+      color: posted ? "#15803d" : "#b45309",
+      padding: "2px 9px",
+      borderRadius: 999,
+      fontSize: 11,
+      fontWeight: 700,
+    }}>
+      {posted ? uiText("مرحّل", "Posted", language) : uiText("مسودة", "Draft", language)}
+    </span>
   );
 }
 
@@ -207,6 +305,18 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
+  const customerOptions = useMemo(() => [
+    { value: 0, label: text("— بدون عميل —", "— No customer —") },
+    ...deps.customers.map((customer) => ({ value: customer.id, label: customer.nameAr })),
+  ], [deps.customers, language]);
+  const warehouseOptions = useMemo(() => [
+    { value: 0, label: text("— المستودع الافتراضي —", "— Default warehouse —") },
+    ...deps.warehouses.map((warehouse) => ({ value: warehouse.id, label: warehouse.name })),
+  ], [deps.warehouses, language]);
+  const itemOptions = useMemo(() => [
+    { value: 0, label: text("— اختر —", "— Select —") },
+    ...deps.items.map((item) => ({ value: item.id, label: item.nameAr })),
+  ], [deps.items, language]);
   const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(todayStr());
@@ -232,6 +342,10 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
       ? initial.lines.map((l) => ({ ...l, disc: 0, discType: "percent" as DiscType }))
       : [],
   );
+  const [returnAvailability, setReturnAvailability] = useState<Map<number, number> | null>(
+    initial?.invoiceId ? null : new Map(),
+  );
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [headerDisc, setHeaderDisc] = useState(0);
   const [headerDiscType, setHeaderDiscType] = useState<DiscType>("percent");
   const [currency, setCurrency] = useState<string>(() => baseCurrencyCode());
@@ -242,6 +356,50 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
   const [issues, setIssues] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const { taxes, taxId, setTaxId, taxOptions, selectedRate } = useInvoiceTaxes("sales_return");
+
+  useEffect(() => {
+    if (!initial?.invoiceId) {
+      setReturnAvailability(new Map());
+      setAvailabilityError(null);
+      return;
+    }
+    let cancelled = false;
+    setReturnAvailability(null);
+    setAvailabilityError(null);
+    void salesInvoiceReturnAvailability(initial.invoiceId).then((available) => {
+      if (cancelled) return;
+      const map = new Map(available.map((line) => [line.itemId, line.remainingBaseQty]));
+      setReturnAvailability(map);
+      setLines((current) => {
+        const used = new Map<number, number>();
+        return current.map((line) => {
+          const rawFactor = line.conversionFactor ?? 1;
+          const factor = Number.isFinite(rawFactor) && rawFactor > 0 ? rawFactor : 1;
+          const left = Math.max(0, (map.get(line.itemId) ?? 0) - (used.get(line.itemId) ?? 0));
+          const qty = Math.min(line.qty, left / factor);
+          used.set(line.itemId, (used.get(line.itemId) ?? 0) + qty * factor);
+          const { net } = lineNet(qty, line.unitPrice, line.disc, line.discType);
+          return { ...line, qty, lineTotal: net + net * (Number(line.vatRate) || 0) / 100 };
+        });
+      });
+    }).catch((e: any) => {
+      if (!cancelled) setAvailabilityError(errText(e, text("تعذر تحميل الكميات المتبقية", "Could not load remaining quantities.")));
+    });
+    return () => { cancelled = true; };
+  }, [initial?.invoiceId]);
+
+  function maxQtyForLine(lineIndex: number, itemId: number, factorValue: number | undefined): number | undefined {
+    if (!initial?.invoiceId || !returnAvailability || itemId <= 0) return undefined;
+    const rawFactor = factorValue ?? 1;
+    const factor = Number.isFinite(rawFactor) && rawFactor > 0 ? rawFactor : 1;
+    const usedByOtherLines = lines.reduce((total, line, index) => {
+      if (index === lineIndex || line.itemId !== itemId) return total;
+      const rawLineFactor = line.conversionFactor ?? 1;
+      const lineFactor = Number.isFinite(rawLineFactor) && rawLineFactor > 0 ? rawLineFactor : 1;
+      return total + line.qty * lineFactor;
+    }, 0);
+    return Math.max(0, ((returnAvailability.get(itemId) ?? 0) - usedByOtherLines) / factor);
+  }
 
   function setLine(i: number, patch: Partial<FLine>) {
     setLines((ls) => ls.map((l, k) => {
@@ -262,6 +420,18 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
       if (patch.uomId !== undefined) {
         const u = uoms.find((x) => x.id === Number(patch.uomId));
         if (u) { next.uomName = u.nameAr; next.conversionFactor = u.baseQty; }
+      }
+      if (initial?.invoiceId && returnAvailability && next.itemId > 0) {
+        const rawFactor = next.conversionFactor ?? 1;
+        const factor = Number.isFinite(rawFactor) && rawFactor > 0 ? rawFactor : 1;
+        const usedByOtherLines = ls.reduce((total, line, index) => {
+          if (index === i || line.itemId !== next.itemId) return total;
+          const rawLineFactor = line.conversionFactor ?? 1;
+          const lineFactor = Number.isFinite(rawLineFactor) && rawLineFactor > 0 ? rawLineFactor : 1;
+          return total + line.qty * lineFactor;
+        }, 0);
+        const maxQty = Math.max(0, ((returnAvailability.get(next.itemId) ?? 0) - usedByOtherLines) / factor);
+        next.qty = Math.min(Math.max(0, next.qty), maxQty);
       }
       // A selected header tax overrides any per-item/per-line rate so one tax
       // applies to the whole invoice.
@@ -299,6 +469,10 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
   const selectedLineCount = lines.filter((line) => line.itemId > 0).length;
 
   async function save() {
+    if (initial?.invoiceId && returnAvailability === null) {
+      setErr(availabilityError ?? text("جارٍ تحميل الكميات المتبقية من الفاتورة", "Loading remaining invoice quantities."));
+      return;
+    }
     setBusy(true); setErr(null); setIssues([]);
     try {
       const problems = collectDocIssues([
@@ -340,7 +514,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
         currencyCode: currency, exchangeRate: effRate,
       });
       onDone();
-    } catch (e: any) { setErr(e?.message ?? text("فشل", "Could not save sales return.")); }
+    } catch (e: any) { setErr(errText(e, text("فشل", "Could not save sales return."))); }
     finally { setBusy(false); }
   }
 
@@ -367,10 +541,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
             value={customerId}
             onChange={(v) => setCustomerId(Number(v))}
             style={input}
-            options={[
-              { value: 0, label: text("— بدون عميل —", "— No customer —") },
-              ...deps.customers.map((c) => ({ value: c.id, label: c.nameAr })),
-            ]}
+            options={customerOptions}
           />
         </Field>
         <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
@@ -379,10 +550,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
             value={warehouseId}
             onChange={(v) => setWarehouseId(Number(v))}
             style={input}
-            options={[
-              { value: 0, label: text("— المستودع الافتراضي —", "— Default warehouse —") },
-              ...deps.warehouses.map((w) => ({ value: w.id, label: w.name })),
-            ]}
+            options={warehouseOptions}
           />
         </Field>
         <Field label={text("الضريبة", "Tax")}>
@@ -429,10 +597,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
                   onChange={(v) => setLine(i, { itemId: Number(v) })}
                   style={input}
                   inputClassName="zfield"
-                  options={[
-                    { value: 0, label: text("— اختر —", "— Select —") },
-                    ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
-                  ]}
+                  options={itemOptions}
                 />
               </Td>
               <Td>
@@ -444,7 +609,16 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
                   options={uoms.map((u) => ({ value: u.id, label: u.baseQty !== 1 ? `${u.nameAr} (×${u.baseQty})` : u.nameAr }))}
                 />
               </Td>
-              <Td><input type="number" step="0.001" value={l.qty} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} className="zfield" /></Td>
+              <Td><input
+                type="number"
+                step="0.001"
+                min={0}
+                max={maxQtyForLine(i, l.itemId, l.conversionFactor)}
+                value={l.qty}
+                onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })}
+                style={{ ...input, textAlign: "center", fontWeight: 600 }}
+                className="zfield"
+              /></Td>
               <Td><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} className="zfield" /></Td>
               <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} inputClassName="zfield" /></Td>
               <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} className="zfield" /></Td>
@@ -455,6 +629,22 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
         </tbody>
       </Table>
       </div>
+      {initial?.invoiceId && (
+        <div style={{
+          marginTop: 8,
+          padding: "8px 10px",
+          borderRadius: 6,
+          background: availabilityError ? "#fef2f2" : "#eff6ff",
+          color: availabilityError ? "#b91c1c" : "#1d4ed8",
+          fontSize: 12,
+        }}>
+          {availabilityError
+            ? availabilityError
+            : returnAvailability === null
+              ? text("جارٍ تحميل الكميات المتبقية...", "Loading remaining quantities…")
+              : text("تم تقييد الكمية بإجمالي المتبقي من الفاتورة الأصلية، بعد احتساب المرتجعات السابقة.", "Quantities are capped at the original invoice balance after previous returns.")}
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "flex-start", gap: 8, marginTop: 8 }}>
         <button onClick={addLine} type="button" style={{ padding: "7px 14px", background: "#fff", color: "#087f69", border: "1px solid #9bd6c9", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
           + {text("إضافة صنف", "Add item")}
@@ -508,7 +698,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
-        <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : text("حفظ وترحيل", "Save and post")}</button>
+        <button onClick={save} disabled={busy || (!!initial?.invoiceId && returnAvailability === null)} type="button" style={btnPrimary}>{busy ? "..." : text("حفظ وترحيل", "Save and post")}</button>
       </Actions>
       </div>
     </div>

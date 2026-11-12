@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   listJournalEntries, postingCenterPost, postingCenterUnpost,
-  postingCenterDocuments, postSalesInvoice, postPurchase, financialTxPost,
-  type JournalEntry, type UnpostedDoc,
+  postingCenterDocuments, postSalesInvoice, postPurchase, postSalesReturn, financialTxPost,
+  confirmBulkUnpostAction, type JournalEntry, type UnpostedDoc,
 } from "../lib/accounting";
 import {
   Page, Card, Table, Th, Td, ErrorMsg, Empty,
@@ -209,6 +209,7 @@ export default function PostingCenter() {
         if (r.kind !== "doc") continue;
         if (r.docType === "sale") await postSalesInvoice(r.id);
         else if (r.docType === "purchase") await postPurchase(r.id);
+        else if (r.docType === "sale_return") await postSalesReturn(r.id);
         else if (r.docType === "voucher") await financialTxPost(r.id);
         count++;
       }
@@ -226,7 +227,7 @@ export default function PostingCenter() {
 
   async function doUnpost() {
     if (selectedPosted.length === 0) return;
-    if (!confirm(`إلغاء ترحيل ${selectedPosted.length} مستند؟ ستُعاد لحالة غير مرحّل وتُلغى آثارها على الأرصدة.`)) return;
+    if (!(await confirmBulkUnpostAction(selectedPosted.length))) return;
     setBusy(true); setErr(null); setNotice(null);
     try {
       // Posted rows are always journal entries (a posted document carries its

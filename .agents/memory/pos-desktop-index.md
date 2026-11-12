@@ -1,5 +1,11 @@
 # POS Desktop
 
+- POS Desktop feature scope — changes requested for the Windows POS Desktop stay in that app; do not alter the web ERP or cashier POS unless the user asks.
+
+**Why:** The user explicitly separated desktop accounting work from the web ERP and cashier POS.
+
+**How to apply:** Keep related code, UI, and verification within the POS Desktop artifact unless a later request broadens scope.
+
 - POS Desktop clock integrity — [unlock key trust](pos-desktop-clock-unlock-key-trust.md) + [rollback guard](pos-desktop-clock-guard.md): unlock must verify vs license accepted-key set (not stale pinned key); wall-clock-vs-HWM is freezable, fold monotonic perf.now() into effectiveNow=max(now,HWM), guard both boot trees.
 - Number formatting & inputs — [en-US grouping](global-en-us-number-grouping.md) + [live input commas](live-input-thousands-grouping.md) + [hide-zeros pos](pos-desktop-hide-zeros.md)+[web](web-hide-zeros-input.md) + [latin-digits](latin-digits-number-input.md): display 100,000.34 via format.ts (never group inputs/payloads/CSV/ZATCA); shared Input paints commas live ONLY for controlled inputMode="decimal" text fields (strip before onChange, caret via non-comma count); hide-zeros blanks INPUT not display; numeric fields = text+inputMode+dir=ltr+sanitizer (type=number → Arabic-Indic on Saudi), display `-nu-latn`.
 - POS Desktop shell — [new-screen wiring](pos-desktop-screen-wiring.md) + [tabbed gating](pos-desktop-tabbed-shell.md): a new PosShell screen needs View type + nav + permission + render branch (tsc won't catch the branch); gating must PRUNE openTabs, not just redirect, or disabled modules stay reachable via tab chips.
