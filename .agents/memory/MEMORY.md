@@ -58,6 +58,7 @@
 - [Additional accounting report boundary](additional-accounting-reports-boundary.md) — only genuinely new reports join the default-off selector; preserve existing report surfaces and fail closed on unsupported audit scope.
 - [Operational report rendering boundary](operational-report-rendering-boundary.md) — reuse the journal grid and branded exports; suppress monetary totals for mixed or unknown currencies.
 - [Platform and security index](platform-ops-index.md) — tenant isolation, permissions, agents, mobile/HR, storage, infrastructure, and operational safeguards.
+- [Clarify before changing the app](clarify-before-app-changes.md) — treat exploratory questions as questions; change or publish only after a clear request.
 - [Replit-hosted latency observation](replit-hosting-latency.md) — user reports branch, warehouse, and item-loading delays only on the Replit-hosted deployment.
 - [Replit control plane and Contabo agents](contabo-hosted-runtime.md) — publish centrally, generate an agent release, update the VPS, then validate on its domain.
 - [Controller-link state integrity](dual-platform-agent-control.md) — preserve exact concurrency checks and use idempotent recovery after remote shell-sync failures.
