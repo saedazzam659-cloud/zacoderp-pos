@@ -5,6 +5,156 @@
  * ZATCA Saudi e-invoicing API
  * OpenAPI spec version: 0.1.0
  */
+export type DevCloudBackupSourceType = typeof DevCloudBackupSourceType[keyof typeof DevCloudBackupSourceType];
+
+
+export const DevCloudBackupSourceType = {
+  central: 'central',
+  agent: 'agent',
+} as const;
+
+export type DevCloudBackupStatus = typeof DevCloudBackupStatus[keyof typeof DevCloudBackupStatus];
+
+
+export const DevCloudBackupStatus = {
+  creating: 'creating',
+  ready: 'ready',
+  failed: 'failed',
+} as const;
+
+export interface DevCloudBackup {
+  id: number;
+  label: string;
+  sourceType: DevCloudBackupSourceType;
+  /** @nullable */
+  sourceAgentId: number | null;
+  sourceLabel: string;
+  releaseVersion: string;
+  sourceSha256: string;
+  databaseSha256: string;
+  /** @minimum 0 */
+  bundleSizeBytes: number;
+  status: DevCloudBackupStatus;
+  /** @nullable */
+  error: string | null;
+  /** @nullable */
+  createdByUsername: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DevCloudBackupOperationAction = typeof DevCloudBackupOperationAction[keyof typeof DevCloudBackupOperationAction];
+
+
+export const DevCloudBackupOperationAction = {
+  create: 'create',
+  upload: 'upload',
+  restore: 'restore',
+} as const;
+
+export type DevCloudBackupOperationTargetType = typeof DevCloudBackupOperationTargetType[keyof typeof DevCloudBackupOperationTargetType];
+
+
+export const DevCloudBackupOperationTargetType = {
+  central: 'central',
+  agent: 'agent',
+} as const;
+
+export type DevCloudBackupOperationStatus = typeof DevCloudBackupOperationStatus[keyof typeof DevCloudBackupOperationStatus];
+
+
+export const DevCloudBackupOperationStatus = {
+  queued: 'queued',
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export interface DevCloudBackupOperation {
+  id: number;
+  backupId: number;
+  action: DevCloudBackupOperationAction;
+  targetType: DevCloudBackupOperationTargetType;
+  /** @nullable */
+  targetAgentId: number | null;
+  targetLabel: string;
+  status: DevCloudBackupOperationStatus;
+  /** @nullable */
+  message: string | null;
+  /** @nullable */
+  error: string | null;
+  createdAt: string;
+  /** @nullable */
+  startedAt: string | null;
+  /** @nullable */
+  completedAt: string | null;
+}
+
+export interface DevCloudBackupAgentTarget {
+  id: number;
+  name: string;
+  /** @nullable */
+  domain: string | null;
+  status: string;
+  databaseReady: boolean;
+  sshReady: boolean;
+}
+
+export type DevCloudBackupListResponseReplitRestoreMode = typeof DevCloudBackupListResponseReplitRestoreMode[keyof typeof DevCloudBackupListResponseReplitRestoreMode];
+
+
+export const DevCloudBackupListResponseReplitRestoreMode = {
+  manual_checkpoint_and_publish: 'manual_checkpoint_and_publish',
+} as const;
+
+export interface DevCloudBackupListResponse {
+  backups: DevCloudBackup[];
+  operations: DevCloudBackupOperation[];
+  agentTargets: DevCloudBackupAgentTarget[];
+  replitRestoreMode: DevCloudBackupListResponseReplitRestoreMode;
+}
+
+export type DevCloudBackupInputSourceType = typeof DevCloudBackupInputSourceType[keyof typeof DevCloudBackupInputSourceType];
+
+
+export const DevCloudBackupInputSourceType = {
+  central: 'central',
+  agent: 'agent',
+} as const;
+
+export interface DevCloudBackupInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  label: string;
+  sourceType: DevCloudBackupInputSourceType;
+  /** @minimum 1 */
+  sourceAgentId?: number;
+}
+
+export interface DevCloudBackupAgentTargetInput {
+  /** @minimum 1 */
+  targetAgentId: number;
+}
+
+export interface DevCloudBackupAgentRestoreInput {
+  /** @minimum 1 */
+  targetAgentId: number;
+  confirm: true;
+}
+
+export interface DevCloudBackupQueueResponse {
+  ok: boolean;
+  backup: DevCloudBackup;
+  operation: DevCloudBackupOperation;
+}
+
+export interface DevCloudBackupOperationResponse {
+  ok: boolean;
+  operation: DevCloudBackupOperation;
+}
+
 export interface PartyIdentitySettings {
   enabled: boolean;
 }

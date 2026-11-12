@@ -157,6 +157,7 @@ import externalDatabasesRouter from "./externalDatabases";
 import agentInstancesRouter, { agentPublicRouter, agentDataSourceRouter, blockSuperadminOnAgentDomains } from "./agentInstances";
 import localAgentUpdatesRouter from "./localAgentUpdates";
 import devCloudAdminRouter from "./dev-cloud-admin";
+import devCloudBackupsRouter from "./dev-cloud-backups";
 import { devStudioRouter, devStudioAdminRouter } from "./dev-studio";
 import extensionsRouter from "../extensions/index.js";
 import { marketplaceRouter, marketplaceAdminRouter } from "./marketplace.js";
@@ -239,6 +240,7 @@ router.use("/reseller", resellerRouter);
 router.use("/admin/partners", partnersAdminRouter);
 // Developer Cloud (Workspaces) — Phase 5 (additive, SuperAdmin-only). Same
 // mount-before-zatcaRouter rationale; self-guards with requireSuperAdmin.
+router.use("/admin/dev-cloud", devCloudBackupsRouter);
 router.use("/admin/dev-cloud", devCloudAdminRouter);
 // DevStudio "التطوير من خلال زاكود" — additive AI coding studio. BOTH routers
 // MUST be mounted BEFORE the path-less zatcaRouter: the developer studio uses

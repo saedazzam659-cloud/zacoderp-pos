@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import DevCloudBackupsPanel from "@/components/admin/DevCloudBackupsPanel";
 import {
   Cloud, PlusCircle, RefreshCw, Building2, Trash2, X, Search, ChevronRight,
   Users, Rocket, Server, GitBranch, Database, FlaskConical, Ban, CheckCircle2,
@@ -142,8 +143,10 @@ export default function DevCloudAdmin() {
 
       <div className="mb-4 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>لا يتم تخزين أو عرض أي بيانات اعتماد للخوادم أو SSH أو RDP أو الوصول المباشر لقاعدة البيانات. النشر يتم حصراً عبر محرك النشر.</span>
+        <span>مساحات العمل لا تحفظ بيانات اعتماد الخوادم. أداة النسخ المنفصلة تستخدم اتصال SSH المشفر المسجل مسبقاً في «سيرفرات الوكلاء» ولا تعرضه، ولا تغيّر أدوات الوكلاء الحالية. استعادة الوكيل تستبدل ملفات التطبيق فقط ولا تستورد قاعدة البيانات.</span>
       </div>
+
+      <DevCloudBackupsPanel />
 
       {isLoading ? (
         <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>

@@ -6750,3 +6750,192 @@ export const GetAgentDatabaseSchemaDiagnosticsResponse = zod.object({
 })
 
 
+/**
+ * @summary List Developer Cloud recovery backups and eligible agent servers
+ */
+export const listDevCloudBackupsResponseBackupsItemBundleSizeBytesMin = 0;
+
+
+
+export const ListDevCloudBackupsResponse = zod.object({
+  "backups": zod.array(zod.object({
+  "id": zod.number(),
+  "label": zod.string(),
+  "sourceType": zod.enum(['central', 'agent']),
+  "sourceAgentId": zod.number().nullable(),
+  "sourceLabel": zod.string(),
+  "releaseVersion": zod.string(),
+  "sourceSha256": zod.string(),
+  "databaseSha256": zod.string(),
+  "bundleSizeBytes": zod.number().min(listDevCloudBackupsResponseBackupsItemBundleSizeBytesMin),
+  "status": zod.enum(['creating', 'ready', 'failed']),
+  "error": zod.string().nullable(),
+  "createdByUsername": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})),
+  "operations": zod.array(zod.object({
+  "id": zod.number(),
+  "backupId": zod.number(),
+  "action": zod.enum(['create', 'upload', 'restore']),
+  "targetType": zod.enum(['central', 'agent']),
+  "targetAgentId": zod.number().nullable(),
+  "targetLabel": zod.string(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "message": zod.string().nullable(),
+  "error": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "startedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable()
+})),
+  "agentTargets": zod.array(zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "domain": zod.string().nullable(),
+  "status": zod.string(),
+  "databaseReady": zod.boolean(),
+  "sshReady": zod.boolean()
+})),
+  "replitRestoreMode": zod.enum(['manual_checkpoint_and_publish'])
+})
+
+
+/**
+ * @summary Queue a code and database backup
+ */
+export const createDevCloudBackupBodyLabelMax = 120;
+
+
+
+
+export const CreateDevCloudBackupBody = zod.object({
+  "label": zod.string().min(1).max(createDevCloudBackupBodyLabelMax),
+  "sourceType": zod.enum(['central', 'agent']),
+  "sourceAgentId": zod.number().min(1).optional()
+})
+
+export const createDevCloudBackupResponseBackupBundleSizeBytesMin = 0;
+
+
+
+export const CreateDevCloudBackupResponse = zod.object({
+  "ok": zod.boolean(),
+  "backup": zod.object({
+  "id": zod.number(),
+  "label": zod.string(),
+  "sourceType": zod.enum(['central', 'agent']),
+  "sourceAgentId": zod.number().nullable(),
+  "sourceLabel": zod.string(),
+  "releaseVersion": zod.string(),
+  "sourceSha256": zod.string(),
+  "databaseSha256": zod.string(),
+  "bundleSizeBytes": zod.number().min(createDevCloudBackupResponseBackupBundleSizeBytesMin),
+  "status": zod.enum(['creating', 'ready', 'failed']),
+  "error": zod.string().nullable(),
+  "createdByUsername": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+}),
+  "operation": zod.object({
+  "id": zod.number(),
+  "backupId": zod.number(),
+  "action": zod.enum(['create', 'upload', 'restore']),
+  "targetType": zod.enum(['central', 'agent']),
+  "targetAgentId": zod.number().nullable(),
+  "targetLabel": zod.string(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "message": zod.string().nullable(),
+  "error": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "startedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Download a verified recovery bundle
+ */
+
+
+
+export const DownloadDevCloudBackupParams = zod.object({
+  "backupId": zod.coerce.number().min(1)
+})
+
+export const DownloadDevCloudBackupResponse = zod.unknown()
+
+
+/**
+ * @summary Store an encrypted backup on an agent server
+ */
+
+
+
+export const UploadDevCloudBackupToAgentParams = zod.object({
+  "backupId": zod.coerce.number().min(1)
+})
+
+
+
+
+export const UploadDevCloudBackupToAgentBody = zod.object({
+  "targetAgentId": zod.number().min(1)
+})
+
+export const UploadDevCloudBackupToAgentResponse = zod.object({
+  "ok": zod.boolean(),
+  "operation": zod.object({
+  "id": zod.number(),
+  "backupId": zod.number(),
+  "action": zod.enum(['create', 'upload', 'restore']),
+  "targetType": zod.enum(['central', 'agent']),
+  "targetAgentId": zod.number().nullable(),
+  "targetLabel": zod.string(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "message": zod.string().nullable(),
+  "error": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "startedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
+ * @summary Restore application code on an agent without importing its database
+ */
+
+
+
+export const RestoreDevCloudBackupToAgentParams = zod.object({
+  "backupId": zod.coerce.number().min(1)
+})
+
+
+
+
+export const RestoreDevCloudBackupToAgentBody = zod.object({
+  "targetAgentId": zod.number().min(1),
+  "confirm": zod.boolean()
+})
+
+export const RestoreDevCloudBackupToAgentResponse = zod.object({
+  "ok": zod.boolean(),
+  "operation": zod.object({
+  "id": zod.number(),
+  "backupId": zod.number(),
+  "action": zod.enum(['create', 'upload', 'restore']),
+  "targetType": zod.enum(['central', 'agent']),
+  "targetAgentId": zod.number().nullable(),
+  "targetLabel": zod.string(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "message": zod.string().nullable(),
+  "error": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "startedAt": zod.coerce.date().nullable(),
+  "completedAt": zod.coerce.date().nullable()
+})
+})
+
+

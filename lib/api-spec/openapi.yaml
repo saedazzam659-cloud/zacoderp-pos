@@ -4203,8 +4203,200 @@ paths:
           description: Agent not found or diagnostics not available
         "502":
           description: Agent database could not be inspected
+  /admin/dev-cloud/backups:
+    get:
+      operationId: listDevCloudBackups
+      tags: [security]
+      summary: List Developer Cloud recovery backups and eligible agent servers
+      responses:
+        "200":
+          description: Backups, operations, and active full-agent targets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevCloudBackupListResponse"
+    post:
+      operationId: createDevCloudBackup
+      tags: [security]
+      summary: Queue a code and database backup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DevCloudBackupInput"
+      responses:
+        "202":
+          description: Backup creation queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevCloudBackupQueueResponse"
+        "400":
+          description: Invalid source selection
+        "403":
+          description: SuperAdmin only
+  /admin/dev-cloud/backups/{backupId}/download:
+    get:
+      operationId: downloadDevCloudBackup
+      tags: [security]
+      summary: Download a verified recovery bundle
+      parameters:
+        - name: backupId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Recovery bundle containing code, source, and database backup
+          content:
+            application/gzip:
+              schema: { type: string, format: binary }
+        "404":
+          description: Backup not found or not ready
+  /admin/dev-cloud/backups/{backupId}/upload:
+    post:
+      operationId: uploadDevCloudBackupToAgent
+      tags: [security]
+      summary: Store an encrypted backup on an agent server
+      parameters:
+        - name: backupId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DevCloudBackupAgentTargetInput"
+      responses:
+        "202":
+          description: Encrypted upload queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevCloudBackupOperationResponse"
+        "404":
+          description: Backup or agent not found
+  /admin/dev-cloud/backups/{backupId}/restore-agent:
+    post:
+      operationId: restoreDevCloudBackupToAgent
+      tags: [security]
+      summary: Restore application code on an agent without importing its database
+      parameters:
+        - name: backupId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DevCloudBackupAgentRestoreInput"
+      responses:
+        "202":
+          description: Code-only restore queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevCloudBackupOperationResponse"
+        "404":
+          description: Backup or agent not found
+        "409":
+          description: Agent is not available for restoration
 components:
   schemas:
+    DevCloudBackup:
+      type: object
+      required: [id, label, sourceType, sourceAgentId, sourceLabel, releaseVersion, sourceSha256, databaseSha256, bundleSizeBytes, status, error, createdByUsername, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        label: { type: string }
+        sourceType: { type: string, enum: [central, agent] }
+        sourceAgentId: { type: ["integer", "null"] }
+        sourceLabel: { type: string }
+        releaseVersion: { type: string }
+        sourceSha256: { type: string }
+        databaseSha256: { type: string }
+        bundleSizeBytes: { type: integer, minimum: 0 }
+        status: { type: string, enum: [creating, ready, failed] }
+        error: { type: ["string", "null"] }
+        createdByUsername: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    DevCloudBackupOperation:
+      type: object
+      required: [id, backupId, action, targetType, targetAgentId, targetLabel, status, message, error, createdAt, startedAt, completedAt]
+      properties:
+        id: { type: integer }
+        backupId: { type: integer }
+        action: { type: string, enum: [create, upload, restore] }
+        targetType: { type: string, enum: [central, agent] }
+        targetAgentId: { type: ["integer", "null"] }
+        targetLabel: { type: string }
+        status: { type: string, enum: [queued, running, completed, failed] }
+        message: { type: ["string", "null"] }
+        error: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: ["string", "null"], format: date-time }
+        completedAt: { type: ["string", "null"], format: date-time }
+    DevCloudBackupAgentTarget:
+      type: object
+      required: [id, name, domain, status, databaseReady, sshReady]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        domain: { type: ["string", "null"] }
+        status: { type: string }
+        databaseReady: { type: boolean }
+        sshReady: { type: boolean }
+    DevCloudBackupListResponse:
+      type: object
+      required: [backups, operations, agentTargets, replitRestoreMode]
+      properties:
+        backups:
+          type: array
+          items: { $ref: "#/components/schemas/DevCloudBackup" }
+        operations:
+          type: array
+          items: { $ref: "#/components/schemas/DevCloudBackupOperation" }
+        agentTargets:
+          type: array
+          items: { $ref: "#/components/schemas/DevCloudBackupAgentTarget" }
+        replitRestoreMode: { type: string, enum: [manual_checkpoint_and_publish] }
+    DevCloudBackupInput:
+      type: object
+      required: [label, sourceType]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 120 }
+        sourceType: { type: string, enum: [central, agent] }
+        sourceAgentId: { type: integer, minimum: 1 }
+    DevCloudBackupAgentTargetInput:
+      type: object
+      required: [targetAgentId]
+      properties:
+        targetAgentId: { type: integer, minimum: 1 }
+    DevCloudBackupAgentRestoreInput:
+      type: object
+      required: [targetAgentId, confirm]
+      properties:
+        targetAgentId: { type: integer, minimum: 1 }
+        confirm: { type: boolean, const: true }
+    DevCloudBackupQueueResponse:
+      type: object
+      required: [ok, backup, operation]
+      properties:
+        ok: { type: boolean }
+        backup: { $ref: "#/components/schemas/DevCloudBackup" }
+        operation: { $ref: "#/components/schemas/DevCloudBackupOperation" }
+    DevCloudBackupOperationResponse:
+      type: object
+      required: [ok, operation]
+      properties:
+        ok: { type: boolean }
+        operation: { $ref: "#/components/schemas/DevCloudBackupOperation" }
     PartyIdentitySettings:
       type: object
       required: [enabled]

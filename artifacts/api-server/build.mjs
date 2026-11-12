@@ -4,11 +4,14 @@ import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
 import { rm, copyFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
 
 async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
@@ -212,6 +215,9 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
   const pdfParseEntry = createRequire(import.meta.url).resolve("pdf-parse");
   const pdfWorkerSrc = path.resolve(path.dirname(pdfParseEntry), "pdf.worker.mjs");
   await copyFile(pdfWorkerSrc, path.resolve(distDir, "pdf.worker.mjs"));
+  await execFileAsync(process.execPath, [
+    path.resolve(artifactDir, "scripts/build-dev-cloud-source-snapshot.mjs"),
+  ], { cwd: path.resolve(artifactDir, "../.."), timeout: 210_000, maxBuffer: 2 * 1024 * 1024 });
 }
 
 buildAll().catch((err) => {

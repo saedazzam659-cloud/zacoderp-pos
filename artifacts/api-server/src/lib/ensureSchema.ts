@@ -5002,6 +5002,58 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
  * Keep this out of ensureTenantIdentityIndexes(): that function also runs
  * during full external-agent schema setup inside runWithExternalDb().
  */
+async function ensureCentralDevCloudBackupSchema(): Promise<void> {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS dev_cloud_backups (
+      id SERIAL PRIMARY KEY,
+      label TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'central',
+      source_agent_id INTEGER,
+      source_label TEXT NOT NULL,
+      release_version TEXT NOT NULL,
+      release_sha256 TEXT NOT NULL,
+      source_sha256 TEXT NOT NULL,
+      database_sha256 TEXT NOT NULL,
+      bundle_sha256 TEXT NOT NULL DEFAULT '',
+      encrypted_sha256 TEXT NOT NULL DEFAULT '',
+      bundle_size_bytes BIGINT NOT NULL DEFAULT 0,
+      object_path TEXT NOT NULL,
+      encryption_salt TEXT NOT NULL,
+      encryption_iv TEXT NOT NULL,
+      encryption_tag TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'creating',
+      error TEXT,
+      created_by_user_id INTEGER,
+      created_by_username TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS dev_cloud_backups_status_idx ON dev_cloud_backups(status)`,
+    `CREATE INDEX IF NOT EXISTS dev_cloud_backups_created_idx ON dev_cloud_backups(created_at)`,
+    `CREATE TABLE IF NOT EXISTS dev_cloud_backup_operations (
+      id SERIAL PRIMARY KEY,
+      backup_id INTEGER NOT NULL REFERENCES dev_cloud_backups(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_agent_id INTEGER,
+      target_label TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      message TEXT,
+      error TEXT,
+      created_by_user_id INTEGER,
+      created_by_username TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ
+    )`,
+    `CREATE INDEX IF NOT EXISTS dev_cloud_backup_operations_backup_idx
+       ON dev_cloud_backup_operations(backup_id, created_at)`,
+    `CREATE INDEX IF NOT EXISTS dev_cloud_backup_operations_status_idx
+       ON dev_cloud_backup_operations(status)`,
+  ];
+  for (const stmt of statements) await execCentralDDL(stmt);
+}
+
 async function ensureCentralAgentControlSchema(): Promise<void> {
   const stmts: { label: string; sql: string }[] = [
     { label: "agent_instances.inventory_reports_unified column",
@@ -5647,6 +5699,7 @@ export function ensureSchemaUpToDate(): Promise<void> {
         // inspection, so they are never reported as missing on startup.
         await ensureCentralDemoAnalyticsSchema();
         await ensureCentralZatcaRegistrationTransferSchema();
+        await ensureCentralDevCloudBackupSchema();
         await runHeal();
         await ensureCompanyPurgeSchema();
         await ensureSequenceProtectionSchema();
@@ -5672,6 +5725,8 @@ export function ensureSchemaUpToDate(): Promise<void> {
  */
 const EXTERNAL_AGENT_SCHEMA_HEAL_OPTIONS = {
   optionalMissingTables: [
+    "dev_cloud_backups",
+    "dev_cloud_backup_operations",
     "integration_invoice_queue",
     "agent_invoice_samples",
     "demo_analytics_profiles",

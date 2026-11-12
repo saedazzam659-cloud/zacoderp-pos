@@ -61,6 +61,12 @@ import type {
   Customer,
   CustomerUpdate,
   DashboardSummary,
+  DevCloudBackupAgentRestoreInput,
+  DevCloudBackupAgentTargetInput,
+  DevCloudBackupInput,
+  DevCloudBackupListResponse,
+  DevCloudBackupOperationResponse,
+  DevCloudBackupQueueResponse,
   EmployeeProvisionBalanceList,
   EmployeeProvisionSettlement,
   EmployeeProvisionSettlementInput,
@@ -14695,4 +14701,373 @@ export function useGetAgentDatabaseSchemaDiagnostics<TData = Awaited<ReturnType<
 
 
 
+
+export const getListDevCloudBackupsUrl = () => {
+
+
+
+
+  return `/api/admin/dev-cloud/backups`
+}
+
+/**
+ * @summary List Developer Cloud recovery backups and eligible agent servers
+ */
+export const listDevCloudBackups = async ( options?: RequestInit): Promise<DevCloudBackupListResponse> => {
+
+  return customFetch<DevCloudBackupListResponse>(getListDevCloudBackupsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListDevCloudBackupsQueryKey = () => {
+    return [
+    `/api/admin/dev-cloud/backups`
+    ] as const;
+    }
+
+
+export const getListDevCloudBackupsQueryOptions = <TData = Awaited<ReturnType<typeof listDevCloudBackups>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDevCloudBackups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDevCloudBackupsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDevCloudBackups>>> = ({ signal }) => listDevCloudBackups({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDevCloudBackups>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListDevCloudBackupsQueryResult = NonNullable<Awaited<ReturnType<typeof listDevCloudBackups>>>
+export type ListDevCloudBackupsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List Developer Cloud recovery backups and eligible agent servers
+ */
+
+export function useListDevCloudBackups<TData = Awaited<ReturnType<typeof listDevCloudBackups>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listDevCloudBackups>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListDevCloudBackupsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateDevCloudBackupUrl = () => {
+
+
+
+
+  return `/api/admin/dev-cloud/backups`
+}
+
+/**
+ * @summary Queue a code and database backup
+ */
+export const createDevCloudBackup = async (devCloudBackupInput: DevCloudBackupInput, options?: RequestInit): Promise<DevCloudBackupQueueResponse> => {
+
+  return customFetch<DevCloudBackupQueueResponse>(getCreateDevCloudBackupUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(devCloudBackupInput)
+  }
+);}
+
+
+
+
+
+export const getCreateDevCloudBackupMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createDevCloudBackup>>, TError,{data: BodyType<DevCloudBackupInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createDevCloudBackup>>, TError,{data: BodyType<DevCloudBackupInput>}, TContext> => {
+
+const mutationKey = ['createDevCloudBackup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createDevCloudBackup>>, {data: BodyType<DevCloudBackupInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createDevCloudBackup(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateDevCloudBackupMutationResult = NonNullable<Awaited<ReturnType<typeof createDevCloudBackup>>>
+    export type CreateDevCloudBackupMutationBody = BodyType<DevCloudBackupInput>
+    export type CreateDevCloudBackupMutationError = ErrorType<void>
+
+    /**
+ * @summary Queue a code and database backup
+ */
+export const useCreateDevCloudBackup = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createDevCloudBackup>>, TError,{data: BodyType<DevCloudBackupInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createDevCloudBackup>>,
+        TError,
+        {data: BodyType<DevCloudBackupInput>},
+        TContext
+      > => {
+      return useMutation(getCreateDevCloudBackupMutationOptions(options));
+    }
+
+export const getDownloadDevCloudBackupUrl = (backupId: number,) => {
+
+
+
+
+  return `/api/admin/dev-cloud/backups/${backupId}/download`
+}
+
+/**
+ * @summary Download a verified recovery bundle
+ */
+export const downloadDevCloudBackup = async (backupId: number, options?: RequestInit): Promise<Blob> => {
+
+  return customFetch<Blob>(getDownloadDevCloudBackupUrl(backupId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getDownloadDevCloudBackupQueryKey = (backupId: number,) => {
+    return [
+    `/api/admin/dev-cloud/backups/${backupId}/download`
+    ] as const;
+    }
+
+
+export const getDownloadDevCloudBackupQueryOptions = <TData = Awaited<ReturnType<typeof downloadDevCloudBackup>>, TError = ErrorType<void>>(backupId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadDevCloudBackup>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDownloadDevCloudBackupQueryKey(backupId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof downloadDevCloudBackup>>> = ({ signal }) => downloadDevCloudBackup(backupId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: backupId !== null && backupId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof downloadDevCloudBackup>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type DownloadDevCloudBackupQueryResult = NonNullable<Awaited<ReturnType<typeof downloadDevCloudBackup>>>
+export type DownloadDevCloudBackupQueryError = ErrorType<void>
+
+
+/**
+ * @summary Download a verified recovery bundle
+ */
+
+export function useDownloadDevCloudBackup<TData = Awaited<ReturnType<typeof downloadDevCloudBackup>>, TError = ErrorType<void>>(
+ backupId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadDevCloudBackup>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getDownloadDevCloudBackupQueryOptions(backupId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUploadDevCloudBackupToAgentUrl = (backupId: number,) => {
+
+
+
+
+  return `/api/admin/dev-cloud/backups/${backupId}/upload`
+}
+
+/**
+ * @summary Store an encrypted backup on an agent server
+ */
+export const uploadDevCloudBackupToAgent = async (backupId: number,
+    devCloudBackupAgentTargetInput: DevCloudBackupAgentTargetInput, options?: RequestInit): Promise<DevCloudBackupOperationResponse> => {
+
+  return customFetch<DevCloudBackupOperationResponse>(getUploadDevCloudBackupToAgentUrl(backupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(devCloudBackupAgentTargetInput)
+  }
+);}
+
+
+
+
+
+export const getUploadDevCloudBackupToAgentMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadDevCloudBackupToAgent>>, TError,{backupId: number;data: BodyType<DevCloudBackupAgentTargetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof uploadDevCloudBackupToAgent>>, TError,{backupId: number;data: BodyType<DevCloudBackupAgentTargetInput>}, TContext> => {
+
+const mutationKey = ['uploadDevCloudBackupToAgent'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof uploadDevCloudBackupToAgent>>, {backupId: number;data: BodyType<DevCloudBackupAgentTargetInput>}> = (props) => {
+          const {backupId,data} = props ?? {};
+
+          return  uploadDevCloudBackupToAgent(backupId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UploadDevCloudBackupToAgentMutationResult = NonNullable<Awaited<ReturnType<typeof uploadDevCloudBackupToAgent>>>
+    export type UploadDevCloudBackupToAgentMutationBody = BodyType<DevCloudBackupAgentTargetInput>
+    export type UploadDevCloudBackupToAgentMutationError = ErrorType<void>
+
+    /**
+ * @summary Store an encrypted backup on an agent server
+ */
+export const useUploadDevCloudBackupToAgent = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uploadDevCloudBackupToAgent>>, TError,{backupId: number;data: BodyType<DevCloudBackupAgentTargetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof uploadDevCloudBackupToAgent>>,
+        TError,
+        {backupId: number;data: BodyType<DevCloudBackupAgentTargetInput>},
+        TContext
+      > => {
+      return useMutation(getUploadDevCloudBackupToAgentMutationOptions(options));
+    }
+
+export const getRestoreDevCloudBackupToAgentUrl = (backupId: number,) => {
+
+
+
+
+  return `/api/admin/dev-cloud/backups/${backupId}/restore-agent`
+}
+
+/**
+ * @summary Restore application code on an agent without importing its database
+ */
+export const restoreDevCloudBackupToAgent = async (backupId: number,
+    devCloudBackupAgentRestoreInput: DevCloudBackupAgentRestoreInput, options?: RequestInit): Promise<DevCloudBackupOperationResponse> => {
+
+  return customFetch<DevCloudBackupOperationResponse>(getRestoreDevCloudBackupToAgentUrl(backupId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(devCloudBackupAgentRestoreInput)
+  }
+);}
+
+
+
+
+
+export const getRestoreDevCloudBackupToAgentMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreDevCloudBackupToAgent>>, TError,{backupId: number;data: BodyType<DevCloudBackupAgentRestoreInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof restoreDevCloudBackupToAgent>>, TError,{backupId: number;data: BodyType<DevCloudBackupAgentRestoreInput>}, TContext> => {
+
+const mutationKey = ['restoreDevCloudBackupToAgent'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof restoreDevCloudBackupToAgent>>, {backupId: number;data: BodyType<DevCloudBackupAgentRestoreInput>}> = (props) => {
+          const {backupId,data} = props ?? {};
+
+          return  restoreDevCloudBackupToAgent(backupId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RestoreDevCloudBackupToAgentMutationResult = NonNullable<Awaited<ReturnType<typeof restoreDevCloudBackupToAgent>>>
+    export type RestoreDevCloudBackupToAgentMutationBody = BodyType<DevCloudBackupAgentRestoreInput>
+    export type RestoreDevCloudBackupToAgentMutationError = ErrorType<void>
+
+    /**
+ * @summary Restore application code on an agent without importing its database
+ */
+export const useRestoreDevCloudBackupToAgent = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreDevCloudBackupToAgent>>, TError,{backupId: number;data: BodyType<DevCloudBackupAgentRestoreInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof restoreDevCloudBackupToAgent>>,
+        TError,
+        {backupId: number;data: BodyType<DevCloudBackupAgentRestoreInput>},
+        TContext
+      > => {
+      return useMutation(getRestoreDevCloudBackupToAgentMutationOptions(options));
+    }
 

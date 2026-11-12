@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, timestamp, boolean, jsonb, uniqueIndex, index,
+  pgTable, serial, text, integer, timestamp, boolean, jsonb, uniqueIndex, index, bigint,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 
@@ -150,3 +150,55 @@ export const devDeploymentsTable = pgTable("dev_deployments", {
 
 export type DevDeployment       = typeof devDeploymentsTable.$inferSelect;
 export type InsertDevDeployment = typeof devDeploymentsTable.$inferInsert;
+
+// Central-only immutable code/database backup catalog. Object bytes are kept
+// encrypted in private App Storage; only non-secret metadata lives here.
+export const devCloudBackupsTable = pgTable("dev_cloud_backups", {
+  id: serial("id").primaryKey(),
+  label: text("label").notNull(),
+  sourceType: text("source_type").notNull().default("central"),
+  sourceAgentId: integer("source_agent_id"),
+  sourceLabel: text("source_label").notNull(),
+  releaseVersion: text("release_version").notNull(),
+  releaseSha256: text("release_sha256").notNull(),
+  sourceSha256: text("source_sha256").notNull(),
+  databaseSha256: text("database_sha256").notNull(),
+  bundleSha256: text("bundle_sha256").notNull().default(""),
+  encryptedSha256: text("encrypted_sha256").notNull().default(""),
+  bundleSizeBytes: bigint("bundle_size_bytes", { mode: "number" }).notNull().default(0),
+  objectPath: text("object_path").notNull(),
+  encryptionSalt: text("encryption_salt").notNull(),
+  encryptionIv: text("encryption_iv").notNull(),
+  encryptionTag: text("encryption_tag").notNull().default(""),
+  status: text("status").notNull().default("creating"),
+  error: text("error"),
+  createdByUserId: integer("created_by_user_id"),
+  createdByUsername: text("created_by_username"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  statusIdx: index("dev_cloud_backups_status_idx").on(t.status),
+  createdIdx: index("dev_cloud_backups_created_idx").on(t.createdAt),
+}));
+
+export type DevCloudBackup = typeof devCloudBackupsTable.$inferSelect;
+
+export const devCloudBackupOperationsTable = pgTable("dev_cloud_backup_operations", {
+  id: serial("id").primaryKey(),
+  backupId: integer("backup_id").notNull().references(() => devCloudBackupsTable.id, { onDelete: "cascade" }),
+  action: text("action").notNull(),
+  targetType: text("target_type").notNull(),
+  targetAgentId: integer("target_agent_id"),
+  targetLabel: text("target_label").notNull(),
+  status: text("status").notNull().default("queued"),
+  message: text("message"),
+  error: text("error"),
+  createdByUserId: integer("created_by_user_id"),
+  createdByUsername: text("created_by_username"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (t) => ({
+  backupIdx: index("dev_cloud_backup_operations_backup_idx").on(t.backupId, t.createdAt),
+  statusIdx: index("dev_cloud_backup_operations_status_idx").on(t.status),
+}));
