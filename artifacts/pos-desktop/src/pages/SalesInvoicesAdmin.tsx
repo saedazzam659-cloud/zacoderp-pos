@@ -10,8 +10,9 @@ import { createCustomer, listCustomers, type LocalCustomer } from "../lib/custom
 import { emitData } from "../lib/dataBus";
 import { createItem, listItems, type LocalItem } from "../lib/items";
 import QuickCreateDialog from "../components/QuickCreateDialog";
+import { DocumentItemPicker, ItemHistoryDialog, NoCustomerHistoryDialog } from "../components/DocumentItemDialogs";
 import {
-  listItemBrands, itemHasBrands, saveInvoiceLineBrands, getInvoiceLineBrands, dropInvoiceLineBrands,
+  listItemBrands, itemHasBrands, saveInvoiceLineBrands, getInvoiceLineBrands, dropInvoiceLineBrands, listBrands, setItemBrands,
 } from "../lib/brands";
 import { getDefaultUom, listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
@@ -578,6 +579,9 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   const [quickCreate, setQuickCreate] = useState<"customer" | "item" | null>(null);
   const [quickCreateBusy, setQuickCreateBusy] = useState(false);
   const [quickCreateError, setQuickCreateError] = useState<string | null>(null);
+  const [itemPickerOpen, setItemPickerOpen] = useState(false);
+  const [historyTarget, setHistoryTarget] = useState<{ item: LocalItem; customer: LocalCustomer } | null>(null);
+  const [historyNeedsCustomer, setHistoryNeedsCustomer] = useState(false);
   // Once the invoice is persisted we keep its id so a ZATCA-bridge failure can
   // be retried (click حفظ again) WITHOUT creating a duplicate invoice.
   const [savedId, setSavedId] = useState<number | null>(null);
@@ -709,10 +713,32 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     });
   }
 
+  function appendCatalogItems(items: LocalItem[]) {
+    setLines((current) => [...current, ...items.map((item) => {
+      const uom = item.uomId != null ? uoms.find((unit) => unit.id === item.uomId) : defUom;
+      const line: FLine = {
+        ...blankLine(), itemId: item.id, itemName: item.nameAr, unitPrice: item.salePrice ?? 0,
+        vatRate: selectedRate ?? item.vatRate ?? 0,
+        uomId: uom?.id ?? null, uomName: uom?.nameAr ?? null, conversionFactor: uom?.baseQty ?? 1,
+      };
+      const { net } = lineNet(line.qty, line.unitPrice, line.disc, line.discType);
+      line.lineTotal = net + net * (Number(line.vatRate) || 0) / 100;
+      return line;
+    })]);
+  }
+
+  function openItemHistory(itemId: number) {
+    if (!customerId) { setHistoryNeedsCustomer(true); return; }
+    const item = deps.items.find((entry) => entry.id === itemId);
+    const customer = deps.customers.find((entry) => entry.id === customerId);
+    if (item && customer) setHistoryTarget({ item, customer });
+  }
+
   async function createQuickCustomer(input: { nameAr: string; phone: string; vatNumber: string }) {
-    if (!input.nameAr.trim()) throw new Error(text("اكتب اسم العميل بالعربية", "Enter the customer's Arabic name."));
+    if (!input.nameAr.trim()) { setQuickCreateError(text("اكتب اسم العميل بالعربية", "Enter the customer's Arabic name.")); return false; }
     if (input.vatNumber && !/^3\d{13}3$/.test(input.vatNumber.trim())) {
-      throw new Error(text("الرقم الضريبي يجب أن يكون 15 رقمًا ويبدأ وينتهي بـ3", "The tax number must be 15 digits and start and end with 3."));
+      setQuickCreateError(text("الرقم الضريبي يجب أن يكون 15 رقمًا ويبدأ وينتهي بـ3", "The tax number must be 15 digits and start and end with 3."));
+      return false;
     }
     setQuickCreateBusy(true); setQuickCreateError(null);
     try {
@@ -732,17 +758,19 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       if (customer.vatNumber) setInvoiceType("standard");
       setQuickCreate(null);
       emitData("customers");
+      return true;
     } catch (e: any) {
       setQuickCreateError(e?.message ?? text("تعذر إضافة العميل", "Could not add customer."));
+      return false;
     } finally { setQuickCreateBusy(false); }
   }
 
-  async function createQuickItem(input: { nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number }) {
-    if (!input.nameAr.trim()) { setQuickCreateError(text("اكتب اسم الصنف بالعربية", "Enter the item's Arabic name.")); return; }
-    if (!Number.isFinite(input.salePrice) || input.salePrice < 0) { setQuickCreateError(text("أدخل سعرًا صحيحًا", "Enter a valid price.")); return; }
-    if (!Number.isFinite(input.vatRate) || input.vatRate < 0 || input.vatRate > 100) { setQuickCreateError(text("نسبة الضريبة يجب أن تكون بين 0 و100", "Tax must be between 0 and 100.")); return; }
+  async function createQuickItem(input: { nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number; brandId: number | null }, action: "close" | "add-another" = "close") {
+    if (!input.nameAr.trim()) { setQuickCreateError(text("اكتب اسم الصنف بالعربية", "Enter the item's Arabic name.")); return false; }
+    if (!Number.isFinite(input.salePrice) || input.salePrice < 0) { setQuickCreateError(text("أدخل سعرًا صحيحًا", "Enter a valid price.")); return false; }
+    if (!Number.isFinite(input.vatRate) || input.vatRate < 0 || input.vatRate > 100) { setQuickCreateError(text("نسبة الضريبة يجب أن تكون بين 0 و100", "Tax must be between 0 and 100.")); return false; }
     const uom = uoms.find((unit) => unit.id === input.uomId);
-    if (!uom) { setQuickCreateError(text("اختر وحدة قياس للصنف", "Choose a unit of measure.")); return; }
+    if (!uom) { setQuickCreateError(text("اختر وحدة قياس للصنف", "Choose a unit of measure.")); return false; }
     setQuickCreateBusy(true); setQuickCreateError(null);
     try {
       const item = await createItem({
@@ -755,17 +783,22 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         uomId: uom.id,
         nature: input.nature,
       });
-      await onRefreshDeps();
+      const chosenBrand = input.brandId == null ? null : listBrands().find((brand) => brand.id === input.brandId) ?? null;
+      if (chosenBrand) setItemBrands(item.id, [{ brandId: chosenBrand.id, salePrice1: item.salePrice, status: "active" }]);
+      if (chosenBrand) setExpandedLineIndices((current) => new Set(current).add(lines.length));
+      try { await onRefreshDeps(); } catch { /* the new local item still gets its document line */ }
       setLines((current) => {
-        const next = { ...blankLine(), itemId: item.id, itemName: item.nameAr, unitPrice: item.salePrice, vatRate: selectedRate ?? item.vatRate, uomId: item.uomId ?? uom.id, uomName: uom.nameAr, conversionFactor: uom.baseQty };
+        const next: FLine = { ...blankLine(), itemId: item.id, itemName: item.nameAr, unitPrice: item.salePrice, vatRate: selectedRate ?? item.vatRate, uomId: item.uomId ?? uom.id, uomName: uom.nameAr, conversionFactor: uom.baseQty, brandId: chosenBrand?.id ?? null, brandName: chosenBrand?.nameAr ?? null };
         const { net } = lineNet(next.qty, next.unitPrice, next.disc, next.discType);
         next.lineTotal = net + net * next.vatRate / 100;
         return [...current, next];
       });
       setActiveTab("lines");
-      setQuickCreate(null);
+      if (action === "close") setQuickCreate(null);
+      return true;
     } catch (e: any) {
       setQuickCreateError(e?.message ?? text("تعذر إضافة الصنف", "Could not add item."));
+      return false;
     } finally { setQuickCreateBusy(false); }
   }
   function removeLine(i: number) {
@@ -1067,6 +1100,16 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
                       <button
                         type="button"
+                        onClick={() => openItemHistory(l.itemId)}
+                        disabled={!l.itemId}
+                        aria-label={text(`عرض سجل مبيعات ${l.itemName ?? "الصنف"}`, `View sales history for ${l.itemName ?? "item"}`)}
+                        title={text("سجل مبيعات هذا الصنف للعميل", "Sales history for this item and customer")}
+                        style={{ ...btnLink, color: "#315e56", fontSize: 12, padding: "4px 6px", whiteSpace: "nowrap" }}
+                      >
+                        {text("السجل", "History")}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setExpandedLineIndices((current) => {
                           const next = new Set(current);
                           if (next.has(i)) next.delete(i); else next.add(i);
@@ -1187,6 +1230,15 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                 + {text("إضافة صنف", "Add item")}
               </button>
               <button
+                onClick={() => setItemPickerOpen(true)}
+                type="button"
+                title={text("اختيار عدة أصناف موجودة", "Select multiple existing items")}
+                aria-label={text("اختيار عدة أصناف موجودة", "Select multiple existing items")}
+                style={{ ...btnSecondary, padding: "5px 7px", color: "#315e56", borderColor: "#b8d4cb", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}
+              >
+                {text("اختيار أصناف", "Select items")}
+              </button>
+              <button
                 onClick={() => { setQuickCreateError(null); setQuickCreate("item"); }}
                 type="button"
                 title={text("صنف جديد سريع", "Quick new item")}
@@ -1204,6 +1256,15 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         </div>
       </div>
       </div>
+      {itemPickerOpen && (
+        <DocumentItemPicker items={deps.items} onCancel={() => setItemPickerOpen(false)} onAdd={appendCatalogItems} />
+      )}
+      {historyTarget && (
+        <ItemHistoryDialog itemId={historyTarget.item.id} itemName={historyTarget.item.nameAr}
+          customerId={historyTarget.customer.id} customerName={historyTarget.customer.nameAr}
+          onClose={() => setHistoryTarget(null)} />
+      )}
+      {historyNeedsCustomer && <NoCustomerHistoryDialog onClose={() => setHistoryNeedsCustomer(false)} />}
       {quickCreate && (
         <QuickCreateDialog
           key={quickCreate}
@@ -1213,9 +1274,9 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           busy={quickCreateBusy}
           error={quickCreateError}
           onCancel={() => { if (!quickCreateBusy) setQuickCreate(null); }}
-          onSubmit={(payload) => {
-            if (payload.kind === "customer") void createQuickCustomer(payload);
-            else void createQuickItem(payload);
+          onSubmit={(payload, action) => {
+            if (payload.kind === "customer") return createQuickCustomer(payload);
+            return createQuickItem(payload, action);
           }}
           uoms={uoms}
         />

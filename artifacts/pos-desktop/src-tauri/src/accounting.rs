@@ -4786,6 +4786,18 @@ pub struct SalesInvoice {
     pub zatca_status: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesItemPartyHistoryEntry {
+    pub invoice_id: i64,
+    pub invoice_no: String,
+    pub invoice_date: String,
+    pub qty: f64,
+    pub uom_name: Option<String>,
+    pub unit_price: f64,
+    pub currency_code: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SalesInvoiceInput {
@@ -4952,6 +4964,44 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
         out.push(r.map_err(|e| e.to_string())?);
     }
     Ok(out)
+}
+
+/// Read-only history for one item sold to one customer. Draft invoices are
+/// excluded so quotations and unposted edits never appear as realized prices.
+#[tauri::command]
+pub fn sales_item_party_history(
+    item_id: i64,
+    customer_id: i64,
+    limit: Option<i64>,
+) -> Result<Vec<SalesItemPartyHistoryEntry>, String> {
+    if item_id <= 0 || customer_id <= 0 {
+        return Err("اختر صنفًا وعميلًا صالحين لعرض حركة الصنف".to_string());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let limit = limit.unwrap_or(20).clamp(1, 100);
+    let mut stmt = conn.prepare(
+        "SELECT s.id,s.invoice_no,s.invoice_date,sl.qty,sl.uom_name,sl.unit_price,s.currency_code
+         FROM sales_invoice_lines_local sl
+         JOIN sales_invoices_local s ON s.id=sl.invoice_id
+         WHERE sl.item_id=?1 AND s.customer_id=?2
+           AND COALESCE(s.status,'posted')='posted'
+         ORDER BY s.invoice_date DESC,s.id DESC,sl.id DESC
+         LIMIT ?3"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![item_id, customer_id, limit], |r| {
+            Ok(SalesItemPartyHistoryEntry {
+                invoice_id: r.get(0)?,
+                invoice_no: r.get(1)?,
+                invoice_date: r.get(2)?,
+                qty: r.get(3)?,
+                uom_name: r.get(4)?,
+                unit_price: r.get(5)?,
+                currency_code: r.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.map(|row| row.map_err(|e| e.to_string())).collect()
 }
 
 #[tauri::command]

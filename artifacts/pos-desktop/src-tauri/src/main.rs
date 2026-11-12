@@ -563,6 +563,7 @@ fn main() {
             accounting::goods_delivery_delete,
             accounting::sales_invoices_list,
             accounting::sales_invoice_get,
+            accounting::sales_item_party_history,
             accounting::sales_invoice_create,
             accounting::sales_invoice_update,
             accounting::sales_invoice_delete,

@@ -309,6 +309,15 @@ export type SalesInvoiceInput = {
   buyerName?: string | null; buyerVat?: string | null; buyerAddress?: string | null;
   lines: SalesLine[];
 };
+export type SalesItemPartyHistoryEntry = {
+  invoiceId: number;
+  invoiceNo: string;
+  invoiceDate: string;
+  qty: number;
+  uomName: string | null;
+  unitPrice: number;
+  currencyCode: string;
+};
 
 export type SalesReturn = {
   id: number; returnNo: string; customerId: number | null; customerName: string | null;
@@ -764,6 +773,17 @@ export async function listSalesInvoices(limit = 200): Promise<SalesInvoice[]> {
 export async function getSalesInvoice(id: number): Promise<SalesInvoice> {
   if (!hasTauri()) notImpl();
   return await invoke<SalesInvoice>("sales_invoice_get", { id });
+}
+/** Read-only posted sales history for an item/customer pair (also used by quotes). */
+export async function salesItemPartyHistory(
+  itemId: number,
+  customerId: number,
+  limit = 20,
+): Promise<SalesItemPartyHistoryEntry[]> {
+  if (!hasTauri()) return [];
+  return await invoke<SalesItemPartyHistoryEntry[]>("sales_item_party_history", {
+    itemId, customerId, limit,
+  });
 }
 export async function createSalesInvoice(input: SalesInvoiceInput): Promise<number> {
   if (!hasTauri()) notImpl();

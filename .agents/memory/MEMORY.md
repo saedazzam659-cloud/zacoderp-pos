@@ -117,7 +117,7 @@
 - [Sales negative-stock precedence](sales-negative-stock-precedence.md) — company switch is the master; warehouse can block, invoice can override warehouse only.
 - [Negative-stock cost settlement](negative-stock-cost-settlement.md) — keep provisional shortage layers and separate, reversible cost adjustments without rewriting posted sales.
 - [Item catalog performance](item-catalog-performance.md) — large catalogs need bounded tenant-scoped picker search; preserve full-list behavior for reports.
-- [Invoice item history party scope](invoice-item-history-party-scope.md) — sales history follows the selected customer and purchase history follows the selected supplier; never show unrelated parties.
+- [Item history party scope](invoice-item-history-party-scope.md) — quote history uses posted sales invoices for the selected customer/item; never auto-apply the prior price.
 - [Purchase picker price priority](purchase-picker-weighted-average-cost.md) — default from latest posted purchase; keep current weighted-average inventory cost separate.
 - [Purchase direct-expense and custody boundary](purchase-direct-expense-custody.md) — default-off direct-expense lines use normal expense/tax posting; custody settlements and returns reuse the existing lifecycle.
 - [Company document field controls](company-document-field-controls.md) — keep company controls off by default, SuperAdmin-gated, and company-wide when enabled.

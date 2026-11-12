@@ -769,6 +769,8 @@ pub fn initialize() -> Result<()> {
             vat_rate    REAL NOT NULL DEFAULT 15,
             line_total  REAL NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS idx_sales_invoice_lines_item_invoice
+            ON sales_invoice_lines_local(item_id, invoice_id);
 
         CREATE TABLE IF NOT EXISTS sales_returns_local (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
