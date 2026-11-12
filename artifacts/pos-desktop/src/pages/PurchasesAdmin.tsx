@@ -63,9 +63,12 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
     setRows(invs);
     const m = new Map<number, number>();
     for (const t of tx) {
-      if (t.txType === "payment" && t.appliedDocType === "purchase" && t.appliedDocId != null) {
-        m.set(t.appliedDocId, (m.get(t.appliedDocId) ?? 0) + t.amount);
-      }
+      if (t.status !== "posted" || t.txType !== "payment") continue;
+      const links = t.allocations?.length
+        ? t.allocations.filter((a) => a.docType === "purchase")
+        : t.appliedDocType === "purchase" && t.appliedDocId != null
+          ? [{ docId: t.appliedDocId, amount: t.amount }] : [];
+      for (const link of links) m.set(link.docId, (m.get(link.docId) ?? 0) + link.amount);
     }
     setPaidByPurchase(m);
   }

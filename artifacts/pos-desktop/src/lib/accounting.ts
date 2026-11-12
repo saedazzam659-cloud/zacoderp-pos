@@ -285,6 +285,7 @@ export type SalesInvoice = {
   id: number; invoiceNo: string; customerId: number | null; customerName: string | null;
   invoiceDate: string; subtotal: number; vatTotal: number; grandTotal: number; cogsTotal: number;
   paymentMethod: PaymentMethod; cashBoxId: number | null; bankId: number | null;
+  cashAmount?: number; bankAmount?: number; creditAmount?: number;
   jeId: number | null; notes: string | null;
   /** Posting state: "posted" (full impact applied) or "draft" (impact reversed
    *  via فك الترحيل — editable/deletable, zero report/stock effect). */
@@ -302,6 +303,7 @@ export type SalesInvoice = {
 export type SalesInvoiceInput = {
   customerId: number | null; invoiceDate: string; paymentMethod: PaymentMethod;
   cashBoxId: number | null; bankId: number | null; notes: string | null;
+  cashAmount?: number; bankAmount?: number; creditAmount?: number;
   warehouseId?: number | null;
   branchId?: number | null; costCenterId?: number | null;
   salesRepId?: number | null; commissionPct?: number | null;
@@ -398,6 +400,12 @@ export type FinancialTx = {
   /** Optional link to the settled document ("sales_invoice" | "purchase") so an
    *  invoice list can surface its paid amount. */
   appliedDocType?: string | null; appliedDocId?: number | null;
+  allocations?: FinancialTxAllocation[];
+};
+export type FinancialTxAllocation = {
+  docType: "sales_invoice" | "purchase";
+  docId: number;
+  amount: number;
 };
 export type FinancialTxInput = {
   txDate: string; txType: TxType;
@@ -406,6 +414,7 @@ export type FinancialTxInput = {
   amount: number; description: string | null;
   branchId?: number | null; costCenterId?: number | null;
   appliedDocType?: string | null; appliedDocId?: number | null;
+  allocations?: FinancialTxAllocation[];
 };
 
 export type JournalEntryLine = {

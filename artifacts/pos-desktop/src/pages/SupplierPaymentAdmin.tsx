@@ -3,7 +3,7 @@ import {
   listFinancialTx, createFinancialTx, updateFinancialTx, deleteFinancialTx, financialTxPost, financialTxUnpost,
   confirmUnpostAction,
   listSuppliers, listCashBoxes, listBanks, listPurchases, type FinancialTxInput,
-  type FinancialTx, type Supplier, type CashBox, type Bank, type Purchase,
+  type FinancialTx, type FinancialTxAllocation, type Supplier, type CashBox, type Bank, type Purchase,
 } from "../lib/accounting";
 import { emitData, useDataRefresh } from "../lib/dataBus";
 import {
@@ -16,6 +16,7 @@ import {
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { printVoucher } from "../lib/invoicePrint";
 import { formatUiDate, uiText, useUiLanguage } from "../lib/appSettings";
+import { baseCurrencyCode } from "../lib/currency";
 
 function payWalletName(
   deps: { cashBoxes: CashBox[]; banks: Bank[] } | null,
@@ -69,14 +70,19 @@ export default function SupplierPaymentAdmin() {
     void (async () => setAllTx(await listFinancialTx(5000)))();
   });
 
-  const invByApplied = (f: FinancialTx) =>
-    f.appliedDocType === "purchase" && f.appliedDocId != null
-      ? deps?.purchases.find((i) => i.id === f.appliedDocId) ?? null : null;
+  const invoiceLabel = (f: FinancialTx) => {
+    const links = f.allocations?.length
+      ? f.allocations.filter((a) => a.docType === "purchase")
+      : f.appliedDocType === "purchase" && f.appliedDocId != null
+        ? [{ docId: f.appliedDocId, amount: f.amount }] : [];
+    return links.map((a) => deps?.purchases.find((i) => i.id === a.docId)?.invoiceNo ?? "")
+      .filter(Boolean).join(", ");
+  };
   const columns = useMemo<GridColumn<FinancialTx>[]>(() => [
     { key: "txNo", label: text("الرقم", "Number"), value: (f) => f.txNo },
     { key: "txDate", label: text("التاريخ", "Date"), value: (f) => f.txDate },
     { key: "party", label: text("المورد", "Supplier"), value: (f) => f.partyName ?? "" },
-    { key: "invoice", label: text("الفاتورة المرتبطة", "Linked invoice"), value: (f) => invByApplied(f)?.invoiceNo ?? "" },
+    { key: "invoice", label: text("الفواتير المرتبطة", "Linked invoices"), value: invoiceLabel },
     { key: "description", label: text("البيان", "Description"), value: (f) => f.description ?? "" },
     { key: "amount", label: text("المبلغ", "Amount"), type: "number", value: (f) => f.amount },
     { key: "currency", label: text("العملة", "Currency"), value: (f) => `${f.currencyCode} · ${f.exchangeRate}` },
@@ -111,7 +117,6 @@ export default function SupplierPaymentAdmin() {
           <ActionBtn label={text("طباعة", "Print")} icon="🖨️" tone="primary" disabled={!sel.selected}
             onClick={() => {
               const f = sel.selected; if (!f) return;
-              const inv = invByApplied(f);
               printVoucher({
                 kind: "payment",
                 title: text("سند صرف", "Payment voucher"),
@@ -122,7 +127,7 @@ export default function SupplierPaymentAdmin() {
                 description: f.description ?? null,
                 walletKind: f.bankId != null ? "bank" : "cash",
                 walletName: payWalletName(deps, f),
-                linkedDocNo: inv ? inv.invoiceNo : null,
+                linkedDocNo: invoiceLabel(f) || null,
               });
             }} />
           <VoucherActions
@@ -173,13 +178,12 @@ export default function SupplierPaymentAdmin() {
             </thead>
             <tbody>
               {grid.view.map((f) => {
-                const inv = invByApplied(f);
                 return (
                   <tr key={f.id}>
                     <SelectCell id={f.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{f.txNo}</Td><Td>{formatUiDate(f.txDate, language)}</Td>
                     <Td>{f.partyName ?? "—"}</Td>
-                    <Td mono>{inv ? inv.invoiceNo : "—"}</Td>
+                    <Td mono>{invoiceLabel(f) || "—"}</Td>
                     <Td>{f.description ?? "—"}</Td>
                     <Td num style={{ fontWeight: 600, color: "#b91c1c" }}>{fmt(f.amount)}</Td>
                     <Td>{f.currencyCode} · {fmt(f.exchangeRate)}</Td>
@@ -244,7 +248,12 @@ function PayForm({ deps, allTx, initial, onCancel, onDone }: {
   const [branchId, setBranchId] = useState<number | "">(initial?.branchId ?? "");
   const [costCenterId, setCostCenterId] = useState<number | "">(initial?.costCenterId ?? "");
   const [supplierId, setSupplierId] = useState<number | null>(initial?.partyId ?? null);
-  const [purchaseId, setPurchaseId] = useState<number | null>(initial?.appliedDocId ?? null);
+  const [allocations, setAllocations] = useState<Record<number, number>>(() => {
+    const links = initial?.allocations?.filter((a) => a.docType === "purchase") ?? [];
+    if (links.length) return Object.fromEntries(links.map((a) => [a.docId, a.amount]));
+    return initial?.appliedDocType === "purchase" && initial.appliedDocId != null
+      ? { [initial.appliedDocId]: initial.amount } : {};
+  });
   const [walletKind, setWalletKind] = useState<"cash" | "bank">(initial?.bankId != null ? "bank" : "cash");
   const [cashBoxId, setCashBoxId] = useState<number | null>(initial?.cashBoxId ?? deps.cashBoxes[0]?.id ?? null);
   const [bankId, setBankId] = useState<number | null>(initial?.bankId ?? deps.banks[0]?.id ?? null);
@@ -257,9 +266,12 @@ function PayForm({ deps, allTx, initial, onCancel, onDone }: {
   const paidByPurchase = useMemo(() => {
     const m = new Map<number, number>();
     for (const t of allTx) {
-      if (t.status === "posted" && t.txType === "payment" && t.appliedDocType === "purchase" && t.appliedDocId != null) {
-        m.set(t.appliedDocId, (m.get(t.appliedDocId) ?? 0) + t.amount);
-      }
+      if (t.status !== "posted" || t.txType !== "payment") continue;
+      const links = t.allocations?.length
+        ? t.allocations.filter((a) => a.docType === "purchase")
+        : t.appliedDocType === "purchase" && t.appliedDocId != null
+          ? [{ docId: t.appliedDocId, amount: t.amount }] : [];
+      for (const link of links) m.set(link.docId, (m.get(link.docId) ?? 0) + link.amount);
     }
     return m;
   }, [allTx]);
@@ -271,6 +283,8 @@ function PayForm({ deps, allTx, initial, onCancel, onDone }: {
       .map((i) => ({ inv: i, outstanding: i.grandTotal - (paidByPurchase.get(i.id) ?? 0) }))
       .filter((x) => x.outstanding > 0.005);
   }, [supplierId, deps.purchases, paidByPurchase]);
+  const selectedTotal = Object.values(allocations).reduce((sum, value) => sum + value, 0);
+  const voucherAmount = Object.keys(allocations).length ? selectedTotal : amount;
   const branchFilter = branchId === "" ? null : Number(branchId);
   const availableCashBoxes = deps.cashBoxes.filter((box) =>
     (box.isActive !== false || box.id === cashBoxId) &&
@@ -284,30 +298,42 @@ function PayForm({ deps, allTx, initial, onCancel, onDone }: {
     ? deps.banks.find((bank) => bank.id === bankId)?.currencyCode
     : deps.cashBoxes.find((box) => box.id === cashBoxId)?.currencyCode;
 
-  function pickPurchase(id: number | null) {
-    setPurchaseId(id);
-    if (id != null) {
-      const hit = openPurchases.find((x) => x.inv.id === id);
-      if (hit && amount <= 0) setAmount(Number(hit.outstanding.toFixed(2)));
+  function togglePurchase(id: number, selected: boolean) {
+    if (!selected) {
+      setAllocations((current) => { const next = { ...current }; delete next[id]; return next; });
+      return;
     }
+    const hit = openPurchases.find((x) => x.inv.id === id);
+    if (hit) setAllocations((current) => ({ ...current, [id]: Number(hit.outstanding.toFixed(2)) }));
   }
 
   async function save() {
     setBusy(true); setErr(null);
     try {
       if (supplierId == null) throw new Error(text("اختر المورد", "Select a supplier."));
-      if (amount <= 0) throw new Error(text("أدخل مبلغاً موجباً", "Enter an amount greater than zero."));
+      if (voucherAmount <= 0) throw new Error(text("أدخل مبلغاً موجباً", "Enter an amount greater than zero."));
+      if (Object.entries(allocations).some(([id, allocated]) => {
+        const invoice = openPurchases.find((item) => item.inv.id === Number(id));
+        return !invoice || allocated <= 0 || allocated > invoice.outstanding + 0.01;
+      })) throw new Error(text("تحقق من أن مبلغ كل فاتورة لا يتجاوز رصيدها المتبقي", "Each allocation must be positive and no greater than its outstanding balance."));
+      const invoiceAllocations: FinancialTxAllocation[] = Object.entries(allocations)
+        .map(([docId, allocated]) => ({ docType: "purchase", docId: Number(docId), amount: allocated }));
+      if (invoiceAllocations.length && walletCurrency !== baseCurrencyCode()) {
+        throw new Error(text(`اختر خزينة أو بنكًا بالعملة الأساسية ${baseCurrencyCode()} لربط الفواتير`, `Choose a cashbox or bank in the base currency ${baseCurrencyCode()} to allocate invoices.`));
+      }
+      const singleLink = invoiceAllocations.length === 1 ? invoiceAllocations[0] : null;
       const payload: FinancialTxInput = {
         txDate: date, txType: "payment",
         partyType: "supplier", partyId: supplierId,
         cashBoxId: walletKind === "cash" ? cashBoxId : null,
         bankId:    walletKind === "bank" ? bankId : null,
         counterAccountId: null,
-        amount, description: desc || null,
+        amount: voucherAmount, description: desc || null,
         branchId: branchId === "" ? null : branchId,
         costCenterId: costCenterId === "" ? null : costCenterId,
-        appliedDocType: purchaseId != null ? "purchase" : null,
-        appliedDocId: purchaseId,
+        appliedDocType: singleLink?.docType ?? null,
+        appliedDocId: singleLink?.docId ?? null,
+        allocations: invoiceAllocations,
       };
       if (initial) await updateFinancialTx(initial.id, payload); else await createFinancialTx(payload);
       emitData("vouchers", "journal", "suppliers", "cashboxes", "banks");
@@ -326,7 +352,7 @@ function PayForm({ deps, allTx, initial, onCancel, onDone }: {
       <Field label={text("المورد", "Supplier")}>
         <SearchCombobox
           value={supplierId ?? ""}
-          onChange={(v) => { setSupplierId(Number(v) || null); setPurchaseId(null); }}
+          onChange={(v) => { setSupplierId(Number(v) || null); setAllocations({}); }}
           style={input}
           options={[
             { value: "", label: text("— اختر —", "— Select —") },
@@ -334,27 +360,50 @@ function PayForm({ deps, allTx, initial, onCancel, onDone }: {
           ]}
         />
       </Field>
-      {supplierId != null && (
-        <Field label={text("ربط بفاتورة شراء (اختياري)", "Link to purchase invoice (optional)")}>
-          <SearchCombobox
-            value={purchaseId ?? ""}
-            onChange={(v) => pickPurchase(Number(v) || null)}
-            style={input}
-            options={[
-              { value: "", label: text("— بدون ربط —", "— No link —") },
-              ...openPurchases.map((x) => ({ value: x.inv.id, label: `${x.inv.invoiceNo} — ${text("متبقّي", "Outstanding")} ${fmt(x.outstanding)}` })),
-              ...(initial?.appliedDocId != null && !openPurchases.some((x) => x.inv.id === initial.appliedDocId)
-                ? deps.purchases.filter((purchase) => purchase.id === initial.appliedDocId).map((purchase) => ({
-                    value: purchase.id, label: `${purchase.invoiceNo} — ${text("الفاتورة المرتبطة حالياً", "Currently linked invoice")}`,
-                  }))
-                : []),
-            ]}
-          />
-        </Field>
-      )}
       <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-      <Field label={`${text("المبلغ", "Amount")} · ${walletCurrency ?? "SAR"}`}><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} /></Field>
+      <Field label={`${text("المبلغ", "Amount")} · ${walletCurrency ?? "SAR"}`}>
+        <input type="number" step="0.01" value={voucherAmount || ""} readOnly={Object.keys(allocations).length > 0}
+          onChange={(e) => setAmount(Number(e.target.value) || 0)} style={{ ...input, ...(Object.keys(allocations).length ? { background: "#f8fafc" } : {}) }} />
+      </Field>
       </div>
+      {supplierId != null && (
+        <div style={{ marginTop: 8, border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ padding: "8px 10px", background: "#f8fafc", fontWeight: 700, fontSize: 13 }}>
+            {text("فواتير الشراء الآجلة المفتوحة — اختر فاتورة أو أكثر", "Open credit purchase invoices — select one or more")}
+          </div>
+          {openPurchases.length === 0 ? <div style={{ padding: 10, color: "#64748b", fontSize: 12 }}>{text("لا توجد فواتير آجلة متبقية لهذا المورد", "No outstanding credit invoices for this supplier")}</div> : (
+            <div style={{ maxHeight: 180, overflow: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: "#f1f5f9" }}>
+                  <th style={{ padding: 7, textAlign: "center" }}></th>
+                  <th style={{ padding: 7, textAlign: "right" }}>{text("الفاتورة", "Invoice")}</th>
+                  <th style={{ padding: 7, textAlign: "right" }}>{text("الرصيد المطلوب", "Outstanding")}</th>
+                  <th style={{ padding: 7, textAlign: "right" }}>{text("المبلغ المخصص", "Amount")}</th>
+                </tr></thead>
+                <tbody>{openPurchases.map(({ inv, outstanding }) => {
+                  const selected = allocations[inv.id] != null;
+                  return <tr key={inv.id} style={{ borderTop: "1px solid #e5e7eb" }}>
+                    <td style={{ padding: 6, textAlign: "center" }}><input type="checkbox" checked={selected} onChange={(e) => togglePurchase(inv.id, e.target.checked)} /></td>
+                    <td style={{ padding: 6 }}>{inv.invoiceNo} · {inv.invoiceDate}</td>
+                    <td style={{ padding: 6, fontVariantNumeric: "tabular-nums" }}>{fmt(outstanding)}</td>
+                    <td style={{ padding: 6, width: 160 }}>
+                      <input type="number" min="0.01" max={outstanding} step="0.01" disabled={!selected}
+                        value={selected ? allocations[inv.id] : ""}
+                        onChange={(e) => {
+                          const value = Math.min(Math.max(0, Number(e.target.value) || 0), outstanding);
+                          setAllocations((current) => ({ ...current, [inv.id]: value }));
+                        }} style={{ ...input, padding: "5px 7px" }} />
+                    </td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>
+          )}
+          {Object.keys(allocations).length > 0 && <div style={{ padding: "7px 10px", borderTop: "1px solid #e5e7eb", textAlign: "left", fontWeight: 700, color: "#9f1239" }}>
+            {text("إجمالي السند:", "Voucher total:")} {fmt(selectedTotal)}
+          </div>}
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, alignItems: "end", marginTop: 2 }}>
         <Field label={text("طريقة الصرف", "Payment method")}>
           <div style={{ display: "flex", gap: 6 }}>

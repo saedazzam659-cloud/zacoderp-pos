@@ -3443,6 +3443,15 @@ pub fn purchase_unpost(id: i64) -> Result<(), String> {
     if status != "posted" {
         return Err("الفاتورة غير مرحّلة بالفعل".into());
     }
+    let posted_allocations: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM financial_transaction_allocations_local a
+         JOIN financial_transactions_local f ON f.id=a.financial_tx_id
+         WHERE a.doc_type='purchase' AND a.doc_id=?1 AND f.status='posted'",
+        params![id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    if posted_allocations > 0 {
+        return Err("لا يمكن فك ترحيل فاتورة لها سندات صرف مرحّلة؛ فك ترحيل السندات أولاً".into());
+    }
     guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
     let delete_after_unpost = unpost_deletes_document(&tx);
     if delete_after_unpost {
@@ -3461,6 +3470,8 @@ pub fn purchase_unpost(id: i64) -> Result<(), String> {
                 "SELECT
                     (SELECT COUNT(*) FROM financial_transactions_local
                      WHERE applied_doc_type='purchase' AND applied_doc_id=?1)
+                  + (SELECT COUNT(*) FROM financial_transaction_allocations_local
+                     WHERE doc_type='purchase' AND doc_id=?1)
                   + (SELECT COUNT(*) FROM purchase_orders_local WHERE converted_invoice_id=?1)
                   + (SELECT COUNT(*) FROM goods_receipts_local WHERE converted_invoice_id=?1)",
                 params![id],
@@ -3555,6 +3566,13 @@ pub fn purchase_delete(id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     if ret_count > 0 {
         return Err("لا يمكن حذف فاتورة لها مرتجعات — احذف المرتجع أولاً".into());
+    }
+    let allocation_count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM financial_transaction_allocations_local WHERE doc_type='purchase' AND doc_id=?1",
+        params![id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    if allocation_count > 0 {
+        return Err("لا يمكن حذف فاتورة مرتبطة بسندات؛ أزل تخصيصها من السند أولاً".into());
     }
     // GR-sourced invoices keep the LEGACY lifecycle: they are always "posted"
     // (no draft / فك الترحيل) and managed from the goods-receipts screen, so
@@ -4746,6 +4764,12 @@ pub struct SalesInvoice {
     pub grand_total: f64,
     pub cogs_total: f64,
     pub payment_method: String,
+    #[serde(default)]
+    pub cash_amount: f64,
+    #[serde(default)]
+    pub bank_amount: f64,
+    #[serde(default)]
+    pub credit_amount: f64,
     pub cash_box_id: Option<i64>,
     pub bank_id: Option<i64>,
     pub je_id: Option<i64>,
@@ -4804,6 +4828,12 @@ pub struct SalesInvoiceInput {
     pub customer_id: Option<i64>,
     pub invoice_date: String,
     pub payment_method: String,
+    #[serde(default)]
+    pub cash_amount: Option<f64>,
+    #[serde(default)]
+    pub bank_amount: Option<f64>,
+    #[serde(default)]
+    pub credit_amount: Option<f64>,
     pub cash_box_id: Option<i64>,
     pub bank_id: Option<i64>,
     pub notes: Option<String>,
@@ -4826,6 +4856,33 @@ pub struct SalesInvoiceInput {
     #[serde(default)]
     pub buyer_address: Option<String>,
     pub lines: Vec<SalesLine>,
+}
+
+fn sales_payment_parts(input: &SalesInvoiceInput, total: f64) -> Result<(f64, f64, f64), String> {
+    let all_missing = input.cash_amount.is_none()
+        && input.bank_amount.is_none()
+        && input.credit_amount.is_none();
+    let (cash, bank, credit) = if all_missing {
+        match input.payment_method.as_str() {
+            "cash" => (total, 0.0, 0.0),
+            "bank" => (0.0, total, 0.0),
+            "credit" => (0.0, 0.0, total),
+            _ => return Err("طريقة دفع غير صالحة".into()),
+        }
+    } else {
+        (
+            input.cash_amount.unwrap_or(0.0),
+            input.bank_amount.unwrap_or(0.0),
+            input.credit_amount.unwrap_or(0.0),
+        )
+    };
+    if [cash, bank, credit].iter().any(|v| !v.is_finite() || *v < 0.0) {
+        return Err("مبالغ الدفع يجب أن تكون أرقاماً موجبة أو صفراً".into());
+    }
+    if (cash + bank + credit - total).abs() > 0.011 {
+        return Err("مجموع طرق الدفع يجب أن يساوي إجمالي الفاتورة".into());
+    }
+    Ok((cash, bank, credit))
 }
 
 fn next_sales_no(conn: &Connection) -> Result<String> {
@@ -4919,7 +4976,10 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
                 s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
                 s.sales_rep_id,sp.name_ar,s.commission_pct,s.invoice_type,s.buyer_name,s.buyer_vat,s.buyer_address,
-                oi.sync_status,s.branch_id,s.cost_center_id,s.status
+                oi.sync_status,s.branch_id,s.cost_center_id,s.status,
+                COALESCE(s.cash_amount,CASE WHEN s.payment_method='cash' THEN s.grand_total ELSE 0 END),
+                COALESCE(s.bank_amount,CASE WHEN s.payment_method='bank' THEN s.grand_total ELSE 0 END),
+                COALESCE(s.credit_amount,CASE WHEN s.payment_method='credit' THEN s.grand_total ELSE 0 END)
          FROM sales_invoices_local s
          LEFT JOIN customers_local c ON c.id=s.customer_id
          LEFT JOIN salespersons_local sp ON sp.id=s.sales_rep_id
@@ -4956,6 +5016,9 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
                 branch_id: r.get(22)?,
                 cost_center_id: r.get(23)?,
                 status: r.get(24)?,
+                cash_amount: r.get(25)?,
+                bank_amount: r.get(26)?,
+                credit_amount: r.get(27)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -5011,7 +5074,10 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
                 s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
                 s.sales_rep_id,sp.name_ar,s.commission_pct,s.invoice_type,s.buyer_name,s.buyer_vat,s.buyer_address,
-                s.zatca_qr_base64,oi.sync_status,s.branch_id,s.cost_center_id,s.status
+                s.zatca_qr_base64,oi.sync_status,s.branch_id,s.cost_center_id,s.status,
+                COALESCE(s.cash_amount,CASE WHEN s.payment_method='cash' THEN s.grand_total ELSE 0 END),
+                COALESCE(s.bank_amount,CASE WHEN s.payment_method='bank' THEN s.grand_total ELSE 0 END),
+                COALESCE(s.credit_amount,CASE WHEN s.payment_method='credit' THEN s.grand_total ELSE 0 END)
          FROM sales_invoices_local s
          LEFT JOIN customers_local c ON c.id=s.customer_id
          LEFT JOIN salespersons_local sp ON sp.id=s.sales_rep_id
@@ -5027,6 +5093,7 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
             lines: Vec::new(),
             zatca_qr_base64: r.get(21)?, zatca_status: r.get(22)?,
             branch_id: r.get(23)?, cost_center_id: r.get(24)?, status: r.get(25)?,
+            cash_amount: r.get(26)?, bank_amount: r.get(27)?, credit_amount: r.get(28)?,
         })
     ).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
@@ -5165,38 +5232,48 @@ fn apply_sales_invoice_impact(
     )
     .map_err(|e| e.to_string())?;
 
-    // Revenue JE: DR (AR|cash|bank)(grand) / CR Revenue(subtotal) + CR VAT-out(vat)
+    // Revenue JE: split the debit across cash, bank, and customer receivables.
     let rev_acc = account_id_by_code(tx, "4100").map_err(|e| e.to_string())?;
     let vat_out_acc = account_id_by_code(tx, "2200").map_err(|e| e.to_string())?;
-    let dr_account_id = resolve_sales_debit_account(
-        tx,
-        &input.payment_method,
-        input.customer_id,
-        input.cash_box_id,
-        input.bank_id,
-    )
-    .map_err(|e| e.to_string())?;
-
-    let mut lines = vec![
-        JournalEntryLine {
-            id: None,
-            account_id: dr_account_id,
-            account_code: None,
-            account_name: None,
-            debit: grand_total,
-            credit: 0.0,
-            description: Some(format!("مبيعات {invoice_no}")),
-        },
-        JournalEntryLine {
-            id: None,
-            account_id: rev_acc,
-            account_code: None,
-            account_name: None,
-            debit: 0.0,
-            credit: subtotal,
-            description: None,
-        },
-    ];
+    let (cash_amount, bank_amount, credit_amount) = sales_payment_parts(input, grand_total)?;
+    let mut lines = Vec::new();
+    if cash_amount > 0.005 {
+        let cash_box_id = input.cash_box_id.ok_or("اختر الخزينة")?;
+        let account_id: i64 = tx.query_row(
+            "SELECT account_id FROM cash_boxes_local WHERE id=?1",
+            params![cash_box_id], |r| r.get(0),
+        ).map_err(|e| e.to_string())?;
+        lines.push(JournalEntryLine {
+            id: None, account_id, account_code: None, account_name: None,
+            debit: cash_amount, credit: 0.0,
+            description: Some(format!("مبيعات {invoice_no} — نقدي")),
+        });
+    }
+    if bank_amount > 0.005 {
+        let bank_id = input.bank_id.ok_or("اختر البنك")?;
+        let account_id: i64 = tx.query_row(
+            "SELECT account_id FROM banks_local WHERE id=?1",
+            params![bank_id], |r| r.get(0),
+        ).map_err(|e| e.to_string())?;
+        lines.push(JournalEntryLine {
+            id: None, account_id, account_code: None, account_name: None,
+            debit: bank_amount, credit: 0.0,
+            description: Some(format!("مبيعات {invoice_no} — بنكي")),
+        });
+    }
+    if credit_amount > 0.005 {
+        let account_id = customer_receivables_account_id(tx, input.customer_id)
+            .map_err(|e| e.to_string())?;
+        lines.push(JournalEntryLine {
+            id: None, account_id, account_code: None, account_name: None,
+            debit: credit_amount, credit: 0.0,
+            description: Some(format!("مبيعات {invoice_no} — آجل")),
+        });
+    }
+    lines.push(JournalEntryLine {
+        id: None, account_id: rev_acc, account_code: None, account_name: None,
+        debit: 0.0, credit: subtotal, description: None,
+    });
     if vat_total > 0.0 {
         lines.push(JournalEntryLine {
             id: None,
@@ -5271,31 +5348,20 @@ fn apply_sales_invoice_impact(
         .map_err(|e| e.to_string())?;
     }
 
-    // Balance shadows. Credit → customer owes more; cash/bank → treasury up.
-    if input.payment_method == "credit" {
-        if let Some(cid) = input.customer_id {
-            tx.execute(
-                "UPDATE customers_local SET balance=balance+?1 WHERE id=?2",
-                params![grand_total, cid],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-    } else if input.payment_method == "cash" {
-        if let Some(cb) = input.cash_box_id {
-            tx.execute(
-                "UPDATE cash_boxes_local SET balance=balance+?1 WHERE id=?2",
-                params![grand_total, cb],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-    } else if input.payment_method == "bank" {
-        if let Some(b) = input.bank_id {
-            tx.execute(
-                "UPDATE banks_local SET balance=balance+?1 WHERE id=?2",
-                params![grand_total, b],
-            )
-            .map_err(|e| e.to_string())?;
-        }
+    if credit_amount > 0.005 {
+        let cid = input.customer_id.ok_or("اختر العميل للبيع الآجل")?;
+        tx.execute("UPDATE customers_local SET balance=balance+?1 WHERE id=?2",
+            params![credit_amount, cid]).map_err(|e| e.to_string())?;
+    }
+    if cash_amount > 0.005 {
+        let cb = input.cash_box_id.ok_or("اختر الخزينة")?;
+        tx.execute("UPDATE cash_boxes_local SET balance=balance+?1 WHERE id=?2",
+            params![cash_amount, cb]).map_err(|e| e.to_string())?;
+    }
+    if bank_amount > 0.005 {
+        let bank = input.bank_id.ok_or("اختر البنك")?;
+        tx.execute("UPDATE banks_local SET balance=balance+?1 WHERE id=?2",
+            params![bank_amount, bank]).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -5306,11 +5372,17 @@ fn apply_sales_invoice_impact(
 /// (`sales_invoice_delete`) or re-apply fresh impact (`sales_invoice_update`).
 fn reverse_sales_invoice_impact(tx: &Transaction, invoice_id: i64) -> Result<(), String> {
     // Header snapshot for the shadow-balance unwind + stock-restore date.
-    let (pm, cust, cb, bank, grand, date): (String, Option<i64>, Option<i64>, Option<i64>, f64, String) = tx
+    let (cust, cb, bank, cash_amount, bank_amount, credit_amount, date):
+        (Option<i64>, Option<i64>, Option<i64>, f64, f64, f64, String) = tx
         .query_row(
-            "SELECT payment_method,customer_id,cash_box_id,bank_id,grand_total,invoice_date FROM sales_invoices_local WHERE id=?1",
+            "SELECT customer_id,cash_box_id,bank_id,
+                    COALESCE(cash_amount,CASE WHEN payment_method='cash' THEN grand_total ELSE 0 END),
+                    COALESCE(bank_amount,CASE WHEN payment_method='bank' THEN grand_total ELSE 0 END),
+                    COALESCE(credit_amount,CASE WHEN payment_method='credit' THEN grand_total ELSE 0 END),
+                    invoice_date
+             FROM sales_invoices_local WHERE id=?1",
             params![invoice_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -5361,35 +5433,23 @@ fn reverse_sales_invoice_impact(tx: &Transaction, invoice_id: i64) -> Result<(),
     crate::inventory::ledger_remove_ref_in_tx(tx, "sale", invoice_id)?;
 
     // 3) Unwind shadow balances (mirror of the create-time bump).
-    match pm.as_str() {
-        "credit" => {
-            if let Some(cid) = cust {
-                tx.execute(
-                    "UPDATE customers_local SET balance=balance-?1 WHERE id=?2",
-                    params![grand, cid],
-                )
-                .map_err(|e| e.to_string())?;
-            }
+    if credit_amount > 0.005 {
+        if let Some(cid) = cust {
+            tx.execute("UPDATE customers_local SET balance=balance-?1 WHERE id=?2",
+                params![credit_amount, cid]).map_err(|e| e.to_string())?;
         }
-        "cash" => {
-            if let Some(c) = cb {
-                tx.execute(
-                    "UPDATE cash_boxes_local SET balance=balance-?1 WHERE id=?2",
-                    params![grand, c],
-                )
-                .map_err(|e| e.to_string())?;
-            }
+    }
+    if cash_amount > 0.005 {
+        if let Some(c) = cb {
+            tx.execute("UPDATE cash_boxes_local SET balance=balance-?1 WHERE id=?2",
+                params![cash_amount, c]).map_err(|e| e.to_string())?;
         }
-        "bank" => {
-            if let Some(b) = bank {
-                tx.execute(
-                    "UPDATE banks_local SET balance=balance-?1 WHERE id=?2",
-                    params![grand, b],
-                )
-                .map_err(|e| e.to_string())?;
-            }
+    }
+    if bank_amount > 0.005 {
+        if let Some(b) = bank {
+            tx.execute("UPDATE banks_local SET balance=balance-?1 WHERE id=?2",
+                params![bank_amount, b]).map_err(|e| e.to_string())?;
         }
-        _ => {}
     }
 
     // 4) Drop the line rows (header kept for the caller to decide).
@@ -5424,19 +5484,29 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
         vat_total += line_sub * l.vat_rate / 100.0;
     }
     let grand_total = subtotal + vat_total;
+    let (cash_amount, bank_amount, credit_amount) = sales_payment_parts(&input, grand_total)?;
 
     // ── Credit control (credit sales to a known customer only) ──
-    if input.payment_method == "credit" {
+    if credit_amount > 0.005 && input.customer_id.is_none() {
+        return Err("اختر العميل للبيع الآجل".into());
+    }
+    if cash_amount > 0.005 && input.cash_box_id.is_none() {
+        return Err("اختر الخزينة للمبلغ النقدي".into());
+    }
+    if bank_amount > 0.005 && input.bank_id.is_none() {
+        return Err("اختر البنك للمبلغ البنكي".into());
+    }
+    if credit_amount > 0.005 {
         if let Some(cid) = input.customer_id {
             let (bal, limit, enforce, terms): (f64, f64, i64, i64) = tx.query_row(
                 "SELECT balance, credit_limit, enforce_credit_limit, payment_terms_days FROM customers_local WHERE id=?1",
                 params![cid], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             ).map_err(|e| e.to_string())?;
             // Credit-limit cap — only when enforcement is explicitly enabled.
-            if enforce != 0 && limit > 0.0 && bal + grand_total > limit + 0.001 {
+            if enforce != 0 && limit > 0.0 && bal + credit_amount > limit + 0.001 {
                 return Err(format!(
                     "تجاوز حد الائتمان: الرصيد الحالي {:.2} + الفاتورة {:.2} = {:.2} يتجاوز الحد المسموح {:.2}",
-                    bal, grand_total, bal + grand_total, limit
+                    bal, credit_amount, bal + credit_amount, limit
                 ));
             }
             // Overdue check — applies whenever payment terms are configured and
@@ -5447,7 +5517,8 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
             // that is still not fully covered — never a long-since-settled one.
             if terms > 0 && bal > 0.001 {
                 let total_invoiced: f64 = tx.query_row(
-                    "SELECT COALESCE(SUM(grand_total),0) FROM sales_invoices_local WHERE customer_id=?1 AND payment_method='credit'",
+                    "SELECT COALESCE(SUM(COALESCE(credit_amount,CASE WHEN payment_method='credit' THEN grand_total ELSE 0 END)),0)
+                     FROM sales_invoices_local WHERE customer_id=?1",
                     params![cid], |r| r.get(0),
                 ).map_err(|e| e.to_string())?;
                 // Amount applied against credit invoices so far (receipts +
@@ -5458,8 +5529,9 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
                 {
                     let mut stmt = tx
                         .prepare(
-                            "SELECT invoice_date, grand_total FROM sales_invoices_local
-                         WHERE customer_id=?1 AND payment_method='credit'
+                            "SELECT invoice_date,COALESCE(credit_amount,CASE WHEN payment_method='credit' THEN grand_total ELSE 0 END)
+                         FROM sales_invoices_local WHERE customer_id=?1
+                           AND COALESCE(credit_amount,CASE WHEN payment_method='credit' THEN grand_total ELSE 0 END)>0.005
                          ORDER BY invoice_date ASC, id ASC",
                         )
                         .map_err(|e| e.to_string())?;
@@ -5504,11 +5576,12 @@ pub fn sales_invoice_create(input: SalesInvoiceInput) -> Result<i64, String> {
         _ => None,
     };
     tx.execute(
-        "INSERT INTO sales_invoices_local(invoice_no,customer_id,invoice_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id,sales_rep_id,commission_pct,invoice_type,buyer_name,buyer_vat,buyer_address)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
+        "INSERT INTO sales_invoices_local(invoice_no,customer_id,invoice_date,subtotal,vat_total,grand_total,cogs_total,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id,sales_rep_id,commission_pct,invoice_type,buyer_name,buyer_vat,buyer_address,cash_amount,bank_amount,credit_amount)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
         params![invoice_no, input.customer_id, input.invoice_date, subtotal, vat_total, grand_total, 0.0,
                 input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id,
-                sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address],
+                sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address,
+                cash_amount, bank_amount, credit_amount],
     ).map_err(|e| e.to_string())?;
     let invoice_id = tx.last_insert_rowid();
 
@@ -5560,6 +5633,13 @@ pub fn sales_invoice_delete(id: i64) -> Result<(), String> {
         return Err("لا يمكن حذف فاتورة مرحّلة — افكَّ الترحيل أولاً".into());
     }
     guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
+    let allocation_count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM financial_transaction_allocations_local WHERE doc_type='sales_invoice' AND doc_id=?1",
+        params![id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    if allocation_count > 0 {
+        return Err("لا يمكن حذف فاتورة مرتبطة بسندات؛ أزل تخصيصها من السند أولاً".into());
+    }
     // A draft carries NO impact (unpost already reversed it) → drop rows only.
     tx.execute(
         "DELETE FROM sales_invoice_lines_local WHERE invoice_id=?1",
@@ -5605,6 +5685,16 @@ pub fn sales_invoice_update(id: i64, input: SalesInvoiceInput) -> Result<(), Str
     guard_period_open_for_date(&tx, &input.invoice_date).map_err(|e| e.to_string())?;
 
     let (subtotal, vat_total, grand_total) = sales_doc_totals(&input.lines);
+    let (cash_amount, bank_amount, credit_amount) = sales_payment_parts(&input, grand_total)?;
+    if credit_amount > 0.005 && input.customer_id.is_none() {
+        return Err("اختر العميل للبيع الآجل".into());
+    }
+    if cash_amount > 0.005 && input.cash_box_id.is_none() {
+        return Err("اختر الخزينة للمبلغ النقدي".into());
+    }
+    if bank_amount > 0.005 && input.bank_id.is_none() {
+        return Err("اختر البنك للمبلغ البنكي".into());
+    }
 
     // Draft path only (posted is blocked above). A draft carries NO impact, so
     // rewrite the header in place (keeping id + invoice_no), drop the old line
@@ -5619,10 +5709,11 @@ pub fn sales_invoice_update(id: i64, input: SalesInvoiceInput) -> Result<(), Str
         _ => None,
     };
     tx.execute(
-        "UPDATE sales_invoices_local SET customer_id=?1,invoice_date=?2,subtotal=?3,vat_total=?4,grand_total=?5,cogs_total=0,payment_method=?6,cash_box_id=?7,bank_id=?8,notes=?9,branch_id=?10,cost_center_id=?11,sales_rep_id=?12,commission_pct=?13,invoice_type=?14,buyer_name=?15,buyer_vat=?16,buyer_address=?17 WHERE id=?18",
+        "UPDATE sales_invoices_local SET customer_id=?1,invoice_date=?2,subtotal=?3,vat_total=?4,grand_total=?5,cogs_total=0,payment_method=?6,cash_box_id=?7,bank_id=?8,notes=?9,branch_id=?10,cost_center_id=?11,sales_rep_id=?12,commission_pct=?13,invoice_type=?14,buyer_name=?15,buyer_vat=?16,buyer_address=?17,cash_amount=?18,bank_amount=?19,credit_amount=?20 WHERE id=?21",
         params![input.customer_id, input.invoice_date, subtotal, vat_total, grand_total,
                 input.payment_method, input.cash_box_id, input.bank_id, input.notes, input.branch_id, input.cost_center_id,
-                sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address, id],
+                sales_rep_id, commission_pct, invoice_type, input.buyer_name, input.buyer_vat, input.buyer_address,
+                cash_amount, bank_amount, credit_amount, id],
     ).map_err(|e| e.to_string())?;
     tx.execute(
         "DELETE FROM sales_invoice_lines_local WHERE invoice_id=?1",
@@ -5676,10 +5767,14 @@ fn insert_sales_lines_only(
 /// is left None at the header level — each line already carries its resolved
 /// `warehouse_id`, so impact re-application stays warehouse-faithful.
 fn load_sales_invoice_input(tx: &Transaction, id: i64) -> Result<SalesInvoiceInput, String> {
-    let (customer_id, invoice_date, payment_method, cash_box_id, bank_id, notes, branch_id, cost_center_id, sales_rep_id, commission_pct, invoice_type, buyer_name, buyer_vat, buyer_address):
-        (Option<i64>, String, String, Option<i64>, Option<i64>, Option<String>, Option<i64>, Option<i64>, Option<i64>, f64, String, Option<String>, Option<String>, Option<String>) = tx.query_row(
-        "SELECT customer_id,invoice_date,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id,sales_rep_id,commission_pct,invoice_type,buyer_name,buyer_vat,buyer_address FROM sales_invoices_local WHERE id=?1",
-        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?)),
+    let (customer_id, invoice_date, payment_method, cash_box_id, bank_id, notes, branch_id, cost_center_id, sales_rep_id, commission_pct, invoice_type, buyer_name, buyer_vat, buyer_address, cash_amount, bank_amount, credit_amount):
+        (Option<i64>, String, String, Option<i64>, Option<i64>, Option<String>, Option<i64>, Option<i64>, Option<i64>, f64, String, Option<String>, Option<String>, Option<String>, f64, f64, f64) = tx.query_row(
+        "SELECT customer_id,invoice_date,payment_method,cash_box_id,bank_id,notes,branch_id,cost_center_id,sales_rep_id,commission_pct,invoice_type,buyer_name,buyer_vat,buyer_address,
+                COALESCE(cash_amount,CASE WHEN payment_method='cash' THEN grand_total ELSE 0 END),
+                COALESCE(bank_amount,CASE WHEN payment_method='bank' THEN grand_total ELSE 0 END),
+                COALESCE(credit_amount,CASE WHEN payment_method='credit' THEN grand_total ELSE 0 END)
+         FROM sales_invoices_local WHERE id=?1",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?, r.get(14)?, r.get(15)?, r.get(16)?)),
     ).map_err(|e| e.to_string())?;
     let mut lines: Vec<SalesLine> = Vec::new();
     {
@@ -5713,6 +5808,9 @@ fn load_sales_invoice_input(tx: &Transaction, id: i64) -> Result<SalesInvoiceInp
         customer_id,
         invoice_date,
         payment_method,
+        cash_amount: Some(cash_amount),
+        bank_amount: Some(bank_amount),
+        credit_amount: Some(credit_amount),
         cash_box_id,
         bank_id,
         notes,
@@ -5746,6 +5844,15 @@ pub fn sales_invoice_unpost(id: i64) -> Result<(), String> {
     if status != "posted" {
         return Err("الفاتورة غير مرحّلة بالفعل".into());
     }
+    let posted_allocations: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM financial_transaction_allocations_local a
+         JOIN financial_transactions_local f ON f.id=a.financial_tx_id
+         WHERE a.doc_type='sales_invoice' AND a.doc_id=?1 AND f.status='posted'",
+        params![id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    if posted_allocations > 0 {
+        return Err("لا يمكن فك ترحيل فاتورة لها سندات قبض مرحّلة؛ فك ترحيل السندات أولاً".into());
+    }
     guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
     let active_returns: i64 = tx
         .query_row(
@@ -5774,6 +5881,8 @@ pub fn sales_invoice_unpost(id: i64) -> Result<(), String> {
                 "SELECT
                     (SELECT COUNT(*) FROM financial_transactions_local
                      WHERE applied_doc_type='sales_invoice' AND applied_doc_id=?1)
+                  + (SELECT COUNT(*) FROM financial_transaction_allocations_local
+                     WHERE doc_type='sales_invoice' AND doc_id=?1)
                   + (SELECT COUNT(*) FROM quotations_local WHERE converted_invoice_id=?1)
                   + (SELECT COUNT(*) FROM sales_orders_local WHERE converted_invoice_id=?1)",
                 params![id],
@@ -6310,6 +6419,9 @@ pub fn quotation_convert_to_invoice(id: i64) -> Result<i64, String> {
         customer_id: Some(customer_id),
         invoice_date: today_str(),
         payment_method: "credit".into(),
+        cash_amount: None,
+        bank_amount: None,
+        credit_amount: None,
         cash_box_id: None,
         bank_id: None,
         notes: q.notes.clone(),
@@ -6657,6 +6769,9 @@ pub fn sales_order_convert_to_invoice(id: i64) -> Result<i64, String> {
         customer_id: o.customer_id,
         invoice_date: today_str(),
         payment_method: o.payment_method.clone(),
+        cash_amount: None,
+        bank_amount: None,
+        credit_amount: None,
         cash_box_id: o.cash_box_id,
         bank_id: o.bank_id,
         notes: o.notes.clone(),
@@ -7709,6 +7824,14 @@ pub fn sales_return_post(id: i64) -> Result<(), String> {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct FinancialTxAllocation {
+    pub doc_type: String,
+    pub doc_id: i64,
+    pub amount: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct FinancialTx {
     pub id: i64,
     pub tx_no: String,
@@ -7734,6 +7857,8 @@ pub struct FinancialTx {
     pub exchange_rate: f64,
     pub branch_id: Option<i64>,
     pub cost_center_id: Option<i64>,
+    #[serde(default)]
+    pub allocations: Vec<FinancialTxAllocation>,
 }
 
 #[derive(Deserialize)]
@@ -7756,6 +7881,122 @@ pub struct FinancialTxInput {
     pub applied_doc_type: Option<String>,
     #[serde(default)]
     pub applied_doc_id: Option<i64>,
+    #[serde(default)]
+    pub allocations: Vec<FinancialTxAllocation>,
+}
+
+fn load_financial_tx_allocations(
+    conn: &Connection,
+    tx_id: i64,
+) -> Result<Vec<FinancialTxAllocation>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT doc_type,doc_id,amount FROM financial_transaction_allocations_local
+         WHERE financial_tx_id=?1 ORDER BY id",
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![tx_id], |r| Ok(FinancialTxAllocation {
+        doc_type: r.get(0)?, doc_id: r.get(1)?, amount: r.get(2)?,
+    })).map_err(|e| e.to_string())?;
+    rows.map(|row| row.map_err(|e| e.to_string())).collect()
+}
+
+fn normalized_financial_tx_allocations(input: &FinancialTxInput) -> Vec<FinancialTxAllocation> {
+    if !input.allocations.is_empty() {
+        input.allocations.clone()
+    } else if let (Some(doc_type), Some(doc_id)) =
+        (input.applied_doc_type.as_ref(), input.applied_doc_id)
+    {
+        vec![FinancialTxAllocation { doc_type: doc_type.clone(), doc_id, amount: input.amount }]
+    } else {
+        Vec::new()
+    }
+}
+
+fn validate_financial_tx_allocations(
+    tx: &Transaction,
+    tx_type: &str,
+    party_type: Option<&str>,
+    party_id: Option<i64>,
+    currency_code: &str,
+    amount: f64,
+    allocations: &[FinancialTxAllocation],
+    excluding_tx_id: Option<i64>,
+) -> Result<(), String> {
+    if allocations.is_empty() {
+        return Ok(());
+    }
+    let expected_type = match tx_type {
+        "receipt" if party_type == Some("customer") => "sales_invoice",
+        "payment" if party_type == Some("supplier") => "purchase",
+        _ => return Err("نوع السند والطرف لا يتوافقان مع الفواتير المحددة".into()),
+    };
+    let base_currency: Option<String> = tx
+        .query_row(
+            "SELECT code FROM currencies_local WHERE is_base=1 LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let base_currency = base_currency.unwrap_or_else(|| "SAR".to_string());
+    if currency_code != base_currency {
+        return Err(format!(
+            "عند ربط السند بفواتير يجب اختيار خزينة أو بنك بالعملة الأساسية ({base_currency})"
+        ));
+    }
+    let mut sum = 0.0;
+    let mut seen = std::collections::HashSet::new();
+    for allocation in allocations {
+        if allocation.doc_type != expected_type || allocation.doc_id <= 0
+            || !allocation.amount.is_finite() || allocation.amount <= 0.0
+            || !seen.insert((allocation.doc_type.as_str(), allocation.doc_id))
+        {
+            return Err("بيانات تخصيص الفواتير غير صالحة أو مكررة".into());
+        }
+        sum += allocation.amount;
+        let (document_party, open_balance, document_status): (i64, f64, String) =
+            if expected_type == "sales_invoice" {
+                tx.query_row(
+                    "SELECT customer_id,
+                            COALESCE(credit_amount,CASE WHEN payment_method='credit' THEN grand_total ELSE 0 END),
+                            COALESCE(status,'posted')
+                     FROM sales_invoices_local WHERE id=?1",
+                    params![allocation.doc_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                ).map_err(|e| format!("الفاتورة المحددة غير موجودة: {e}"))?
+            } else {
+                tx.query_row(
+                    "SELECT supplier_id,grand_total,COALESCE(status,'posted')
+                     FROM purchases_local WHERE id=?1 AND payment_method='credit'",
+                    params![allocation.doc_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                ).map_err(|e| format!("فاتورة الشراء المحددة غير موجودة أو ليست آجلة: {e}"))?
+            };
+        if Some(document_party) != party_id {
+            return Err("لا يمكن ربط السند بفاتورة تخص عميلاً أو مورداً آخر".into());
+        }
+        if document_status != "posted" {
+            return Err("لا يمكن تسوية فاتورة غير مرحّلة".into());
+        }
+        let already_allocated: f64 = tx.query_row(
+            "SELECT COALESCE(SUM(a.amount),0)
+             FROM financial_transaction_allocations_local a
+             JOIN financial_transactions_local f ON f.id=a.financial_tx_id
+             WHERE a.doc_type=?1 AND a.doc_id=?2 AND f.status='posted'
+               AND (?3 IS NULL OR f.id<>?3)",
+            params![expected_type, allocation.doc_id, excluding_tx_id],
+            |r| r.get(0),
+        ).map_err(|e| e.to_string())?;
+        if allocation.amount > open_balance - already_allocated + 0.011 {
+            return Err(format!(
+                "المبلغ المخصص للفاتورة يتجاوز رصيدها المتبقي ({:.2})",
+                (open_balance - already_allocated).max(0.0)
+            ));
+        }
+    }
+    if (sum - amount).abs() > 0.011 {
+        return Err("إجمالي تخصيص الفواتير يجب أن يساوي مبلغ السند".into());
+    }
+    Ok(())
 }
 
 fn next_fintx_no(conn: &Connection, tx_type: &str) -> Result<String> {
@@ -7806,12 +8047,16 @@ pub fn financial_tx_list(limit: Option<i64>) -> Result<Vec<FinancialTx>, String>
                 exchange_rate: r.get(17)?,
                 branch_id: r.get(18)?,
                 cost_center_id: r.get(19)?,
+                allocations: Vec::new(),
             })
         })
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for r in rows {
         out.push(r.map_err(|e| e.to_string())?);
+    }
+    for row in &mut out {
+        row.allocations = load_financial_tx_allocations(&conn, row.id)?;
     }
     Ok(out)
 }
@@ -7856,6 +8101,11 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
         };
     let rate_to_base = current_rate_to_base(&tx, &endpoint_currency).map_err(|e| e.to_string())?;
     let amount_base = input.amount * rate_to_base;
+    let allocations = normalized_financial_tx_allocations(&input);
+    validate_financial_tx_allocations(
+        &tx, &input.tx_type, input.party_type.as_deref(), input.party_id,
+        &endpoint_currency, input.amount, &allocations, None,
+    )?;
 
     // Resolve counter account: party AP/AR if party_type set, else explicit counter_account_id.
     let counter_acc: i64 = match input.party_type.as_deref() {
@@ -7877,12 +8127,21 @@ pub fn financial_tx_create(input: FinancialTxInput) -> Result<i64, String> {
     // later post / unpost reverses the exact same base amount.
     let auto_post = resolve_auto_post(&tx, "voucher");
     let status = if auto_post { "posted" } else { "draft" };
+    let legacy_link = if allocations.len() == 1 {
+        Some((&allocations[0].doc_type, allocations[0].doc_id))
+    } else { None };
     tx.execute(
         "INSERT INTO financial_transactions_local(tx_no,tx_date,tx_type,party_type,party_id,cash_box_id,bank_id,counter_account_id,amount,description,branch_id,cost_center_id,applied_doc_type,applied_doc_id,currency_code,exchange_rate,status)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
-        params![tx_no, input.tx_date, input.tx_type, input.party_type, input.party_id, input.cash_box_id, input.bank_id, counter_acc, input.amount, input.description, input.branch_id, input.cost_center_id, input.applied_doc_type, input.applied_doc_id, endpoint_currency, rate_to_base, status],
+        params![tx_no, input.tx_date, input.tx_type, input.party_type, input.party_id, input.cash_box_id, input.bank_id, counter_acc, input.amount, input.description, input.branch_id, input.cost_center_id, legacy_link.map(|x| x.0.as_str()), legacy_link.map(|x| x.1), endpoint_currency, rate_to_base, status],
     ).map_err(|e| e.to_string())?;
     let ftx_id = tx.last_insert_rowid();
+    for allocation in &allocations {
+        tx.execute(
+            "INSERT INTO financial_transaction_allocations_local(financial_tx_id,doc_type,doc_id,amount) VALUES(?1,?2,?3,?4)",
+            params![ftx_id, allocation.doc_type, allocation.doc_id, allocation.amount],
+        ).map_err(|e| e.to_string())?;
+    }
 
     if auto_post {
         let lines = fintx_je_lines(
@@ -7988,6 +8247,11 @@ pub fn financial_tx_update(id: i64, input: FinancialTxInput) -> Result<(), Strin
     } else {
         unreachable!()
     };
+    let allocations = normalized_financial_tx_allocations(&input);
+    validate_financial_tx_allocations(
+        &tx, &input.tx_type, input.party_type.as_deref(), input.party_id,
+        &endpoint_currency, input.amount, &allocations, Some(id),
+    )?;
     let counter_acc = match input.party_type.as_deref() {
         Some("supplier") => supplier_ap_account(&tx, input.party_id.ok_or("اختر المورد")?)?,
         Some("customer") => {
@@ -7996,10 +8260,23 @@ pub fn financial_tx_update(id: i64, input: FinancialTxInput) -> Result<(), Strin
         Some("none") | None => input.counter_account_id.ok_or("اختر الحساب المقابل")?,
         Some(_) => return Err("نوع الطرف غير صالح".into()),
     };
+    let legacy_link = if allocations.len() == 1 {
+        Some((&allocations[0].doc_type, allocations[0].doc_id))
+    } else { None };
     tx.execute(
         "UPDATE financial_transactions_local SET tx_date=?1,tx_type=?2,party_type=?3,party_id=?4,cash_box_id=?5,bank_id=?6,counter_account_id=?7,amount=?8,description=?9,branch_id=?10,cost_center_id=?11,applied_doc_type=?12,applied_doc_id=?13,currency_code=?14,exchange_rate=?15 WHERE id=?16 AND status='draft' AND je_id IS NULL",
-        params![input.tx_date,input.tx_type,input.party_type,input.party_id,input.cash_box_id,input.bank_id,counter_acc,input.amount,input.description,input.branch_id,input.cost_center_id,input.applied_doc_type,input.applied_doc_id,endpoint_currency,rate_to_base,id],
+        params![input.tx_date,input.tx_type,input.party_type,input.party_id,input.cash_box_id,input.bank_id,counter_acc,input.amount,input.description,input.branch_id,input.cost_center_id,legacy_link.map(|x| x.0.as_str()),legacy_link.map(|x| x.1),endpoint_currency,rate_to_base,id],
     ).map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM financial_transaction_allocations_local WHERE financial_tx_id=?1",
+        params![id],
+    ).map_err(|e| e.to_string())?;
+    for allocation in &allocations {
+        tx.execute(
+            "INSERT INTO financial_transaction_allocations_local(financial_tx_id,doc_type,doc_id,amount) VALUES(?1,?2,?3,?4)",
+            params![id, allocation.doc_type, allocation.doc_id, allocation.amount],
+        ).map_err(|e| e.to_string())?;
+    }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -8172,6 +8449,11 @@ pub fn financial_tx_post(id: i64) -> Result<(), String> {
     };
     let rate_to_base = current_rate_to_base(&tx, &endpoint_currency).map_err(|e| e.to_string())?;
     let amount_base = amount * rate_to_base;
+    let allocations = load_financial_tx_allocations(&tx, id)?;
+    validate_financial_tx_allocations(
+        &tx, &tx_type, party_type.as_deref(), party_id,
+        &endpoint_currency, amount, &allocations, Some(id),
+    )?;
 
     let lines = fintx_je_lines(
         &tx_type,
@@ -9180,6 +9462,9 @@ pub struct SalesInvoiceReportRow {
     pub vat_total: f64,
     pub grand_total: f64,
     pub line_count: i64,
+    pub cash_amount: f64,
+    pub bank_amount: f64,
+    pub credit_amount: f64,
 }
 
 /// Back-office sales invoices in a date range, optionally scoped by branch /
@@ -9197,7 +9482,10 @@ pub fn report_sales_invoices(
     let mut sql = String::from(
         "SELECT s.id, s.invoice_no, s.invoice_date, s.customer_id, c.name_ar, \
          s.payment_method, s.subtotal, s.vat_total, s.grand_total, \
-         (SELECT COUNT(*) FROM sales_invoice_lines_local l WHERE l.invoice_id = s.id) \
+         (SELECT COUNT(*) FROM sales_invoice_lines_local l WHERE l.invoice_id = s.id), \
+         COALESCE(s.cash_amount,CASE WHEN s.payment_method='cash' THEN s.grand_total ELSE 0 END), \
+         COALESCE(s.bank_amount,CASE WHEN s.payment_method='bank' THEN s.grand_total ELSE 0 END), \
+         COALESCE(s.credit_amount,CASE WHEN s.payment_method='credit' THEN s.grand_total ELSE 0 END) \
          FROM sales_invoices_local s \
          LEFT JOIN customers_local c ON c.id = s.customer_id WHERE 1=1",
     );
@@ -9234,6 +9522,9 @@ pub fn report_sales_invoices(
                 vat_total: r.get(7)?,
                 grand_total: r.get(8)?,
                 line_count: r.get(9)?,
+                cash_amount: r.get(10)?,
+                bank_amount: r.get(11)?,
+                credit_amount: r.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?;

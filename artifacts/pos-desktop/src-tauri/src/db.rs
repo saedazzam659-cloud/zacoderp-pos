@@ -1225,6 +1225,9 @@ pub fn initialize() -> Result<()> {
         "ALTER TABLE sales_invoices_local ADD COLUMN buyer_name TEXT",
         "ALTER TABLE sales_invoices_local ADD COLUMN buyer_vat TEXT",
         "ALTER TABLE sales_invoices_local ADD COLUMN buyer_address TEXT",
+        "ALTER TABLE sales_invoices_local ADD COLUMN cash_amount REAL",
+        "ALTER TABLE sales_invoices_local ADD COLUMN bank_amount REAL",
+        "ALTER TABLE sales_invoices_local ADD COLUMN credit_amount REAL",
         // Lines: free (bonus) qty — no revenue/VAT but still consumes stock &
         // COGS; an optional per-line note; and a per-line warehouse override
         // (NULL → falls back to the header/default warehouse).
@@ -1251,6 +1254,32 @@ pub fn initialize() -> Result<()> {
     for sql in alters {
         let _ = conn.execute(sql, []);
     }
+    // Preserve the original payment classification for invoices that predate
+    // split payments. New invoices always write all three amounts explicitly.
+    let _ = conn.execute(
+        "UPDATE sales_invoices_local SET
+           cash_amount=CASE WHEN payment_method='cash' THEN grand_total ELSE 0 END,
+           bank_amount=CASE WHEN payment_method='bank' THEN grand_total ELSE 0 END,
+           credit_amount=CASE WHEN payment_method='credit' THEN grand_total ELSE 0 END
+         WHERE cash_amount IS NULL OR bank_amount IS NULL OR credit_amount IS NULL",
+        [],
+    );
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS financial_transaction_allocations_local (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            financial_tx_id INTEGER NOT NULL REFERENCES financial_transactions_local(id) ON DELETE CASCADE,
+            doc_type TEXT NOT NULL CHECK (doc_type IN ('sales_invoice','purchase')),
+            doc_id INTEGER NOT NULL,
+            amount REAL NOT NULL CHECK (amount > 0),
+            UNIQUE(financial_tx_id, doc_type, doc_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fintx_alloc_doc
+          ON financial_transaction_allocations_local(doc_type,doc_id,financial_tx_id);
+        INSERT OR IGNORE INTO financial_transaction_allocations_local(financial_tx_id,doc_type,doc_id,amount)
+          SELECT id,applied_doc_type,applied_doc_id,amount
+          FROM financial_transactions_local
+          WHERE applied_doc_type IN ('sales_invoice','purchase') AND applied_doc_id IS NOT NULL;"
+    );
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sret_invoice_status ON sales_returns_local(invoice_id,status)",
         [],

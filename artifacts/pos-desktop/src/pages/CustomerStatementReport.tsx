@@ -58,23 +58,32 @@ function buildLines(
   const lines: StmtLine[] = [];
   for (const inv of invoices) {
     if (inv.customerId !== customerId) continue;
-    if (inv.paymentMethod === "credit") {
+    const cashAmount = inv.cashAmount ?? (inv.paymentMethod === "cash" ? inv.grandTotal : 0);
+    const bankAmount = inv.bankAmount ?? (inv.paymentMethod === "bank" ? inv.grandTotal : 0);
+    const creditAmount = inv.creditAmount ?? (inv.paymentMethod === "credit" ? inv.grandTotal : 0);
+    if (creditAmount > 0.005) {
       lines.push({
         date: inv.invoiceDate,
         docType: uiText("فاتورة مبيعات", "Sales invoice", language),
         docNo: inv.invoiceNo,
         description: inv.notes || "",
-        debit: inv.grandTotal,
+        debit: creditAmount,
         credit: 0,
       });
-    } else if (includeCash) {
-      const settle = inv.paymentMethod === "bank" ? uiText("سداد بنكي فوري", "Immediate bank receipt", language) : uiText("سداد نقدي فوري", "Immediate cash receipt", language);
+    }
+    const immediatelyPaid = cashAmount + bankAmount;
+    if (includeCash && immediatelyPaid > 0.005) {
+      const settle = cashAmount > 0.005 && bankAmount > 0.005
+        ? uiText("سداد نقدي وبنكي فوري", "Immediate cash and bank receipt", language)
+        : bankAmount > 0.005
+          ? uiText("سداد بنكي فوري", "Immediate bank receipt", language)
+          : uiText("سداد نقدي فوري", "Immediate cash receipt", language);
       lines.push({
         date: inv.invoiceDate,
-        docType: uiText("فاتورة مبيعات نقدية", "Cash sales invoice", language),
+        docType: uiText("فاتورة مبيعات مسددة", "Settled sales invoice", language),
         docNo: inv.invoiceNo,
         description: inv.notes || "",
-        debit: inv.grandTotal,
+        debit: immediatelyPaid,
         credit: 0,
       });
       lines.push({
@@ -83,7 +92,7 @@ function buildLines(
         docNo: inv.invoiceNo,
         description: uiText("تحصيل قيمة الفاتورة النقدية فوراً", "Immediate settlement of cash invoice", language),
         debit: 0,
-        credit: inv.grandTotal,
+        credit: immediatelyPaid,
       });
     }
   }

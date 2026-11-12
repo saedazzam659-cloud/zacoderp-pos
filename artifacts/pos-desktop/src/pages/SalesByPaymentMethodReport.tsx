@@ -25,6 +25,7 @@ export default function SalesByPaymentMethodReport() {
   const [toDate, setToDate] = useState(todayStr());
   const [branchId, setBranchId] = useState<number | "">("");
   const [rows, setRows] = useState<Bucket[] | null>(null);
+  const [invoiceCount, setInvoiceCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -35,13 +36,25 @@ export default function SalesByPaymentMethodReport() {
       const invs = await reportSalesInvoices({ fromDate, toDate, branchId: branchId === "" ? null : branchId });
       const map = new Map<Method, Bucket>();
       for (const r of invs) {
-        const key = r.paymentMethod || "credit";
-        let b = map.get(key);
-        if (!b) { b = { key, count: 0, sub: 0, vat: 0, total: 0 }; map.set(key, b); }
-        b.count += 1; b.sub += r.subtotal; b.vat += r.vatTotal; b.total += r.grandTotal;
+        const paymentParts = [
+          ["cash", r.cashAmount ?? (r.paymentMethod === "cash" ? r.grandTotal : 0)],
+          ["bank", r.bankAmount ?? (r.paymentMethod === "bank" ? r.grandTotal : 0)],
+          ["credit", r.creditAmount ?? (r.paymentMethod === "credit" ? r.grandTotal : 0)],
+        ] as const;
+        for (const [key, amount] of paymentParts) {
+          if (amount <= 0.005) continue;
+          let b = map.get(key);
+          if (!b) { b = { key, count: 0, sub: 0, vat: 0, total: 0 }; map.set(key, b); }
+          const share = r.grandTotal > 0 ? amount / r.grandTotal : 0;
+          b.count += 1;
+          b.sub += r.subtotal * share;
+          b.vat += r.vatTotal * share;
+          b.total += amount;
+        }
       }
       const order = (k: Method) => { const i = (METHODS as readonly string[]).indexOf(k); return i < 0 ? 99 : i; };
       setRows([...map.values()].sort((a, b) => order(a.key) - order(b.key)));
+      setInvoiceCount(invs.length);
     } finally { setLoading(false); }
   }
 
@@ -92,7 +105,7 @@ export default function SalesByPaymentMethodReport() {
               {rows.length > 0 && (
                 <tr style={{ fontWeight: 700, background: "#f8fafc" }}>
                   <Td>{text("الإجمالي", "Total")}</Td>
-                  <Td style={{ textAlign: "center" }}>{totals.count}</Td>
+                  <Td style={{ textAlign: "center" }}>{invoiceCount}</Td>
                   <Td num>{fmt(totals.sub)}</Td>
                   <Td num>{fmt(totals.vat)}</Td>
                   <Td num>{fmt(totals.total)}</Td>
