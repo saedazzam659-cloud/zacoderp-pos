@@ -742,3 +742,17 @@ mtime_ms = 1793649204915
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/fa61d73d-dfdf-4dde-9518-366392426f52/59a5dcc7-812c-41f4-b5dd-7000dd6054df"
 storage_version_token = "1793649605499679"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "gT8d9ocexlexD2z0Sb1Ur"
+uri = "file://generated-artifacts/zacode-ai-handoff-2026-11-12.zip"
+type = "unspecified"
+title = "Zacode ERP AI handoff source bundle"
+description = "Current full frontend/backend source and database schema code in one ZIP, with a handoff guide. Production database rows, uploads, secrets, and old backups are excluded."
+logical_id = "a1e81240-2289-498f-bcb1-fb7640eb703f"
+content_hash = "sha256:6154f3ce4dd7360aa58712631f2c349594d6bd9e9ab947d0d1789b8659df6278"
+size = 40961936
+mtime_ms = 1794441746656
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:aa77edd7-d413-478b-8e91-a5ac49d39000/a1e81240-2289-498f-bcb1-fb7640eb703f/fa5446cc-8cbc-4749-b23e-409e49d6dc3b"
+storage_version_token = "1794441760826246"
+content_type = "application/octet-stream"
