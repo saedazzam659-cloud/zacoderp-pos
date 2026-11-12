@@ -41,6 +41,7 @@ import { setSalesReturnPrefill } from "../lib/returnPrefill";
 import { type WindowsView } from "../lib/moduleRegistry";
 
 type FLine = SalesLine & DiscFields & { unitKey?: string; brandId?: number | null; brandName?: string | null };
+type SalesPaymentChoice = PaymentMethod | "mixed";
 
 export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
   onNavigate?: (v: WindowsView) => void;
@@ -68,8 +69,13 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
     setRows(invs);
     const m = new Map<number, number>();
     for (const t of tx) {
-      if (t.status === "posted" && t.txType === "receipt" && t.appliedDocType === "sales_invoice" && t.appliedDocId != null) {
-        m.set(t.appliedDocId, (m.get(t.appliedDocId) ?? 0) + t.amount);
+      if (t.status !== "posted" || t.txType !== "receipt") continue;
+      const links = t.allocations?.length
+        ? t.allocations.filter((a) => a.docType === "sales_invoice").map((a) => [a.docId, a.amount] as const)
+        : t.appliedDocType === "sales_invoice" && t.appliedDocId != null
+          ? [[t.appliedDocId, t.amount] as const] : [];
+      for (const [invoiceId, amount] of links) {
+        m.set(invoiceId, (m.get(invoiceId) ?? 0) + amount);
       }
     }
     setPaidByInvoice(m);
@@ -161,7 +167,7 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
       { key: "invoiceNo", label: text("رقم الفاتورة", "Invoice number"), value: (p) => p.invoiceNo },
       { key: "date", label: text("التاريخ", "Date"), value: (p) => p.invoiceDate },
       { key: "customer", label: text("العميل", "Customer"), value: (p) => p.customerName ?? text("نقدي/بدون عميل", "Cash / no customer") },
-      { key: "payment", label: text("طريقة الدفع", "Payment method"), value: (p) => p.paymentMethod },
+    { key: "payment", label: text("طريقة الدفع", "Payment method"), value: (p) => paymentLabel(p, language) },
       { key: "status", label: text("الحالة", "Status"), value: (p) => p.status ?? "" },
     ];
     if (zatca) base.push({ key: "zatca", label: "ZATCA", value: (p) => p.zatcaStatus ?? "" });
@@ -169,7 +175,10 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
       { key: "subtotal", label: text("المجموع", "Subtotal"), type: "number", value: (p) => p.subtotal },
       { key: "vat", label: text("الضريبة", "Tax"), type: "number", value: (p) => p.vatTotal },
       { key: "grand", label: text("الإجمالي", "Total"), type: "number", value: (p) => p.grandTotal },
-      { key: "paid", label: text("المسدّد", "Paid"), type: "number", value: (p) => paidByInvoice.get(p.id) ?? 0 },
+      { key: "paid", label: text("المسدّد", "Paid"), type: "number", value: (p) =>
+        (p.cashAmount ?? (p.paymentMethod === "cash" ? p.grandTotal : 0))
+        + (p.bankAmount ?? (p.paymentMethod === "bank" ? p.grandTotal : 0))
+        + (paidByInvoice.get(p.id) ?? 0) },
     );
     return base;
   }, [zatca, paidByInvoice, language]);
@@ -290,7 +299,7 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
                     <Td mono>{p.invoiceNo}</Td>
                     <Td>{p.invoiceDate}</Td>
                     <Td>{p.customerName ?? text("نقدي/بدون عميل", "Cash / no customer")}</Td>
-                    <Td><PayBadge m={p.paymentMethod} /></Td>
+                    <Td><PayBadge invoice={p} /></Td>
                     <Td><StatusBadge status={p.status} /></Td>
                     {isZatcaCountry() && <Td><ZatcaBadge status={p.zatcaStatus} /></Td>}
                     <Td num>{fmt(p.subtotal)}</Td>
@@ -327,27 +336,40 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
 function PaidCell({ invoice: p, paid }: { invoice: SalesInvoice; paid: number }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
-  if (p.paymentMethod !== "credit") return <span style={{ color: "#15803d" }}>{text("مدفوعة", "Paid")}</span>;
-  const remaining = p.grandTotal - paid;
-  if (paid <= 0.005) return <span style={{ color: "#b45309" }}>{text("غير مسدّدة", "Unpaid")}</span>;
+  const initialPaid = (p.cashAmount ?? (p.paymentMethod === "cash" ? p.grandTotal : 0))
+    + (p.bankAmount ?? (p.paymentMethod === "bank" ? p.grandTotal : 0));
+  const totalPaid = initialPaid + paid;
+  const remaining = p.grandTotal - totalPaid;
+  if (remaining <= 0.005) return <span style={{ color: "#15803d" }}>{text("مدفوعة", "Paid")}</span>;
+  if (totalPaid <= 0.005) return <span style={{ color: "#b45309" }}>{text("غير مسدّدة", "Unpaid")}</span>;
   return (
     <span>
-      <span style={{ color: "#15803d", fontWeight: 600 }}>{fmt(paid)}</span>
+      <span style={{ color: "#15803d", fontWeight: 600 }}>{fmt(totalPaid)}</span>
       {remaining > 0.005 && <span style={{ color: "#b45309" }}> / {fmt(remaining)}</span>}
-      {remaining <= 0.005 && <span style={{ color: "#15803d" }}> ✓</span>}
     </span>
   );
 }
 
-function PayBadge({ m }: { m: PaymentMethod }) {
+function paymentLabel(p: SalesInvoice, language: "ar" | "en"): string {
+  const cash = p.cashAmount ?? (p.paymentMethod === "cash" ? p.grandTotal : 0);
+  const bank = p.bankAmount ?? (p.paymentMethod === "bank" ? p.grandTotal : 0);
+  const credit = p.creditAmount ?? (p.paymentMethod === "credit" ? p.grandTotal : 0);
+  const parts = [
+    cash > 0.005 ? (language === "en" ? "Cash" : "نقدي") : "",
+    bank > 0.005 ? (language === "en" ? "Bank" : "بنكي") : "",
+    credit > 0.005 ? (language === "en" ? "Credit" : "آجل") : "",
+  ].filter(Boolean);
+  return parts.length > 1
+    ? (language === "en" ? "Mixed" : "متعدد")
+    : parts[0] || (language === "en" ? "Paid" : "مدفوع");
+}
+
+function PayBadge({ invoice }: { invoice: SalesInvoice }) {
   const language = useUiLanguage();
-  const map = {
-    credit: { ar: "آجل", en: "Credit", c: "#9a3412" },
-    cash: { ar: "نقدي", en: "Cash", c: "#15803d" },
-    bank: { ar: "بنك", en: "Bank", c: "#1e40af" },
-  } as const;
-  const x = map[m];
-  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{language === "en" ? x.en : x.ar}</span>;
+  const label = paymentLabel(invoice, language);
+  const c = (invoice.creditAmount ?? (invoice.paymentMethod === "credit" ? invoice.grandTotal : 0)) > 0.005
+    ? "#9a3412" : (invoice.cashAmount ?? 0) > 0.005 ? "#15803d" : "#1e40af";
+  return <span style={{ background: c + "20", color: c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{label}</span>;
 }
 
 // Posting state badge: a draft has its impact reversed (no GL/stock effect) and
@@ -458,7 +480,18 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.invoiceDate ?? todayStr());
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "cash");
+  const [paymentChoice, setPaymentChoice] = useState<SalesPaymentChoice>(() => {
+    if (!initial) return "cash";
+    const parts = [initial.cashAmount ?? 0, initial.bankAmount ?? 0, initial.creditAmount ?? 0]
+      .filter((amount) => amount > 0.005).length;
+    return parts > 1 ? "mixed" : initial.paymentMethod;
+  });
+  const [cashAmount, setCashAmount] = useState(
+    initial?.cashAmount ?? (initial?.paymentMethod === "cash" ? initial.grandTotal : 0),
+  );
+  const [bankAmount, setBankAmount] = useState(
+    initial?.bankAmount ?? (initial?.paymentMethod === "bank" ? initial.grandTotal : 0),
+  );
   const [cashBoxId, setCashBoxId] = useState<number | null>(initial?.cashBoxId ?? deps.cashBoxes[0]?.id ?? null);
   const [bankId, setBankId] = useState<number | null>(initial?.bankId ?? deps.banks[0]?.id ?? null);
   const [warehouseId, setWarehouseId] = useState<number>(
@@ -736,8 +769,8 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     setBusy(true); setErr(null); setIssues([]);
     try {
       const problems = collectDocIssues([
-        { label: text("طريقة الدفع", "Payment method"), ok: !!paymentMethod },
-        { label: text("العميل", "Customer"), ok: paymentMethod !== "credit" || !!customerId },
+        { label: text("طريقة الدفع", "Payment method"), ok: !!paymentChoice },
+        { label: text("العميل", "Customer"), ok: paymentChoice !== "credit" || !!customerId },
         { label: text("العملة", "Currency"), ok: !!currency },
         ...(branches.length ? [{ label: text("الفرع", "Branch"), ok: branchId !== "" }] : []),
         { label: text("المستودع", "Warehouse"), ok: !!warehouseId },
@@ -753,6 +786,17 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         cleaned.map((l) => ({ qty: l.qty, unit: l.unitPrice, vatRate: l.vatRate, disc: l.disc, discType: l.discType })),
         headerDisc, headerDiscType,
       );
+      const paymentTotal = r.grandTotal;
+      const paidCash = paymentChoice === "cash" ? paymentTotal : paymentChoice === "mixed" ? cashAmount : 0;
+      const paidBank = paymentChoice === "bank" ? paymentTotal : paymentChoice === "mixed" ? bankAmount : 0;
+      const dueCredit = paymentChoice === "credit" ? paymentTotal : paymentChoice === "mixed" ? paymentTotal - paidCash - paidBank : 0;
+      if (paymentChoice === "mixed" && (paidCash < 0 || paidBank < 0 || paidCash + paidBank > paymentTotal + 0.01)) {
+        throw new Error(text("مجموع النقدي والبنكي لا يمكن أن يتجاوز إجمالي الفاتورة", "Cash and bank amounts cannot exceed the invoice total."));
+      }
+      if (paidCash > 0.005 && !cashBoxId) throw new Error(text("اختر الخزينة للمبلغ النقدي", "Choose a cashbox for the cash amount."));
+      if (paidBank > 0.005 && !bankId) throw new Error(text("اختر البنك للمبلغ البنكي", "Choose a bank for the bank amount."));
+      if (dueCredit > 0.005 && !customerId) throw new Error(text("اختر العميل للمبلغ الآجل", "Choose a customer for the credit amount."));
+      const savedMethod: PaymentMethod = dueCredit > 0.005 ? "credit" : paidCash > 0.005 ? "cash" : "bank";
       const payloadLines: SalesLine[] = cleaned.map((l, i) => {
         // Bake discount AND the FX conversion into the base-currency unit
         // price (Rust stores/recomputes in the base currency only).
@@ -765,9 +809,10 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         };
       });
       const payload = {
-        customerId: customerId || null, invoiceDate: date, paymentMethod,
-        cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
-        bankId:    paymentMethod === "bank" ? bankId : null,
+        customerId: customerId || null, invoiceDate: date, paymentMethod: savedMethod,
+        cashAmount: paidCash * effRate, bankAmount: paidBank * effRate, creditAmount: dueCredit * effRate,
+        cashBoxId: paidCash > 0.005 ? cashBoxId : null,
+        bankId:    paidBank > 0.005 ? bankId : null,
         warehouseId: warehouseId || null,
         branchId: branchId === "" ? null : branchId,
         costCenterId: costCenterId === "" ? null : costCenterId,
@@ -817,7 +862,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           // bridge, so the QR/payload match exactly what was stored (no drift).
           await bridgeSalesInvoiceToZatca({
             invoiceId: id,
-            paymentMethod,
+            paymentMethod: savedMethod,
             customerName: selectedCustomer?.nameAr ?? null,
             customerVat: selectedCustomer?.vatNumber ?? null,
           });
@@ -1072,18 +1117,34 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label={text("طريقة الدفع", "Payment method")}>
           <SearchCombobox
-            value={paymentMethod}
-            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            value={paymentChoice}
+            onChange={(v) => {
+              const next = v as SalesPaymentChoice;
+              if (next === "mixed") {
+                if (paymentChoice === "cash") { setCashAmount(result.grandTotal); setBankAmount(0); }
+                else if (paymentChoice === "bank") { setCashAmount(0); setBankAmount(result.grandTotal); }
+                else if (paymentChoice === "credit") { setCashAmount(0); setBankAmount(0); }
+              }
+              setPaymentChoice(next);
+            }}
             {...navCombo}
             style={input}
             options={[
               { value: "cash", label: text("نقدي", "Cash") },
               { value: "bank", label: text("بنك", "Bank") },
               { value: "credit", label: text("آجل (على الحساب)", "Credit (on account)") },
+              { value: "mixed", label: text("متعدد الطرق", "Split payment") },
             ]}
           />
         </Field>
-        {paymentMethod === "cash" && (
+        {paymentChoice === "mixed" && (
+          <Field label={`${text("المبلغ النقدي", "Cash amount")} · ${docSym}`}>
+            <input type="number" min="0" max={Math.max(0, result.grandTotal - bankAmount)} step="0.01"
+              value={cashAmount || ""} onChange={(e) => setCashAmount(Math.min(Math.max(0, Number(e.target.value) || 0), Math.max(0, result.grandTotal - bankAmount)))}
+              style={input} {...navInput} />
+          </Field>
+        )}
+        {(paymentChoice === "cash" || paymentChoice === "mixed") && (
           <Field label={text("الخزينة", "Cashbox")}>
             <SearchCombobox
               value={cashBoxId ?? ""}
@@ -1094,7 +1155,14 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
             />
           </Field>
         )}
-        {paymentMethod === "bank" && (
+        {paymentChoice === "mixed" && (
+          <Field label={`${text("المبلغ البنكي", "Bank amount")} · ${docSym}`}>
+            <input type="number" min="0" max={Math.max(0, result.grandTotal - cashAmount)} step="0.01"
+              value={bankAmount || ""} onChange={(e) => setBankAmount(Math.min(Math.max(0, Number(e.target.value) || 0), Math.max(0, result.grandTotal - cashAmount)))}
+              style={input} {...navInput} />
+          </Field>
+        )}
+        {(paymentChoice === "bank" || paymentChoice === "mixed") && (
           <Field label={text("البنك", "Bank")}>
             <SearchCombobox
               value={bankId ?? ""}
@@ -1105,8 +1173,14 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
             />
           </Field>
         )}
+        {paymentChoice === "mixed" && (
+          <Field label={`${text("المتبقي آجل", "Remaining on account")} · ${docSym}`}>
+            <input readOnly value={fmt(Math.max(0, result.grandTotal - cashAmount - bankAmount))}
+              style={{ ...input, background: "#f8fafc", color: "#9a3412", fontWeight: 700 }} />
+          </Field>
+        )}
       </div>
-      {selectedCustomer && paymentMethod === "credit" && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
+      {selectedCustomer && (paymentChoice === "credit" || (paymentChoice === "mixed" && result.grandTotal - cashAmount - bankAmount > 0.005)) && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
         <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
           {text("الرصيد الحالي:", "Current balance:")} <b>{fmt(selectedCustomer.balance ?? 0)}</b>
           {(selectedCustomer.creditLimit ?? 0) > 0 && <> · {text("حد الائتمان:", "Credit limit:")} <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}

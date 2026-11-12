@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   listFinancialTx, createFinancialTx, updateFinancialTx, deleteFinancialTx, financialTxPost, financialTxUnpost,
   listCashBoxes, listBanks, listSalesInvoices, type FinancialTxInput,
-  type FinancialTx, type CashBox, type Bank, type SalesInvoice,
+  type FinancialTx, type FinancialTxAllocation, type CashBox, type Bank, type SalesInvoice,
 } from "../lib/accounting";
 import { listCustomers, type LocalCustomer } from "../lib/customers";
 import { emitData, useDataRefresh } from "../lib/dataBus";
@@ -16,6 +16,7 @@ import {
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { printVoucher } from "../lib/invoicePrint";
 import { formatUiDate, uiText, useUiLanguage } from "../lib/appSettings";
+import { baseCurrencyCode } from "../lib/currency";
 
 // تحصيل من العملاء — a customer-scoped سند قبض. Reuses the shared
 // financial_tx pipeline (DR cash/bank, CR AR 1500, decrements customer balance),
@@ -70,14 +71,19 @@ export default function CustomerCollectionAdmin() {
     void (async () => setAllTx(await listFinancialTx(5000)))();
   });
 
-  const invByApplied = (f: FinancialTx) =>
-    f.appliedDocType === "sales_invoice" && f.appliedDocId != null
-      ? deps?.invoices.find((i) => i.id === f.appliedDocId) ?? null : null;
+  const invoiceLabel = (f: FinancialTx) => {
+    const links = f.allocations?.length
+      ? f.allocations.filter((a) => a.docType === "sales_invoice")
+      : f.appliedDocType === "sales_invoice" && f.appliedDocId != null
+        ? [{ docId: f.appliedDocId, amount: f.amount }] : [];
+    return links.map((a) => deps?.invoices.find((i) => i.id === a.docId)?.invoiceNo ?? "")
+      .filter(Boolean).join(", ");
+  };
   const columns = useMemo<GridColumn<FinancialTx>[]>(() => [
     { key: "txNo", label: text("الرقم", "Number"), value: (f) => f.txNo },
     { key: "txDate", label: text("التاريخ", "Date"), value: (f) => f.txDate },
     { key: "party", label: text("العميل", "Customer"), value: (f) => f.partyName ?? "" },
-    { key: "invoice", label: text("الفاتورة المرتبطة", "Linked invoice"), value: (f) => invByApplied(f)?.invoiceNo ?? "" },
+    { key: "invoice", label: text("الفواتير المرتبطة", "Linked invoices"), value: invoiceLabel },
     { key: "description", label: text("البيان", "Description"), value: (f) => f.description ?? "" },
     { key: "amount", label: text("المبلغ", "Amount"), type: "number", value: (f) => f.amount },
     { key: "currency", label: text("العملة", "Currency"), value: (f) => `${f.currencyCode} · ${f.exchangeRate}` },
@@ -112,7 +118,6 @@ export default function CustomerCollectionAdmin() {
           <ActionBtn label={text("طباعة", "Print")} icon="🖨️" tone="primary" disabled={!sel.selected}
             onClick={() => {
               const f = sel.selected; if (!f) return;
-              const inv = invByApplied(f);
               printVoucher({
                 kind: "receipt",
                 title: text("سند قبض", "Receipt voucher"),
@@ -123,7 +128,7 @@ export default function CustomerCollectionAdmin() {
                 description: f.description ?? null,
                 walletKind: f.bankId != null ? "bank" : "cash",
                 walletName: walletName(deps, f),
-                linkedDocNo: inv ? inv.invoiceNo : null,
+                linkedDocNo: invoiceLabel(f) || null,
               });
             }} />
           <VoucherActions
@@ -173,13 +178,12 @@ export default function CustomerCollectionAdmin() {
             </thead>
             <tbody>
               {grid.view.map((f) => {
-                const inv = invByApplied(f);
                 return (
                   <tr key={f.id}>
                     <SelectCell id={f.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
                     <Td mono>{f.txNo}</Td><Td>{formatUiDate(f.txDate, language)}</Td>
                     <Td>{f.partyName ?? "—"}</Td>
-                    <Td mono>{inv ? inv.invoiceNo : "—"}</Td>
+                    <Td mono>{invoiceLabel(f) || "—"}</Td>
                     <Td>{f.description ?? "—"}</Td>
                     <Td num style={{ fontWeight: 600, color: "#15803d" }}>{fmt(f.amount)}</Td>
                     <Td>{f.currencyCode} · {fmt(f.exchangeRate)}</Td>
@@ -240,7 +244,12 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
   const [branchId, setBranchId] = useState<number | "">(initial?.branchId ?? "");
   const [costCenterId, setCostCenterId] = useState<number | "">(initial?.costCenterId ?? "");
   const [customerId, setCustomerId] = useState<number | null>(initial?.partyId ?? null);
-  const [invoiceId, setInvoiceId] = useState<number | null>(initial?.appliedDocId ?? null);
+  const [allocations, setAllocations] = useState<Record<number, number>>(() => {
+    const links = initial?.allocations?.filter((a) => a.docType === "sales_invoice") ?? [];
+    if (links.length) return Object.fromEntries(links.map((a) => [a.docId, a.amount]));
+    return initial?.appliedDocType === "sales_invoice" && initial.appliedDocId != null
+      ? { [initial.appliedDocId]: initial.amount } : {};
+  });
   const [walletKind, setWalletKind] = useState<"cash" | "bank">(initial?.bankId != null ? "bank" : "cash");
   const [cashBoxId, setCashBoxId] = useState<number | null>(initial?.cashBoxId ?? deps.cashBoxes[0]?.id ?? null);
   const [bankId, setBankId] = useState<number | null>(initial?.bankId ?? deps.banks[0]?.id ?? null);
@@ -254,9 +263,12 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
   const paidByInvoice = useMemo(() => {
     const m = new Map<number, number>();
     for (const t of allTx) {
-      if (t.status === "posted" && t.txType === "receipt" && t.appliedDocType === "sales_invoice" && t.appliedDocId != null) {
-        m.set(t.appliedDocId, (m.get(t.appliedDocId) ?? 0) + t.amount);
-      }
+      if (t.status !== "posted" || t.txType !== "receipt") continue;
+      const links = t.allocations?.length
+        ? t.allocations.filter((a) => a.docType === "sales_invoice")
+        : t.appliedDocType === "sales_invoice" && t.appliedDocId != null
+          ? [{ docId: t.appliedDocId, amount: t.amount }] : [];
+      for (const link of links) m.set(link.docId, (m.get(link.docId) ?? 0) + link.amount);
     }
     return m;
   }, [allTx]);
@@ -264,10 +276,16 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
   const openInvoices = useMemo(() => {
     if (customerId == null) return [] as { inv: SalesInvoice; outstanding: number }[];
     return deps.invoices
-      .filter((i) => i.customerId === customerId && i.paymentMethod === "credit" && (i.status ?? "posted") === "posted")
-      .map((i) => ({ inv: i, outstanding: i.grandTotal - (paidByInvoice.get(i.id) ?? 0) }))
+      .filter((i) => i.customerId === customerId && (i.status ?? "posted") === "posted")
+      .map((i) => ({
+        inv: i,
+        outstanding: (i.creditAmount ?? (i.paymentMethod === "credit" ? i.grandTotal : 0))
+          - (paidByInvoice.get(i.id) ?? 0),
+      }))
       .filter((x) => x.outstanding > 0.005);
   }, [customerId, deps.invoices, paidByInvoice]);
+  const selectedTotal = Object.values(allocations).reduce((sum, amount) => sum + amount, 0);
+  const voucherAmount = Object.keys(allocations).length ? selectedTotal : amount;
   const branchFilter = branchId === "" ? null : Number(branchId);
   const availableCashBoxes = deps.cashBoxes.filter((box) =>
     (box.isActive !== false || box.id === cashBoxId) &&
@@ -281,30 +299,42 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
     ? deps.banks.find((bank) => bank.id === bankId)?.currencyCode
     : deps.cashBoxes.find((box) => box.id === cashBoxId)?.currencyCode;
 
-  function pickInvoice(id: number | null) {
-    setInvoiceId(id);
-    if (id != null) {
-      const hit = openInvoices.find((x) => x.inv.id === id);
-      if (hit && amount <= 0) setAmount(Number(hit.outstanding.toFixed(2)));
+  function toggleInvoice(id: number, selected: boolean) {
+    if (!selected) {
+      setAllocations((current) => { const next = { ...current }; delete next[id]; return next; });
+      return;
     }
+    const hit = openInvoices.find((x) => x.inv.id === id);
+    if (hit) setAllocations((current) => ({ ...current, [id]: Number(hit.outstanding.toFixed(2)) }));
   }
 
   async function save() {
     setBusy(true); setErr(null);
     try {
       if (customerId == null) throw new Error(text("اختر العميل", "Select a customer."));
-      if (amount <= 0) throw new Error(text("أدخل مبلغاً موجباً", "Enter an amount greater than zero."));
+      if (voucherAmount <= 0) throw new Error(text("أدخل مبلغاً موجباً", "Enter an amount greater than zero."));
+      if (Object.entries(allocations).some(([id, allocated]) => {
+        const invoice = openInvoices.find((item) => item.inv.id === Number(id));
+        return !invoice || allocated <= 0 || allocated > invoice.outstanding + 0.01;
+      })) throw new Error(text("تحقق من أن مبلغ كل فاتورة لا يتجاوز رصيدها المتبقي", "Each allocation must be positive and no greater than its outstanding balance."));
+      const invoiceAllocations: FinancialTxAllocation[] = Object.entries(allocations)
+        .map(([docId, allocated]) => ({ docType: "sales_invoice", docId: Number(docId), amount: allocated }));
+      if (invoiceAllocations.length && walletCurrency !== baseCurrencyCode()) {
+        throw new Error(text(`اختر خزينة أو بنكًا بالعملة الأساسية ${baseCurrencyCode()} لربط الفواتير`, `Choose a cashbox or bank in the base currency ${baseCurrencyCode()} to allocate invoices.`));
+      }
+      const singleLink = invoiceAllocations.length === 1 ? invoiceAllocations[0] : null;
       const payload: FinancialTxInput = {
         txDate: date, txType: "receipt",
         partyType: "customer", partyId: customerId,
         cashBoxId: walletKind === "cash" ? cashBoxId : null,
         bankId:    walletKind === "bank" ? bankId : null,
         counterAccountId: null,
-        amount, description: desc || null,
+        amount: voucherAmount, description: desc || null,
         branchId: branchId === "" ? null : branchId,
         costCenterId: costCenterId === "" ? null : costCenterId,
-        appliedDocType: invoiceId != null ? "sales_invoice" : null,
-        appliedDocId: invoiceId,
+        appliedDocType: singleLink?.docType ?? null,
+        appliedDocId: singleLink?.docId ?? null,
+        allocations: invoiceAllocations,
       };
       if (initial) await updateFinancialTx(initial.id, payload); else await createFinancialTx(payload);
       emitData("vouchers", "journal", "customers", "cashboxes", "banks");
@@ -323,7 +353,7 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
       <Field label={text("العميل", "Customer")}>
         <SearchCombobox
           value={customerId ?? ""}
-          onChange={(v) => { setCustomerId(Number(v) || null); setInvoiceId(null); }}
+          onChange={(v) => { setCustomerId(Number(v) || null); setAllocations({}); }}
           style={input}
           options={[
             { value: "", label: text("— اختر —", "— Select —") },
@@ -332,27 +362,50 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
         />
       </Field>
 
-      {customerId != null && (
-        <Field label={text("ربط بفاتورة (اختياري)", "Link to invoice (optional)")}>
-          <SearchCombobox
-            value={invoiceId ?? ""}
-            onChange={(v) => pickInvoice(Number(v) || null)}
-            style={input}
-            options={[
-              { value: "", label: text("— بدون ربط —", "— No link —") },
-              ...openInvoices.map((x) => ({ value: x.inv.id, label: `${x.inv.invoiceNo} — ${text("متبقّي", "Outstanding")} ${fmt(x.outstanding)}` })),
-              ...(initial?.appliedDocId != null && !openInvoices.some((x) => x.inv.id === initial.appliedDocId)
-                ? deps.invoices.filter((inv) => inv.id === initial.appliedDocId).map((inv) => ({
-                    value: inv.id, label: `${inv.invoiceNo} — ${text("الفاتورة المرتبطة حالياً", "Currently linked invoice")}`,
-                  }))
-                : []),
-            ]}
-          />
-        </Field>
-      )}
       <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-      <Field label={`${text("المبلغ", "Amount")} · ${walletCurrency ?? "SAR"}`}><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} /></Field>
+      <Field label={`${text("المبلغ", "Amount")} · ${walletCurrency ?? "SAR"}`}>
+        <input type="number" step="0.01" value={voucherAmount || ""} readOnly={Object.keys(allocations).length > 0}
+          onChange={(e) => setAmount(Number(e.target.value) || 0)} style={{ ...input, ...(Object.keys(allocations).length ? { background: "#f8fafc" } : {}) }} />
+      </Field>
       </div>
+      {customerId != null && (
+        <div style={{ marginTop: 8, border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ padding: "8px 10px", background: "#f8fafc", fontWeight: 700, fontSize: 13 }}>
+            {text("الفواتير الآجلة المفتوحة — اختر فاتورة أو أكثر", "Open credit invoices — select one or more")}
+          </div>
+          {openInvoices.length === 0 ? <div style={{ padding: 10, color: "#64748b", fontSize: 12 }}>{text("لا توجد فواتير آجلة متبقية لهذا العميل", "No outstanding credit invoices for this customer")}</div> : (
+            <div style={{ maxHeight: 180, overflow: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: "#f1f5f9" }}>
+                  <th style={{ padding: 7, textAlign: "center" }}></th>
+                  <th style={{ padding: 7, textAlign: "right" }}>{text("الفاتورة", "Invoice")}</th>
+                  <th style={{ padding: 7, textAlign: "right" }}>{text("الرصيد المطلوب", "Outstanding")}</th>
+                  <th style={{ padding: 7, textAlign: "right" }}>{text("المبلغ المخصص", "Amount")}</th>
+                </tr></thead>
+                <tbody>{openInvoices.map(({ inv, outstanding }) => {
+                  const selected = allocations[inv.id] != null;
+                  return <tr key={inv.id} style={{ borderTop: "1px solid #e5e7eb" }}>
+                    <td style={{ padding: 6, textAlign: "center" }}><input type="checkbox" checked={selected} onChange={(e) => toggleInvoice(inv.id, e.target.checked)} /></td>
+                    <td style={{ padding: 6 }}>{inv.invoiceNo} · {inv.invoiceDate}</td>
+                    <td style={{ padding: 6, fontVariantNumeric: "tabular-nums" }}>{fmt(outstanding)}</td>
+                    <td style={{ padding: 6, width: 160 }}>
+                      <input type="number" min="0.01" max={outstanding} step="0.01" disabled={!selected}
+                        value={selected ? allocations[inv.id] : ""}
+                        onChange={(e) => {
+                          const value = Math.min(Math.max(0, Number(e.target.value) || 0), outstanding);
+                          setAllocations((current) => ({ ...current, [inv.id]: value }));
+                        }} style={{ ...input, padding: "5px 7px" }} />
+                    </td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>
+          )}
+          {Object.keys(allocations).length > 0 && <div style={{ padding: "7px 10px", borderTop: "1px solid #e5e7eb", textAlign: "left", fontWeight: 700, color: "#166534" }}>
+            {text("إجمالي السند:", "Voucher total:")} {fmt(selectedTotal)}
+          </div>}
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, alignItems: "end", marginTop: 2 }}>
         <Field label={text("طريقة القبض", "Receipt method")}>
           <div style={{ display: "flex", gap: 6 }}>

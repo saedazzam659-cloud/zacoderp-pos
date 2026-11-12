@@ -1,11 +1,14 @@
 import { Fragment, useState } from "react";
-import { reportSalesInvoices, reportSalesInvoiceLines, type SalesInvoiceReportRow, type SalesLineReportRow } from "../lib/salesReports";
+import { reportSalesInvoices, reportSalesInvoiceLines, salesInvoicePaymentLabel, type SalesInvoiceReportRow, type SalesLineReportRow } from "../lib/salesReports";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function payLabel(m: string, language: "ar" | "en"): string {
-  return m === "cash" ? uiText("نقدي", "Cash", language) : m === "bank" ? uiText("بنك / شبكة", "Bank / card", language) : uiText("آجل", "Credit", language);
+  return m === "cash" ? uiText("نقدي", "Cash", language)
+    : m === "bank" ? uiText("بنك / شبكة", "Bank / card", language)
+    : m === "mixed" ? uiText("متعدد الطرق", "Mixed", language)
+    : uiText("آجل", "Credit", language);
 }
 
 type ItemBucket = { itemId: number; code: string | null; name: string; qty: number; total: number };
@@ -91,7 +94,7 @@ export default function DailyDetailedSalesReport() {
                         <Td mono>{inv.invoiceNo}</Td>
                         <Td mono>{inv.invoiceDate}</Td>
                         <Td>{inv.customerName || text("عميل نقدي", "Cash customer")}</Td>
-                        <Td>{payLabel(inv.paymentMethod, language)}</Td>
+                        <Td>{payLabel(salesInvoicePaymentLabel(inv), language)}</Td>
                         <Td num>{fmt(inv.subtotal)}</Td>
                         <Td num>{fmt(inv.vatTotal)}</Td>
                         <Td num>{fmt(inv.grandTotal)}</Td>

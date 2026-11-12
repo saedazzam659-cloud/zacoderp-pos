@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { reportSalesInvoices, type SalesInvoiceReportRow } from "../lib/salesReports";
+import { reportSalesInvoices, salesInvoicePaymentLabel, type SalesInvoiceReportRow } from "../lib/salesReports";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { useDimensions, DateField, BranchField } from "./_reportFilters";
 import type { ExportColumn } from "../lib/exporters";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 
 function payLabel(m: string, language: "ar" | "en"): string {
-  return m === "cash" ? uiText("نقدي", "Cash", language) : m === "bank" ? uiText("بنك / شبكة", "Bank / card", language) : uiText("آجل", "Credit", language);
+  return m === "cash" ? uiText("نقدي", "Cash", language)
+    : m === "bank" ? uiText("بنك / شبكة", "Bank / card", language)
+    : m === "mixed" ? uiText("متعدد الطرق", "Mixed", language)
+    : uiText("آجل", "Credit", language);
 }
 
 // Flat row mirroring the on-screen invoices table (per-invoice rows + totals row).
@@ -50,7 +53,7 @@ export default function DailySalesReport() {
     invoiceNo: r.invoiceNo,
     invoiceDate: r.invoiceDate,
     customer: r.customerName || text("عميل نقدي", "Cash customer"),
-    payment: payLabel(r.paymentMethod, language),
+    payment: payLabel(salesInvoicePaymentLabel(r), language),
     lineCount: r.lineCount,
     subtotal: r.subtotal,
     vat: r.vatTotal,
@@ -120,7 +123,7 @@ export default function DailySalesReport() {
                   <Td mono>{r.invoiceNo}</Td>
                   <Td mono>{r.invoiceDate}</Td>
                   <Td>{r.customerName || text("عميل نقدي", "Cash customer")}</Td>
-                  <Td>{payLabel(r.paymentMethod, language)}</Td>
+                  <Td>{payLabel(salesInvoicePaymentLabel(r), language)}</Td>
                   <Td style={{ textAlign: "center" }}>{r.lineCount}</Td>
                   <Td num>{fmt(r.subtotal)}</Td>
                   <Td num>{fmt(r.vatTotal)}</Td>

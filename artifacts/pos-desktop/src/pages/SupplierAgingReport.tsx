@@ -53,35 +53,45 @@ export default function SupplierAgingReport() {
       const nameById = new Map(suppliers.map((s) => [s.id, s.nameAr]));
 
       // Per-supplier ordered list of outstanding credit invoices (oldest first).
-      const bySupplier = new Map<number, { date: string; remaining: number }[]>();
+      const bySupplier = new Map<number, { id: number; date: string; remaining: number }[]>();
       const creditInvs = purchases
         .filter((p: Purchase) => p.paymentMethod === "credit" && p.invoiceDate <= asOf)
         .sort((a, b) => (a.invoiceDate < b.invoiceDate ? -1 : 1));
       for (const inv of creditInvs) {
         const arr = bySupplier.get(inv.supplierId) ?? [];
-        arr.push({ date: inv.invoiceDate, remaining: inv.grandTotal });
+        arr.push({ id: inv.id, date: inv.invoiceDate, remaining: inv.grandTotal });
         bySupplier.set(inv.supplierId, arr);
       }
 
       // Credits available per supplier = credit returns + payment vouchers (≤ asOf).
       const credits = new Map<number, number>();
+      const allocatedPayments = new Map<number, number>();
       for (const r of returns as PurchaseReturn[]) {
         if (r.returnDate > asOf) continue;
         credits.set(r.supplierId, (credits.get(r.supplierId) ?? 0) + r.grandTotal);
       }
       for (const t of txs as FinancialTx[]) {
         if (t.partyType !== "supplier" || t.partyId == null) continue;
-        if (t.txDate > asOf) continue;
+        if (t.status !== "posted" || t.txDate > asOf) continue;
+        const invoiceLinks = t.allocations?.filter((a) => a.docType === "purchase") ?? [];
+        if (t.txType === "payment" && invoiceLinks.length) {
+          for (const allocation of invoiceLinks) {
+            allocatedPayments.set(allocation.docId, (allocatedPayments.get(allocation.docId) ?? 0) + allocation.amount);
+          }
+          continue;
+        }
         // payment to supplier reduces AP; a receipt (refund from supplier) raises it
         const delta = t.txType === "payment" ? t.amount : -t.amount;
         credits.set(t.partyId, (credits.get(t.partyId) ?? 0) + delta);
       }
 
-      // FIFO-apply credits oldest-first.
+      // Directly linked payments settle their chosen invoice. Apply only
+      // unlinked payments and returns FIFO to the remaining invoices.
       for (const [sid, invs] of bySupplier) {
         let avail = credits.get(sid) ?? 0;
         for (const inv of invs) {
-          if (avail <= 0) break;
+          inv.remaining = Math.max(0, inv.remaining - (allocatedPayments.get(inv.id) ?? 0));
+          if (avail <= 0) continue;
           const used = Math.min(avail, inv.remaining);
           inv.remaining -= used; avail -= used;
         }

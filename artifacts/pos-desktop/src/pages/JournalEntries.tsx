@@ -11,13 +11,15 @@ import {
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnDanger, btnLink, fmt, todayStr, SearchCombobox,
-  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
+  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn, errText,
+  ExportButtons, GridFilterRow, SortableTh, gridToExportCols, useGridFilter,
+  type GridColumn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { getTaxRate } from "../lib/taxSettings";
 import { getDefaultTax } from "../lib/taxes";
 import {
-  formatUiDate, getCompanyProfile, getUiLanguage, localizeStaticUiText, safeLogoSrc, uiText, useUiLanguage,
+  formatUiDate, getCompanyProfile, getUiLanguage, safeLogoSrc, uiText, useUiLanguage,
   type CompanyProfile,
 } from "../lib/appSettings";
 
@@ -69,6 +71,18 @@ function isManual(e: { sourceType: string | null }): boolean {
   return e.sourceType === null || e.sourceType === "manual";
 }
 
+const SOURCE_LABELS: Record<string, [string, string]> = {
+  manual: ["يدوي", "Manual"],
+  purchase: ["شراء", "Purchase"],
+  purchase_return: ["مرتجع شراء", "Purchase return"],
+  receipt: ["سند قبض", "Receipt voucher"],
+  payment: ["سند صرف", "Payment voucher"],
+};
+function sourceText(source: string | null, language: string): string {
+  if (!source || source === "manual") return uiText("يدوي", "Manual", language);
+  return SOURCE_LABELS[source] ? uiText(...SOURCE_LABELS[source], language) : source;
+}
+
 export default function JournalEntries() {
   const language = useUiLanguage();
   const [rows, setRows] = useState<JournalEntry[]>([]);
@@ -77,14 +91,17 @@ export default function JournalEntries() {
   const [expandedDetail, setExpandedDetail] = useState<JournalEntry | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [statusFilter, setStatusFilter] = useState<"all" | JeStatus>("all");
-  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [printData, setPrintData] = useState<ManualJeDetail | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
   async function refresh() {
-    const [list, accs] = await Promise.all([listJournalEntries(500), listAccounts()]);
+    const [list, accs] = await Promise.all([listJournalEntries(5000), listAccounts()]);
     setRows(list); setAccounts(accs);
   }
   useEffect(() => { void refresh(); }, []);
@@ -145,14 +162,79 @@ export default function JournalEntries() {
     finally { setBusyId(null); }
   }
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter((e) => {
-      if (statusFilter !== "all" && e.status !== statusFilter) return false;
-      if (!q) return true;
-      return e.entryNo.toLowerCase().includes(q) || (e.description ?? "").toLowerCase().includes(q);
-    });
-  }, [rows, statusFilter, search]);
+  const gridColumns = useMemo<GridColumn<JournalEntry>[]>(() => [
+    { key: "entryNo", label: uiText("رقم القيد", "Entry number", language), value: (e) => e.entryNo },
+    { key: "entryDate", label: uiText("التاريخ", "Date", language), value: (e) => e.entryDate, text: (e) => formatUiDate(e.entryDate, language) },
+    { key: "entryType", label: uiText("النوع", "Type", language), value: (e) => ENTRY_TYPE_LABEL[e.entryType] ? uiText(...ENTRY_TYPE_LABEL[e.entryType], language) : e.entryType },
+    { key: "description", label: uiText("البيان", "Description", language), value: (e) => e.description ?? "" },
+    { key: "sourceType", label: uiText("المصدر", "Source", language), value: (e) => sourceText(e.sourceType, language) },
+    { key: "status", label: uiText("الحالة", "Status", language), value: (e) => e.status === "posted" ? uiText("مرحَّل", "Posted", language) : uiText("مسودة", "Draft", language) },
+    { key: "totalDebit", label: uiText("المدين", "Debit", language), type: "number", value: (e) => e.totalDebit },
+    { key: "totalCredit", label: uiText("الدائن", "Credit", language), type: "number", value: (e) => e.totalCredit },
+  ], [language]);
+
+  const dateStatusRows = useMemo(() => rows.filter((e) => {
+    if (statusFilter !== "all" && e.status !== statusFilter) return false;
+    if (dateFrom && e.entryDate < dateFrom) return false;
+    if (dateTo && e.entryDate > dateTo) return false;
+    return true;
+  }), [rows, statusFilter, dateFrom, dateTo]);
+  const grid = useGridFilter(dateStatusRows, gridColumns);
+  const filtered = grid.view;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const pageRows = useMemo(
+    () => filtered.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filtered, safePage, pageSize],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, dateFrom, dateTo, grid.search, grid.columnFilters, grid.sort, pageSize]);
+  useEffect(() => {
+    if (safePage !== page) setPage(safePage);
+  }, [safePage, page]);
+
+  function applyDatePreset(preset: "today" | "week" | "month" | "year") {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const format = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const today = format(now);
+    if (preset === "today") { setDateFrom(today); setDateTo(today); return; }
+    const start = new Date(now);
+    if (preset === "week") start.setDate(now.getDate() - 6);
+    if (preset === "month") start.setDate(1);
+    if (preset === "year") { start.setMonth(0); start.setDate(1); }
+    setDateFrom(format(start));
+    setDateTo(today);
+  }
+
+  function clearFilters() {
+    setStatusFilter("all");
+    setDateFrom("");
+    setDateTo("");
+    grid.clearAll();
+    setPage(1);
+  }
+
+  function exportCsv() {
+    if (filtered.length === 0) return;
+    const csvCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const lines = [
+      gridColumns.map((col) => csvCell(col.label)).join(","),
+      ...filtered.map((entry) => gridColumns.map((col) => {
+        const value = col.text ? col.text(entry) : col.value(entry);
+        return csvCell(typeof value === "number" ? value.toFixed(2) : value);
+      }).join(",")),
+    ];
+    const blob = new Blob(["\uFEFF", lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `journal-entries-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 
   // Single-row ActionBar selection binds to the VISIBLE (filtered) set so a
   // hidden row can never be acted on; useRowSelect self-clears when it drops out.
@@ -183,6 +265,14 @@ export default function JournalEntries() {
     const sel = new Set(selected);
     return rows.filter((e) => sel.has(e.id) && isManual(e) && e.status === "draft").map((e) => e.id);
   }, [rows, selected]);
+  const postedSelectedIds = useMemo(() => {
+    const sel = new Set(selected);
+    return rows.filter((e) => sel.has(e.id) && isManual(e) && e.status === "posted").map((e) => e.id);
+  }, [rows, selected]);
+  const selectedRows = useMemo(
+    () => filtered.filter((e) => selected.has(e.id)),
+    [filtered, selected],
+  );
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
 
   function toggleSel(id: number) {
@@ -221,6 +311,22 @@ export default function JournalEntries() {
     } finally { setBulkBusy(false); }
   }
 
+  async function handleBulkUnpost() {
+    if (postedSelectedIds.length === 0) return;
+    if (!confirm(`سيُفك ترحيل ${postedSelectedIds.length} قيد محدد، وسيُلغى أثره من الأرصدة والتقارير. متابعة؟`)) return;
+    setBulkBusy(true);
+    try {
+      const { ok, failures } = await bulkRun(postedSelectedIds, (id) => unpostJournalEntry(id));
+      await refresh();
+      setSelected(new Set());
+      if (failures.length > 0) {
+        alert(`تم فك ترحيل ${ok} من ${postedSelectedIds.length} قيد.\n${failures.length} قيد فشل:\n• ${failures.slice(0, 8).join("\n• ")}`);
+      } else if (ok > 0) {
+        alert(`تم فك ترحيل ${ok} قيد بنجاح`);
+      }
+    } finally { setBulkBusy(false); }
+  }
+
   async function handleBulkDelete() {
     const ids = rows.filter((e) => selected.has(e.id) && isManual(e)).map((e) => e.id);
     if (ids.length === 0) return;
@@ -240,16 +346,26 @@ export default function JournalEntries() {
   }
 
   const draftCount = rows.filter((e) => e.status === "draft").length;
+  const filteredDebit = filtered.reduce((sum, e) => sum + Number(e.totalDebit || 0), 0);
+  const filteredCredit = filtered.reduce((sum, e) => sum + Number(e.totalCredit || 0), 0);
   const formKey = form ? (form.kind === "edit" ? `edit-${form.id}` : form.kind === "duplicate" ? `dup-${form.initial.id}` : "create") : "none";
 
   return (
     <Page
-      title="القيود اليومية"
-      subtitle={`${rows.length} قيد — ${draftCount} مسودة — تشمل القيود التلقائية (مشتريات/مرتجع/سندات) والقيود اليدوية`}
+      title={uiText("القيود اليومية", "Journal entries", language)}
+      subtitle={uiText(
+        `${filtered.length} نتيجة من ${rows.length} قيد محمّل — ${draftCount} مسودة`,
+        `${filtered.length} results from ${rows.length} loaded entries — ${draftCount} drafts`,
+        language,
+      )}
       right={
         <button onClick={() => setForm({ kind: "create", initial: null })} disabled={!!form}
-          style={{ ...btnPrimary, opacity: form ? 0.5 : 1, cursor: form ? "not-allowed" : "pointer" }}>
-          + قيد يدوي
+          style={{
+            ...btnPrimary, minHeight: 40, padding: "9px 18px", borderRadius: 10,
+            boxShadow: "0 5px 14px rgba(37,99,235,.18)",
+            opacity: form ? 0.5 : 1, cursor: form ? "not-allowed" : "pointer",
+          }}>
+          {uiText("＋ قيد يدوي", "＋ Manual entry", language)}
         </button>
       }
     >
@@ -269,38 +385,115 @@ export default function JournalEntries() {
         </Card>
       )}
 
-      <Card style={{ marginBottom: 12 }}>
-        <div style={{ padding: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12, marginBottom: 12 }}>
+        {[
+          { label: uiText("القيود المطابقة", "Matching entries", language), symbol: "#", value: filtered.length.toLocaleString(), accent: "#2563eb", wash: "#eff6ff", note: uiText("حسب الفلاتر الحالية", "With current filters", language) },
+          { label: uiText("إجمالي المدين", "Total debit", language), symbol: "مد", value: fmt(filteredDebit), accent: "#059669", wash: "#ecfdf5", note: uiText("للقائمة المطابقة", "For matching entries", language) },
+          { label: uiText("إجمالي الدائن", "Total credit", language), symbol: "دا", value: fmt(filteredCredit), accent: "#7c3aed", wash: "#f5f3ff", note: uiText("للقائمة المطابقة", "For matching entries", language) },
+        ].map((stat) => (
+          <Card key={stat.label} style={{ padding: 14, borderRadius: 14, boxShadow: "0 4px 14px rgba(15,23,42,.04)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 42, height: 42, borderRadius: 12, display: "grid", placeItems: "center", background: stat.wash, color: stat.accent, fontSize: 18, fontWeight: 800 }}>
+                {stat.symbol}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ color: "#64748b", fontSize: 12, fontWeight: 600 }}>{stat.label}</div>
+                <div style={{ color: "#0f172a", fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums", marginTop: 2 }}>{stat.value}</div>
+                <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 2 }}>{stat.note}</div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card style={{ marginBottom: 12, borderRadius: 14, boxShadow: "0 4px 16px rgba(15,23,42,.04)" }}>
+        <div style={{ padding: 14, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ display: "flex", gap: 4 }}>
-            {([["all", "الكل"], ["posted", "مرحَّل"], ["draft", "مسودة"]] as const).map(([v, l]) => (
+            {([
+              ["all", uiText("الكل", "All", language)],
+              ["posted", uiText("مرحَّل", "Posted", language)],
+              ["draft", uiText("مسودة", "Draft", language)],
+            ] as const).map(([v, l]) => (
               <button key={v} type="button" onClick={() => setStatusFilter(v)}
-                style={{ ...(statusFilter === v ? btnPrimary : btnSecondary), padding: "6px 14px" }}>
-                {localizeStaticUiText(l, language)}
+                style={{
+                  ...(statusFilter === v ? btnPrimary : btnSecondary), padding: "7px 13px",
+                  borderRadius: 9, minHeight: 34, fontWeight: 700,
+                }}>
+                {l}
               </button>
             ))}
           </div>
           <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="بحث برقم القيد أو البيان…"
-            style={{ ...input, maxWidth: 300 }}
+            value={grid.search}
+            onChange={(e) => grid.setSearch(e.target.value)}
+            placeholder={uiText("بحث برقم القيد أو البيان…", "Search entry number or description…", language)}
+            style={{ ...input, maxWidth: 300, marginBottom: 0, minHeight: 36, borderRadius: 9 }}
           />
-          <span style={{ color: "#64748b", fontSize: 13 }}>{filtered.length} نتيجة</span>
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, padding: "4px 8px", border: "1px solid #dbe4ef", borderRadius: 10, background: dateFrom || dateTo ? "#eff6ff" : "#f8fafc" }}>
+            <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>{uiText("التاريخ", "Date range", language)}</span>
+            <input type="date" aria-label={uiText("من تاريخ", "From date", language)} value={dateFrom} max={dateTo || undefined}
+              onChange={(e) => setDateFrom(e.target.value)}
+              style={{ ...input, width: 132, minHeight: 30, padding: "4px 7px", marginBottom: 0, fontSize: 12, borderRadius: 7 }} />
+            <span style={{ color: "#94a3b8", fontSize: 12 }}>{uiText("إلى", "to", language)}</span>
+            <input type="date" aria-label={uiText("إلى تاريخ", "To date", language)} value={dateTo} min={dateFrom || undefined}
+              onChange={(e) => setDateTo(e.target.value)}
+              style={{ ...input, width: 132, minHeight: 30, padding: "4px 7px", marginBottom: 0, fontSize: 12, borderRadius: 7 }} />
+            {([
+              ["today", uiText("اليوم", "Today", language)],
+              ["week", uiText("٧ أيام", "7 days", language)],
+              ["month", uiText("هذا الشهر", "This month", language)],
+              ["year", uiText("هذه السنة", "This year", language)],
+            ] as const).map(([preset, label]) => (
+              <button key={preset} type="button" onClick={() => applyDatePreset(preset)}
+                style={{ ...btnSecondary, padding: "5px 8px", minHeight: 28, borderRadius: 7, fontSize: 11 }}>
+                {label}
+              </button>
+            ))}
+            {(dateFrom || dateTo) && (
+              <button type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}
+                style={{ ...btnLink, padding: "3px 5px", color: "#b91c1c" }} title={uiText("مسح فلتر التاريخ", "Clear date filter", language)}>{uiText("مسح", "Clear", language)}</button>
+            )}
+          </div>
+          <span style={{ color: "#64748b", fontSize: 12, fontWeight: 600 }}>{uiText(`${filtered.length} نتيجة`, `${filtered.length} results`, language)}</span>
+          <div style={{ flex: 1 }} />
+          <button type="button" onClick={() => grid.setShowFilters(!grid.showFilters)}
+            style={{ ...btnSecondary, minHeight: 36, borderRadius: 9, background: grid.showFilters ? "#dbeafe" : "#fff", color: grid.showFilters ? "#1d4ed8" : "#334155" }}>
+            {uiText("فلاتر الأعمدة", "Column filters", language)}
+          </button>
+          <ExportButtons columns={gridToExportCols(gridColumns)} rows={filtered} filenameBase="journal-entries" title={uiText("القيود اليومية", "Journal entries", language)} />
+          <button type="button" onClick={exportCsv} disabled={filtered.length === 0}
+            style={{ ...btnSecondary, minHeight: 36, borderRadius: 9, opacity: filtered.length ? 1 : 0.5 }}>
+            CSV
+          </button>
+          {(grid.hasActive || grid.sort || statusFilter !== "all" || dateFrom || dateTo) && (
+            <button type="button" onClick={clearFilters}
+              style={{ ...btnSecondary, minHeight: 36, borderRadius: 9, color: "#b91c1c" }}>
+              {uiText("مسح الكل", "Clear all", language)}
+            </button>
+          )}
           {selectedIds.length > 0 && (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginInlineStart: "auto", flexWrap: "wrap" }}>
-              <span style={{ color: "#0f172a", fontSize: 13, fontWeight: 600 }}>{selectedIds.length} محدد</span>
+            <div style={{ width: "100%", display: "flex", gap: 8, alignItems: "center", marginTop: 4, paddingTop: 10, borderTop: "1px solid #e2e8f0", flexWrap: "wrap" }}>
+              <span style={{ color: "#0f172a", fontSize: 13, fontWeight: 700 }}>{uiText(`${selectedIds.length} محدد`, `${selectedIds.length} selected`, language)}</span>
+              <ExportButtons columns={gridToExportCols(gridColumns)} rows={selectedRows} filenameBase="journal-entries-selected" title={uiText("القيود المحددة", "Selected journal entries", language)} />
               <button type="button" onClick={() => void handleBulkPost()}
                 disabled={bulkBusy || draftSelectedIds.length === 0}
-                style={{ ...btnPrimary, background: "#15803d", padding: "6px 14px",
+                style={{ ...btnPrimary, background: "#15803d", padding: "7px 14px", borderRadius: 9,
                   opacity: (bulkBusy || draftSelectedIds.length === 0) ? 0.5 : 1,
                   cursor: (bulkBusy || draftSelectedIds.length === 0) ? "not-allowed" : "pointer" }}>
-                {bulkBusy ? "..." : `ترحيل المحدد (${draftSelectedIds.length})`}
+                {bulkBusy ? "..." : uiText(`ترحيل المحدد (${draftSelectedIds.length})`, `Post drafts (${draftSelectedIds.length})`, language)}
+              </button>
+              <button type="button" onClick={() => void handleBulkUnpost()}
+                disabled={bulkBusy || postedSelectedIds.length === 0}
+                style={{ ...btnSecondary, padding: "7px 14px", borderRadius: 9, color: "#92400e",
+                  opacity: (bulkBusy || postedSelectedIds.length === 0) ? 0.5 : 1,
+                  cursor: (bulkBusy || postedSelectedIds.length === 0) ? "not-allowed" : "pointer" }}>
+                {bulkBusy ? "..." : uiText(`فك ترحيل (${postedSelectedIds.length})`, `Unpost (${postedSelectedIds.length})`, language)}
               </button>
               <button type="button" onClick={() => void handleBulkDelete()} disabled={bulkBusy}
-                style={{ ...btnDanger, padding: "6px 14px", opacity: bulkBusy ? 0.5 : 1 }}>
-                {bulkBusy ? "..." : `حذف المحدد (${selectedIds.length})`}
+                style={{ ...btnDanger, padding: "7px 14px", borderRadius: 9, opacity: bulkBusy ? 0.5 : 1 }}>
+                {bulkBusy ? "..." : uiText(`حذف المحدد (${selectedIds.length})`, `Delete selected (${selectedIds.length})`, language)}
               </button>
-              <button type="button" onClick={() => setSelected(new Set())} disabled={bulkBusy} style={btnLink}>إلغاء التحديد</button>
+              <button type="button" onClick={() => setSelected(new Set())} disabled={bulkBusy} style={btnLink}>{uiText("إلغاء التحديد", "Clear selection", language)}</button>
             </div>
           )}
         </div>
@@ -334,23 +527,31 @@ export default function JournalEntries() {
         </ActionBar>
       )}
 
-      <Card>
-        {filtered.length === 0 ? <Empty text="لا توجد قيود مطابقة" /> : (
+      <Card style={{ borderRadius: 14, boxShadow: "0 6px 20px rgba(15,23,42,.05)" }}>
+        {filtered.length === 0 ? <Empty text={uiText("لا توجد قيود مطابقة", "No matching entries", language)} /> : (
           <Table>
             <thead><tr>
               <SelectTh />
               <Th style={{ width: 38 }}>
                 <input type="checkbox" checked={allSelected} disabled={selectableIds.length === 0}
-                  title="تحديد كل القيود اليدوية" onChange={toggleSelectAll} />
+                  title={uiText("تحديد كل القيود اليدوية", "Select all manual entries", language)} onChange={toggleSelectAll} />
               </Th>
-              <Th>رقم القيد</Th><Th>التاريخ</Th><Th>النوع</Th><Th>البيان</Th><Th>المصدر</Th><Th>الحالة</Th>
-              <Th style={{ textAlign: "left" }}>المدين</Th><Th style={{ textAlign: "left" }}>الدائن</Th>
-            </tr></thead>
+              <SortableTh grid={grid} colKey="entryNo">{uiText("رقم القيد", "Entry no.", language)}</SortableTh>
+              <SortableTh grid={grid} colKey="entryDate">{uiText("التاريخ", "Date", language)}</SortableTh>
+              <SortableTh grid={grid} colKey="entryType">{uiText("النوع", "Type", language)}</SortableTh>
+              <SortableTh grid={grid} colKey="description">{uiText("البيان", "Description", language)}</SortableTh>
+              <SortableTh grid={grid} colKey="sourceType">{uiText("المصدر", "Source", language)}</SortableTh>
+              <SortableTh grid={grid} colKey="status">{uiText("الحالة", "Status", language)}</SortableTh>
+              <SortableTh grid={grid} colKey="totalDebit" style={{ textAlign: "left" }}>{uiText("المدين", "Debit", language)}</SortableTh>
+              <SortableTh grid={grid} colKey="totalCredit" style={{ textAlign: "left" }}>{uiText("الدائن", "Credit", language)}</SortableTh>
+            </tr>
+              <GridFilterRow grid={grid} columns={gridColumns} leading={2} />
+            </thead>
             <tbody>
               {(() => {
                 let lastMonthKey = "";
                 const nodes: React.ReactNode[] = [];
-                for (const e of filtered) {
+                for (const e of pageRows) {
                   const manual = isManual(e);
                   const rowBusy = busyId === e.id;
                   const mi = monthInfo(e.entryDate);
@@ -407,25 +608,52 @@ export default function JournalEntries() {
           </Table>
         )}
       </Card>
+      {filtered.length > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+          flexWrap: "wrap", padding: "11px 14px", marginTop: -4, borderRadius: "0 0 12px 12px",
+          border: "1px solid #e2e8f0", background: "#f8fafc",
+        }}>
+            <span style={{ color: "#64748b", fontSize: 12 }}>
+              {uiText(
+                `عرض ${Math.min((safePage - 1) * pageSize + 1, filtered.length)}–${Math.min(safePage * pageSize, filtered.length)} من ${filtered.length}`,
+                `Showing ${Math.min((safePage - 1) * pageSize + 1, filtered.length)}–${Math.min(safePage * pageSize, filtered.length)} of ${filtered.length}`,
+                language,
+              )}
+            </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={{ color: "#64748b", fontSize: 12 }}>{uiText("صفوف الصفحة", "Rows per page", language)}</label>
+            <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}
+              style={{ ...input, width: 82, minHeight: 32, padding: "4px 7px", marginBottom: 0, borderRadius: 8 }}>
+              {[25, 50, 100, 200].map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+            <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage <= 1}
+                style={{ ...btnSecondary, minHeight: 32, padding: "5px 11px", borderRadius: 8, opacity: safePage <= 1 ? 0.45 : 1 }}>{uiText("السابق", "Previous", language)}</button>
+            <span style={{ minWidth: 82, textAlign: "center", color: "#334155", fontSize: 12, fontWeight: 700 }}>{safePage} / {pageCount}</span>
+            <button type="button" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={safePage >= pageCount}
+                style={{ ...btnSecondary, minHeight: 32, padding: "5px 11px", borderRadius: 8, opacity: safePage >= pageCount ? 0.45 : 1 }}>{uiText("التالي", "Next", language)}</button>
+          </div>
+        </div>
+      )}
     </Page>
   );
 }
 
 function SourceTag({ source }: { source: string | null }) {
-  const map: Record<string, { l: string; c: string }> = {
-    manual:           { l: "يدوي",       c: "#475569" },
-    purchase:         { l: "شراء",       c: "#1e40af" },
-    purchase_return:  { l: "مرتجع شراء", c: "#9a3412" },
-    receipt:          { l: "سند قبض",    c: "#15803d" },
-    payment:          { l: "سند صرف",    c: "#b91c1c" },
+  const colors: Record<string, string> = {
+    manual: "#475569",
+    purchase: "#1e40af",
+    purchase_return: "#9a3412",
+    receipt: "#15803d",
+    payment: "#b91c1c",
   };
-  const m = source ? (map[source] ?? { l: source, c: "#64748b" }) : { l: "يدوي", c: "#475569" };
-  return <span style={{ background: m.c + "20", color: m.c, padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 600 }}>{m.l}</span>;
+  const color = source ? (colors[source] ?? "#64748b") : "#475569";
+  return <span style={{ background: color + "20", color, padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>{sourceText(source, getUiLanguage())}</span>;
 }
 
 function StatusTag({ status }: { status: JeStatus }) {
   const m = status === "posted" ? { l: "مرحَّل", c: "#15803d" } : { l: "مسودة", c: "#b45309" };
-  return <span style={{ background: m.c + "20", color: m.c, padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 600 }}>{m.l}</span>;
+  return <span style={{ background: m.c + "20", color: m.c, padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>{uiText(m.l, status === "posted" ? "Posted" : "Draft", getUiLanguage())}</span>;
 }
 
 function EntryDetail({ entry }: { entry: JournalEntry }) {

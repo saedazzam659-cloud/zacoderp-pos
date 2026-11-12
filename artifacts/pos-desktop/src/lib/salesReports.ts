@@ -22,7 +22,23 @@ export type SalesInvoiceReportRow = {
   vatTotal: number;
   grandTotal: number;
   lineCount: number;
+  cashAmount?: number;
+  bankAmount?: number;
+  creditAmount?: number;
 };
+
+export function salesInvoicePaymentLabel(row: SalesInvoiceReportRow): string {
+  const parts = [
+    row.cashAmount ?? (row.paymentMethod === "cash" ? row.grandTotal : 0),
+    row.bankAmount ?? (row.paymentMethod === "bank" ? row.grandTotal : 0),
+    row.creditAmount ?? (row.paymentMethod === "credit" ? row.grandTotal : 0),
+  ].filter((amount) => amount > 0.005);
+  if (parts.length > 1) return "mixed";
+  if ((row.cashAmount ?? 0) > 0.005) return "cash";
+  if ((row.bankAmount ?? 0) > 0.005) return "bank";
+  if ((row.creditAmount ?? 0) > 0.005) return "credit";
+  return row.paymentMethod || "credit";
+}
 
 export type SalesLineReportRow = {
   invoiceId: number;
