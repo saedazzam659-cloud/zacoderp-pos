@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { reportLedgerLines, type LedgerLine } from "../lib/reports";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
-import { useDimensions, DateField, BranchField, CostCenterField } from "./_reportFilters";
+import { useDimensions, useReportAccounts, DateField, BranchField, CostCenterField, AccountHierarchyFields } from "./_reportFilters";
 import type { ExportColumn } from "../lib/exporters";
+import { filterAccountReportRows, type AccountLevelMode } from "../lib/accountReportFilters";
 
 type Agg = {
   accountId: number; code: string; name: string;
@@ -20,10 +21,14 @@ function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
 export default function TrialBalanceReport() {
   const { branches, costCenters } = useDimensions();
+  const { accounts, loading: accountsLoading, error: accountsError, refreshAccounts } = useReportAccounts();
   const [fromDate, setFromDate] = useState(firstOfYear());
   const [toDate, setToDate] = useState(todayStr());
   const [branchId, setBranchId] = useState<number | "">("");
   const [costCenterId, setCostCenterId] = useState<number | "">("");
+  const [parentIds, setParentIds] = useState<number[]>([]);
+  const [levelMode, setLevelMode] = useState<AccountLevelMode>("all");
+  const [showZero, setShowZero] = useState(false);
   const [rows, setRows] = useState<Agg[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -32,6 +37,7 @@ export default function TrialBalanceReport() {
     if (fromDate > toDate) { setErr("تاريخ البداية يجب أن يكون قبل تاريخ النهاية"); return; }
     setErr(null); setLoading(true);
     try {
+      const allAccounts = await refreshAccounts();
       const lines = await reportLedgerLines({
         toDate,
         branchId: branchId === "" ? null : branchId,
@@ -48,14 +54,27 @@ export default function TrialBalanceReport() {
           a.periodCr += l.credit;
         }
       }
-      const out = [...map.values()]
-        .filter((a) => Math.abs(a.openNet) > 0.001 || a.periodDr > 0.001 || a.periodCr > 0.001)
-        .sort((x, y) => x.code.localeCompare(y.code, undefined, { numeric: true }));
+      for (const account of allAccounts) {
+        if (!map.has(account.id)) {
+          map.set(account.id, { accountId: account.id, code: account.code, name: account.nameAr, openNet: 0, periodDr: 0, periodCr: 0 });
+        }
+      }
+      const out = [...map.values()].sort((x, y) => x.code.localeCompare(y.code, undefined, { numeric: true }));
       setRows(out);
+    } catch (e) {
+      setErr(typeof e === "string" ? e : (e as Error)?.message ?? "تعذر تحميل التقرير");
     } finally { setLoading(false); }
   }
 
-  const totals = (rows ?? []).reduce((s, a) => {
+  const visibleRows = useMemo(() => {
+    if (!rows) return null;
+    const hierarchyRows = filterAccountReportRows(rows, accounts, { parentIds, levelMode });
+    return showZero
+      ? hierarchyRows
+      : hierarchyRows.filter((a) => Math.abs(a.openNet) > 0.001 || a.periodDr > 0.001 || a.periodCr > 0.001);
+  }, [rows, accounts, parentIds, levelMode, showZero]);
+
+  const totals = (visibleRows ?? []).reduce((s, a) => {
     const close = a.openNet + a.periodDr - a.periodCr;
     s.openDr += a.openNet > 0 ? a.openNet : 0;
     s.openCr += a.openNet < 0 ? -a.openNet : 0;
@@ -70,9 +89,9 @@ export default function TrialBalanceReport() {
   const cell = (n: number) => (Math.abs(n) > 0.001 ? fmt(n) : "");
 
   const numCell = (n: number): number | string => (Math.abs(n) > 0.001 ? n : "");
-  const exportRows: TBExportRow[] = rows && rows.length > 0
+  const exportRows: TBExportRow[] = visibleRows && visibleRows.length > 0
     ? [
-        ...rows.map((a): TBExportRow => {
+        ...visibleRows.map((a): TBExportRow => {
           const close = a.openNet + a.periodDr - a.periodCr;
           return {
             code: a.code, name: a.name,
@@ -111,19 +130,29 @@ export default function TrialBalanceReport() {
           <DateField label="إلى تاريخ" value={toDate} onChange={setToDate} />
           <BranchField branches={branches} value={branchId} onChange={setBranchId} />
           <CostCenterField costCenters={costCenters} value={costCenterId} onChange={setCostCenterId} />
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <AccountHierarchyFields
+            accounts={accounts}
+            parentIds={parentIds}
+            onParentIdsChange={setParentIds}
+            levelMode={levelMode}
+            onLevelModeChange={setLevelMode}
+            showZero={showZero}
+            onShowZeroChange={setShowZero}
+          />
+          <button onClick={run} disabled={loading || accountsLoading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
         </div>
+        {accountsError && <div style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{accountsError}</div>}
         {err && <div style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{err}</div>}
       </Card>
 
-      {rows && (
+      {visibleRows && (
         <Card>
-          {rows.length > 0 && (
+          {visibleRows.length > 0 && (
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
               <ExportButtons columns={exportCols} rows={exportRows} filenameBase="ميزان-المراجعة" title={`ميزان المراجعة بالمجاميع — ${fromDate} ← ${toDate}`} />
             </div>
           )}
-          {rows.length === 0 ? <Empty text="لا توجد حركة في الفترة المحددة" /> : (
+          {visibleRows.length === 0 ? <Empty text="لا توجد حركة في الفترة المحددة" /> : (
             <Table>
               <thead>
                 <tr>
@@ -139,7 +168,7 @@ export default function TrialBalanceReport() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((a) => {
+                {visibleRows.map((a) => {
                   const close = a.openNet + a.periodDr - a.periodCr;
                   return (
                     <tr key={a.accountId}>
@@ -163,7 +192,7 @@ export default function TrialBalanceReport() {
               </tbody>
             </Table>
           )}
-          {rows.length > 0 && (
+          {visibleRows.length > 0 && (
             <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600,
               background: balanced ? "#ecfdf5" : "#fef2f2", color: balanced ? "#15803d" : "#991b1b" }}>
               {balanced ? "✓ الميزان متوازن" : `⚠️ فرق غير متوازن: ${fmt(Math.abs(totals.closeDr - totals.closeCr))}`}

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { reportLedgerLines, type LedgerLine } from "../lib/reports";
 import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
-import { useDimensions, DateField, BranchField, CostCenterField } from "./_reportFilters";
+import { useDimensions, useReportAccounts, DateField, BranchField, CostCenterField, AccountHierarchyFields } from "./_reportFilters";
 import type { ExportColumn } from "../lib/exporters";
+import { filterAccountReportRows, type AccountLevelMode } from "../lib/accountReportFilters";
 
 type Row = { accountId: number; code: string; name: string; balance: number };
 
@@ -10,18 +11,25 @@ type BSExportRow = { code: string; name: string; amount: number | string };
 
 export default function BalanceSheetReport() {
   const { branches, costCenters } = useDimensions();
+  const { accounts, loading: accountsLoading, error: accountsError, refreshAccounts } = useReportAccounts();
   const [asOfDate, setAsOfDate] = useState(todayStr());
   const [branchId, setBranchId] = useState<number | "">("");
   const [costCenterId, setCostCenterId] = useState<number | "">("");
+  const [parentIds, setParentIds] = useState<number[]>([]);
+  const [levelMode, setLevelMode] = useState<AccountLevelMode>("all");
+  const [showZero, setShowZero] = useState(false);
   const [data, setData] = useState<{
     assets: Row[]; liabilities: Row[]; equity: Row[];
     totalAssets: number; totalLiabilities: number; totalEquity: number; netIncome: number;
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   async function run() {
+    setErr(null);
     setLoading(true);
     try {
+      const allAccounts = await refreshAccounts();
       const lines = await reportLedgerLines({
         toDate: asOfDate,
         branchId: branchId === "" ? null : branchId,
@@ -48,32 +56,58 @@ export default function BalanceSheetReport() {
           netIncome -= l.debit - l.credit;
         }
       }
+      for (const account of allAccounts) {
+        if (account.type === "asset" && !assets.has(account.id)) {
+          assets.set(account.id, { accountId: account.id, code: account.code, name: account.nameAr, balance: 0 });
+        } else if (account.type === "liability" && !liabilities.has(account.id)) {
+          liabilities.set(account.id, { accountId: account.id, code: account.code, name: account.nameAr, balance: 0 });
+        } else if (account.type === "equity" && !equity.has(account.id)) {
+          equity.set(account.id, { accountId: account.id, code: account.code, name: account.nameAr, balance: 0 });
+        }
+      }
       const byCode = (a: Row, b: Row) => a.code.localeCompare(b.code, undefined, { numeric: true });
-      const assetRows = [...assets.values()].filter((r) => Math.abs(r.balance) > 0.001).sort(byCode);
-      const liabRows = [...liabilities.values()].filter((r) => Math.abs(r.balance) > 0.001).sort(byCode);
-      const equityRows = [...equity.values()].filter((r) => Math.abs(r.balance) > 0.001).sort(byCode);
+      const assetRows = [...assets.values()].sort(byCode);
+      const liabRows = [...liabilities.values()].sort(byCode);
+      const equityRows = [...equity.values()].sort(byCode);
       const totalAssets = assetRows.reduce((s, r) => s + r.balance, 0);
       const totalLiabilities = liabRows.reduce((s, r) => s + -r.balance, 0);
       const totalEquity = equityRows.reduce((s, r) => s + -r.balance, 0) + netIncome;
       setData({ assets: assetRows, liabilities: liabRows, equity: equityRows, totalAssets, totalLiabilities, totalEquity, netIncome });
+    } catch (e) {
+      setErr(typeof e === "string" ? e : (e as Error)?.message ?? "تعذر تحميل التقرير");
     } finally { setLoading(false); }
   }
 
-  const totalLE = data ? data.totalLiabilities + data.totalEquity : 0;
-  const balanced = data ? Math.abs(data.totalAssets - totalLE) < 0.01 : true;
+  const shownData = useMemo(() => {
+    if (!data) return null;
+    const filterGroup = (group: Row[]) => {
+      const hierarchyRows = filterAccountReportRows(group, accounts, { parentIds, levelMode });
+      return showZero ? hierarchyRows : hierarchyRows.filter((r) => Math.abs(r.balance) > 0.001);
+    };
+    const assets = filterGroup(data.assets);
+    const liabilities = filterGroup(data.liabilities);
+    const equity = filterGroup(data.equity);
+    const totalAssets = assets.reduce((sum, row) => sum + row.balance, 0);
+    const totalLiabilities = liabilities.reduce((sum, row) => sum - row.balance, 0);
+    const totalEquity = equity.reduce((sum, row) => sum - row.balance, 0) + data.netIncome;
+    return { ...data, assets, liabilities, equity, totalAssets, totalLiabilities, totalEquity };
+  }, [data, accounts, parentIds, levelMode, showZero]);
 
-  const exportRows: BSExportRow[] = data
+  const totalLE = shownData ? shownData.totalLiabilities + shownData.totalEquity : 0;
+  const balanced = shownData ? Math.abs(shownData.totalAssets - totalLE) < 0.01 : true;
+
+  const exportRows: BSExportRow[] = shownData
     ? [
         { code: "", name: "الأصول", amount: "" },
-        ...data.assets.map((r): BSExportRow => ({ code: r.code, name: r.name, amount: Math.abs(r.balance) })),
-        { code: "", name: "إجمالي الأصول", amount: Math.abs(data.totalAssets) },
+        ...shownData.assets.map((r): BSExportRow => ({ code: r.code, name: r.name, amount: Math.abs(r.balance) })),
+        { code: "", name: "إجمالي الأصول", amount: Math.abs(shownData.totalAssets) },
         { code: "", name: "الخصوم", amount: "" },
-        ...data.liabilities.map((r): BSExportRow => ({ code: r.code, name: r.name, amount: Math.abs(r.balance) })),
-        { code: "", name: "إجمالي الخصوم", amount: Math.abs(data.totalLiabilities) },
+        ...shownData.liabilities.map((r): BSExportRow => ({ code: r.code, name: r.name, amount: Math.abs(r.balance) })),
+        { code: "", name: "إجمالي الخصوم", amount: Math.abs(shownData.totalLiabilities) },
         { code: "", name: "حقوق الملكية", amount: "" },
-        ...data.equity.map((r): BSExportRow => ({ code: r.code, name: r.name, amount: Math.abs(r.balance) })),
-        { code: "", name: "إجمالي حقوق الملكية", amount: Math.abs(data.totalEquity - data.netIncome) },
-        { code: "", name: "صافي دخل الفترة الحالية", amount: data.netIncome },
+        ...shownData.equity.map((r): BSExportRow => ({ code: r.code, name: r.name, amount: Math.abs(r.balance) })),
+        { code: "", name: "إجمالي حقوق الملكية", amount: Math.abs(shownData.totalEquity - shownData.netIncome) },
+        { code: "", name: "صافي دخل الفترة الحالية", amount: shownData.netIncome },
         { code: "", name: "إجمالي الخصوم وحقوق الملكية", amount: Math.abs(totalLE) },
       ]
     : [];
@@ -108,27 +142,38 @@ export default function BalanceSheetReport() {
           <DateField label="حتى تاريخ" value={asOfDate} onChange={setAsOfDate} />
           <BranchField branches={branches} value={branchId} onChange={setBranchId} />
           <CostCenterField costCenters={costCenters} value={costCenterId} onChange={setCostCenterId} />
-          <button onClick={run} disabled={loading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
+          <AccountHierarchyFields
+            accounts={accounts}
+            parentIds={parentIds}
+            onParentIdsChange={setParentIds}
+            levelMode={levelMode}
+            onLevelModeChange={setLevelMode}
+            showZero={showZero}
+            onShowZeroChange={setShowZero}
+          />
+          <button onClick={run} disabled={loading || accountsLoading} style={btnPrimary}>{loading ? "..." : "عرض"}</button>
         </div>
+        {accountsError && <div style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{accountsError}</div>}
+        {err && <div style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{err}</div>}
       </Card>
 
-      {data && (
+      {shownData && (
         <>
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
             <ExportButtons columns={exportCols} rows={exportRows} filenameBase="الميزانية-العمومية" title={`الميزانية العمومية — حتى ${asOfDate}`} />
           </div>
           <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 8, fontSize: 14, fontWeight: 600,
             background: balanced ? "#ecfdf5" : "#fef2f2", color: balanced ? "#15803d" : "#991b1b" }}>
-            {balanced ? `✓ الميزانية متوازنة — ${fmt(Math.abs(data.totalAssets))}` : `⚠️ فرق: ${fmt(Math.abs(data.totalAssets - totalLE))}`}
+            {balanced ? `✓ الميزانية متوازنة — ${fmt(Math.abs(shownData.totalAssets))}` : `⚠️ فرق: ${fmt(Math.abs(shownData.totalAssets - totalLE))}`}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
-            <Section title="الأصول" rows={data.assets} total={data.totalAssets} color="#1e40af" natural="debit" />
+            <Section title="الأصول" rows={shownData.assets} total={shownData.totalAssets} color="#1e40af" natural="debit" />
             <div>
-              <Section title="الخصوم" rows={data.liabilities} total={data.totalLiabilities} color="#b91c1c" natural="credit" />
-              <Section title="حقوق الملكية" rows={data.equity} total={data.totalEquity - data.netIncome} color="#7c3aed" natural="credit" />
+              <Section title="الخصوم" rows={shownData.liabilities} total={shownData.totalLiabilities} color="#b91c1c" natural="credit" />
+              <Section title="حقوق الملكية" rows={shownData.equity} total={shownData.totalEquity - shownData.netIncome} color="#7c3aed" natural="credit" />
               <Card style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", color: "#64748b" }}>
-                  <span>صافي دخل الفترة الحالية</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{fmt(data.netIncome)}</span>
+                  <span>صافي دخل الفترة الحالية</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{fmt(shownData.netIncome)}</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 16, borderTop: "1px solid #e2e8f0", paddingTop: 8, marginTop: 4 }}>
                   <span>إجمالي الخصوم وحقوق الملكية</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{fmt(Math.abs(totalLE))}</span>

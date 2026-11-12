@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listBranches, type Branch } from "../lib/branches";
 import { listCostCenters, type CostCenter } from "../lib/costCenters";
+import { listAccounts, type Account } from "../lib/accounting";
 import { uiText } from "../lib/appSettings";
 import { input, SearchCombobox } from "./_adminUi";
 
@@ -16,6 +17,31 @@ export function useDimensions() {
     })();
   }, []);
   return { branches, costCenters };
+}
+
+export function useReportAccounts() {
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  async function refreshAccounts(): Promise<Account[]> {
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await listAccounts();
+      setAccounts(next);
+      return next;
+    } catch (e) {
+      const message = typeof e === "string" ? e : (e as Error)?.message;
+      setError(message || uiText("تعذر تحميل شجرة الحسابات", "Could not load the chart of accounts"));
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void refreshAccounts().catch(() => {}); }, []);
+  return { accounts, loading, error, refreshAccounts };
 }
 
 export function branchOptions(branches: Branch[]) {
@@ -91,5 +117,50 @@ export function CostCenterField({ costCenters, value, onChange }: { costCenters:
         style={filterInput}
       />
     </FilterField>
+  );
+}
+
+export function AccountHierarchyFields({
+  accounts, parentIds, onParentIdsChange, levelMode, onLevelModeChange, showZero, onShowZeroChange,
+}: {
+  accounts: Account[];
+  parentIds: number[];
+  onParentIdsChange: (ids: number[]) => void;
+  levelMode: "all" | "first" | "last";
+  onLevelModeChange: (mode: "all" | "first" | "last") => void;
+  showZero: boolean;
+  onShowZeroChange: (show: boolean) => void;
+}) {
+  const children = new Set(accounts.flatMap((a) => a.parentId == null ? [] : [a.parentId]));
+  const parents = accounts
+    .filter((a) => children.has(a.id))
+    .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+
+  return (
+    <>
+      <FilterField label={uiText("الحسابات الرئيسية", "Parent accounts")}>
+        <select
+          multiple
+          size={3}
+          value={parentIds.map(String)}
+          onChange={(e) => onParentIdsChange(Array.from(e.currentTarget.selectedOptions, (o) => Number(o.value)))}
+          style={{ ...filterInput, minWidth: 210, height: "auto", padding: "5px 8px" }}
+          aria-label={uiText("تصفية حسب الحساب الرئيسي وفروعه", "Filter by parent accounts and descendants")}
+        >
+          {parents.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.nameAr}</option>)}
+        </select>
+      </FilterField>
+      <FilterField label={uiText("مستوى الحساب", "Account level")}>
+        <select value={levelMode} onChange={(e) => onLevelModeChange(e.target.value as "all" | "first" | "last")} style={filterInput}>
+          <option value="all">{uiText("كل المستويات", "All levels")}</option>
+          <option value="first">{uiText("الحسابات الرئيسية", "Top-level accounts")}</option>
+          <option value="last">{uiText("الحسابات الفرعية", "Leaf accounts")}</option>
+        </select>
+      </FilterField>
+      <label style={{ display: "inline-flex", gap: 7, alignItems: "center", fontSize: 13, cursor: "pointer", minHeight: 36 }}>
+        <input type="checkbox" checked={showZero} onChange={(e) => onShowZeroChange(e.target.checked)} />
+        {uiText("عرض الحسابات الصفرية", "Show zero-balance accounts")}
+      </label>
+    </>
   );
 }
