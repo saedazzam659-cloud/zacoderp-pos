@@ -34,6 +34,7 @@ type BackupRow = {
   encryptionIv: string;
   encryptionTag: string;
   releaseVersion: string;
+  releaseSha256: string;
 };
 
 function sha256File(filePath: string): Promise<string> {
@@ -163,7 +164,7 @@ async function verifiedEncryptedRead(row: BackupRow, outputPath: string): Promis
 
 export async function materializeVerifiedBackup(
   row: BackupRow,
-): Promise<{ dir: string; bundlePath: string; runtimeReleasePath: string; sourceArchivePath: string }> {
+): Promise<{ dir: string; bundlePath: string; runtimeReleasePath: string }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dev-cloud-backup-"));
   const bundlePath = path.join(dir, "snapshot.tar.gz");
   try {
@@ -172,7 +173,7 @@ export async function materializeVerifiedBackup(
       timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
     });
     const entries = String(listing.stdout).split(/\r?\n/).filter(Boolean).map((entry) => entry.replace(/^\.\//, ""));
-    const allowed = new Set(["manifest.json", "runtime-release.tgz", "source-code.tar.gz", "database.dump"]);
+    const allowed = new Set(["manifest.json", "runtime-release.tgz", "database.dump"]);
     if (entries.some((entry) => entry.includes("..") || entry.startsWith("/") || !allowed.has(entry))) {
       throw new Error("محتويات النسخة غير آمنة");
     }
@@ -181,13 +182,22 @@ export async function materializeVerifiedBackup(
     }
     await execFileAsync("tar", [
       "--no-same-owner", "--no-same-permissions", "-xzf", bundlePath, "-C", dir,
-      "runtime-release.tgz", "source-code.tar.gz", "manifest.json",
+      "runtime-release.tgz", "manifest.json",
     ], { timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
+    const manifest = JSON.parse(await fs.readFile(path.join(dir, "manifest.json"), "utf8"));
+    const runtimeSha256 = await sha256File(path.join(dir, "runtime-release.tgz"));
+    if (manifest.format !== "zacod-dev-cloud-backup-v1"
+        || manifest.releaseVersion !== row.releaseVersion
+        || manifest.releaseSha256 !== row.releaseSha256
+        || runtimeSha256 !== row.releaseSha256
+        || row.releaseVersion !== row.releaseSha256.slice(0, 16)
+        || manifest.databaseRestorePolicy !== "never-import-during-code-restore") {
+      throw new Error("بيانات إصدار النسخة لا تطابق الحزمة");
+    }
     return {
       dir,
       bundlePath,
       runtimeReleasePath: path.join(dir, "runtime-release.tgz"),
-      sourceArchivePath: path.join(dir, "source-code.tar.gz"),
     };
   } catch (error) {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -198,7 +208,6 @@ export async function materializeVerifiedBackup(
 export async function buildBackupBundle(input: {
   workDir: string;
   releaseArchivePath: string;
-  sourceArchivePath: string;
   databaseDumpPath: string;
   releaseVersion: string;
   releaseSha256: string;
@@ -206,7 +215,8 @@ export async function buildBackupBundle(input: {
   sourceType: "central" | "agent";
   sourceAgentId: number | null;
 }): Promise<{ bundlePath: string; sourceSha256: string; databaseSha256: string }> {
-  const sourceSha256 = await sha256File(input.sourceArchivePath);
+  const sourceSha256 = await sha256File(input.releaseArchivePath);
+  if (sourceSha256 !== input.releaseSha256) throw new Error("بصمة إصدار التطبيق لا تطابق الحزمة");
   const databaseSha256 = await sha256File(input.databaseDumpPath);
   const manifest = {
     format: "zacod-dev-cloud-backup-v1",
@@ -229,7 +239,6 @@ export async function buildBackupBundle(input: {
     "--format=gnu", "-czf", bundlePath, "-C", input.workDir,
     "manifest.json",
     "runtime-release.tgz",
-    "source-code.tar.gz",
     "database.dump",
   ], { timeout: 180_000, maxBuffer: 2 * 1024 * 1024 });
   const size = (await fs.stat(bundlePath)).size;
@@ -525,18 +534,16 @@ export async function restoreAgentCodeFromBackup(input: {
   agent: Agent;
   backupId: number;
   row: BackupRow;
-}): Promise<{ targetVersion: string; backupPath: string }> {
+}): Promise<{ targetVersion: string }> {
   const materialized = await materializeVerifiedBackup(input.row);
   const dir = materialized.dir;
-  const encryptedPath = path.join(dir, "backup.enc");
   const runtimeTemp = path.join(dir, "agent-release.tgz");
   try {
-    const stored = storage.getPrivateObjectFile(privateKeyFromObjectPath(input.row.objectPath));
-    const storedHash = createHash("sha256");
-    await pipeline(stored.createReadStream(), hashTransform(storedHash), createWriteStream(encryptedPath, { mode: 0o600 }));
-    if (storedHash.digest("hex") !== input.row.encryptedSha256) throw new Error("بصمة النسخة المشفرة غير مطابقة");
     await fs.copyFile(materialized.runtimeReleasePath, runtimeTemp);
     const releaseSha = await sha256File(runtimeTemp);
+    if (releaseSha !== input.row.releaseSha256 || input.row.releaseVersion !== releaseSha.slice(0, 16)) {
+      throw new Error("بصمة إصدار التطبيق لا تطابق النسخة");
+    }
     const releaseListing = String((await execFileAsync("tar", ["-tzf", runtimeTemp], {
       timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
     })).stdout).split(/\r?\n/).filter(Boolean).map((entry) => entry.replace(/^\.\//, ""));
@@ -546,9 +553,7 @@ export async function restoreAgentCodeFromBackup(input: {
     }
 
     const safeId = `${input.backupId}-${randomBytes(6).toString("hex")}`;
-    const remoteBackupTemp = `/tmp/dev-cloud-backup-${safeId}.enc`;
     const remoteReleaseTemp = `/tmp/dev-cloud-release-${safeId}.tgz`;
-    const remoteBackup = `/opt/zacod/backups/dev-cloud/dev-cloud-backup-${input.backupId}.enc`;
     const version = input.row.releaseVersion;
     if (!/^[a-f0-9]{8,64}$/.test(version)) throw new Error("إصدار النسخة غير صالح");
     const scriptPath = `/opt/zacod/.dev-cloud-restore-${safeId}.sh`;
@@ -560,9 +565,7 @@ NEW="$ROOT/app.new"
 OLD="$ROOT/app.old"
 FAILED="$ROOT/backups/dev-cloud/failed-app-${safeId}"
 LOCK="$ROOT/manual-update.lock"
-BACKUP_TEMP=${shellQuote(remoteBackupTemp)}
 RELEASE_TEMP=${shellQuote(remoteReleaseTemp)}
-BACKUP_FINAL=${shellQuote(remoteBackup)}
 VERSION=${shellQuote(version)}
 EXPECTED_SHA=${shellQuote(releaseSha)}
 SCRIPT_FILE=${shellQuote(scriptPath)}
@@ -571,7 +574,7 @@ SWAPPED=0
 NEW_CREATED=0
 cleanup() {
   if [ "$NEW_CREATED" = "1" ] && [ "$SWAPPED" = "0" ]; then rm -rf "$NEW"; fi
-  rm -f "$BACKUP_TEMP" "$RELEASE_TEMP" "$SCRIPT_FILE" "$RELEASE"
+  rm -f "$RELEASE_TEMP" "$SCRIPT_FILE" "$RELEASE"
 }
 rollback() {
   set +e
@@ -602,7 +605,6 @@ trap on_error ERR
 [ ! -e "$ROOT/SUSPENDED" ]
 [ ! -e "$NEW" ]
 install -d -m 700 "$ROOT/backups/dev-cloud"
-install -o root -g root -m 600 "$BACKUP_TEMP" "$BACKUP_FINAL"
 mv "$RELEASE_TEMP" "$RELEASE"
 ACTUAL_SHA=$(sha256sum "$RELEASE" | awk '{print $1}')
 [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ]
@@ -630,12 +632,11 @@ rm -f "$RELEASE" "$SCRIPT_FILE"
 echo ZACOD_DEV_CLOUD_RESTORE_OK
 `;
     await withAgentSsh(input.agent, async (client) => {
-      await uploadSftp(client, encryptedPath, remoteBackupTemp);
       await uploadSftp(client, runtimeTemp, remoteReleaseTemp);
       const result = await runRootScript(client, input.agent, script);
       if (!result.includes("ZACOD_DEV_CLOUD_RESTORE_OK")) throw new Error("تعذر التحقق من اكتمال استعادة التطبيق");
     });
-    return { targetVersion: version, backupPath: remoteBackup };
+    return { targetVersion: version };
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }

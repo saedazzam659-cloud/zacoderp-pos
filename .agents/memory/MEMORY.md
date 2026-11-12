@@ -137,3 +137,4 @@
 - [Saved feature scope](saved-feature-scope.md) — invoice item multi-select and Saudi VAT display only for Mahmoud's agent.
 - [Screen recorder boundaries](screen-recorder-boundary.md) — browser-local capture, company/user gates, bitrate estimates, and platform-limited audio.
 - [Public module screenshots](public-module-screenshots.md) — keep login-gallery screenshots public-safe and under SuperAdmin control.
+- [Developer Cloud backup boundary](dev-cloud-backup-boundary.md) — keep recovery additive; upload full encrypted DB snapshots only by explicit action and restore code without importing DBs.

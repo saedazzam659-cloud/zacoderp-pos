@@ -5050,6 +5050,12 @@ async function ensureCentralDevCloudBackupSchema(): Promise<void> {
        ON dev_cloud_backup_operations(backup_id, created_at)`,
     `CREATE INDEX IF NOT EXISTS dev_cloud_backup_operations_status_idx
        ON dev_cloud_backup_operations(status)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS dev_cloud_backup_create_active_uq
+       ON dev_cloud_backup_operations(action)
+       WHERE action = 'create' AND status IN ('queued', 'running')`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS dev_cloud_backup_agent_active_uq
+       ON dev_cloud_backup_operations(target_agent_id)
+       WHERE target_agent_id IS NOT NULL AND status IN ('queued', 'running')`,
   ];
   for (const stmt of statements) await execCentralDDL(stmt);
 }

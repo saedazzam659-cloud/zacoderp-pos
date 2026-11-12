@@ -56,10 +56,10 @@ const actionText: Record<string, string> = {
   restore: "استعادة كود التطبيق",
 };
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, testId }: { status: string; testId: string }) {
   return (
     <span
-      data-testid={`backup-status-${status}`}
+      data-testid={testId}
       className={cn(
         "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold",
         statusStyle[status] ?? "border-slate-200 bg-slate-50 text-slate-600",
@@ -107,6 +107,7 @@ export default function DevCloudBackupsPanel() {
   const [activeDialog, setActiveDialog] = useState<"upload" | "restore" | null>(null);
   const [selectedBackupId, setSelectedBackupId] = useState<number | null>(null);
   const [targetAgentId, setTargetAgentId] = useState("");
+  const [uploadConfirmed, setUploadConfirmed] = useState(false);
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
 
@@ -147,6 +148,7 @@ export default function DevCloudBackupsPanel() {
   const openAction = (action: "upload" | "restore", backupId: number) => {
     setSelectedBackupId(backupId);
     setTargetAgentId("");
+    setUploadConfirmed(false);
     setRestoreConfirmed(false);
     setActiveDialog(action);
   };
@@ -181,7 +183,7 @@ export default function DevCloudBackupsPanel() {
   const submitAction = () => {
     if (!selectedBackupId || !targetAgentId) return;
     const targetId = Number(targetAgentId);
-    if (activeDialog === "upload") {
+    if (activeDialog === "upload" && uploadConfirmed) {
       uploadBackup.mutate(
         { backupId: selectedBackupId, data: { targetAgentId: targetId } },
         {
@@ -233,7 +235,7 @@ export default function DevCloudBackupsPanel() {
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
       toast({
         title: "تعذر تنزيل الحزمة",
@@ -267,7 +269,7 @@ export default function DevCloudBackupsPanel() {
               </span>
             </div>
             <p data-testid="text-backups-description" className="max-w-2xl text-sm leading-6 text-slate-600">
-              نسخ استرداد كاملة لكود ERP وقاعدة البيانات، وقد تتضمن سجلات أعمال الشركات. هذه اللوحة منفصلة عن أدوات خادم الوكيل.
+              حزم استرداد لتشغيل ERP وقاعدة البيانات، وقد تتضمن سجلات أعمال الشركات. هذه اللوحة منفصلة عن أدوات خادم الوكيل.
             </p>
           </div>
         </div>
@@ -285,7 +287,7 @@ export default function DevCloudBackupsPanel() {
             </div>
             <div>
               <h3 className="font-bold text-slate-800">إنشاء نسخة احتياطية</h3>
-              <p className="text-xs text-slate-500">اختر مصدر الحزمة وسمّها</p>
+              <p className="text-xs text-slate-500">اختر قاعدة البيانات وسمّ الحزمة</p>
             </div>
           </div>
 
@@ -303,7 +305,7 @@ export default function DevCloudBackupsPanel() {
               />
             </div>
             <div>
-              <Label htmlFor="backup-source">مصدر النسخة</Label>
+              <Label htmlFor="backup-source">مصدر قاعدة البيانات</Label>
               <select
                 id="backup-source"
                 data-testid="select-backup-source"
@@ -314,10 +316,13 @@ export default function DevCloudBackupsPanel() {
                   setSourceAgentId("");
                 }}
               >
-                <option value="central">المركزي — Replit</option>
-                <option value="agent">وكيل كامل مؤهل</option>
+                <option value="central">قاعدة بيانات المركزي — Replit</option>
+                <option value="agent">قاعدة بيانات وكيل كامل</option>
               </select>
             </div>
+            <p data-testid="notice-central-code-source" className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-700">
+              تتضمن كل حزمة نسخة تشغيل مطابقة للإصدار المركزي الحالي؛ هذا الاختيار يحدد قاعدة البيانات المرفقة فقط.
+            </p>
             {sourceType === "agent" && (
               <div>
                 <Label htmlFor="backup-source-agent">الوكيل المصدر</Label>
@@ -411,7 +416,7 @@ export default function DevCloudBackupsPanel() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h4 data-testid={`text-backup-label-${backup.id}`} className="break-words font-bold text-slate-800">{backup.label}</h4>
-                        <StatusBadge status={backup.status} />
+                        <StatusBadge status={backup.status} testId={`backup-status-${backup.id}`} />
                       </div>
                       <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                         <span data-testid={`text-backup-source-${backup.id}`} className="inline-flex items-center gap-1">
@@ -419,6 +424,7 @@ export default function DevCloudBackupsPanel() {
                           {backup.sourceLabel} · لقطة قاعدة بيانات كاملة
                         </span>
                         <span data-testid={`text-backup-created-${backup.id}`}>{formatDate(backup.createdAt)}</span>
+                        <span data-testid={`text-backup-version-${backup.id}`}>إصدار التطبيق {backup.releaseVersion}</span>
                         <span data-testid={`text-backup-size-${backup.id}`} className="inline-flex items-center gap-1">
                           <Database className="h-3.5 w-3.5" />{formatBytes(backup.bundleSizeBytes)}
                         </span>
@@ -511,7 +517,7 @@ export default function DevCloudBackupsPanel() {
                   </div>
                   <div className="flex shrink-0 items-center justify-between gap-2">
                     <span data-testid={`text-operation-created-${operation.id}`} className="text-[10px] text-slate-400">{formatDate(operation.createdAt)}</span>
-                    <StatusBadge status={operation.status} />
+                    <StatusBadge status={operation.status} testId={`operation-status-${operation.id}`} />
                   </div>
                 </div>
               ))}
@@ -554,7 +560,11 @@ export default function DevCloudBackupsPanel() {
                 data-testid="select-backup-target-agent"
                 className="mt-1.5 min-h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
                 value={targetAgentId}
-                onChange={(event) => setTargetAgentId(event.target.value)}
+                onChange={(event) => {
+                  setTargetAgentId(event.target.value);
+                  setUploadConfirmed(false);
+                  setRestoreConfirmed(false);
+                }}
               >
                 <option value="">اختر وكيلاً</option>
                 {eligibleTargets.map((agent) => (
@@ -563,12 +573,24 @@ export default function DevCloudBackupsPanel() {
                   </option>
                 ))}
               </select>
-              <p className="mt-1.5 text-xs text-slate-500">تُعرض الوكلاء النشطة والجاهزة للاتصال الآمن فقط.</p>
+              <p className="mt-1.5 text-xs text-slate-500">تُعرض الوكلاء النشطة ذات اتصال SSH مختبر فقط.</p>
             </div>
 
             {activeDialog === "upload" ? (
-              <div data-testid="notice-agent-upload" className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-900">
-                سترسل النسخة المخزنة المشفّرة إلى مساحة النسخ الاحتياطي للوكيل. لا يبدأ هذا الإجراء استعادة الكود ولا يستورد قاعدة البيانات.
+              <div data-testid="notice-agent-upload" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
+                <p className="text-xs leading-5 text-amber-950">
+                  الحزمة تتضمن لقطة كاملة لقاعدة البيانات وقد تحتوي على بيانات أعمال الشركات. سيرسل الملف المشفّر إلى مساحة النسخ الاحتياطي للوكيل، ولن يستورده.
+                </p>
+                <label className="mt-3 flex cursor-pointer items-start gap-2 border-t border-amber-200 pt-3 text-xs font-medium leading-5 text-amber-950">
+                  <input
+                    type="checkbox"
+                    data-testid="checkbox-confirm-sensitive-upload"
+                    checked={uploadConfirmed}
+                    onChange={(event) => setUploadConfirmed(event.target.checked)}
+                    className="mt-1 h-4 w-4 accent-amber-800"
+                  />
+                  أوافق على إرسال الأرشيف المشفّر الذي قد يحتوي على بيانات أعمال إلى هذا الوكيل.
+                </label>
               </div>
             ) : (
               <div data-testid="notice-agent-restore" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
@@ -576,7 +598,7 @@ export default function DevCloudBackupsPanel() {
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-800" />
                   <div className="text-xs leading-5 text-amber-950">
                     <p className="font-bold">سيتم استبدال كود التطبيق على الوكيل المحدد.</p>
-                    <p>لن يتم استيراد أي تفريغ لقاعدة البيانات، ولن تُستبدل بيانات الشركة أو تُعدّل.</p>
+                    <p>لن تُرسل لقطة قاعدة البيانات إلى الوكيل، ولن تُستورد أو تُعدّل بيانات الشركة.</p>
                   </div>
                 </div>
                 <label className="mt-3 flex cursor-pointer items-start gap-2 border-t border-amber-200 pt-3 text-xs font-medium leading-5 text-amber-950">
@@ -595,7 +617,7 @@ export default function DevCloudBackupsPanel() {
               <Button data-testid="button-cancel-agent-action" variant="outline" disabled={busy} onClick={() => setActiveDialog(null)}>إلغاء</Button>
               <Button
                 data-testid="button-confirm-agent-action"
-                disabled={!targetAgentId || busy || (activeDialog === "restore" && !restoreConfirmed)}
+                disabled={!targetAgentId || busy || (activeDialog === "upload" && !uploadConfirmed) || (activeDialog === "restore" && !restoreConfirmed)}
                 onClick={submitAction}
               >
                 {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : activeDialog === "upload" ? <ArrowUpFromLine className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}

@@ -89,6 +89,7 @@ function backupMetadata(row: any) {
     encryptionIv: row.encryptionIv,
     encryptionTag: row.encryptionTag,
     releaseVersion: row.releaseVersion,
+    releaseSha256: row.releaseSha256,
   };
 }
 
@@ -181,8 +182,6 @@ async function createBackup(backup: typeof devCloudBackupsTable.$inferSelect): P
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "dev-cloud-create-"));
   try {
     const distDir = await findDistDir();
-    const sourceArchivePath = path.join(distDir, "dev-cloud-source.tar.gz");
-    await fs.access(sourceArchivePath);
     const release = await getReleaseInfo().catch(async () => buildReleaseFromDist(distDir));
     const databaseDumpPath = path.join(workDir, "database.dump");
     let databaseUrl: string;
@@ -205,13 +204,10 @@ async function createBackup(backup: typeof devCloudBackupsTable.$inferSelect): P
 
     await dumpPostgresDatabase(databaseUrl, databaseDumpPath, sourceAgent);
     const runtimePath = path.join(workDir, "runtime-release.tgz");
-    const sourcePath = path.join(workDir, "source-code.tar.gz");
     await fs.copyFile(release.tarPath, runtimePath);
-    await fs.copyFile(sourceArchivePath, sourcePath);
     const built = await buildBackupBundle({
       workDir,
       releaseArchivePath: runtimePath,
-      sourceArchivePath: sourcePath,
       databaseDumpPath,
       releaseVersion: release.version,
       releaseSha256: release.sha256,
@@ -272,11 +268,10 @@ async function queueOperation(input: {
     createdByUserId: input.createdByUserId,
     createdByUsername: input.createdByUsername,
   }).returning();
-  startOperation(operation.id);
   return operation;
 }
 
-router.get("/backups", async (req, res): Promise<void> => {
+router.get("/backups", async (_req, res): Promise<void> => {
   const [backups, operations, agents] = await Promise.all([
     centralDb.select().from(devCloudBackupsTable)
       .orderBy(desc(devCloudBackupsTable.createdAt)).limit(100),
@@ -334,6 +329,10 @@ router.post("/backups", async (req, res): Promise<void> => {
       return;
     }
     sourceLabel = `${source.name} — ${source.domain}`;
+    if (source.deployStatus === "deploying") {
+      res.status(409).json({ error: "الوكيل قيد عملية نشر أو صيانة؛ انتظر اكتمالها قبل أخذ النسخة" });
+      return;
+    }
   }
   const pending = await centralDb.select({ id: devCloudBackupOperationsTable.id })
     .from(devCloudBackupOperationsTable)
@@ -343,32 +342,46 @@ router.post("/backups", async (req, res): Promise<void> => {
     )).limit(1);
   if (pending.length) { res.status(409).json({ error: "توجد نسخة أخرى قيد الإنشاء؛ انتظر اكتمالها" }); return; }
 
-  const [backup] = await centralDb.insert(devCloudBackupsTable).values({
-    label: sanitizeBackupLabel(body.label),
-    sourceType: body.sourceType,
-    sourceAgentId: body.sourceAgentId ?? null,
-    sourceLabel,
-    releaseVersion: "pending",
-    releaseSha256: "pending",
-    sourceSha256: "pending",
-    databaseSha256: "pending",
-    bundleSha256: "",
-    encryptedSha256: "",
-    bundleSizeBytes: 0,
-    objectPath: "",
-    encryptionSalt: "",
-    encryptionIv: "",
-    encryptionTag: "",
-    status: "creating",
-    ...actor(req),
-  }).returning();
-  const operation = await queueOperation({
-    backupId: backup.id,
-    action: "create",
-    targetType: "central",
-    targetLabel: "التخزين المركزي",
-    ...actor(req),
-  });
+  let backup: typeof devCloudBackupsTable.$inferSelect;
+  let operation: typeof devCloudBackupOperationsTable.$inferSelect;
+  try {
+    [backup, operation] = await centralDb.transaction(async (tx) => {
+      const [createdBackup] = await tx.insert(devCloudBackupsTable).values({
+        label: sanitizeBackupLabel(body.label),
+        sourceType: body.sourceType,
+        sourceAgentId: body.sourceAgentId ?? null,
+        sourceLabel,
+        releaseVersion: "pending",
+        releaseSha256: "pending",
+        sourceSha256: "pending",
+        databaseSha256: "pending",
+        bundleSha256: "",
+        encryptedSha256: "",
+        bundleSizeBytes: 0,
+        objectPath: "",
+        encryptionSalt: "",
+        encryptionIv: "",
+        encryptionTag: "",
+        status: "creating",
+        ...actor(req),
+      }).returning();
+      const [createdOperation] = await tx.insert(devCloudBackupOperationsTable).values({
+        backupId: createdBackup.id,
+        action: "create",
+        targetType: "central",
+        targetLabel: "التخزين المركزي",
+        ...actor(req),
+      }).returning();
+      return [createdBackup, createdOperation] as const;
+    });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      res.status(409).json({ error: "توجد نسخة أخرى قيد الإنشاء؛ انتظر اكتمالها" });
+      return;
+    }
+    throw error;
+  }
+  startOperation(operation.id);
   await writeAudit({
     userId: req.authUser!.id,
     username: req.authUser!.username,
@@ -427,6 +440,10 @@ async function validateAgentTarget(
     res.status(404).json({ error: "سيرفر الوكيل غير موجود أو غير نشط" });
     return null;
   }
+  if (agent.deployStatus === "deploying") {
+    res.status(409).json({ error: "الوكيل قيد عملية أخرى؛ انتظر اكتمالها" });
+    return null;
+  }
   const pending = await centralDb.select({ id: devCloudBackupOperationsTable.id })
     .from(devCloudBackupOperationsTable)
     .where(and(
@@ -458,14 +475,24 @@ router.post("/backups/:backupId/upload", async (req, res): Promise<void> => {
   if (!backup || backup.status !== "ready") { res.status(404).json({ error: "النسخة غير موجودة أو لم تكتمل" }); return; }
   const agent = await validateAgentTarget(res, parsed.data, "upload");
   if (!agent) return;
-  const operation = await queueOperation({
-    backupId: id,
-    action: "upload",
-    targetType: "agent",
-    targetAgentId: agent.id,
-    targetLabel: `${agent.name} — ${agent.domain}`,
-    ...actor(req),
-  });
+  let operation: typeof devCloudBackupOperationsTable.$inferSelect;
+  try {
+    operation = await queueOperation({
+      backupId: id,
+      action: "upload",
+      targetType: "agent",
+      targetAgentId: agent.id,
+      targetLabel: `${agent.name} — ${agent.domain}`,
+      ...actor(req),
+    });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      res.status(409).json({ error: "توجد عملية أخرى على هذا السيرفر" });
+      return;
+    }
+    throw error;
+  }
+  startOperation(operation.id);
   await writeAudit({
     userId: req.authUser!.id,
     username: req.authUser!.username,
@@ -494,14 +521,24 @@ router.post("/backups/:backupId/restore-agent", async (req, res): Promise<void> 
   if (!backup || backup.status !== "ready") { res.status(404).json({ error: "النسخة غير موجودة أو لم تكتمل" }); return; }
   const agent = await validateAgentTarget(res, parsed.data, "restore");
   if (!agent) return;
-  const operation = await queueOperation({
-    backupId: id,
-    action: "restore",
-    targetType: "agent",
-    targetAgentId: agent.id,
-    targetLabel: `${agent.name} — ${agent.domain}`,
-    ...actor(req),
-  });
+  let operation: typeof devCloudBackupOperationsTable.$inferSelect;
+  try {
+    operation = await queueOperation({
+      backupId: id,
+      action: "restore",
+      targetType: "agent",
+      targetAgentId: agent.id,
+      targetLabel: `${agent.name} — ${agent.domain}`,
+      ...actor(req),
+    });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      res.status(409).json({ error: "توجد عملية أخرى على هذا السيرفر" });
+      return;
+    }
+    throw error;
+  }
+  startOperation(operation.id);
   await writeAudit({
     userId: req.authUser!.id,
     username: req.authUser!.username,
