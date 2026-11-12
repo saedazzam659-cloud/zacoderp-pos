@@ -32,3 +32,15 @@ at `/api/admin/dev-cloud` before zatcaRouter), and
 `artifacts/zatca-invoicing/src/pages/DevCloudAdmin.tsx`. SA-only screen → no
 company module gate (like إدارة النطاقات). Adding a doc/seat capability means
 extending `DEV_SEAT_PERMISSION_KEYS` + `DEV_ROLE_DEFAULT_PERMISSIONS` together.
+
+## Requested rollback scope
+The user wants one SuperAdmin control point to restore the central platform or
+each external server independently, without changing the existing database
+schema or rolling back business data.
+
+**Why:** the operator needs a useful, target-specific recovery option that does
+not affect other servers or tenants.
+
+**How to apply:** keep code-release recovery separate from database recovery;
+do not imply that the Replit-hosted central deployment can be rolled back by an
+in-app button unless a supported deployment controller is available.
