@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useDataRefresh } from "../lib/dataBus";
 import {
   listQuotations, getQuotation, createQuotation, updateQuotation, deleteQuotation,
@@ -14,12 +14,15 @@ import { listBrands, setItemBrands } from "../lib/brands";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
-import { getCompanyProfile, useShowFreeQuantityColumn } from "../lib/appSettings";
+import { getCompanyProfile, uiText, useShowFreeQuantityColumn, useUiLanguage } from "../lib/appSettings";
+import { saveText } from "../lib/saveFile";
+import { printQuotationDocs, printQuotationSummary } from "../lib/invoicePrint";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
   LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, EmptyItemsRow,
-  useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
+  ActionBtn, useGridFilter, GridToolbar, SortableTh, GridFilterRow,
+  ExportButtons, gridToExportCols, type GridColumn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
@@ -29,20 +32,27 @@ import { computeDiscount, lineNet, type DiscType, type DiscFields } from "../lib
 
 type FLine = SalesLine & DiscFields;
 
-const STATUS: Record<QuotationStatus, { l: string; c: string }> = {
-  draft:     { l: "مسودة",  c: "#475569" },
-  sent:      { l: "مُرسل",   c: "#1e40af" },
-  accepted:  { l: "مقبول",  c: "#15803d" },
-  rejected:  { l: "مرفوض",  c: "#b91c1c" },
-  converted: { l: "محوّل لفاتورة", c: "#7c3aed" },
+const STATUS: Record<QuotationStatus, { l: string; en: string; c: string }> = {
+  draft:     { l: "مسودة",  en: "Draft", c: "#475569" },
+  sent:      { l: "مُرسل",   en: "Sent", c: "#1e40af" },
+  accepted:  { l: "مقبول",  en: "Accepted", c: "#15803d" },
+  rejected:  { l: "مرفوض",  en: "Rejected", c: "#b91c1c" },
+  converted: { l: "محوّل لفاتورة", en: "Converted", c: "#7c3aed" },
 };
 
-function StatusBadge({ s }: { s: QuotationStatus }) {
+function statusLabel(s: QuotationStatus, language: string): string {
   const x = STATUS[s];
-  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{x.l}</span>;
+  return language === "en" ? x.en : x.l;
+}
+
+function StatusBadge({ s, language }: { s: QuotationStatus; language: string }) {
+  const x = STATUS[s];
+  return <span style={{ background: x.c + "20", color: x.c, padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600 }}>{statusLabel(s, language)}</span>;
 }
 
 export default function QuotationsAdmin() {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
   const [rows, setRows] = useState<Quotation[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<Quotation | null>(null);
@@ -52,6 +62,10 @@ export default function QuotationsAdmin() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [statusFilter, setStatusFilter] = useState<QuotationStatus | "all">("all");
   const [err, setErr] = useState<string | null>(null);
   const formOpen = creating || editDoc !== null;
 
@@ -65,63 +79,212 @@ export default function QuotationsAdmin() {
     void refreshDeps();
   }, []);
 
-  const sel = useRowSelect(rows);
-  const { start, end, page: clampedPage } = pageSlice(rows.length, page, pageSize);
-  const pageRows = rows.slice(start, end);
+  const columns = useMemo<GridColumn<Quotation>[]>(() => [
+    { key: "docNo", label: text("رقم العرض", "Quotation number"), value: (r) => r.docNo, text: (r) => r.docNo },
+    { key: "date", label: text("التاريخ", "Date"), value: (r) => r.quotationDate, text: (r) => r.quotationDate },
+    { key: "validUntil", label: text("صالح حتى", "Valid until"), value: (r) => r.validUntil ?? "", text: (r) => r.validUntil ?? "" },
+    { key: "customer", label: text("العميل", "Customer"), value: (r) => r.buyerName ?? r.customerName ?? "", text: (r) => r.buyerName ?? r.customerName ?? "" },
+    { key: "status", label: text("الحالة", "Status"), value: (r) => statusLabel(r.status, language), text: (r) => statusLabel(r.status, language) },
+    { key: "subtotal", label: text("المجموع", "Subtotal"), type: "number", value: (r) => r.subtotal, text: (r) => fmt(r.subtotal) },
+    { key: "vat", label: text("الضريبة", "VAT"), type: "number", value: (r) => r.vatTotal, text: (r) => fmt(r.vatTotal) },
+    { key: "grandTotal", label: text("الإجمالي", "Total"), type: "number", value: (r) => r.grandTotal, text: (r) => fmt(r.grandTotal) },
+  ], [language]);
+  const grid = useGridFilter(rows, columns);
+  const visibleRows = useMemo(
+    () => grid.view.filter((row) => statusFilter === "all" || row.status === statusFilter),
+    [grid.view, statusFilter],
+  );
+  const { start, end, page: clampedPage } = pageSlice(visibleRows.length, page, pageSize);
+  const pageRows = visibleRows.slice(start, end);
+  const selectedRows = rows.filter((row) => selectedIds.has(row.id));
+  const selectedSendable = selectedRows.filter((row) => row.status === "draft");
+  const selectedAcceptable = selectedRows.filter((row) => row.status === "draft" || row.status === "sent");
+  const selectedDeletable = selectedRows.filter((row) => row.status !== "converted");
+  const singleSelected = selectedRows.length === 1 ? selectedRows[0] : null;
+  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selectedIds.has(row.id));
+  const someVisibleSelected = visibleRows.some((row) => selectedIds.has(row.id));
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someVisibleSelected && !allVisibleSelected;
+  }, [someVisibleSelected, allVisibleSelected]);
+  useEffect(() => {
+    const available = new Set(rows.map((row) => row.id));
+    setSelectedIds((current) => {
+      const next = new Set([...current].filter((id) => available.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [rows]);
   useDataRefresh(["invoices"], refresh);
   useEffect(() => { if (clampedPage !== page) setPage(clampedPage); }, [clampedPage, page]);
+
+  function toggleSelection(id: number) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) visibleRows.forEach((row) => next.delete(row.id));
+      else visibleRows.forEach((row) => next.add(row.id));
+      return next;
+    });
+  }
 
   async function toggleView(id: number) {
     if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
     setExpandedId(id); setExpandedDetail(null);
-    const fetched = await getQuotation(id);
-    setExpandedId((cur) => { if (cur === id) setExpandedDetail(fetched); return cur; });
+    try {
+      const fetched = await getQuotation(id);
+      setExpandedId((cur) => { if (cur === id) setExpandedDetail(fetched); return cur; });
+    } catch (e: any) {
+      setErr(e?.message ?? text("تعذر تحميل تفاصيل العرض", "Could not load quotation details."));
+    }
   }
 
   async function changeStatus(id: number, s: QuotationStatus) {
-    setBusyId(id); setErr(null);
-    try { await setQuotationStatus(id, s); await refresh(); }
-    catch (e: any) { setErr(e?.message ?? "فشل تغيير الحالة"); }
+    setBusyId(id); setErr(null); setBulkNotice(null);
+    try {
+      await setQuotationStatus(id, s);
+      await refresh();
+      setSelectedIds(new Set());
+      setBulkNotice(text(`تم تحديث حالة العرض إلى ${statusLabel(s, "ar")}`, `Quotation status changed to ${statusLabel(s, "en")}`));
+    }
+    catch (e: any) { setErr(e?.message ?? text("فشل تغيير الحالة", "Could not change status.")); }
     finally { setBusyId(null); }
   }
 
   async function convert(id: number) {
-    setBusyId(id); setErr(null);
-    try { await convertQuotationToInvoice(id); await refresh(); }
-    catch (e: any) { setErr(e?.message ?? "فشل التحويل إلى فاتورة"); }
+    setBusyId(id); setErr(null); setBulkNotice(null);
+    try {
+      const invoiceId = await convertQuotationToInvoice(id);
+      await refresh();
+      setSelectedIds(new Set());
+      setBulkNotice(text(`تم التحويل إلى فاتورة #${invoiceId}`, `Converted to invoice #${invoiceId}`));
+    }
+    catch (e: any) { setErr(e?.message ?? text("فشل التحويل إلى فاتورة", "Could not convert to invoice.")); }
     finally { setBusyId(null); }
   }
 
   async function startEdit(id: number) {
-    setBusyId(id); setErr(null);
+    setBusyId(id); setErr(null); setBulkNotice(null);
     try {
       const full = await getQuotation(id);
       setCreating(false); setExpandedId(null); setExpandedDetail(null);
+      setSelectedIds(new Set());
       setEditDoc(full);
     } catch (e: any) { setErr(e?.message ?? "فشل تحميل العرض"); }
     finally { setBusyId(null); }
   }
 
-  async function remove(id: number, docNo: string) {
-    if (!window.confirm(`حذف عرض السعر ${docNo}؟ لا يمكن التراجع.`)) return;
-    setBusyId(id); setErr(null);
-    try { await deleteQuotation(id); await refresh(); }
-    catch (e: any) { setErr(e?.message ?? "فشل حذف العرض"); }
-    finally { setBusyId(null); }
+  async function runBulkAction(
+    targets: Quotation[],
+    successAr: string,
+    successEn: string,
+    action: (id: number) => Promise<unknown>,
+  ) {
+    if (!targets.length) return;
+    setBulkBusy(true); setErr(null); setBulkNotice(null);
+    let succeeded = 0;
+    const failures: string[] = [];
+    try {
+      for (const row of targets) {
+        try { await action(row.id); succeeded += 1; }
+        catch (e: any) { failures.push(e?.message ?? `${row.docNo}: ${text("فشل الإجراء", "Action failed")}`); }
+      }
+      if (succeeded) await refresh();
+      setSelectedIds(new Set());
+      if (failures.length) {
+        setErr(text(
+          `${successAr}: نجح ${succeeded} وفشل ${failures.length}. ${failures[0]}`,
+          `${successEn}: ${succeeded} succeeded, ${failures.length} failed. ${failures[0]}`,
+        ));
+      } else {
+        setBulkNotice(text(`${successAr}: ${succeeded}`, `${successEn}: ${succeeded}`));
+      }
+    } catch (e: any) {
+      setErr(e?.message ?? text("تعذر تحديث قائمة العروض", "Could not refresh quotations."));
+    } finally { setBulkBusy(false); }
+  }
+
+  function bulkSend() {
+    return runBulkAction(selectedSendable, "تم إرسال العروض", "Quotations sent", (id) => setQuotationStatus(id, "sent"));
+  }
+
+  function bulkAccept() {
+    return runBulkAction(selectedAcceptable, "تم قبول العروض", "Quotations accepted", (id) => setQuotationStatus(id, "accepted"));
+  }
+
+  async function bulkDelete() {
+    if (!selectedDeletable.length) return;
+    if (!window.confirm(text(
+      `حذف ${selectedDeletable.length} عرض سعر غير محوّل نهائيًا؟ لا يمكن التراجع عن هذا الإجراء.`,
+      `Permanently delete ${selectedDeletable.length} non-converted quotations? This cannot be undone.`,
+    ))) return;
+    await runBulkAction(selectedDeletable, "تم حذف العروض", "Quotations deleted", deleteQuotation);
+  }
+
+  function exportCsv() {
+    if (!visibleRows.length) return;
+    const quoteCell = (value: unknown, numeric = false) => {
+      const raw = String(value ?? "");
+      const safe = !numeric && /^[\s]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
+    const csv = [
+      columns.map((column) => quoteCell(column.label)).join(","),
+      ...visibleRows.map((row) => columns.map((column) => {
+        const value = column.value(row);
+        return quoteCell(column.type === "number" ? value : column.text ? column.text(row) : value, column.type === "number");
+      }).join(",")),
+    ].join("\r\n");
+    setErr(null);
+    void saveText(`\uFEFF${csv}`, `sales-quotations-${new Date().toISOString().slice(0, 10)}.csv`)
+      .catch((e: unknown) => setErr(typeof e === "string" ? e : e instanceof Error ? e.message : text("تعذر حفظ ملف CSV", "Could not save CSV file.")));
+  }
+
+  function printSelectedSummary() {
+    try {
+      printQuotationSummary(selectedRows.map((row) => ({
+        docNo: row.docNo,
+        quotationDate: row.quotationDate,
+        validUntil: row.validUntil,
+        customerName: row.buyerName ?? row.customerName,
+        statusLabel: statusLabel(row.status, language),
+        subtotal: row.subtotal,
+        vatTotal: row.vatTotal,
+        grandTotal: row.grandTotal,
+      })));
+    } catch (e: any) { setErr(e?.message ?? text("تعذرت طباعة ملخص العروض", "Could not print quotation summary.")); }
+  }
+
+  async function printSelectedDocs() {
+    if (!selectedRows.length) return;
+    setBulkBusy(true); setErr(null);
+    try {
+      const fullDocs = await Promise.all(selectedRows.map((row) => getQuotation(row.id)));
+      printQuotationDocs(fullDocs);
+    } catch (e: any) {
+      setErr(e?.message ?? text("تعذر تحميل العروض للطباعة", "Could not load quotations for printing."));
+    } finally { setBulkBusy(false); }
   }
 
   return (
     <Page
-      title="عروض الأسعار"
-      subtitle={`${rows.length} عرض — مستند غير مالي؛ يمكن تحويله إلى فاتورة مبيعات`}
+      title={text("عروض الأسعار", "Quotations")}
+      subtitle={text(`${rows.length} عرض — مستند غير مالي؛ يمكن تحويله إلى فاتورة مبيعات`, `${rows.length} quotations — non-fiscal documents that can be converted to sales invoices`)}
       right={
-        <button onClick={() => setCreating(true)} disabled={!deps || formOpen}
+        <button onClick={() => { setSelectedIds(new Set()); setBulkNotice(null); setCreating(true); }} disabled={!deps || formOpen}
           style={{ ...btnPrimary, opacity: (!deps || formOpen) ? 0.5 : 1, cursor: (!deps || formOpen) ? "not-allowed" : "pointer" }}>
-          + عرض سعر
+          + {text("عرض سعر", "Quotation")}
         </button>
       }
     >
       <ErrorMsg text={err} />
+      {bulkNotice && <div role="status" style={{ marginBottom: 12, padding: "9px 12px", borderRadius: 8, color: "#166534", background: "#f0fdf4", border: "1px solid #bbf7d0" }}>{bulkNotice}</div>}
       {formOpen && deps && (
         <Card style={{ marginBottom: 12 }}>
           <div style={{ padding: 16 }}>
@@ -129,67 +292,114 @@ export default function QuotationsAdmin() {
               onItemCreated={(item) => setDeps((current) => current
                 ? { ...current, items: current.items.some((existing) => existing.id === item.id) ? current.items : [...current.items, item] }
                 : current)}
-              onCancel={() => { setCreating(false); setEditDoc(null); }}
-              onDone={() => { setCreating(false); setEditDoc(null); void refresh(); }} />
+              onCancel={() => { setCreating(false); setEditDoc(null); setSelectedIds(new Set()); }}
+              onDone={() => { setCreating(false); setEditDoc(null); setSelectedIds(new Set()); void refresh(); }} />
           </div>
         </Card>
       )}
       {rows.length > 0 && !formOpen && (
-        <ActionBar selectedLabel={sel.selected ? sel.selected.docNo : null}>
-          {(() => {
-            const s = sel.selected;
-            const busy = !s || busyId === s.id;
-            return (
-              <>
-                <ActionBtn label={expandedId === sel.selectedId ? "إخفاء" : "عرض"} icon="▼" disabled={!s}
-                  onClick={() => { if (sel.selectedId != null) void toggleView(sel.selectedId); }} />
-                <ActionBtn label="إرسال" icon="📤" disabled={busy || s?.status !== "draft"}
-                  onClick={() => { if (s) void changeStatus(s.id, "sent"); }} />
-                <ActionBtn label="قبول" icon="✔" tone="success" disabled={busy || s?.status !== "sent"}
-                  onClick={() => { if (s) void changeStatus(s.id, "accepted"); }} />
-                <ActionBtn label="رفض" icon="✖" tone="danger" disabled={busy || s?.status !== "sent"}
-                  onClick={() => { if (s) void changeStatus(s.id, "rejected"); }} />
-                <ActionBtn label="إلى فاتورة" icon="↪" tone="purple" disabled={busy || s?.status === "converted" || s?.status === "rejected"}
-                  onClick={() => { if (s) void convert(s.id); }} />
-                <ActionBtn label="تعديل" icon="✎" disabled={busy || s?.status === "converted"}
-                  onClick={() => { if (s) void startEdit(s.id); }} />
-                <ActionBtn label="حذف" icon="🗑" tone="danger" disabled={busy || s?.status === "converted"}
-                  onClick={() => { if (s) void remove(s.id, s.docNo); }} />
-                {s?.status === "converted" && s.convertedInvoiceId && (
-                  <span style={{ fontSize: 12, color: "#7c3aed" }}>فاتورة #{s.convertedInvoiceId}</span>
-                )}
-              </>
-            );
-          })()}
-        </ActionBar>
+        <>
+          <GridToolbar
+            grid={grid}
+            placeholder={text("🔍 بحث في عروض الأسعار…", "🔍 Search quotations…")}
+            extra={
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <ExportButtons columns={gridToExportCols(columns)} rows={visibleRows} filenameBase="sales-quotations" title={text("عروض الأسعار", "Quotations")} />
+                <button type="button" disabled={!visibleRows.length} onClick={exportCsv}
+                  style={{ ...btnSecondary, opacity: visibleRows.length ? 1 : 0.5, cursor: visibleRows.length ? "pointer" : "not-allowed" }}>
+                  {text("تصدير CSV", "Export CSV")}
+                </button>
+              </div>
+            }
+          />
+          <div role="group" aria-label={text("تصفية حالة العرض", "Filter quotation status")}
+            style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 12 }}>
+            {(["all", "draft", "sent", "accepted", "rejected", "converted"] as const).map((status) => {
+              const label = status === "all" ? text("كل الحالات", "All statuses") : statusLabel(status, language);
+              const active = statusFilter === status;
+              return <button key={status} type="button" onClick={() => { setStatusFilter(status); setPage(1); }}
+                aria-pressed={active}
+                style={{ ...btnSecondary, padding: "6px 10px", borderColor: active ? "#2563eb" : "#cbd5e1", background: active ? "#eff6ff" : "#fff", color: active ? "#1d4ed8" : "#334155" }}>
+                {label}
+              </button>;
+            })}
+            <span style={{ marginInlineStart: "auto", color: "#64748b", fontSize: 12 }}>
+              {visibleRows.length}{visibleRows.length !== rows.length ? ` / ${rows.length}` : ""} {text("عرض", "quotations")}
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12, padding: "10px 12px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10 }}>
+            <span style={{ minWidth: 150, fontSize: 12.5, fontWeight: 700, color: "#475569" }}>
+              {selectedIds.size ? text(`محدد ${selectedIds.size} عرض`, `${selectedIds.size} selected`) : text("حدد عروضًا لتفعيل الإجراءات", "Select quotations to enable actions")}
+            </span>
+            <div style={{ flex: 1 }} />
+            <ActionBtn label={text("طباعة ملخص", "Print summary")} icon="▤" disabled={!selectedRows.length || bulkBusy} onClick={printSelectedSummary} />
+            <ActionBtn label={text("طباعة العروض المحددة", "Print selected quotations")} icon="🖨" disabled={!selectedRows.length || bulkBusy} onClick={() => void printSelectedDocs()} />
+            <ActionBtn label={text(`إرسال (${selectedSendable.length})`, `Send (${selectedSendable.length})`)} icon="↗" disabled={!selectedSendable.length || bulkBusy} onClick={() => void bulkSend()} />
+            <ActionBtn label={text(`قبول (${selectedAcceptable.length})`, `Accept (${selectedAcceptable.length})`)} icon="✔" tone="success" disabled={!selectedAcceptable.length || bulkBusy} onClick={() => void bulkAccept()} />
+            {singleSelected?.status === "sent" && (
+              <ActionBtn label={text("رفض", "Reject")} icon="✖" tone="danger" disabled={bulkBusy || busyId === singleSelected.id} onClick={() => void changeStatus(singleSelected.id, "rejected")} />
+            )}
+            {singleSelected && singleSelected.status !== "converted" && singleSelected.status !== "rejected" && (
+              <ActionBtn label={text("إلى فاتورة", "Convert to invoice")} icon="↪" tone="purple" disabled={bulkBusy || busyId === singleSelected.id} onClick={() => void convert(singleSelected.id)} />
+            )}
+            {singleSelected && singleSelected.status !== "converted" && (
+              <ActionBtn label={text("تعديل", "Edit")} icon="✎" disabled={bulkBusy || busyId === singleSelected.id} onClick={() => void startEdit(singleSelected.id)} />
+            )}
+            <ActionBtn label={text(`حذف (${selectedDeletable.length})`, `Delete (${selectedDeletable.length})`)} icon="🗑" tone="danger" disabled={!selectedDeletable.length || bulkBusy} onClick={() => void bulkDelete()} />
+            {singleSelected?.status === "converted" && singleSelected.convertedInvoiceId && (
+              <span style={{ fontSize: 12, color: "#7c3aed" }}>{text("فاتورة", "Invoice")} #{singleSelected.convertedInvoiceId}</span>
+            )}
+          </div>
+        </>
       )}
       <Card>
-        {rows.length === 0 && !formOpen ? <Empty text="لا توجد عروض أسعار" /> : (
+        {rows.length === 0 && !formOpen ? <Empty text={text("لا توجد عروض أسعار", "No quotations")} />
+          : visibleRows.length === 0 && !formOpen ? <Empty text={text("لا توجد نتائج مطابقة للفلاتر", "No quotations match these filters")} /> : (
           <Table>
-            <thead><tr>
-              <SelectTh />
-              <Th>رقم العرض</Th><Th>التاريخ</Th><Th>صالح حتى</Th><Th>العميل</Th><Th>الحالة</Th>
-              <Th style={{ textAlign: "left" }}>المجموع</Th><Th style={{ textAlign: "left" }}>الضريبة</Th>
-              <Th style={{ textAlign: "left" }}>الإجمالي</Th>
-            </tr></thead>
+            <thead>
+              <tr>
+                <Th style={{ width: 38, textAlign: "center" }}>
+                  <input ref={selectAllRef} type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible}
+                    aria-label={text("تحديد كل النتائج", "Select all filtered quotations")} disabled={!visibleRows.length || bulkBusy}
+                    style={{ width: 16, height: 16, accentColor: "#2563eb", cursor: "pointer" }} />
+                </Th>
+                <SortableTh grid={grid} colKey="docNo">{text("رقم العرض", "Quotation number")}</SortableTh>
+                <SortableTh grid={grid} colKey="date">{text("التاريخ", "Date")}</SortableTh>
+                <SortableTh grid={grid} colKey="validUntil">{text("صالح حتى", "Valid until")}</SortableTh>
+                <SortableTh grid={grid} colKey="customer">{text("العميل", "Customer")}</SortableTh>
+                <SortableTh grid={grid} colKey="status">{text("الحالة", "Status")}</SortableTh>
+                <SortableTh grid={grid} colKey="subtotal" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("المجموع", "Subtotal")}</SortableTh>
+                <SortableTh grid={grid} colKey="vat" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الضريبة", "VAT")}</SortableTh>
+                <SortableTh grid={grid} colKey="grandTotal" style={{ textAlign: language === "en" ? "right" : "left" }}>{text("الإجمالي", "Total")}</SortableTh>
+                <Th>{text("الإجراءات", "Actions")}</Th>
+              </tr>
+              <GridFilterRow grid={grid} columns={columns} leading={1} trailing={1} />
+            </thead>
             <tbody>
               {pageRows.map((p) => (
                 <React.Fragment key={p.id}>
                   <tr>
-                    <SelectCell id={p.id} selectedId={sel.selectedId} onToggle={sel.toggle} />
+                    <Td style={{ width: 38, textAlign: "center" }}>
+                      <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleSelection(p.id)}
+                        aria-label={text(`تحديد العرض ${p.docNo}`, `Select quotation ${p.docNo}`)}
+                        style={{ width: 16, height: 16, accentColor: "#2563eb", cursor: "pointer" }} />
+                    </Td>
                     <Td mono>{p.docNo}</Td>
                     <Td>{p.quotationDate}</Td>
                     <Td>{p.validUntil ?? "—"}</Td>
-                    <Td>{p.customerName ?? "بدون عميل"}</Td>
-                    <Td><StatusBadge s={p.status} /></Td>
+                    <Td>{p.buyerName ?? p.customerName ?? text("بدون عميل", "No customer")}</Td>
+                    <Td><StatusBadge s={p.status} language={language} /></Td>
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
+                    <Td><button type="button" onClick={() => void toggleView(p.id)} style={btnLink}>
+                      {expandedId === p.id ? text("إخفاء", "Hide") : text("عرض", "View")}
+                    </button></Td>
                   </tr>
                   {expandedId === p.id && (
                     <tr style={{ background: "#f8fafc" }}>
-                      <Td colSpan={9 as any}>
-                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>... جاري التحميل</div> : (
+                      <Td colSpan={10 as any}>
+                        {!expandedDetail ? <div style={{ padding: 16, textAlign: "center", color: "#64748b" }}>{text("جارٍ التحميل…", "Loading…")}</div> : (
                           <DocDetail p={expandedDetail} />
                         )}
                       </Td>
@@ -200,8 +410,8 @@ export default function QuotationsAdmin() {
             </tbody>
           </Table>
         )}
-        {rows.length > 0 && (
-          <Pagination total={rows.length} page={page} pageSize={pageSize}
+        {visibleRows.length > 0 && (
+          <Pagination total={visibleRows.length} page={page} pageSize={pageSize}
             onPageChange={setPage} onPageSizeChange={(s) => { setPageSize(s); setPage(1); }} />
         )}
       </Card>

@@ -353,6 +353,158 @@ export async function printSalesDoc(kind: PrintKind, doc: PrintDoc): Promise<voi
   printHtml(html);
 }
 
+export interface QuotationPrintDoc {
+  docNo: string;
+  quotationDate: string;
+  validUntil?: string | null;
+  customerName: string | null;
+  buyerName?: string | null;
+  buyerVat?: string | null;
+  buyerAddress?: string | null;
+  subtotal: number;
+  vatTotal: number;
+  grandTotal: number;
+  notes: string | null;
+  lines: SalesLine[];
+}
+
+export interface QuotationSummaryPrintDoc {
+  docNo: string;
+  quotationDate: string;
+  validUntil?: string | null;
+  customerName: string | null;
+  statusLabel: string;
+  subtotal: number;
+  vatTotal: number;
+  grandTotal: number;
+}
+
+function quotationPrintStyles(language: string): string {
+  const direction = language === "en" ? "ltr" : "rtl";
+  const align = language === "en" ? "left" : "right";
+  return `
+    * { box-sizing:border-box; }
+    body { margin:0; color:#0f172a; background:#fff; font:12px 'Segoe UI',Tahoma,Arial,sans-serif; direction:${direction}; }
+    .quote-page { max-width:800px; margin:0 auto; padding:4px 0; page-break-after:always; break-after:page; }
+    .quote-page:last-child { page-break-after:auto; break-after:auto; }
+    .quote-head { display:grid; grid-template-columns:1fr auto; gap:18px; align-items:start; border-bottom:2px solid #7c3aed; padding-bottom:12px; }
+    .quote-company { display:flex; align-items:center; gap:12px; }
+    .quote-company img { max-width:100px; max-height:64px; object-fit:contain; }
+    .quote-company-name { font-size:18px; font-weight:800; }
+    .quote-title { text-align:${align}; color:#6d28d9; font-size:20px; font-weight:800; }
+    .quote-title small { display:block; margin-top:3px; color:#64748b; font-size:11px; font-weight:600; }
+    .quote-meta { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px 18px; margin:14px 0; padding:11px 13px; border:1px solid #e2e8f0; border-radius:8px; background:#fafafa; }
+    .quote-meta span { color:#64748b; }
+    .quote-meta b { color:#0f172a; }
+    .quote-table { width:100%; border-collapse:collapse; margin-top:10px; }
+    .quote-table th,.quote-table td { border:1px solid #dbe2ea; padding:7px 8px; text-align:${align}; }
+    .quote-table th { background:#f3f4f6; font-weight:700; }
+    .quote-table td.num,.quote-table th.num { text-align:${language === "en" ? "right" : "left"}; font-variant-numeric:tabular-nums; }
+    .quote-table tr { page-break-inside:avoid; break-inside:avoid; }
+    .quote-totals { width:min(360px,100%); margin:14px 0 0 auto; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; }
+    .quote-total-row { display:flex; justify-content:space-between; gap:16px; padding:4px 0; }
+    .quote-total-row.grand { margin-top:5px; padding-top:8px; border-top:1px solid #64748b; font-size:14px; font-weight:800; }
+    .quote-notes { margin-top:14px; padding:10px 12px; border-inline-start:3px solid #7c3aed; background:#f8fafc; white-space:pre-wrap; }
+    .quote-foot { margin-top:20px; border-top:1px solid #e2e8f0; padding-top:8px; color:#64748b; font-size:10px; display:flex; justify-content:space-between; }
+    .summary-title { margin:0 0 12px; color:#6d28d9; font-size:20px; }
+    @page { size:A4; margin:12mm; }
+    @media print { body { print-color-adjust:exact; -webkit-print-color-adjust:exact; } }
+  `;
+}
+
+/** Print selected quotations together as complete, non-fiscal A4 documents. */
+export function printQuotationDocs(docs: QuotationPrintDoc[]): void {
+  if (!docs.length) return;
+  const co = getCompanyProfile();
+  const language = getUiLanguage();
+  const dp = co.decimals ?? 2;
+  const sym = currencySymbol();
+  const pages = docs.map((doc) => {
+    const customer = doc.buyerName || doc.customerName || L("عميل", "Customer");
+    const lineRows = doc.lines.map((line, index) => `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${esc(line.itemName ?? "")}</td>
+        <td class="num">${fmt(line.qty, dp)}</td>
+        <td>${esc(line.uomName || "—")}</td>
+        <td class="num">${fmt(line.unitPrice, dp)}</td>
+        <td class="num">${fmt(line.vatRate, 2)}%</td>
+        <td class="num">${fmt(line.lineTotal, dp)}</td>
+      </tr>`).join("");
+    return `<section class="quote-page">
+      <header class="quote-head">
+        <div class="quote-company">
+          ${co.logo ? `<img src="${esc(co.logo)}" alt="logo" />` : ""}
+          <div><div class="quote-company-name">${esc(co.name)}</div>
+            ${co.phone ? `<div>${L("الهاتف", "Phone")}: ${esc(co.phone)}</div>` : ""}
+            ${co.vat ? `<div>${L("الرقم الضريبي", "Tax number")}: ${esc(co.vat)}</div>` : ""}
+          </div>
+        </div>
+        <div class="quote-title">${L("عرض سعر", "Quotation")}<small>${L("مستند غير مالي", "Non-fiscal document")}</small></div>
+      </header>
+      <div class="quote-meta">
+        <div><span>${L("رقم العرض", "Quotation number")}:</span> <b>${esc(doc.docNo)}</b></div>
+        <div><span>${L("تاريخ العرض", "Quotation date")}:</span> <b>${esc(doc.quotationDate)}</b></div>
+        <div><span>${L("العميل", "Customer")}:</span> <b>${esc(customer)}</b></div>
+        <div><span>${L("صالح حتى", "Valid until")}:</span> <b>${esc(doc.validUntil || "—")}</b></div>
+        ${doc.buyerVat ? `<div><span>${L("الرقم الضريبي", "Tax number")}:</span> <b>${esc(doc.buyerVat)}</b></div>` : ""}
+        ${doc.buyerAddress ? `<div><span>${L("العنوان", "Address")}:</span> <b>${esc(doc.buyerAddress)}</b></div>` : ""}
+      </div>
+      <table class="quote-table">
+        <thead><tr>
+          <th>#</th><th>${L("الصنف", "Item")}</th><th class="num">${L("الكمية", "Quantity")}</th>
+          <th>${L("الوحدة", "Unit")}</th><th class="num">${L("سعر الوحدة", "Unit price")}</th>
+          <th class="num">${L("الضريبة", "Tax")}</th><th class="num">${L("قبل الضريبة", "Before tax")}</th>
+        </tr></thead>
+        <tbody>${lineRows || `<tr><td colspan="7">${L("لا توجد أصناف", "No items")}</td></tr>`}</tbody>
+      </table>
+      <div class="quote-totals">
+        <div class="quote-total-row"><span>${L("المجموع", "Subtotal")}</span><b>${fmt(doc.subtotal, dp)} ${esc(sym)}</b></div>
+        <div class="quote-total-row"><span>${L("ضريبة القيمة المضافة", "VAT")}</span><b>${fmt(doc.vatTotal, dp)} ${esc(sym)}</b></div>
+        <div class="quote-total-row grand"><span>${L("الإجمالي", "Total")}</span><b>${fmt(doc.grandTotal, dp)} ${esc(sym)}</b></div>
+      </div>
+      ${doc.notes ? `<div class="quote-notes"><b>${L("ملاحظات", "Notes")}:</b><br />${esc(doc.notes)}</div>` : ""}
+      <footer class="quote-foot"><span>${L("عرض سعر — لا يُعد فاتورة مبيعات", "Quotation — not a sales invoice")}</span><span>${L("تاريخ الطباعة", "Printed at")}: ${esc(new Date().toLocaleString(language === "en" ? "en-GB" : "ar-SA"))}</span></footer>
+    </section>`;
+  }).join("");
+  printHtml(`<!DOCTYPE html><html dir="${language === "en" ? "ltr" : "rtl"}" lang="${language}"><head><meta charset="UTF-8"><title>${L("عروض الأسعار", "Quotations")}</title><style>${quotationPrintStyles(language)}</style></head><body>${pages}</body></html>`);
+}
+
+/** Print a compact, selected-quotation summary in one print dialog. */
+export function printQuotationSummary(docs: QuotationSummaryPrintDoc[]): void {
+  if (!docs.length) return;
+  const co = getCompanyProfile();
+  const language = getUiLanguage();
+  const dp = co.decimals ?? 2;
+  const sym = currencySymbol();
+  const rows = docs.map((doc, index) => `<tr>
+    <td>${index + 1}</td><td>${esc(doc.docNo)}</td><td>${esc(doc.quotationDate)}</td>
+    <td>${esc(doc.validUntil || "—")}</td><td>${esc(doc.customerName || L("بدون عميل", "No customer"))}</td>
+    <td>${esc(doc.statusLabel)}</td><td class="num">${fmt(doc.subtotal, dp)}</td>
+    <td class="num">${fmt(doc.vatTotal, dp)}</td><td class="num">${fmt(doc.grandTotal, dp)} ${esc(sym)}</td>
+  </tr>`).join("");
+  const subtotal = docs.reduce((sum, doc) => sum + Number(doc.subtotal || 0), 0);
+  const vatTotal = docs.reduce((sum, doc) => sum + Number(doc.vatTotal || 0), 0);
+  const grandTotal = docs.reduce((sum, doc) => sum + Number(doc.grandTotal || 0), 0);
+  const html = `<!DOCTYPE html><html dir="${language === "en" ? "ltr" : "rtl"}" lang="${language}"><head><meta charset="UTF-8"><title>${L("ملخص عروض الأسعار", "Quotation summary")}</title><style>${quotationPrintStyles(language)}</style></head><body>
+    <section class="quote-page">
+      <header class="quote-head"><div><div class="quote-company-name">${esc(co.name)}</div>${co.phone ? `<div>${L("الهاتف", "Phone")}: ${esc(co.phone)}</div>` : ""}</div>
+        <div class="quote-title">${L("ملخص عروض الأسعار المحددة", "Selected quotations summary")}<small>${esc(new Date().toLocaleDateString(language === "en" ? "en-GB" : "ar-SA"))}</small></div>
+      </header>
+      <table class="quote-table"><thead><tr>
+        <th>#</th><th>${L("رقم العرض", "Quotation")}</th><th>${L("التاريخ", "Date")}</th><th>${L("صالح حتى", "Valid until")}</th>
+        <th>${L("العميل", "Customer")}</th><th>${L("الحالة", "Status")}</th>
+        <th class="num">${L("المجموع", "Subtotal")}</th><th class="num">${L("الضريبة", "VAT")}</th><th class="num">${L("الإجمالي", "Total")}</th>
+      </tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr>
+        <th colspan="6">${L("الإجمالي", "Total")}</th>
+        <th class="num">${fmt(subtotal, dp)}</th><th class="num">${fmt(vatTotal, dp)}</th><th class="num">${fmt(grandTotal, dp)} ${esc(sym)}</th>
+      </tr></tfoot></table>
+      <footer class="quote-foot"><span>${docs.length} ${L("عرض", "quotations")}</span><span>${esc(co.name)}</span></footer>
+    </section></body></html>`;
+  printHtml(html);
+}
+
 // ─── Vouchers (سند قبض / سند صرف / سند تحصيل) ─────────────────────────
 export type VoucherKind = "receipt" | "payment";
 
