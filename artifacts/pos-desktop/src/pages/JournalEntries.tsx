@@ -20,7 +20,7 @@ import { getTaxRate } from "../lib/taxSettings";
 import { getDefaultTax } from "../lib/taxes";
 import {
   formatUiDate, getCompanyProfile, getUiLanguage, safeLogoSrc, uiText, useUiLanguage,
-  type CompanyProfile,
+  type CompanyProfile, type UiLanguage,
 } from "../lib/appSettings";
 
 const ENTRY_TYPES: { value: JeEntryType; labelAr: string; labelEn: string }[] = [
@@ -78,7 +78,7 @@ const SOURCE_LABELS: Record<string, [string, string]> = {
   receipt: ["سند قبض", "Receipt voucher"],
   payment: ["سند صرف", "Payment voucher"],
 };
-function sourceText(source: string | null, language: string): string {
+function sourceText(source: string | null, language: UiLanguage): string {
   if (!source || source === "manual") return uiText("يدوي", "Manual", language);
   return SOURCE_LABELS[source] ? uiText(...SOURCE_LABELS[source], language) : source;
 }
