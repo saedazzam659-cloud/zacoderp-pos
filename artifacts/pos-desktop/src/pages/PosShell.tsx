@@ -114,8 +114,7 @@ import SettingsGuide from "./SettingsGuide";
 import ZatcaOnboarding from "./ZatcaOnboarding";
 import { isZatcaCountry } from "../lib/zatcaBridge";
 import {
-  listUserPermissions, computeAllowed, persistAllowedToLS, clearAllowedLS,
-  loadAllowedFromLS, defaultsForRole, type ScreenKey,
+  listUserPermissions, computeAllowed, defaultsForRole, type ScreenKey,
 } from "../lib/permissions";
 import { type WindowsView, type AppProfile } from "../lib/moduleRegistry";
 import { loadRenewalMessage } from "../lib/expiryMessage";
@@ -445,34 +444,57 @@ export default function PosShell({
   useEffect(() => { void getVertical().then((v) => v && setVerticalState(v)); }, []);
   const isPharmacy = vertical === "pharmacy";
 
-  // Task #207 — allowed-screens set for the current user. Admins always see
-  // everything; cashiers start from ROLE_DEFAULTS.cashier and the admin can
-  // grant/revoke individual screens via UserPermissionsAdmin. Cached in LS so
-  // the sidebar renders immediately on reload without waiting for SQLite.
-  const [allowed, setAllowed] = useState<Set<ScreenKey>>(
-    () => loadAllowedFromLS() ?? defaultsForRole("admin"),
-  );
+  // Load permissions for every standalone user, including admins. Keep the
+  // shell closed until this user's persisted set has been read successfully.
+  const [allowed, setAllowed] = useState<Set<ScreenKey>>(() => new Set());
+  const [permissionLoadAttempt, setPermissionLoadAttempt] = useState(0);
+  const [permissionLoadState, setPermissionLoadState] = useState<{
+    userId: string | null;
+    status: "loading" | "ready" | "error";
+    message: string;
+  }>({ userId: null, status: "loading", message: "" });
   useEffect(() => {
-    if (!standalone || !standaloneSession) return;
-    const role = standaloneSession.role;
+    if (!standalone) {
+      setAllowed(defaultsForRole("admin"));
+      setPermissionLoadState({ userId: null, status: "ready", message: "" });
+      return;
+    }
+    if (!standaloneSession) {
+      setAllowed(new Set());
+      setPermissionLoadState({ userId: null, status: "error", message: "تعذر تحديد المستخدم الحالي." });
+      return;
+    }
+
+    const { userId, role } = standaloneSession;
     let cancelled = false;
+    setAllowed(new Set());
+    setPermissionLoadState({ userId, status: "loading", message: "" });
     void (async () => {
       try {
-        const overrides = role === "cashier"
-          ? await listUserPermissions(standaloneSession.userId)
-          : [];
+        const overrides = await listUserPermissions(userId);
         if (cancelled) return;
         const next = computeAllowed(role, overrides);
-        persistAllowedToLS(next);
         setAllowed(new Set(next));
-      } catch {
-        const fallback = computeAllowed(role, []);
-        if (!cancelled) { persistAllowedToLS(fallback); setAllowed(new Set(fallback)); }
+        setPermissionLoadState({ userId, status: "ready", message: "" });
+      } catch (loadError) {
+        if (cancelled) return;
+        const message = typeof loadError === "string"
+          ? loadError
+          : (loadError as Error)?.message ?? "تعذر تحميل صلاحيات المستخدم.";
+        setAllowed(new Set());
+        setPermissionLoadState({ userId, status: "error", message });
       }
     })();
     return () => { cancelled = true; };
-  }, [standalone, standaloneSession]);
+  }, [standalone, standaloneSession?.userId, standaloneSession?.role, permissionLoadAttempt]);
   const can = useCallback((k: ScreenKey) => allowed.has(k), [allowed]);
+  const currentPermissionLoadState = standaloneSession
+    ? standaloneSession.userId === permissionLoadState.userId ? permissionLoadState : null
+    : standalone && permissionLoadState.userId === null ? permissionLoadState : null;
+  const permissionsReady = !standalone || currentPermissionLoadState?.status === "ready";
+  const permissionLoadError = standalone && currentPermissionLoadState?.status === "error"
+    ? currentPermissionLoadState.message
+    : null;
 
   // Task #226 — module/profile visibility gate, additive to `can()`:
   //   • profile  — the first-run "POS only vs Full ERP" choice.
@@ -487,19 +509,6 @@ export default function PosShell({
     (v: View) => isModuleEnabled(v, { profile: appProfile, standalone, flags: moduleFlags }),
     [appProfile, standalone, moduleFlags],
   );
-  // If a screen becomes gated (profile change / SuperAdmin disabled the module
-  // mid-session), close every now-forbidden open tab and fall back to the
-  // always-available sales register. Pruning openTabs (not just the active view)
-  // closes the access-control gap where a previously-opened tab chip would keep
-  // a disabled module reachable.
-  useEffect(() => {
-    setOpenTabs((prev) => {
-      const allowed = prev.filter((t) => t === "sales" || moduleVisible(t));
-      return allowed.length === prev.length ? prev : (allowed.length ? allowed : ["sales"]);
-    });
-    if (!moduleVisible(view)) setView("sales");
-  }, [moduleVisible, view]);
-
   // Low-stock count drives the sidebar badge under "أصناف تحت الحد".
   // Refreshed on view-switch (cheap) + after import/sale (no realtime needed).
   const [lowStockCount, setLowStockCount] = useState(0);
@@ -640,16 +649,13 @@ export default function PosShell({
     if (!confirm("هل تريد تسجيل خروج الكاشير الحالي وإغلاق الوردية؟")) return;
     setLoggingOut(true);
     try {
-      // Drop the cached allowed-screens set so the next user starts fresh.
-      clearAllowedLS();
       await onLogoutCashier();
     }
     catch (e: any) { setActionErr(e?.message ?? "logout failed"); setLoggingOut(false); }
   }
 
-  // Cloud-only nav entries hidden in standalone mode:
-  //   • pending (cloud upload queue), dashboard (sync controls), updates (cloud release feed)
-  // Standalone gains: users (local user admin, admin role only).
+  // Cloud-only pending invoices stay hidden in standalone mode. Every standalone
+  // screen, including admin-only screens, is checked against the user's set.
   const isAdmin = standaloneSession?.role === "admin";
   const standaloneNav: Array<{ id: View; icon: string; label: string; badge?: number; perm?: ScreenKey; adminOnly?: boolean }> = [
     { id: "sales",            icon: "🛒", label: "بيع", perm: "sales" },
@@ -737,19 +743,19 @@ export default function PosShell({
     { id: "goods_deliveries",  icon: "📤", label: "أذونات الصرف", perm: "goods_deliveries" },
     { id: "offers",            icon: "🎁", label: "العروض الترويجية", perm: "offers" },
     { id: "scale",            icon: "⚖️", label: "الميزان", perm: "scale" },
-    ...(isAdmin ? [{ id: "network" as View, icon: "🌐", label: "مشاركة الشبكة", adminOnly: true }] : []),
+    ...(isAdmin ? [{ id: "network" as View, icon: "🌐", label: "مشاركة الشبكة", perm: "network" as ScreenKey, adminOnly: true }] : []),
     ...(isPharmacy ? [{ id: "expiry" as View, icon: "⏳", label: "تقرير الصلاحية", perm: "expiry" as ScreenKey }] : []),
     ...(isAdmin
       ? [
-          { id: "users" as View,            icon: "🔐", label: "المستخدمون", adminOnly: true },
-          { id: "number_series" as View,    icon: "🔢", label: "أرقام المسلسلات", adminOnly: true },
-          { id: "posting_control" as View,  icon: "🔀", label: "التحكم في الترحيل", adminOnly: true },
-          { id: "pos_accounts" as View,     icon: "💳", label: "إعدادات حسابات نقاط البيع", adminOnly: true },
-          { id: "backup" as View,           icon: "💾", label: "النسخ الاحتياطي", adminOnly: true },
-          { id: "user_permissions" as View, icon: "🛡️", label: "صلاحيات المستخدمين", adminOnly: true },
+          { id: "users" as View,            icon: "🔐", label: "المستخدمون", perm: "users" as ScreenKey, adminOnly: true },
+          { id: "number_series" as View,    icon: "🔢", label: "أرقام المسلسلات", perm: "number_series" as ScreenKey, adminOnly: true },
+          { id: "posting_control" as View,  icon: "🔀", label: "التحكم في الترحيل", perm: "posting_control" as ScreenKey, adminOnly: true },
+          { id: "pos_accounts" as View,     icon: "💳", label: "إعدادات حسابات نقاط البيع", perm: "pos_accounts" as ScreenKey, adminOnly: true },
+          { id: "backup" as View,           icon: "💾", label: "النسخ الاحتياطي", perm: "backup" as ScreenKey, adminOnly: true },
+          { id: "user_permissions" as View, icon: "🛡️", label: "صلاحيات المستخدمين", perm: "user_permissions" as ScreenKey, adminOnly: true },
         ]
       : []),
-    { id: "dashboard", icon: "⚙️", label: "لوحة التحكم" },
+    { id: "dashboard", icon: "⚙️", label: "لوحة التحكم", perm: "dashboard" },
     { id: "settings_guide", icon: "🏢", label: "دليل الإعدادات", perm: "settings_guide" },
     ...(isZatcaCountry()
       ? [{ id: "zatca" as View, icon: "🧾", label: "تسجيل زاتكا (مستقل)", perm: "zatca" as const }]
@@ -758,11 +764,11 @@ export default function PosShell({
     // versions (the device usually has occasional internet for this).
     // The Updates screen itself gracefully handles offline by showing
     // an error and a manual-download link.
-    { id: "updates",   icon: "🔄", label: "التحديثات" },
+    { id: "updates",   icon: "🔄", label: "التحديثات", perm: "updates" },
   ];
   const navItemsRaw: Array<{ id: View; icon: string; label: string; badge?: number }> = standalone
     ? standaloneNav
-        .filter((it) => it.adminOnly ? isAdmin : (it.perm ? (isAdmin || can(it.perm)) : true))
+        .filter((it) => (!it.adminOnly || isAdmin) && (!it.perm || can(it.perm)))
         .map(({ id, icon, label, badge }) => ({ id, icon, label, badge }))
     : [
     { id: "sales",     icon: "🛒", label: "بيع" },
@@ -788,12 +794,40 @@ export default function PosShell({
   // Task #226 — apply the module/profile gate on top of the per-user `can()`
   // filter above. Hides ERP-only screens in the POS-only profile and any module
   // the SuperAdmin disabled for this company (cloud mode).
-  const navItems = navItemsRaw.filter((it) => moduleVisible(it.id));
+  const navItems = (permissionsReady && !permissionLoadError ? navItemsRaw : [])
+    .filter((it) => moduleVisible(it.id));
+  const navSignature = navItems.map((item) => item.id).join("|");
+  const allowedViewIds = new Set(navItems.map((item) => item.id));
+  const visibleTabs = permissionsReady && !permissionLoadError
+    ? (() => {
+        const allowedTabs = openTabs.filter((tab) => allowedViewIds.has(tab));
+        return allowedTabs.length > 0
+          ? allowedTabs
+          : navItems.length > 0 ? [navItems[0].id] : [];
+      })()
+    : [];
+  const displayActiveTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0] ?? null;
+
+  // Keep the tab bar and mounted content in sync with the same allowed-screen
+  // list as the navigation. This closes stale tabs immediately on permission,
+  // profile, or module changes; there is no special admin bypass.
+  useEffect(() => {
+    if (standalone && !permissionsReady) return;
+    const permitted = new Set((navSignature ? navSignature.split("|") : []) as View[]);
+    const next = openTabs.filter((tab) => permitted.has(tab));
+    if (next.length === 0 && navItems.length > 0) next.push(navItems[0].id);
+    if (next.length !== openTabs.length || next.some((tab, index) => tab !== openTabs[index])) {
+      setOpenTabs(next);
+    }
+    if (next.length > 0 && !next.includes(activeTab)) setActiveTab(next[0]);
+  }, [standalone, permissionsReady, permissionLoadError, navSignature, openTabs, activeTab]);
 
   // Keep-alive tab renderer: returns the single screen matching `v`. Every
   // open tab is rendered (mounted) at once; inactive ones are hidden with
   // display:none so their component state survives a tab switch.
-  const renderView = (v: View) => (
+  const renderView = (v: View) => {
+    if (!allowedViewIds.has(v)) return null;
+    return (
     <>
           {v === "sales" && (
             usesNewRegisterScreen(vertical)
@@ -1099,7 +1133,8 @@ export default function PosShell({
             <div style={S.pagePad}><ZatcaOnboarding /></div>
           )}
     </>
-  );
+    );
+  };
 
   return (
     <div data-pos-shell-root dir={language === "en" ? "ltr" : "rtl"} style={S.shell}>
@@ -1297,10 +1332,10 @@ export default function PosShell({
         )}
 
         {/* Tab bar — one chip per open screen; click to switch, × to close. */}
-        {openTabs.length > 1 && (
+        {visibleTabs.length > 1 && (
           <div style={S.tabBar}>
-            {openTabs.map((tab) => {
-              const active = tab === activeTab;
+            {visibleTabs.map((tab) => {
+              const active = tab === displayActiveTab;
               return (
                 <div key={tab} onClick={() => setActiveTab(tab)}
                      title={labelFor(tab)}
@@ -1319,11 +1354,37 @@ export default function PosShell({
 
         {/* Page content */}
         <main style={S.content}>
-          {openTabs.map((tab) => (
-            <div key={tab} style={{ display: tab === activeTab ? "contents" : "none" }}>
-              {renderView(tab)}
+          {standalone && permissionLoadError ? (
+            <div role="alert" style={{ ...S.pagePad, maxWidth: 680, margin: "40px auto", textAlign: "center" }}>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>تعذر تحميل صلاحيات المستخدم</div>
+              <div style={{ color: "#64748b", marginBottom: 16 }}>{permissionLoadError}</div>
+              <button
+                type="button"
+                onClick={() => setPermissionLoadAttempt((value) => value + 1)}
+                style={{
+                  border: "none", borderRadius: 8, padding: "9px 16px",
+                  background: "#2563eb", color: "#fff", fontFamily: "inherit",
+                  fontWeight: 700, cursor: "pointer",
+                }}
+              >
+                إعادة المحاولة
+              </button>
             </div>
-          ))}
+          ) : standalone && !permissionsReady ? (
+            <div role="status" style={{ ...S.pagePad, textAlign: "center", color: "#64748b" }}>
+              جار تحميل صلاحيات المستخدم...
+            </div>
+          ) : visibleTabs.length === 0 ? (
+            <div role="status" style={{ ...S.pagePad, textAlign: "center", color: "#64748b" }}>
+              لا توجد شاشات مفعّلة لهذا المستخدم. اطلب من مسؤول آخر تعديل الصلاحيات.
+            </div>
+          ) : (
+            visibleTabs.map((tab) => (
+              <div key={tab} style={{ display: tab === displayActiveTab ? "contents" : "none" }}>
+                {renderView(tab)}
+              </div>
+            ))
+          )}
         </main>
       </div>
 

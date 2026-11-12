@@ -1,8 +1,8 @@
 // Screen-permission helpers (Task #207).
 //
 // Two layers:
-//   1. Role defaults — hardcoded map below (admin sees all, cashier sees
-//      only sales/returns/parked/daily/low_stock/items).
+//   1. Role defaults — hardcoded map below (admins start with all screens;
+//      cashiers start with the cashier workspace).
 //   2. Per-user overrides — stored in user_permissions_local. An explicit
 //      row (can_view=1|0) wins over the role default.
 //
@@ -62,7 +62,7 @@ export type ScreenKey =
   | "warehouse_groups" | "inventory_dashboard" | "smart_alerts" | "units" | "offers" | "goods_deliveries"
   | "number_series" | "branches"
   | "user_permissions" | "dashboard" | "updates" | "users" | "settings_guide" | "zatca"
-  | "pos_accounts";
+  | "pos_accounts" | "backup" | "network";
 
 export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: string }[] = [
   { key: "sales", label: "البيع", icon: "🛒", group: "العمليات" },
@@ -167,12 +167,14 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "settings_guide", label: "دليل الإعدادات", icon: "🏢", group: "الإعدادات" },
   { key: "zatca", label: "تسجيل زاتكا (مستقل)", icon: "🧾", group: "الإعدادات" },
   { key: "pos_accounts", label: "إعدادات حسابات نقاط البيع", icon: "💳", group: "الإعدادات" },
+  { key: "backup", label: "النسخ الاحتياطي", icon: "💾", group: "الإعدادات" },
+  { key: "network", label: "مشاركة الشبكة", icon: "🌐", group: "الإعدادات" },
 ];
 
 // Role default: which screens are visible by default for each role.
 const ROLE_DEFAULTS: Record<"admin" | "cashier", ScreenKey[]> = {
-  admin: SCREEN_KEYS.map((s) => s.key), // admin sees everything
-  cashier: ["sales", "returns", "parked", "daily", "customers", "items", "low_stock"],
+  admin: SCREEN_KEYS.map((s) => s.key), // per-user overrides can restrict admins too
+  cashier: ["sales", "returns", "parked", "daily", "customers", "items", "low_stock", "dashboard", "updates"],
 };
 
 export function defaultsForRole(role: "admin" | "cashier"): Set<ScreenKey> {
@@ -236,23 +238,4 @@ export function computeAllowed(
     else set.delete(o.screenKey);
   }
   return set;
-}
-
-/** Cache the current user's allowed-set in localStorage so the sidebar
- *  filter is synchronous (avoids first-render flash). Refreshed on login
- *  and whenever the permissions admin saves a change. */
-const LS_ALLOWED = "pos_desktop_allowed_screens";
-
-export function persistAllowedToLS(allowed: Set<ScreenKey>): void {
-  try { localStorage.setItem(LS_ALLOWED, JSON.stringify([...allowed])); } catch { /* quota */ }
-}
-export function loadAllowedFromLS(): Set<ScreenKey> | null {
-  try {
-    const raw = localStorage.getItem(LS_ALLOWED);
-    if (!raw) return null;
-    return new Set(JSON.parse(raw) as ScreenKey[]);
-  } catch { return null; }
-}
-export function clearAllowedLS(): void {
-  try { localStorage.removeItem(LS_ALLOWED); } catch { /* ignore */ }
 }

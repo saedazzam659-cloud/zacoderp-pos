@@ -1,12 +1,12 @@
 ---
 name: POS Desktop per-user screen permissions
-description: Keep permission edits staged, bulk changes save atomically, and inherited role defaults intact.
+description: Saved screen access, admin overrides, and safe navigation
 ---
 
 # POS Desktop per-user screen permissions
 
-Edits in the per-user screen permissions page remain drafts until the administrator chooses Save. Global and group enable/disable actions change only that draft. Role defaults remain the inheritance baseline: persist only values that differ from the selected user's role defaults, and restore defaults by clearing those overrides.
+Permission edits stay as drafts until Save. Persist only values that differ from the selected user's role defaults, and keep unknown permission rows when replacing the known screen keys. Admin defaults begin with all screens, but explicit per-user overrides restrict admin screens too; role checks remain an additional gate for admin-only screens. Every standalone screen must have a permission key, and the same allowed screen list must control navigation, open tab chips, and rendered screen content. Do not reveal cached permissions from a previous login while the current user's permissions are loading; fail closed and allow retry if loading fails.
 
-**Why:** Bulk actions can change many screens at once, so saving a partial sequence would leave permissions inconsistent. Keeping edits staged also makes the requested Save action meaningful and lets the administrator review changes first.
+**Why:** The administrator role originally bypassed custom per-user settings, and shared cached permissions or stale open tabs could expose screens from another user session. Admins also need a clear warning that disabling their own permissions page requires another admin to restore it.
 
-**How to apply:** Save the known screen-key set and its overrides in one SQLite transaction. Replace only keys known to the current UI so older or future permission rows are preserved. When the signed-in user is edited, refresh both the cached allowed set and the shell's in-memory state. Keep browser-preview persistence separate from the native Tauri command path.
+**How to apply:** Keep bulk edits atomic and staged. When adding a screen, include it in the permission catalog and navigation mapping; preserve the admin-only role gate where needed, then verify denied screens cannot render from a saved tab or internal navigation action.

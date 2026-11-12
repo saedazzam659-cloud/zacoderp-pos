@@ -9,7 +9,6 @@ import {
   listUserPermissions,
   replaceUserPermissions,
   computeAllowed,
-  persistAllowedToLS,
   type UserPermission,
   type ScreenKey,
 } from "../lib/permissions";
@@ -178,7 +177,6 @@ export default function UserPermissionsAdmin({
       setOverrides(nextOverrides.map((override) => ({ ...override, userId: selectedUser.id })));
       setDraftAllowed(nextAllowed);
       if (selectedUser.id === session.userId) {
-        persistAllowedToLS(nextAllowed);
         onAllowedChange?.(nextAllowed);
       }
       setMessage("تم حفظ إعدادات الصلاحيات بنجاح.");
@@ -197,7 +195,14 @@ export default function UserPermissionsAdmin({
   };
 
   return (
-    <Page title="صلاحيات المستخدمين" subtitle="ضع إعداداً خاصاً لكل مستخدم — يتجاوز الإعداد الافتراضي للدور">
+    <Page title="صلاحيات المستخدمين" subtitle="تخصيص الشاشات لكل مستخدم، بما في ذلك الحسابات المسؤولة">
+      <div role="note" style={{
+        marginBottom: 12, padding: "10px 12px", borderRadius: 8,
+        background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e",
+        fontSize: 13, lineHeight: 1.6,
+      }}>
+        إذا أغلقت شاشة الصلاحيات لحساب مسؤول، فلن يستطيع تعديلها بنفسه؛ يلزم مسؤول آخر لإعادتها.
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "260px minmax(0, 1fr)", gap: 16 }}>
         <Card style={{ padding: 8 }}>
           {loadingUsers ? <Empty text="جاري تحميل المستخدمين..." /> : users.length === 0 ? <Empty text="لا يوجد مستخدمون" /> : users.map((user) => (
