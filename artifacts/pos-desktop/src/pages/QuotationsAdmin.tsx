@@ -54,12 +54,13 @@ export default function QuotationsAdmin() {
   const formOpen = creating || editDoc !== null;
 
   async function refresh() { setRows(await listQuotations(5000)); }
+  async function refreshDeps() {
+    const [customers, items, warehouses, salespersons] = await Promise.all([listCustomers(), listItems(), listWarehouses(), listSalespersons(false)]);
+    setDeps({ customers, items, warehouses, salespersons });
+  }
   useEffect(() => {
     void refresh();
-    void (async () => {
-      const [customers, items, warehouses, salespersons] = await Promise.all([listCustomers(), listItems(), listWarehouses(), listSalespersons(false)]);
-      setDeps({ customers, items, warehouses, salespersons });
-    })();
+    void refreshDeps();
   }, []);
 
   const sel = useRowSelect(rows);
@@ -514,7 +515,8 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
 
       <div style={{ overflow: "auto", marginTop: 10, maxHeight: 360 }}>
       <Table style={{ minWidth: 1250 }}>
-        <thead style={{ position: "sticky", top: 0, zIndex: 2 }}><tr>
+        <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
+        <tr>
           <Th style={{ minWidth: 240 }}>الصنف</Th>
           <Th style={{ width: 130 }}>الوحدة</Th>
           <Th style={{ width: 180 }}>الكمية</Th>
@@ -571,13 +573,22 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
       <ErrorMsg text={err} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button onClick={addLine} type="button" title="إضافة سطر" aria-label="إضافة سطر"
-            style={{ ...btnSecondary, padding: "5px 9px", color: "#087f69", borderColor: "#9bd6c9", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+          <button
+            onClick={addLine}
+            type="button"
+            title="إضافة سطر"
+            aria-label="إضافة سطر"
+            style={{ ...btnSecondary, padding: "5px 9px", color: "#087f69", borderColor: "#9bd6c9", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+          >
             + إضافة صنف
           </button>
-          <button onClick={() => { setQuickCreateError(null); setQuickCreateOpen(true); }} type="button"
-            title="إضافة صنف جديد سريعًا" aria-label="إضافة صنف جديد سريعًا"
-            style={{ ...btnSecondary, padding: "5px 9px", color: "#7c3aed", borderColor: "#c4b5fd", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+          <button
+            onClick={() => { setQuickCreateError(null); setQuickCreateOpen(true); }}
+            type="button"
+            title="إضافة صنف جديد سريعًا"
+            aria-label="إضافة صنف جديد سريعًا"
+            style={{ ...btnSecondary, padding: "5px 9px", color: "#7c3aed", borderColor: "#c4b5fd", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+          >
             ✨ صنف جديد
           </button>
         </div>

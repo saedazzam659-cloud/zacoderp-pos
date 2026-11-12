@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 import { getDefaultUom, type Uom } from "../lib/uom";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 import { btnPrimary, btnSecondary, input } from "../pages/_adminUi";
@@ -30,7 +30,7 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
   const [uomId, setUomId] = useState(() => getDefaultUom()?.id ?? uoms[0]?.id ?? 0);
   const isCustomer = kind === "customer";
   const accent = isCustomer ? "#2563eb" : "#7c3aed";
-  const fieldStyle: CSSProperties = { ...input, borderRadius: 9, padding: "9px 11px", background: "#fff" };
+  const fieldStyle = { ...input, borderRadius: 9, padding: "9px 11px", background: "#fff" };
 
   function submit() {
     if (isCustomer) onSubmit({ kind, nameAr, phone, vatNumber });

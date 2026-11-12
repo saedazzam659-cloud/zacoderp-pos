@@ -269,7 +269,8 @@ export function useHideZeros(): boolean {
 }
 
 // ─── Free-quantity column visibility ─────────────────────────────────
-// Hidden by default; saved quantities and document calculations are unchanged.
+// Hidden on fresh installs. This affects only the sales-invoice and
+// quotation editors; saved quantities and document calculations are unchanged.
 export function getShowFreeQuantityColumn(): boolean {
   if (typeof window === "undefined") return false;
   return localStorage.getItem(LS_SHOW_FREE_QTY_COLUMN) === "1";
@@ -280,6 +281,7 @@ export function setShowFreeQuantityColumn(show: boolean): void {
   window.dispatchEvent(new Event(EVT));
 }
 
+/** Live free-quantity column preference — defaults to hidden on new installs. */
 export function useShowFreeQuantityColumn(): boolean {
   const [show, setShow] = useState<boolean>(() => getShowFreeQuantityColumn());
   useEffect(() => {

@@ -287,11 +287,11 @@ const NAV_LABELS_EN: Record<string, string> = {
   item_import: "Import items", low_stock: "Low stock", uom: "Units of measure",
   purchase_orders: "Purchase orders", goods_receipts: "Goods receipts", purchases: "Purchase invoices",
   purchase_returns: "Purchase returns", letters_of_credit: "Letters of credit",
-  supplier_settlement: "Supplier settlements", supplier_payment: "Supplier payment",
+  supplier_settlement: "Supplier settlements", supplier_payment: "Payment vouchers",
   salespersons: "Sales representatives", quotations: "Quotations", sales_orders: "Sales orders",
-  sales_invoices: "Sales invoices", sales_returns: "Sales returns", customer_collection: "Customer collection",
+  sales_invoices: "Sales invoices", sales_returns: "Sales returns", customer_collection: "Receipt vouchers",
   invoice_import: "Import invoices", cash_boxes: "Cash boxes", banks: "Banks",
-  financial_tx: "Financial transactions", treasury_transfers: "Treasury transfers",
+  financial_tx: "Receipt and payment vouchers", treasury_transfers: "Treasury transfers",
   currencies: "Currencies", exchange_rates: "Exchange rates", chart_of_accounts: "Chart of accounts",
   journal_entries: "Journal entries", posting_center: "Posting center", fiscal_periods: "Fiscal periods",
   cost_centers: "Cost centers", taxes: "Taxes", branches: "Branches", warehouses: "Warehouses",
@@ -670,7 +670,7 @@ export default function PosShell({
     { id: "purchase_returns", icon: "🔁", label: "مرتجع الشراء", perm: "purchase_returns" },
     { id: "letters_of_credit", icon: "🌐", label: "الاعتمادات المستندية", perm: "letters_of_credit" },
     { id: "supplier_settlement", icon: "🤝", label: "تسوية الموردين", perm: "supplier_settlement" },
-    { id: "supplier_payment",  icon: "💵", label: "سند صرف لمورد", perm: "supplier_payment" },
+    { id: "supplier_payment",  icon: "💵", label: "سند الصرف", perm: "supplier_payment" },
     { id: "report_purchases_by_supplier", icon: "🏭", label: "المشتريات حسب المورد", perm: "report_purchases_by_supplier" },
     { id: "report_purchases_by_item",     icon: "📦", label: "المشتريات حسب الصنف", perm: "report_purchases_by_item" },
     { id: "report_purchases_by_period",   icon: "🗓️", label: "المشتريات حسب الفترة", perm: "report_purchases_by_period" },
@@ -686,7 +686,7 @@ export default function PosShell({
     { id: "sales_orders",     icon: "📋", label: "أوامر البيع", perm: "sales_orders" },
     { id: "sales_invoices",   icon: "🧾", label: "فواتير المبيعات", perm: "sales_invoices" },
     { id: "sales_returns",    icon: "🔁", label: "مرتجع المبيعات", perm: "sales_returns" },
-    { id: "customer_collection", icon: "💵", label: "تحصيل من عميل", perm: "customer_collection" },
+    { id: "customer_collection", icon: "💵", label: "سند القبض", perm: "customer_collection" },
     { id: "invoice_import",   icon: "📂", label: "استيراد الفواتير", perm: "invoice_import" },
     { id: "report_sales_daily",       icon: "📅", label: "تقرير المبيعات اليومي", perm: "report_sales_daily" },
     { id: "report_sales_by_period",   icon: "🗓️", label: "المبيعات حسب الفترة", perm: "report_sales_by_period" },
@@ -698,7 +698,7 @@ export default function PosShell({
     { id: "report_sales_top_customers", icon: "🏆", label: "أفضل العملاء", perm: "report_sales_top_customers" },
     { id: "cash_boxes",       icon: "💰", label: "الخزن", perm: "cash_boxes" },
     { id: "banks",            icon: "🏦", label: "البنوك", perm: "banks" },
-    { id: "financial_tx",     icon: "💸", label: "المعاملات المالية", perm: "financial_tx" },
+    { id: "financial_tx",     icon: "💸", label: "سندات القبض والصرف", perm: "financial_tx" },
     { id: "treasury_transfers", icon: "🔁", label: "تحويل الخزن", perm: "treasury_transfers" },
     { id: "currencies",       icon: "🌐", label: "العملات", perm: "currencies" },
     { id: "exchange_rates",   icon: "💱", label: "أسعار الصرف", perm: "exchange_rates" },
@@ -1346,8 +1346,8 @@ function labelFor(v: View): string {
     purchase_returns: "مرتجع الشراء",
     letters_of_credit: "الاعتمادات المستندية",
     supplier_settlement: "تسوية الموردين",
-    supplier_payment: "سند صرف لمورد",
-    customer_collection: "تحصيل من عميل",
+    supplier_payment: "سند الصرف",
+    customer_collection: "سند القبض",
     salespersons: "مندوبو المبيعات",
     quotations: "عروض الأسعار",
     sales_orders: "أوامر البيع",
@@ -1374,7 +1374,7 @@ function labelFor(v: View): string {
     report_lc_statement: "كشف الاعتمادات المستندية",
     cash_boxes: "الخزن",
     banks: "البنوك",
-    financial_tx: "المعاملات المالية",
+    financial_tx: "سندات القبض والصرف",
     chart_of_accounts: "شجرة الحسابات",
     journal_entries: "القيود اليومية",
     posting_center: "مركز الترحيل",
@@ -1626,12 +1626,12 @@ function StandaloneDashboardView({
 
 function FreeQuantityColumnSettingsCard() {
   const show = useShowFreeQuantityColumn();
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState<"" | "ok">("");
 
   function toggle(next: boolean) {
     setShowFreeQuantityColumn(next);
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1500);
+    setSaved("ok");
+    setTimeout(() => setSaved(""), 1500);
   }
 
   return (
@@ -1649,7 +1649,11 @@ function FreeQuantityColumnSettingsCard() {
         />
         إظهار عمود مجاني
       </label>
-      {saved && <span style={{ display: "inline-block", marginTop: 10, color: "#16a34a", fontSize: 13, fontWeight: 600 }}>✓ تم حفظ الإعداد</span>}
+      {saved === "ok" && (
+        <span style={{ display: "inline-block", marginTop: 10, color: "#16a34a", fontSize: 13, fontWeight: 600 }}>
+          ✓ تم حفظ الإعداد
+        </span>
+      )}
     </section>
   );
 }
