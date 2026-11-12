@@ -45,6 +45,7 @@ import ExchangeRatesAdmin from "./ExchangeRatesAdmin";
 import TreasuryTransfersAdmin from "./TreasuryTransfersAdmin";
 import ChartOfAccounts from "./ChartOfAccounts";
 import JournalEntries from "./JournalEntries";
+import OpeningBalancesAdmin from "./OpeningBalancesAdmin";
 import PostingCenter from "./PostingCenter";
 import FiscalPeriods from "./FiscalPeriods";
 import PostingControl from "./PostingControl";
@@ -261,7 +262,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     icon: "🧮",
     label: "الحسابات العامة",
     members: [
-      "chart_of_accounts", "journal_entries", "posting_center", "fiscal_periods",
+      "chart_of_accounts", "journal_entries", "opening_balances", "posting_center", "fiscal_periods",
       "cost_centers", "taxes",
       "report_account_statement", "report_income_statement",
       "report_balance_sheet", "report_trial_balance",
@@ -294,6 +295,7 @@ const NAV_LABELS_EN: Record<string, string> = {
   financial_tx: "Receipt and payment vouchers", treasury_transfers: "Treasury transfers",
   currencies: "Currencies", exchange_rates: "Exchange rates", chart_of_accounts: "Chart of accounts",
   journal_entries: "Journal entries", posting_center: "Posting center", fiscal_periods: "Fiscal periods",
+  opening_balances: "Opening balances",
   cost_centers: "Cost centers", taxes: "Taxes", branches: "Branches", warehouses: "Warehouses",
   stocktakes: "Stocktakes", stock_adjustments: "Stock adjustments", stock_movements: "Stock movements",
   stock_transfers: "Warehouse transfers", item_card: "Item card", stock_valuation: "Stock valuation",
@@ -704,6 +706,7 @@ export default function PosShell({
     { id: "exchange_rates",   icon: "💱", label: "أسعار الصرف", perm: "exchange_rates" },
     { id: "chart_of_accounts",icon: "🌳", label: "شجرة الحسابات", perm: "chart_of_accounts" },
     { id: "journal_entries",  icon: "📒", label: "القيود اليومية", perm: "journal_entries" },
+    { id: "opening_balances", icon: "⚖️", label: "الأرصدة الافتتاحية", perm: "opening_balances" },
     { id: "posting_center",   icon: "📮", label: "مركز الترحيل", perm: "posting_center" },
     { id: "fiscal_periods",   icon: "🗓️", label: "الفترات المحاسبية", perm: "fiscal_periods" },
     { id: "cost_centers",     icon: "🎯", label: "مراكز التكلفة", perm: "cost_centers" },
@@ -969,6 +972,9 @@ export default function PosShell({
           )}
           {standalone && v === "journal_entries" && (isAdmin || can("journal_entries")) && (
             <div style={S.pagePad}><JournalEntries /></div>
+          )}
+          {standalone && v === "opening_balances" && (isAdmin || can("opening_balances")) && (
+            <div style={S.pagePad}><OpeningBalancesAdmin /></div>
           )}
           {standalone && v === "posting_center" && (isAdmin || can("posting_center")) && (
             <div style={S.pagePad}><PostingCenter /></div>
@@ -1377,6 +1383,7 @@ function labelFor(v: View): string {
     financial_tx: "سندات القبض والصرف",
     chart_of_accounts: "شجرة الحسابات",
     journal_entries: "القيود اليومية",
+    opening_balances: "الأرصدة الافتتاحية",
     posting_center: "مركز الترحيل",
     fiscal_periods: "الفترات المحاسبية",
     posting_control: "التحكم في الترحيل",

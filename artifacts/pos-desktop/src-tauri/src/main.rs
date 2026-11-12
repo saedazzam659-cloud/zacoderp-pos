@@ -573,6 +573,7 @@ fn main() {
             accounting::financial_tx_post,
             accounting::financial_tx_unpost,
             accounting::journal_entries_list,
+            accounting::journal_entries_by_type,
             accounting::journal_entry_get,
             accounting::journal_entry_detail,
             accounting::journal_entry_create,

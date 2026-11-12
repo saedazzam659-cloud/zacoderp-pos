@@ -440,15 +440,19 @@ export async function listAccounts(): Promise<Account[]> {
 }
 export async function createAccount(input: AccountInput): Promise<number> {
   if (!hasTauri()) notImpl();
-  return await invoke<number>("accounts_create", { input });
+  const id = await invoke<number>("accounts_create", { input });
+  emitData("accounts");
+  return id;
 }
 export async function updateAccount(id: number, input: AccountInput): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("accounts_update", { id, input });
+  emitData("accounts");
 }
 export async function deleteAccount(id: number): Promise<void> {
   if (!hasTauri()) notImpl();
   await invoke("accounts_delete", { id });
+  emitData("accounts");
 }
 
 // ─── Suppliers ───────────────────────────────────────────────────────
@@ -917,6 +921,10 @@ export async function financialTxUnpost(id: number): Promise<void> {
 export async function listJournalEntries(limit = 200): Promise<JournalEntry[]> {
   if (!hasTauri()) return [];
   return await invoke<JournalEntry[]>("journal_entries_list", { limit });
+}
+export async function listJournalEntriesByType(entryType: JeEntryType): Promise<JournalEntry[]> {
+  if (!hasTauri()) return [];
+  return await invoke<JournalEntry[]>("journal_entries_by_type", { entryType });
 }
 export async function getJournalEntry(id: number): Promise<JournalEntry> {
   if (!hasTauri()) notImpl();

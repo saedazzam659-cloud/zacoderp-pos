@@ -15,3 +15,9 @@ Manual JE CRUD (`journal_entry_{create,update,post,unpost,delete,detail,peek_num
 - `load_manual_guard` rejects edit/post/unpost/delete when `source_type` is non-null and != `'manual'` (system entries must be unwound from their origin document, not edited directly).
 - `entry_no` is UNIQUE; a manual doc# collision is mapped to a friendly Arabic message via `map_entry_no_conflict`. The list badge peeks the next number WITHOUT consuming the sequence (`peek_number` reads, create consumes via `next_entry_no`).
 - New columns (`entry_type` default `general`, `status` default `posted`) are added by idempotent ALTERs so pre-existing rows keep their already-applied-to-balance behavior.
+
+Opening balances belong in one manual JE tagged `opening`, not in a parallel balance store. Look up all entries by type rather than relying on the latest-N journal list, and reject a second opening entry at creation.
+
+**Why:** Reusing the local ledger keeps opening balances consistent with posted-only reports and prevents duplicate initialization.
+
+**How to apply:** Add future opening-balance import/export or edit flows on top of this JE; do not introduce a second balance source.

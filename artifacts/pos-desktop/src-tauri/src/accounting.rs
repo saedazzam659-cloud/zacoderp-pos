@@ -958,6 +958,29 @@ pub fn journal_entries_list(limit: Option<i64>) -> Result<Vec<JournalEntry>, Str
     Ok(out)
 }
 
+/// Efficiently fetches every entry of one supported type. Opening-balance
+/// uniqueness must not depend on the most-recent-N journal list.
+#[tauri::command]
+pub fn journal_entries_by_type(entry_type: String) -> Result<Vec<JournalEntry>, String> {
+    if !VALID_ENTRY_TYPES.contains(&entry_type.as_str()) {
+        return Err("نوع القيد غير صالح".into());
+    }
+    let conn = db::open().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id,entry_no,entry_date,description,total_debit,total_credit,source_type,source_id,entry_type,status,branch_id,cost_center_id
+         FROM journal_entries_local WHERE entry_type=?1 ORDER BY id DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([entry_type], |r| Ok(JournalEntry {
+        id: r.get(0)?, entry_no: r.get(1)?, entry_date: r.get(2)?, description: r.get(3)?,
+        total_debit: r.get(4)?, total_credit: r.get(5)?, source_type: r.get(6)?, source_id: r.get(7)?,
+        entry_type: r.get(8)?, status: r.get(9)?, branch_id: r.get(10)?, cost_center_id: r.get(11)?,
+        lines: Vec::new(),
+    })).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for row in rows { out.push(row.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
 #[tauri::command]
 pub fn journal_entry_get(id: i64) -> Result<JournalEntry, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
@@ -1036,6 +1059,16 @@ pub fn journal_entry_create(input: ManualJeInput) -> Result<i64, String> {
     };
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if entry_type == "opening" {
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM journal_entries_local WHERE entry_type='opening')",
+            [],
+            |r| r.get(0),
+        ).map_err(|e| e.to_string())?;
+        if exists {
+            return Err("يوجد قيد افتتاحي بالفعل — افتحه للتعديل بدلاً من إنشاء قيد آخر".into());
+        }
+    }
     // Period-lock: a manual entry created directly as `posted` applies GL
     // balances, so it must respect a closed fiscal period just like the
     // Posting Center path. Drafts touch no GL and are always allowed.
