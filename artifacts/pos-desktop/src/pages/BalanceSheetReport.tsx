@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
+import { uiText } from "../lib/appSettings";
+import { accountHierarchyPrintFilters, printAccountingReport } from "../lib/accountingReportPrint";
 import { reportLedgerLines, type LedgerLine } from "../lib/reports";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, btnSecondary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { useDimensions, useReportAccounts, DateField, BranchField, CostCenterField, AccountHierarchyFields } from "./_reportFilters";
 import type { ExportColumn } from "../lib/exporters";
 import { filterAccountReportRows, type AccountLevelMode } from "../lib/accountReportFilters";
@@ -95,6 +97,53 @@ export default function BalanceSheetReport() {
 
   const totalLE = shownData ? shownData.totalLiabilities + shownData.totalEquity : 0;
   const balanced = shownData ? Math.abs(shownData.totalAssets - totalLE) < 0.01 : true;
+  const branchLabel = branchId === "" ? uiText("كل الفروع", "All branches") : branches.find((branch) => branch.id === branchId)?.nameAr ?? "";
+  const costCenterLabel = costCenterId === "" ? uiText("كل مراكز التكلفة", "All cost centers") : costCenters.find((center) => center.id === costCenterId)?.nameAr ?? "";
+  function printReport() {
+    if (!shownData) return;
+    printAccountingReport({
+      title: uiText("الميزانية العمومية", "Balance sheet"),
+      subtitle: `${uiText("حتى تاريخ", "As of")}: ${asOfDate}`,
+      filters: [
+        `${uiText("الفرع", "Branch")}: ${branchLabel}`,
+        `${uiText("مركز التكلفة", "Cost center")}: ${costCenterLabel}`,
+        ...accountHierarchyPrintFilters(accounts, parentIds, levelMode, showZero),
+      ],
+      summaries: [
+        { label: uiText("إجمالي الأصول", "Total assets"), value: Math.abs(shownData.totalAssets) },
+        { label: uiText("إجمالي الخصوم", "Total liabilities"), value: Math.abs(shownData.totalLiabilities) },
+        { label: uiText("حقوق الملكية", "Equity"), value: Math.abs(shownData.totalEquity - shownData.netIncome) },
+        { label: uiText("صافي دخل الفترة الحالية", "Current period net income"), value: shownData.netIncome },
+        { label: uiText("إجمالي الخصوم وحقوق الملكية", "Total liabilities and equity"), value: Math.abs(totalLE), emphasis: true },
+      ],
+      notice: {
+        text: balanced
+          ? `${uiText("الميزانية متوازنة", "Balance sheet is balanced")} — ${fmt(Math.abs(shownData.totalAssets))}`
+          : `${uiText("فرق غير متوازن", "Out-of-balance difference")}: ${fmt(Math.abs(shownData.totalAssets - totalLE))}`,
+        balanced,
+      },
+      sections: [
+        {
+          title: uiText("الأصول", "Assets"),
+          columns: [uiText("الكود", "Code"), uiText("الحساب", "Account"), uiText("الرصيد", "Balance")],
+          rows: shownData.assets.map((row) => [row.code, row.name, Math.abs(row.balance)]),
+          totalRow: ["", uiText("إجمالي الأصول", "Total assets"), Math.abs(shownData.totalAssets)],
+        },
+        {
+          title: uiText("الخصوم", "Liabilities"),
+          columns: [uiText("الكود", "Code"), uiText("الحساب", "Account"), uiText("الرصيد", "Balance")],
+          rows: shownData.liabilities.map((row) => [row.code, row.name, Math.abs(row.balance)]),
+          totalRow: ["", uiText("إجمالي الخصوم", "Total liabilities"), Math.abs(shownData.totalLiabilities)],
+        },
+        {
+          title: uiText("حقوق الملكية", "Equity"),
+          columns: [uiText("الكود", "Code"), uiText("الحساب", "Account"), uiText("الرصيد", "Balance")],
+          rows: shownData.equity.map((row) => [row.code, row.name, Math.abs(row.balance)]),
+          totalRow: ["", uiText("إجمالي حقوق الملكية", "Total equity"), Math.abs(shownData.totalEquity - shownData.netIncome)],
+        },
+      ],
+    });
+  }
 
   const exportRows: BSExportRow[] = shownData
     ? [
@@ -159,7 +208,8 @@ export default function BalanceSheetReport() {
 
       {shownData && (
         <>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <button type="button" onClick={printReport} style={btnSecondary}>🖨️ {uiText("طباعة", "Print")}</button>
             <ExportButtons columns={exportCols} rows={exportRows} filenameBase="الميزانية-العمومية" title={`الميزانية العمومية — حتى ${asOfDate}`} />
           </div>
           <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 8, fontSize: 14, fontWeight: 600,

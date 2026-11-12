@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { uiText } from "../lib/appSettings";
+import { printAccountingReport } from "../lib/accountingReportPrint";
 import { reportLedgerLines, type LedgerLine } from "../lib/reports";
 import { listAccounts, type Account } from "../lib/accounting";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, SearchCombobox, input, ExportButtons } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, btnSecondary, fmt, todayStr, SearchCombobox, input, ExportButtons } from "./_adminUi";
 import { useDimensions, DateField, BranchField, CostCenterField, FilterField } from "./_reportFilters";
 import { useDataRefresh } from "../lib/dataBus";
 import type { ExportColumn } from "../lib/exporters";
@@ -76,6 +78,55 @@ export default function AccountStatementReport({ initialAccountId, onConsumed }:
   const closing = result ? result.opening + totals.dr - totals.cr : 0;
 
   const acctLabel = accountOpts.find((o) => o.value === accountId)?.label ?? "";
+  const branchLabel = branchId === "" ? uiText("كل الفروع", "All branches") : branches.find((branch) => branch.id === branchId)?.nameAr ?? "";
+  const costCenterLabel = costCenterId === "" ? uiText("كل مراكز التكلفة", "All cost centers") : costCenters.find((center) => center.id === costCenterId)?.nameAr ?? "";
+  function printReport() {
+    if (!result) return;
+    let running = result.opening;
+    const rows: (string | number)[][] = [[
+      "", "", uiText("الرصيد الافتتاحي", "Opening balance"), "", "", result.opening,
+    ]];
+    for (const line of result.lines) {
+      running += line.debit - line.credit;
+      rows.push([
+        line.entryDate,
+        line.entryNo,
+        line.description || "—",
+        line.debit > 0.001 ? line.debit : "",
+        line.credit > 0.001 ? line.credit : "",
+        running,
+      ]);
+    }
+    printAccountingReport({
+      title: uiText("كشف حساب", "Account statement"),
+      subtitle: acctLabel,
+      orientation: "landscape",
+      filters: [
+        `${uiText("الفترة", "Period")}: ${fromDate} — ${toDate}`,
+        `${uiText("الفرع", "Branch")}: ${branchLabel}`,
+        `${uiText("مركز التكلفة", "Cost center")}: ${costCenterLabel}`,
+      ],
+      summaries: [
+        { label: uiText("الرصيد الافتتاحي", "Opening balance"), value: result.opening },
+        { label: uiText("إجمالي المدين", "Total debit"), value: totals.dr },
+        { label: uiText("إجمالي الدائن", "Total credit"), value: totals.cr },
+        { label: uiText("الرصيد الختامي", "Closing balance"), value: closing, emphasis: true },
+      ],
+      sections: [{
+        title: uiText("حركة الحساب", "Account activity"),
+        columns: [
+          uiText("التاريخ", "Date"),
+          uiText("القيد", "Journal entry"),
+          uiText("البيان", "Description"),
+          uiText("مدين", "Debit"),
+          uiText("دائن", "Credit"),
+          uiText("الرصيد", "Balance"),
+        ],
+        rows,
+        totalRow: ["", "", uiText("الإجمالي / الرصيد الختامي", "Totals / closing balance"), totals.dr, totals.cr, closing],
+      }],
+    });
+  }
   const exportRows: ASExportRow[] = result
     ? (() => {
         const out: ASExportRow[] = [];
@@ -128,7 +179,8 @@ export default function AccountStatementReport({ initialAccountId, onConsumed }:
 
       {result && (
         <Card>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <button type="button" onClick={printReport} style={btnSecondary}>🖨️ {uiText("طباعة", "Print")}</button>
             <ExportButtons columns={exportCols} rows={exportRows} filenameBase="كشف-حساب" title={`كشف حساب — ${acctLabel} — ${fromDate} ← ${toDate}`} />
           </div>
           <Table>

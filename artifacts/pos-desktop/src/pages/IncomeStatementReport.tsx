@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
+import { uiText } from "../lib/appSettings";
+import { accountHierarchyPrintFilters, printAccountingReport } from "../lib/accountingReportPrint";
 import { reportLedgerLines, type LedgerLine } from "../lib/reports";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, btnSecondary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { useDimensions, useReportAccounts, DateField, BranchField, CostCenterField, AccountHierarchyFields } from "./_reportFilters";
 import type { ExportColumn } from "../lib/exporters";
 import { filterAccountReportRows, type AccountLevelMode } from "../lib/accountReportFilters";
@@ -86,6 +88,40 @@ export default function IncomeStatementReport() {
 
   const netIncome = shownData ? shownData.totalRevenue - shownData.totalExpenses : 0;
   const isProfit = netIncome >= 0;
+  const branchLabel = branchId === "" ? uiText("كل الفروع", "All branches") : branches.find((branch) => branch.id === branchId)?.nameAr ?? "";
+  const costCenterLabel = costCenterId === "" ? uiText("كل مراكز التكلفة", "All cost centers") : costCenters.find((center) => center.id === costCenterId)?.nameAr ?? "";
+  function printReport() {
+    if (!shownData) return;
+    printAccountingReport({
+      title: uiText("قائمة الدخل", "Income statement"),
+      subtitle: uiText("الإيرادات والمصروفات وصافي الربح أو الخسارة", "Revenue, expenses, and net profit or loss"),
+      filters: [
+        `${uiText("الفترة", "Period")}: ${fromDate} — ${toDate}`,
+        `${uiText("الفرع", "Branch")}: ${branchLabel}`,
+        `${uiText("مركز التكلفة", "Cost center")}: ${costCenterLabel}`,
+        ...accountHierarchyPrintFilters(accounts, parentIds, levelMode, showZero),
+      ],
+      summaries: [
+        { label: uiText("إجمالي الإيرادات", "Total revenue"), value: shownData.totalRevenue },
+        { label: uiText("إجمالي المصروفات", "Total expenses"), value: shownData.totalExpenses },
+        { label: isProfit ? uiText("صافي الربح", "Net profit") : uiText("صافي الخسارة", "Net loss"), value: Math.abs(netIncome), emphasis: true },
+      ],
+      sections: [
+        {
+          title: uiText("الإيرادات", "Revenue"),
+          columns: [uiText("الكود", "Code"), uiText("الحساب", "Account"), uiText("المبلغ", "Amount")],
+          rows: shownData.revenues.map((row) => [row.code, row.name, row.amount]),
+          totalRow: ["", uiText("إجمالي الإيرادات", "Total revenue"), shownData.totalRevenue],
+        },
+        {
+          title: uiText("المصروفات", "Expenses"),
+          columns: [uiText("الكود", "Code"), uiText("الحساب", "Account"), uiText("المبلغ", "Amount")],
+          rows: shownData.expenses.map((row) => [row.code, row.name, row.amount]),
+          totalRow: ["", uiText("إجمالي المصروفات", "Total expenses"), shownData.totalExpenses],
+        },
+      ],
+    });
+  }
 
   const exportRows: ISExportRow[] = shownData
     ? [
@@ -129,7 +165,8 @@ export default function IncomeStatementReport() {
 
       {shownData && (
         <>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <button type="button" onClick={printReport} style={btnSecondary}>🖨️ {uiText("طباعة", "Print")}</button>
             <ExportButtons columns={exportCols} rows={exportRows} filenameBase="قائمة-الدخل" title={`قائمة الدخل — ${fromDate} ← ${toDate}`} />
           </div>
           <Card style={{ marginBottom: 16 }}>

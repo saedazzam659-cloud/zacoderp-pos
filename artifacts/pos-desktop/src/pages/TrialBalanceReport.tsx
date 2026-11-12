@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
+import { uiText } from "../lib/appSettings";
+import { accountHierarchyPrintFilters, printAccountingReport } from "../lib/accountingReportPrint";
 import { reportLedgerLines, type LedgerLine } from "../lib/reports";
-import { Page, Card, Table, Th, Td, Empty, btnPrimary, fmt, todayStr, ExportButtons } from "./_adminUi";
+import { Page, Card, Table, Th, Td, Empty, btnPrimary, btnSecondary, fmt, todayStr, ExportButtons } from "./_adminUi";
 import { useDimensions, useReportAccounts, DateField, BranchField, CostCenterField, AccountHierarchyFields } from "./_reportFilters";
 import type { ExportColumn } from "../lib/exporters";
 import { filterAccountReportRows, type AccountLevelMode } from "../lib/accountReportFilters";
@@ -88,6 +90,64 @@ export default function TrialBalanceReport() {
   const balanced = Math.abs(totals.closeDr - totals.closeCr) < 0.01;
   const cell = (n: number) => (Math.abs(n) > 0.001 ? fmt(n) : "");
 
+  const branchLabel = branchId === "" ? uiText("كل الفروع", "All branches") : branches.find((branch) => branch.id === branchId)?.nameAr ?? "";
+  const costCenterLabel = costCenterId === "" ? uiText("كل مراكز التكلفة", "All cost centers") : costCenters.find((center) => center.id === costCenterId)?.nameAr ?? "";
+  function printReport() {
+    if (!visibleRows?.length) return;
+    printAccountingReport({
+      title: uiText("ميزان المراجعة بالمجاميع", "Trial balance"),
+      subtitle: `${uiText("الفترة", "Period")}: ${fromDate} — ${toDate}`,
+      orientation: "landscape",
+      filters: [
+        `${uiText("الفرع", "Branch")}: ${branchLabel}`,
+        `${uiText("مركز التكلفة", "Cost center")}: ${costCenterLabel}`,
+        ...accountHierarchyPrintFilters(accounts, parentIds, levelMode, showZero),
+      ],
+      notice: {
+        text: balanced
+          ? uiText("ميزان المراجعة متوازن", "Trial balance is balanced")
+          : `${uiText("فرق غير متوازن", "Out-of-balance difference")}: ${fmt(Math.abs(totals.closeDr - totals.closeCr))}`,
+        balanced,
+      },
+      sections: [{
+        title: uiText("الأرصدة والحركة", "Balances and activity"),
+        columns: [
+          uiText("الكود", "Code"),
+          uiText("اسم الحساب", "Account"),
+          uiText("افتتاحي مدين", "Opening debit"),
+          uiText("افتتاحي دائن", "Opening credit"),
+          uiText("حركة مدين", "Period debit"),
+          uiText("حركة دائن", "Period credit"),
+          uiText("ختامي مدين", "Closing debit"),
+          uiText("ختامي دائن", "Closing credit"),
+        ],
+        rows: visibleRows.map((account) => {
+          const close = account.openNet + account.periodDr - account.periodCr;
+          return [
+            account.code,
+            account.name,
+            account.openNet > 0 ? account.openNet : "",
+            account.openNet < 0 ? -account.openNet : "",
+            account.periodDr > 0.001 ? account.periodDr : "",
+            account.periodCr > 0.001 ? account.periodCr : "",
+            close > 0 ? close : "",
+            close < 0 ? -close : "",
+          ];
+        }),
+        totalRow: [
+          "",
+          uiText("الإجمالي", "Total"),
+          totals.openDr,
+          totals.openCr,
+          totals.periodDr,
+          totals.periodCr,
+          totals.closeDr,
+          totals.closeCr,
+        ],
+      }],
+    });
+  }
+
   const numCell = (n: number): number | string => (Math.abs(n) > 0.001 ? n : "");
   const exportRows: TBExportRow[] = visibleRows && visibleRows.length > 0
     ? [
@@ -148,7 +208,8 @@ export default function TrialBalanceReport() {
       {visibleRows && (
         <Card>
           {visibleRows.length > 0 && (
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <button type="button" onClick={printReport} style={btnSecondary}>🖨️ {uiText("طباعة", "Print")}</button>
               <ExportButtons columns={exportCols} rows={exportRows} filenameBase="ميزان-المراجعة" title={`ميزان المراجعة بالمجاميع — ${fromDate} ← ${toDate}`} />
             </div>
           )}
