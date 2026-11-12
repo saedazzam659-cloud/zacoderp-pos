@@ -638,6 +638,7 @@ fn main() {
             permissions::permissions_set,
             permissions::permissions_clear,
             permissions::permissions_clear_all,
+            permissions::permissions_replace_for_user,
             // Inventory & warehouses (Task #208).
             inventory::warehouses_list,
             inventory::warehouses_create,

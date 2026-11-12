@@ -15,6 +15,28 @@ function hasTauri(): boolean {
     (("__TAURI_INTERNALS__" in window) || ("__TAURI__" in window));
 }
 
+const LS_PREVIEW_PERMISSIONS = "pos_desktop_user_permissions_v1";
+
+function readPreviewPermissions(): UserPermission[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LS_PREVIEW_PERMISSIONS) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((row): row is UserPermission =>
+      row && typeof row.userId === "string" &&
+      typeof row.screenKey === "string" &&
+      typeof row.canView === "boolean",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writePreviewPermissions(permissions: UserPermission[]): void {
+  if (typeof window === "undefined") throw new Error("حفظ الصلاحيات غير متاح خارج المتصفح.");
+  localStorage.setItem(LS_PREVIEW_PERMISSIONS, JSON.stringify(permissions));
+}
+
 export type ScreenKey =
   | "sales" | "returns" | "parked" | "daily"
   | "customers" | "items" | "item_groups" | "brands" | "uom" | "scale" | "expiry"
@@ -160,20 +182,47 @@ export function defaultsForRole(role: "admin" | "cashier"): Set<ScreenKey> {
 export type UserPermission = { userId: string; screenKey: ScreenKey; canView: boolean };
 
 export async function listUserPermissions(userId: string): Promise<UserPermission[]> {
-  if (!hasTauri()) return [];
+  if (!hasTauri()) return readPreviewPermissions().filter((permission) => permission.userId === userId);
   return await invoke<UserPermission[]>("permissions_list_for_user", { userId });
 }
 export async function setPermission(userId: string, screenKey: ScreenKey, canView: boolean): Promise<void> {
-  if (!hasTauri()) return;
+  if (!hasTauri()) {
+    const next = readPreviewPermissions().filter((permission) => permission.userId !== userId || permission.screenKey !== screenKey);
+    next.push({ userId, screenKey, canView });
+    writePreviewPermissions(next);
+    return;
+  }
   await invoke("permissions_set", { userId, screenKey, canView });
 }
 export async function clearPermission(userId: string, screenKey: ScreenKey): Promise<void> {
-  if (!hasTauri()) return;
+  if (!hasTauri()) {
+    writePreviewPermissions(readPreviewPermissions().filter((permission) => permission.userId !== userId || permission.screenKey !== screenKey));
+    return;
+  }
   await invoke("permissions_clear", { userId, screenKey });
 }
 export async function clearAllPermissions(userId: string): Promise<void> {
-  if (!hasTauri()) return;
+  if (!hasTauri()) {
+    writePreviewPermissions(readPreviewPermissions().filter((permission) => permission.userId !== userId));
+    return;
+  }
   await invoke("permissions_clear_all", { userId });
+}
+export async function replaceUserPermissions(
+  userId: string,
+  screenKeys: ScreenKey[],
+  overrides: Pick<UserPermission, "screenKey" | "canView">[],
+): Promise<void> {
+  if (!hasTauri()) {
+    const knownKeys = new Set(screenKeys);
+    const next = readPreviewPermissions().filter((permission) =>
+      permission.userId !== userId || !knownKeys.has(permission.screenKey),
+    );
+    next.push(...overrides.map((override) => ({ userId, ...override })));
+    writePreviewPermissions(next);
+    return;
+  }
+  await invoke("permissions_replace_for_user", { userId, screenKeys, overrides });
 }
 
 /** Compute effective allowed-screens for a (role, overrides) pair. */

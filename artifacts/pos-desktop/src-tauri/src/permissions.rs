@@ -15,6 +15,13 @@ pub struct UserPermission {
     pub can_view: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionOverride {
+    pub screen_key: String,
+    pub can_view: bool,
+}
+
 #[tauri::command]
 pub fn permissions_list_for_user(user_id: String) -> Result<Vec<UserPermission>, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
@@ -68,5 +75,45 @@ pub fn permissions_clear_all(user_id: String) -> Result<(), String> {
         params![user_id],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn permissions_replace_for_user(
+    user_id: String,
+    screen_keys: Vec<String>,
+    overrides: Vec<PermissionOverride>,
+) -> Result<(), String> {
+    let mut conn = db::open().map_err(|e| e.to_string())?;
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+
+    // Replace only keys known to this UI. Older/future permission keys for
+    // this user are left untouched so updating this app cannot erase them.
+    for screen_key in &screen_keys {
+        tx.execute(
+            "DELETE FROM user_permissions_local WHERE user_id=?1 AND screen_key=?2",
+            params![&user_id, screen_key],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    for permission in overrides {
+        if !screen_keys.iter().any(|key| key == &permission.screen_key) {
+            continue;
+        }
+        tx.execute(
+            "INSERT INTO user_permissions_local(user_id,screen_key,can_view) VALUES(?1,?2,?3)
+             ON CONFLICT(user_id,screen_key) DO UPDATE SET can_view=excluded.can_view",
+            params![
+                &user_id,
+                &permission.screen_key,
+                if permission.can_view { 1 } else { 0 }
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }

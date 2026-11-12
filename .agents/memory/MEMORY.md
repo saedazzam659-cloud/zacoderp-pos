@@ -25,6 +25,7 @@
 - [POS Desktop accounting parity scope](pos-desktop-accounting-parity.md) — Windows POS Desktop only; local prepaid/accrued schedules, with maintenance excluded.
 - [POS employee meal boundary](pos-employee-meal-boundary.md) — fixed meal cost uses expense/clearing accounts; never reduce POS cash or stock, and prevent duplicate daily issues.
 - [POS Desktop full-width UI](pos-desktop-full-width-ui.md) — back-office views should use available width, neutral form edges, and readable spreadsheet-like grids without changing workflows.
+- [POS Desktop per-user permissions](pos-desktop-user-permissions.md) — stage edits until Save; keep group/global actions atomic and preserve role-default inheritance.
 - [POS Desktop update packages](pos-desktop-update-packages.md) — keep the small in-app/web MSI and large offline `/install` MSI on separate release channels.
 - [POS Desktop Windows validation](pos-desktop-windows-build-validation.md) — updater lifecycle changes require the pinned Windows build and a real MSI upgrade check; browser preview cannot verify installation.
 - [Web POS parked carts](web-pos-parked-carts.md) — held drafts stay device-local and scoped by company, cashier, branch, and terminal; checkout alone creates a cloud invoice.

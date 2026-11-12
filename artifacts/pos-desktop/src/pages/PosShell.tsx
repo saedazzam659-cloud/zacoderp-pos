@@ -1018,7 +1018,12 @@ export default function PosShell({
             <div style={S.pagePad}><TrialBalanceReport /></div>
           )}
           {standalone && v === "user_permissions" && isAdmin && standaloneSession && (
-            <div style={S.pagePad}><UserPermissionsAdmin session={standaloneSession} /></div>
+            <div style={S.pagePad}>
+              <UserPermissionsAdmin
+                session={standaloneSession}
+                onAllowedChange={(nextAllowed) => setAllowed(new Set(nextAllowed))}
+              />
+            </div>
           )}
           {standalone && v === "number_series" && isAdmin && (
             <div style={S.pagePad}><NumberSeriesAdmin /></div>
