@@ -14,6 +14,7 @@ import {
 } from "../src/lib/agentReleasePolicy.ts";
 import { buildReleaseFromDist } from "../src/lib/agentRelease.ts";
 import {
+  buildManualRollbackScript,
   buildManualUpdateScript,
   stripLegacyUpdateCron,
 } from "../src/routes/localAgentUpdates.ts";
@@ -417,6 +418,145 @@ test("failed health check restores the previous app automatically", async () => 
     assert.match(fixture.systemctlLog, /restart zacod-app/);
     assert.match(fixture.systemctlLog, /stop zacod-app/);
     assert.match(fixture.systemctlLog, /start zacod-app/);
+  } finally {
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+async function manualRollbackFixture(failTargetHealth: boolean, includePrevious = true) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "zacod-rollback-test-"));
+  const appDir = path.join(root, "app");
+  const previousDir = `${appDir}.old`;
+  const fakeBin = path.join(root, "bin");
+  const scriptPath = path.join(root, "run-rollback.sh");
+  const statusFile = path.join(root, "update-status.json");
+  const healthCount = path.join(root, "health-count");
+  const systemctlLog = path.join(root, "systemctl.log");
+  await fs.mkdir(appDir, { recursive: true });
+  if (includePrevious) await fs.mkdir(previousDir, { recursive: true });
+  await fs.mkdir(fakeBin);
+  await fs.writeFile(path.join(appDir, "VERSION"), "current-release\n");
+  await fs.writeFile(path.join(appDir, "index.mjs"), "current app");
+  if (includePrevious) {
+    await fs.writeFile(path.join(previousDir, "VERSION"), "previous-release\n");
+    await fs.writeFile(path.join(previousDir, "index.mjs"), "previous app");
+  }
+  await fs.writeFile(path.join(root, "customer-database-sentinel"), "must-not-change");
+  await fs.writeFile(healthCount, "0");
+  await fs.writeFile(systemctlLog, "");
+  await fs.writeFile(path.join(fakeBin, "id"), `#!/usr/bin/env bash
+if [ "$1" = "-u" ]; then echo 0; else exec /usr/bin/id "$@"; fi
+`, { mode: 0o700 });
+  await fs.writeFile(path.join(fakeBin, "curl"), `#!/usr/bin/env bash
+N=$(cat "$HEALTH_COUNT")
+N=$((N + 1))
+echo "$N" > "$HEALTH_COUNT"
+if [ "$FAIL_TARGET_HEALTH" = "1" ] && [ "$N" = "1" ]; then echo 503; else echo 200; fi
+`, { mode: 0o700 });
+  await fs.writeFile(path.join(fakeBin, "systemctl"), `#!/usr/bin/env bash
+echo "$*" >> "$SYSTEMCTL_LOG"
+exit 0
+`, { mode: 0o700 });
+
+  const paths = {
+    configPath: path.join(root, "config.json"),
+    rootDir: root,
+    appDir,
+    versionFile: path.join(appDir, "VERSION"),
+    statusFile,
+    dispatchLock: path.join(root, "manual-update.dispatch"),
+    updateLock: path.join(root, "manual-update.lock"),
+  };
+  const script = buildManualRollbackScript({
+    paths,
+    scriptPath,
+    healthAttempts: 1,
+    healthDelaySeconds: 0,
+  });
+  await fs.writeFile(scriptPath, script, { mode: 0o700 });
+  let exitCode = 0;
+  try {
+    await execFileAsync("/bin/bash", [scriptPath], {
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        HEALTH_COUNT: healthCount,
+        FAIL_TARGET_HEALTH: failTargetHealth ? "1" : "0",
+        SYSTEMCTL_LOG: systemctlLog,
+      },
+      timeout: 20_000,
+    });
+  } catch (error: any) {
+    exitCode = error?.code ?? 1;
+  }
+  return {
+    root,
+    appDir,
+    previousDir,
+    status: JSON.parse(await fs.readFile(statusFile, "utf8")) as { state: string; message: string },
+    systemctlLog: await fs.readFile(systemctlLog, "utf8"),
+    sentinel: await fs.readFile(path.join(root, "customer-database-sentinel"), "utf8"),
+    exitCode,
+  };
+}
+
+test("manual rollback restores only the prior app release and keeps a reversible copy", async () => {
+  const fixture = await manualRollbackFixture(false);
+  try {
+    assert.equal(fixture.exitCode, 0);
+    assert.equal(fixture.status.state, "restored");
+    assert.equal(await fs.readFile(path.join(fixture.appDir, "VERSION"), "utf8"), "previous-release\n");
+    assert.equal(await fs.readFile(path.join(fixture.previousDir, "VERSION"), "utf8"), "current-release\n");
+    assert.equal(fixture.sentinel, "must-not-change");
+    assert.match(fixture.systemctlLog, /stop zacod-app/);
+    assert.match(fixture.systemctlLog, /start zacod-app/);
+  } finally {
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("rollback runner keeps the SSH fence descriptor and contains no database commands", () => {
+  const script = buildManualRollbackScript({
+    paths: {
+      configPath: "/opt/zacod/config.json",
+      rootDir: "/opt/zacod",
+      appDir: "/opt/zacod/app",
+      versionFile: "/opt/zacod/app/VERSION",
+      statusFile: "/opt/zacod/update-status.json",
+      dispatchLock: "/opt/zacod/manual-update.dispatch",
+      updateLock: "/opt/zacod/manual-update.lock",
+    },
+    scriptPath: "/opt/zacod/.manual-rollback-test.sh",
+  });
+  assert.match(script, /exec 8>"\$UPDATE_LOCK"/);
+  assert.doesNotMatch(script, /exec 9>/);
+  assert.doesNotMatch(script, /\b(?:psql|pg_dump|drizzle|migrat(?:e|ion))\b/i);
+});
+
+test("failed rollback health check restores the original app and retains the previous release", async () => {
+  const fixture = await manualRollbackFixture(true);
+  try {
+    assert.notEqual(fixture.exitCode, 0);
+    assert.equal(fixture.status.state, "failed");
+    assert.equal(await fs.readFile(path.join(fixture.appDir, "VERSION"), "utf8"), "current-release\n");
+    assert.equal(await fs.readFile(path.join(fixture.previousDir, "VERSION"), "utf8"), "previous-release\n");
+    assert.equal(fixture.sentinel, "must-not-change");
+    assert.match(fixture.systemctlLog, /stop zacod-app/);
+    assert.match(fixture.systemctlLog, /start zacod-app/);
+  } finally {
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("manual rollback without a retained release leaves the current app untouched", async () => {
+  const fixture = await manualRollbackFixture(false, false);
+  try {
+    assert.notEqual(fixture.exitCode, 0);
+    assert.equal(fixture.status.state, "failed");
+    assert.match(fixture.status.message, /لا توجد نسخة سابقة محفوظة/);
+    assert.equal(await fs.readFile(path.join(fixture.appDir, "VERSION"), "utf8"), "current-release\n");
+    assert.equal(fixture.systemctlLog, "");
+    assert.equal(fixture.sentinel, "must-not-change");
   } finally {
     await fs.rm(fixture.root, { recursive: true, force: true });
   }

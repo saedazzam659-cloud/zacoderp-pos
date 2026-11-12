@@ -910,6 +910,30 @@ export default function AgentServers() {
     } finally { setBusy(null); }
   }
 
+  async function rollbackAgent(a: Agent) {
+    if (!confirm(
+      `استعادة آخر نسخة تطبيق محفوظة على «${a.name}»؟\nستُعاد تشغيل الخدمة وقد يتأثر جميع المستخدمين. ستتغير ملفات التطبيق فقط؛ لن تتغير قاعدة البيانات أو بيانات العملاء. إذا غيّر تحديث سابق مخطط قاعدة البيانات فقد لا يتوافق معه الإصدار الأقدم.`
+    )) return;
+    setBusy(`rollback-${a.id}`);
+    try {
+      const r = await fetch(`${API}/api/admin/agent-instances/${a.id}/rollback`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ confirm: true }),
+      });
+      const j = await r.json().catch(() => ({}));
+      invalidate();
+      setLogView({ title: `سجل استعادة الإصدار — ${a.name}`, text: j.log ?? j.error ?? "" });
+      if (!r.ok) throw new Error(j.error ?? "فشلت استعادة الإصدار");
+      toast({
+        title: "تمت استعادة إصدار التطبيق",
+        description: `من ${j.fromVersion ?? "الإصدار الحالي"} إلى ${j.targetVersion ?? "الإصدار السابق"} — لم تتغير قاعدة البيانات`,
+      });
+    } catch (e: any) {
+      toast({ title: "استعادة الإصدار: فشل", description: String(e.message ?? e), variant: "destructive" });
+    } finally { setBusy(null); }
+  }
+
   // ── الحذف الكامل من سيرفر الوكيل (حماية الملكية الفكرية) ──
   const [wipeAgent, setWipeAgent] = useState<Agent | null>(null);
   async function wipeNow(a: Agent) {
@@ -1447,6 +1471,19 @@ export default function AgentServers() {
                     <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!a.sshHost || !a.sshSecretSet || !a.licenseKey || busy === `deploy-${a.id}` || a.deployStatus === "deploying" || isAutoDomainBusy(a)} onClick={() => deployNow(a)} data-testid={`button-deploy-${a.id}`}>
                       {busy === `deploy-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <UploadCloud className="h-3 w-3 ms-1" />}نشر
                     </Button>
+                    {a.mode === "full" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs border-amber-300 text-amber-800 hover:bg-amber-50"
+                        disabled={!a.sshHost || !a.sshSecretSet || a.status !== "active" || busy === `rollback-${a.id}` || a.deployStatus === "deploying" || isAutoDomainBusy(a)}
+                        onClick={() => void rollbackAgent(a)}
+                        data-testid={`button-rollback-agent-${a.id}`}
+                      >
+                        {busy === `rollback-${a.id}` ? <Loader2 className="h-3 w-3 animate-spin ms-1" /> : <RefreshCw className="h-3 w-3 ms-1" />}
+                        استعادة الإصدار السابق
+                      </Button>
+                    )}
                     {a.mode === "full" && (
                       <Button
                         variant="outline"

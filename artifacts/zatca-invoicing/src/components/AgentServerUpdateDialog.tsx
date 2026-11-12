@@ -28,15 +28,20 @@ type OperationState =
   | "restarting"
   | "rolling_back"
   | "completed"
+  | "restored"
   | "rolled_back"
   | "failed";
 
 type UpdateStatus = {
   currentVersion: string;
-  availableVersion: string;
+  previousVersion: string | null;
+  rollbackAvailable: boolean;
+  availableVersion: string | null;
   sizeBytes: number;
   publishedAt: string | null;
   updateAvailable: boolean;
+  centralAvailable: boolean;
+  centralError: string | null;
   operation: {
     state: OperationState;
     message: string;
@@ -60,7 +65,7 @@ function formatBytes(bytes: number): string {
   return `${mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)} MB`;
 }
 
-function shortVersion(version: string): string {
+function shortVersion(version?: string | null): string {
   return version && version !== "unknown" ? version.slice(0, 12) : "—";
 }
 
@@ -77,6 +82,7 @@ export default function AgentServerUpdateDialog({
   const [loading, setLoading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [confirmingRollback, setConfirmingRollback] = useState(false);
   const [error, setError] = useState("");
   const apiBase = import.meta.env.VITE_API_URL ?? "";
 
@@ -104,6 +110,7 @@ export default function AgentServerUpdateDialog({
   useEffect(() => {
     if (!open) {
       setConfirming(false);
+      setConfirmingRollback(false);
       return;
     }
     void loadStatus(false);
@@ -117,6 +124,7 @@ export default function AgentServerUpdateDialog({
   }, [open, busy, loadStatus]);
 
   const completed = status?.operation.state === "completed" && !status.updateAvailable;
+  const rollbackCompleted = status?.operation.state === "restored";
   const rolledBack = status?.operation.state === "rolled_back";
   const operationFailed = status?.operation.state === "failed" || rolledBack;
   const publishedLabel = useMemo(() => {
@@ -128,7 +136,7 @@ export default function AgentServerUpdateDialog({
   }, [status?.publishedAt]);
 
   const applyUpdate = async () => {
-    if (!status) return;
+    if (!status?.availableVersion) return;
     setStarting(true);
     setError("");
     try {
@@ -154,6 +162,38 @@ export default function AgentServerUpdateDialog({
       } : current);
     } catch (e: any) {
       setError(e?.message || t("topbar.agentUpdateStartFailed"));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const restorePrevious = async () => {
+    if (!status?.previousVersion) return;
+    setStarting(true);
+    setError("");
+    try {
+      const response = await fetch(`${apiBase}/api/agent-updates/rollback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ confirm: true }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error || t("topbar.agentRollbackStartFailed"));
+      setConfirmingRollback(false);
+      setStatus((current) => current ? {
+        ...current,
+        operation: {
+          state: "queued",
+          message: t("topbar.agentRollbackQueued"),
+          targetVersion: body?.targetVersion || current.previousVersion || undefined,
+          updatedAt: new Date().toISOString(),
+        },
+      } : current);
+    } catch (e: any) {
+      setError(e?.message || t("topbar.agentRollbackStartFailed"));
     } finally {
       setStarting(false);
     }
@@ -185,20 +225,32 @@ export default function AgentServerUpdateDialog({
 
             {status && (
               <>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <div className="rounded-lg border bg-muted/30 p-3">
                     <p className="text-xs text-muted-foreground">{t("topbar.agentUpdateCurrent")}</p>
                     <p className="mt-1 font-mono text-sm font-semibold" dir="ltr">{shortVersion(status.currentVersion)}</p>
                   </div>
                   <div className="rounded-lg border bg-muted/30 p-3">
                     <p className="text-xs text-muted-foreground">{t("topbar.agentUpdateAvailable")}</p>
-                    <p className="mt-1 font-mono text-sm font-semibold" dir="ltr">{shortVersion(status.availableVersion)}</p>
+                    <p className="mt-1 font-mono text-sm font-semibold" dir="ltr">
+                      {status.centralAvailable ? shortVersion(status.availableVersion) : t("topbar.agentUpdateUnavailable")}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground">{t("topbar.agentRollbackPrevious")}</p>
+                    <p className="mt-1 font-mono text-sm font-semibold" dir="ltr">{shortVersion(status.previousVersion)}</p>
                   </div>
                   <div className="rounded-lg border bg-muted/30 p-3">
                     <p className="text-xs text-muted-foreground">{t("topbar.agentUpdateSize")}</p>
-                    <p className="mt-1 text-sm font-semibold" dir="ltr">{formatBytes(status.sizeBytes)}</p>
+                    <p className="mt-1 text-sm font-semibold" dir="ltr">{status.centralAvailable ? formatBytes(status.sizeBytes) : "—"}</p>
                   </div>
                 </div>
+
+                {!status.centralAvailable && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+                    {status.centralError || t("topbar.agentUpdateCenterOffline")}
+                  </div>
+                )}
 
                 {publishedLabel && (
                   <p className="text-xs text-muted-foreground">
@@ -216,22 +268,15 @@ export default function AgentServerUpdateDialog({
                       </div>
                     </div>
                   </div>
-                ) : completed || (!status.updateAvailable && !operationFailed) ? (
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="h-5 w-5" />
-                      <p className="font-semibold">
-                        {completed ? status.operation.message : t("topbar.agentUpdateLatest")}
-                      </p>
-                    </div>
-                  </div>
-                ) : operationFailed ? (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+                ) : confirmingRollback ? (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950">
                     <div className="flex items-start gap-3">
                       <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
                       <div>
-                        <p className="font-semibold">{status.operation.message}</p>
-                        {rolledBack && <p className="mt-1 text-xs">{t("topbar.agentUpdateRollbackSafe")}</p>}
+                        <p className="font-semibold">{t("topbar.agentRollbackConfirmTitle")}</p>
+                        <p className="mt-1 text-sm text-amber-800">
+                          {t("topbar.agentRollbackConfirmDescription", { version: shortVersion(status.previousVersion) })}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -245,19 +290,52 @@ export default function AgentServerUpdateDialog({
                       </div>
                     </div>
                   </div>
-                ) : (
-                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
-                    <p className="font-semibold text-primary">{t("topbar.agentUpdateReady")}</p>
-                    <p className="mt-1 text-sm text-muted-foreground">{t("topbar.agentUpdateNoAuto")}</p>
+                ) : completed || rollbackCompleted || (status.centralAvailable && !status.updateAvailable && !operationFailed) ? (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-5 w-5" />
+                      <p className="font-semibold">
+                        {completed || rollbackCompleted ? status.operation.message : t("topbar.agentUpdateLatest")}
+                      </p>
+                    </div>
                   </div>
-                )}
+                ) : operationFailed ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+                      <div>
+                        <p className="font-semibold">{status.operation.message}</p>
+                        {rolledBack && <p className="mt-1 text-xs">{t("topbar.agentUpdateRollbackSafe")}</p>}
+                      </div>
+                    </div>
+                  </div>
+                ) : status.updateAvailable || status.rollbackAvailable ? (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                    <p className="font-semibold text-primary">
+                      {status.updateAvailable ? t("topbar.agentUpdateReady") : t("topbar.agentRollbackReady")}
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {status.updateAvailable ? t("topbar.agentUpdateNoAuto") : t("topbar.agentRollbackNoDatabase")}
+                    </p>
+                  </div>
+                ) : null}
               </>
             )}
           </div>
         )}
 
         <DialogFooter className="gap-2 sm:gap-2">
-          {status && confirming && !busy ? (
+          {status && confirmingRollback && !busy ? (
+            <>
+              <Button variant="outline" onClick={() => setConfirmingRollback(false)} disabled={starting}>
+                {t("common.cancel")}
+              </Button>
+              <Button variant="destructive" onClick={restorePrevious} disabled={starting} data-testid="confirm-agent-rollback">
+                {starting ? <Loader2 className="me-2 h-4 w-4 animate-spin" /> : <RefreshCw className="me-2 h-4 w-4" />}
+                {t("topbar.agentRollbackConfirmButton")}
+              </Button>
+            </>
+          ) : status && confirming && !busy ? (
             <>
               <Button variant="outline" onClick={() => setConfirming(false)} disabled={starting}>
                 {t("common.cancel")}
@@ -273,16 +351,23 @@ export default function AgentServerUpdateDialog({
                 <RefreshCw className={`me-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
                 {t("topbar.agentUpdateCheck")}
               </Button>
-              {completed ? (
+              {(completed || rollbackCompleted) && (
                 <Button onClick={() => window.location.reload()} data-testid="reload-after-agent-update">
                   {t("topbar.agentUpdateReload")}
                 </Button>
-              ) : status?.updateAvailable && !busy ? (
+              )}
+              {status?.updateAvailable && !busy && (
                 <Button onClick={() => setConfirming(true)} data-testid="start-agent-update">
                   <Download className="me-2 h-4 w-4" />
                   {t("topbar.agentUpdateInstall")}
                 </Button>
-              ) : null}
+              )}
+              {status?.rollbackAvailable && !busy && (
+                <Button variant="destructive" onClick={() => setConfirmingRollback(true)} data-testid="start-agent-rollback">
+                  <RefreshCw className="me-2 h-4 w-4" />
+                  {t("topbar.agentRollbackButton")}
+                </Button>
+              )}
             </>
           )}
         </DialogFooter>

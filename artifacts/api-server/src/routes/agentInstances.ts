@@ -154,6 +154,7 @@ import {
   type ShellControllerState,
 } from "../lib/shellControllerSync.js";
 import { decideControllerLinkReconcile } from "../lib/controllerLinkReconcile.js";
+import { buildManualRollbackScript } from "./localAgentUpdates.js";
 import {
   assertManagementOperation,
   assertPlatformControlToken,
@@ -2500,6 +2501,153 @@ echo "BANNED_BEFORE:$BANNED_BEFORE"`;
       eq(agentInstancesTable.id, id),
       eq(agentInstancesTable.deployLeaseId, operationId),
     )).catch(() => {});
+    stopHeartbeat();
+  }
+});
+
+// POST /:id/rollback — restore the retained previous application release on
+// this one full-agent server. The script touches only /opt/zacod/app and its
+// adjacent retained directory; it never runs migrations or changes customer DBs.
+router.post("/:id/rollback", async (req, res) => {
+  const id = Number(req.params.id);
+  const [inst] = await db.select().from(agentInstancesTable).where(eq(agentInstancesTable.id, id)).limit(1);
+  if (!inst) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (req.body?.confirm !== true) {
+    res.status(400).json({ error: "يلزم تأكيد استعادة ملفات التطبيق" });
+    return;
+  }
+  if (inst.mode !== "full") {
+    res.status(400).json({ error: "استعادة إصدار التطبيق متاحة فقط للنسخة الكاملة" });
+    return;
+  }
+  if (inst.status !== "active") {
+    res.status(409).json({ error: "فعّل الوكيل أولًا قبل استعادة إصدار التطبيق" });
+    return;
+  }
+  if (!inst.sshHost || !inst.sshUser || !inst.sshSecretEnc) {
+    res.status(400).json({ error: "أكمل بيانات السيرفر (المضيف والمستخدم وكلمة المرور/المفتاح) أولًا" });
+    return;
+  }
+  try { await assertProbeTargetAllowed(inst.sshHost); }
+  catch (e: any) { res.status(400).json({ error: String(e?.message ?? "عنوان غير مسموح") }); return; }
+
+  const operationId = randomBytes(16).toString("hex");
+  const [claimed] = await db.update(agentInstancesTable).set({
+    deployStatus: "deploying",
+    deployLeaseId: operationId,
+    deployOperationPhase: "app_rollback",
+    deployProviderMutationUntil: null,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(agentInstancesTable.id, id),
+    ne(agentInstancesTable.deployStatus, "deploying"),
+  )).returning({ id: agentInstancesTable.id });
+  if (!claimed) {
+    res.status(409).json({ error: "توجد عملية أخرى جارية على هذا السيرفر" });
+    return;
+  }
+
+  const stopHeartbeat = startAgentOperationHeartbeat(id, operationId);
+  let remoteCallStarted = false;
+  let remoteResultReceived = false;
+  const paths = {
+    configPath: "/opt/zacod/config.json",
+    rootDir: "/opt/zacod",
+    appDir: "/opt/zacod/app",
+    versionFile: "/opt/zacod/app/VERSION",
+    statusFile: "/opt/zacod/update-status.json",
+    dispatchLock: "/opt/zacod/manual-update.dispatch",
+    updateLock: "/opt/zacod/manual-update.lock",
+  };
+  const scriptPath = `/opt/zacod/.manual-rollback-${operationId}.sh`;
+  const script = buildManualRollbackScript({ paths, scriptPath, healthAttempts: 45, healthDelaySeconds: 2 });
+
+  const releaseOperation = async (deployStatus: string, deployLog: string, deployedVersion?: string) => {
+    const [released] = await db.update(agentInstancesTable).set({
+      deployStatus,
+      deployLeaseId: null,
+      deployOperationPhase: null,
+      deployProviderMutationUntil: null,
+      deployLog: deployLog.slice(-8000),
+      ...(deployedVersion ? { deployedVersion } : {}),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(agentInstancesTable.id, id),
+      eq(agentInstancesTable.deployStatus, "deploying"),
+      eq(agentInstancesTable.deployLeaseId, operationId),
+    )).returning({ id: agentInstancesTable.id });
+    if (!released) throw new Error("فُقد قفل عملية الاستعادة");
+  };
+
+  try {
+    await initializeRemoteOperationFence(inst, operationId);
+    remoteCallStarted = true;
+    const result = await sshRunOperationScript(inst, operationId, script, { timeoutMs: 210_000 });
+    remoteResultReceived = true;
+    await pinHostKey(inst, result.hostKeyFp);
+    const output = result.out.slice(-8000);
+    const restored = output.match(/ZACOD_ROLLBACK_RESTORED target=([^\s]+) from=([^\s]+)/);
+    const recovered = output.includes("ZACOD_ROLLBACK_RECOVERED");
+    const recoveryFailed = output.includes("ZACOD_ROLLBACK_RECOVERY_FAILED");
+    const noPrevious = output.includes("ZACOD_ROLLBACK_NO_PREVIOUS");
+
+    if (result.code === 0 && restored) {
+      const targetVersion = restored[1].slice(0, 80);
+      const fromVersion = restored[2].slice(0, 80);
+      await releaseOperation("ok", output, targetVersion);
+      await logAgentEvent(id, "agent_app_rollback_succeeded", {
+        targetVersion, fromVersion, by: (req as any).authUser?.username ?? null,
+      }, req);
+      res.json({ ok: true, targetVersion, fromVersion, log: output });
+      return;
+    }
+
+    const safeFailure = noPrevious || recovered || output.includes("ZACOD_ROLLBACK_FAILED_NO_SWAP");
+    await releaseOperation(safeFailure ? inst.deployStatus : "error", output || "فشلت استعادة الإصدار", undefined);
+    await logAgentEvent(id, "agent_app_rollback_failed", {
+      result: noPrevious ? "no_previous_release" : recoveryFailed ? "recovery_failed" : recovered ? "restored_current" : "failed",
+      by: (req as any).authUser?.username ?? null,
+    }, req);
+    if (noPrevious) {
+      res.status(409).json({ error: "لا توجد نسخة سابقة محفوظة على هذا السيرفر", log: output });
+    } else {
+      res.status(502).json({
+        error: recoveryFailed
+          ? "فشل فحص الإصدار السابق وتعذر التحقق من تشغيل الإصدار الأصلي؛ افحص السيرفر فورًا"
+          : output.includes("ZACOD_ROLLBACK_FAILED_NO_SWAP")
+            ? "تعذّر بدء الاستعادة؛ لم تُستبدل ملفات التطبيق"
+            : recovered
+              ? "فشل فحص الإصدار السابق؛ أُعيد الإصدار الأصلي ولم تُترك قاعدة البيانات دون تغيير"
+              : "تعذّرت استعادة الإصدار السابق؛ راجع سجل السيرفر",
+        log: output,
+      });
+    }
+  } catch (e: any) {
+    const message = String(e?.message ?? e).slice(0, 600);
+    await logAgentEvent(id, "agent_app_rollback_failed", {
+      result: remoteCallStarted && !remoteResultReceived ? "remote_result_unknown" : "operation_error",
+      error: message,
+      by: (req as any).authUser?.username ?? null,
+    }, req);
+    if (remoteCallStarted && !remoteResultReceived) {
+      // Do not release an ambiguous remote operation. Existing recovery first
+      // waits for the SSH-side control lock, proving the rollback script stopped.
+      await db.update(agentInstancesTable).set({
+        deployLog: `[استعادة إصدار التطبيق] النتيجة غير محسومة: ${message}`.slice(-8000),
+        updatedAt: new Date(),
+      }).where(and(
+        eq(agentInstancesTable.id, id),
+        eq(agentInstancesTable.deployStatus, "deploying"),
+        eq(agentInstancesTable.deployLeaseId, operationId),
+      )).catch(() => {});
+      res.status(502).json({
+        error: "انقطع الاتصال أثناء الاستعادة، لذلك لم تُحرر العملية. استخدم «استعادة العملية» بعد التحقق من توقفها.",
+      });
+      return;
+    }
+    await releaseOperation(inst.deployStatus, `[استعادة إصدار التطبيق] ${message}`).catch(() => {});
+    res.status(502).json({ error: `فشلت استعادة الإصدار: ${message}` });
+  } finally {
     stopHeartbeat();
   }
 });

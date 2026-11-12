@@ -32,6 +32,7 @@ type UpdateState =
   | "restarting"
   | "rolling_back"
   | "completed"
+  | "restored"
   | "rolled_back"
   | "failed";
 
@@ -97,26 +98,31 @@ async function readJson<T>(filePath: string): Promise<T | null> {
   }
 }
 
-async function readAgentConfig(): Promise<{ config: AgentConfig; paths: AgentPaths } | null> {
+async function readLocalAgentConfig(): Promise<{ config: AgentConfig; paths: AgentPaths } | null> {
   const paths = agentPaths();
   const config = await readJson<AgentConfig>(paths.configPath);
+  if (!config || config.mode !== "full" || config.localSuperadminEnabled === false) {
+    return null;
+  }
+  return { config, paths };
+}
+
+async function readAgentConfig(): Promise<{ config: AgentConfig; paths: AgentPaths } | null> {
+  const local = await readLocalAgentConfig();
+  if (!local) return null;
+  const { config, paths } = local;
   if (
-    !config ||
-    config.mode !== "full" ||
-    config.localSuperadminEnabled === false ||
     !/^[A-Za-z0-9._-]{8,200}$/.test(safeText(config.installationId, 200)) ||
     !/^[A-Za-z0-9._-]{8,500}$/.test(safeText(config.licenseKey, 500)) ||
     !safeText(activeControllerOrigin(config), 1000)
-  ) {
-    return null;
-  }
+  ) return null;
   try {
     const origin = new URL(activeControllerOrigin(config));
     if (origin.protocol !== "https:") return null;
   } catch {
     return null;
   }
-  return { config, paths };
+  return local;
 }
 
 function activeControllerOrigin(config: AgentConfig): string {
@@ -139,6 +145,17 @@ async function readCurrentVersion(paths: AgentPaths): Promise<string> {
     return (await fs.readFile(paths.versionFile, "utf8")).trim().slice(0, 80) || "unknown";
   } catch {
     return "unknown";
+  }
+}
+
+async function readPreviousVersion(paths: AgentPaths): Promise<string | null> {
+  try {
+    const previousDir = `${paths.appDir}.old`;
+    await fs.access(path.join(previousDir, "index.mjs"));
+    const previous = (await fs.readFile(path.join(previousDir, "VERSION"), "utf8")).trim().slice(0, 80);
+    return previous || null;
+  } catch {
+    return null;
   }
 }
 
@@ -183,7 +200,7 @@ function manualBundleUrl(config: AgentConfig, version: string, origin = activeCo
   return url;
 }
 
-async function fetchManualManifest(config: AgentConfig): Promise<ManualManifest> {
+async function fetchManualManifest(config: AgentConfig, timeoutMs = 20_000): Promise<ManualManifest> {
   let lastError: Error | null = null;
   const origins = controllerOriginsInOrder(config);
   for (const origin of origins) try {
@@ -199,7 +216,7 @@ async function fetchManualManifest(config: AgentConfig): Promise<ManualManifest>
       "X-Zacod-Db-Fingerprint": config.fingerprint ?? "",
     },
     redirect: "error",
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const raw = await response.text();
   if (!response.ok) {
@@ -518,6 +535,184 @@ exit 0
 `;
 }
 
+export function buildManualRollbackScript(args: {
+  paths: AgentPaths;
+  scriptPath: string;
+  dispatchLockAlreadyHeld?: boolean;
+  healthAttempts?: number;
+  healthDelaySeconds?: number;
+}): string {
+  const { paths, scriptPath } = args;
+  const healthAttempts = Math.max(1, Math.min(120, Math.floor(args.healthAttempts ?? 45)));
+  const healthDelaySeconds = Math.max(0, Math.min(30, Math.floor(args.healthDelaySeconds ?? 2)));
+  const previousDir = `${paths.appDir}.old`;
+  const currentHoldDir = `${paths.appDir}.rollback-current`;
+  const failedDir = `${paths.appDir}.rollback-failed`;
+  const ownsDispatchOnStart = args.dispatchLockAlreadyHeld ? "1" : "0";
+  const acquireDispatch = args.dispatchLockAlreadyHeld
+    ? ""
+    : `if [ -e "$DISPATCH_LOCK" ]; then
+  lock_mtime=$(stat -c %Y "$DISPATCH_LOCK" 2>/dev/null || echo 0)
+  now=$(date +%s)
+  if [ "$((now - lock_mtime))" -le 1800 ]; then
+    echo "ZACOD_ROLLBACK_FAILED_NO_SWAP"
+    exit 1
+  fi
+  rm -f "$DISPATCH_LOCK"
+fi
+(umask 077; set -o noclobber; printf '%s\\n%s\\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DISPATCH_LOCK") 2>/dev/null || {
+  echo "ZACOD_ROLLBACK_FAILED_NO_SWAP"
+  exit 1
+}
+OWN_DISPATCH_LOCK=1`;
+
+  return `#!/usr/bin/env bash
+set -Eeuo pipefail
+STATUS_FILE=${shQuote(paths.statusFile)}
+DISPATCH_LOCK=${shQuote(paths.dispatchLock)}
+UPDATE_LOCK=${shQuote(paths.updateLock)}
+APP_DIR=${shQuote(paths.appDir)}
+PREVIOUS_DIR=${shQuote(previousDir)}
+CURRENT_HOLD_DIR=${shQuote(currentHoldDir)}
+FAILED_DIR=${shQuote(failedDir)}
+SCRIPT_FILE=${shQuote(scriptPath)}
+OWN_DISPATCH_LOCK=${ownsDispatchOnStart}
+TARGET_VERSION=""
+CURRENT_VERSION=""
+SWAP_STARTED=0
+
+write_status() {
+  UPDATE_STATE="$1" UPDATE_MESSAGE="$2" UPDATE_VERSION="$TARGET_VERSION" STATUS_FILE="$STATUS_FILE" node - <<'NODE'
+const fs = require("node:fs");
+const file = process.env.STATUS_FILE;
+const temporary = file + ".tmp-" + process.pid;
+fs.writeFileSync(temporary, JSON.stringify({
+  state: process.env.UPDATE_STATE,
+  message: process.env.UPDATE_MESSAGE,
+  targetVersion: process.env.UPDATE_VERSION || undefined,
+  updatedAt: new Date().toISOString()
+}), { mode: 0o600 });
+fs.renameSync(temporary, file);
+NODE
+}
+
+health_ok() {
+  local code
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 4 "http://127.0.0.1:8080/api/healthz" 2>/dev/null || true)
+  [ "$code" = "200" ]
+}
+
+cleanup() {
+  [ "$OWN_DISPATCH_LOCK" != "1" ] || rm -f "$DISPATCH_LOCK"
+  rm -f "$SCRIPT_FILE"
+}
+
+restore_current() {
+  set +e
+  systemctl stop zacod-app >/dev/null 2>&1
+  if [ -d "$APP_DIR" ] && [ -d "$CURRENT_HOLD_DIR" ]; then
+    [ ! -e "$FAILED_DIR" ] || return 1
+    mv "$APP_DIR" "$FAILED_DIR" || return 1
+    mv "$CURRENT_HOLD_DIR" "$APP_DIR" || return 1
+    mv "$FAILED_DIR" "$PREVIOUS_DIR" || return 1
+  elif [ ! -d "$APP_DIR" ] && [ -d "$CURRENT_HOLD_DIR" ]; then
+    mv "$CURRENT_HOLD_DIR" "$APP_DIR" || return 1
+  fi
+  systemctl start zacod-app >/dev/null 2>&1 || return 1
+  for _ in $(seq 1 ${healthAttempts}); do
+    sleep ${healthDelaySeconds}
+    health_ok && return 0
+  done
+  return 1
+}
+
+on_error() {
+  local rc=$?
+  trap - ERR
+  if [ "$SWAP_STARTED" = "1" ]; then
+    if restore_current; then
+      SWAP_STARTED=0
+      write_status "failed" "تعذر الرجوع؛ أُعيد تشغيل الإصدار الذي كان يعمل قبل المحاولة"
+      echo "ZACOD_ROLLBACK_RECOVERED target=$TARGET_VERSION current=$CURRENT_VERSION"
+    else
+      write_status "failed" "تعذر الرجوع وتعذر التحقق من تشغيل الإصدار السابق؛ يلزم فحص السيرفر"
+      echo "ZACOD_ROLLBACK_RECOVERY_FAILED target=$TARGET_VERSION current=$CURRENT_VERSION"
+    fi
+  else
+    write_status "failed" "تعذر بدء استعادة الإصدار السابق؛ لم تُستبدل ملفات التطبيق"
+    echo "ZACOD_ROLLBACK_FAILED_NO_SWAP"
+  fi
+  cleanup
+  exit "$rc"
+}
+trap on_error ERR
+
+[ "$(id -u)" = "0" ] || { write_status "failed" "تتطلب الاستعادة صلاحية root"; echo "ZACOD_ROLLBACK_FAILED_NO_SWAP"; cleanup; exit 1; }
+${acquireDispatch}
+# The central SSH fence reserves fd 9; use a different descriptor so its
+# lock stays held for the full remote rollback operation.
+exec 8>"$UPDATE_LOCK"
+flock -n 8 || { echo "ZACOD_ROLLBACK_FAILED_NO_SWAP"; cleanup; exit 1; }
+[ ! -f ${shQuote(path.join(paths.rootDir, "SUSPENDED"))} ] || {
+  write_status "failed" "السيرفر موقوف؛ لم تُغيّر ملفات التطبيق"
+  echo "ZACOD_ROLLBACK_FAILED_NO_SWAP"
+  cleanup
+  exit 1
+}
+[ -d "$APP_DIR" ] && [ -d "$PREVIOUS_DIR" ] && [ -f "$PREVIOUS_DIR/VERSION" ] && [ -f "$PREVIOUS_DIR/index.mjs" ] || {
+  write_status "failed" "لا توجد نسخة سابقة محفوظة على هذا السيرفر"
+  echo "ZACOD_ROLLBACK_NO_PREVIOUS"
+  cleanup
+  exit 1
+}
+CURRENT_VERSION=$(cat "$APP_DIR/VERSION" 2>/dev/null || true)
+TARGET_VERSION=$(cat "$PREVIOUS_DIR/VERSION" 2>/dev/null || true)
+[ -n "$TARGET_VERSION" ] && [ "$TARGET_VERSION" != "$CURRENT_VERSION" ] || {
+  write_status "failed" "تعذر تحديد إصدار سابق مختلف؛ لم تُغيّر ملفات التطبيق"
+  echo "ZACOD_ROLLBACK_NO_PREVIOUS"
+  cleanup
+  exit 1
+}
+if [ -e "$CURRENT_HOLD_DIR" ] || [ -e "$FAILED_DIR" ]; then
+  write_status "failed" "توجد ملفات استعادة سابقة غير محسومة؛ لم تُحذف أي ملفات"
+  echo "ZACOD_ROLLBACK_FAILED_NO_SWAP"
+  cleanup
+  exit 1
+fi
+write_status "rolling_back" "جارٍ استعادة الإصدار السابق $TARGET_VERSION"
+systemctl stop zacod-app
+mv "$APP_DIR" "$CURRENT_HOLD_DIR"
+SWAP_STARTED=1
+mv "$PREVIOUS_DIR" "$APP_DIR"
+systemctl start zacod-app
+
+HEALTHY=0
+for _ in $(seq 1 ${healthAttempts}); do
+  sleep ${healthDelaySeconds}
+  if health_ok; then HEALTHY=1; break; fi
+done
+if [ "$HEALTHY" = "1" ]; then
+  mv "$CURRENT_HOLD_DIR" "$PREVIOUS_DIR"
+  SWAP_STARTED=0
+  write_status "restored" "تم تشغيل الإصدار السابق $TARGET_VERSION والتحقق من صحة الخدمة"
+  echo "ZACOD_ROLLBACK_RESTORED target=$TARGET_VERSION from=$CURRENT_VERSION"
+  cleanup
+  exit 0
+fi
+
+if restore_current; then
+  SWAP_STARTED=0
+  write_status "failed" "فشل فحص الإصدار السابق؛ أُعيد الإصدار الذي كان يعمل"
+  echo "ZACOD_ROLLBACK_RECOVERED target=$TARGET_VERSION current=$CURRENT_VERSION"
+else
+  write_status "failed" "فشل فحص الإصدار السابق وتعذر التحقق من تشغيل الإصدار الذي كان يعمل؛ يلزم فحص السيرفر"
+  echo "ZACOD_ROLLBACK_RECOVERY_FAILED target=$TARGET_VERSION current=$CURRENT_VERSION"
+fi
+cleanup
+exit 1
+`;
+}
+
 async function acquireDispatchLock(paths: AgentPaths): Promise<boolean> {
   try {
     const handle = await fs.open(paths.dispatchLock, "wx", 0o600);
@@ -551,29 +746,43 @@ router.use((req, res, next) => {
 });
 
 router.get("/status", async (_req, res) => {
-  const local = await readAgentConfig();
+  const local = await readLocalAgentConfig();
   if (!local) {
     res.status(404).json({ error: "هذه الخدمة ليست خادم وكيل كاملًا" });
     return;
   }
-  try {
-    const [manifest, currentVersion, operation] = await Promise.all([
-      fetchManualManifest(local.config),
-      readCurrentVersion(local.paths),
-      readUpdateStatus(local.paths),
-    ]);
-    res.setHeader("Cache-Control", "no-store");
-    res.json({
-      currentVersion,
-      availableVersion: manifest.version,
-      sizeBytes: manifest.sizeBytes,
-      publishedAt: manifest.publishedAt ?? null,
-      updateAvailable: currentVersion !== manifest.version,
-      operation,
-    });
-  } catch (error: any) {
-    res.status(502).json({ error: safeText(error?.message, 300) || "تعذّر فحص التحديثات" });
+  const [currentVersion, previousVersion, operation] = await Promise.all([
+    readCurrentVersion(local.paths),
+    readPreviousVersion(local.paths),
+    readUpdateStatus(local.paths),
+  ]);
+  let manifest: ManualManifest | null = null;
+  let centralError: string | null = null;
+  const connected = await readAgentConfig();
+  if (connected) {
+    try {
+      // Keep the local rollback panel responsive during a central outage;
+      // a slow controller should not delay displaying the server's saved copy.
+      manifest = await fetchManualManifest(connected.config, 3_500);
+    } catch (error: any) {
+      centralError = safeText(error?.message, 300) || "تعذّر فحص التحديثات من المنصة";
+    }
+  } else {
+    centralError = "تعذّر الاتصال بالمركز؛ تتوفر الاستعادة من النسخة المحفوظة محليًا";
   }
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    currentVersion,
+    previousVersion,
+    rollbackAvailable: Boolean(previousVersion) && !BUSY_STATES.has(operation.state),
+    availableVersion: manifest?.version ?? null,
+    sizeBytes: manifest?.sizeBytes ?? 0,
+    publishedAt: manifest?.publishedAt ?? null,
+    updateAvailable: manifest ? currentVersion !== manifest.version : false,
+    centralAvailable: Boolean(manifest),
+    centralError,
+    operation,
+  });
 });
 
 router.post("/apply", async (req, res) => {
@@ -632,6 +841,65 @@ router.post("/apply", async (req, res) => {
     if (dispatchAcquired) await fs.rm(local.paths.dispatchLock, { force: true }).catch(() => {});
     logger.error({ err: error }, "manual agent update dispatch failed");
     res.status(502).json({ error: safeText(error?.message, 300) || "تعذّر بدء التحديث" });
+  }
+});
+
+router.post("/rollback", async (req, res) => {
+  const local = await readLocalAgentConfig();
+  if (!local) {
+    res.status(404).json({ error: "هذه الخدمة ليست خادم وكيل كاملًا" });
+    return;
+  }
+  if (req.body?.confirm !== true) {
+    res.status(400).json({ error: "يلزم تأكيد استعادة ملفات التطبيق" });
+    return;
+  }
+  const operation = await readUpdateStatus(local.paths);
+  if (BUSY_STATES.has(operation.state)) {
+    res.status(409).json({ error: "توجد عملية تحديث أو استعادة جارية بالفعل" });
+    return;
+  }
+  const previousVersion = await readPreviousVersion(local.paths);
+  if (!previousVersion) {
+    res.status(409).json({ error: "لا توجد نسخة سابقة محفوظة على هذا السيرفر" });
+    return;
+  }
+
+  let dispatchAcquired = false;
+  let scriptPath = "";
+  try {
+    dispatchAcquired = await acquireDispatchLock(local.paths);
+    if (!dispatchAcquired) {
+      res.status(409).json({ error: "توجد عملية تحديث أو استعادة جارية بالفعل" });
+      return;
+    }
+    scriptPath = path.join(local.paths.rootDir, `.manual-rollback-${Date.now()}.sh`);
+    const script = buildManualRollbackScript({
+      paths: local.paths,
+      scriptPath,
+      dispatchLockAlreadyHeld: true,
+    });
+    await fs.writeFile(scriptPath, script, { mode: 0o700 });
+    await writeUpdateStatus(local.paths, {
+      state: "queued",
+      message: `تم تأكيد استعادة الإصدار السابق ${previousVersion}`,
+      targetVersion: previousVersion,
+      updatedAt: new Date().toISOString(),
+    });
+    const unit = `zacod-manual-rollback-${Date.now()}`;
+    await execFileAsync("systemd-run", [
+      "--unit", unit,
+      "--collect",
+      "--property=TimeoutStartSec=15min",
+      "/bin/bash",
+      scriptPath,
+    ], { timeout: 15_000 });
+    res.status(202).json({ started: true, targetVersion: previousVersion });
+  } catch (error: any) {
+    if (dispatchAcquired) await fs.rm(local.paths.dispatchLock, { force: true }).catch(() => {});
+    if (scriptPath) await fs.rm(scriptPath, { force: true }).catch(() => {});
+    logger.error({ err: error }, "manual agent rollback dispatch failed");
+    res.status(502).json({ error: safeText(error?.message, 300) || "تعذّر بدء الاستعادة" });
   }
 });
 
