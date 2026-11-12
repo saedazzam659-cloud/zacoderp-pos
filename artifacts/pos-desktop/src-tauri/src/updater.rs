@@ -138,9 +138,7 @@ fn run_update_helper_windows(parent_pid: u32, msi_path: PathBuf, app_path: PathB
     // specific case as an explicit repair of every already-installed feature.
     if success && installer_log_is_maintenance_mode(&log_path) {
         let repair_log_path = std::env::temp_dir().join("zacod-pos-update-repair.log");
-        log::warn!(
-            "[updater] MSI entered maintenance mode; retrying with REINSTALL=ALL"
-        );
+        log::warn!("[updater] MSI entered maintenance mode; retrying with REINSTALL=ALL");
         result = std::process::Command::new("msiexec")
             .arg("/i")
             .arg(&msi_path)

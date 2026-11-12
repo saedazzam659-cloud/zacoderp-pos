@@ -50,7 +50,12 @@ struct PushResponse {
 pub async fn push_pending_invoices(server_url: &str, device_token: &str) -> Result<PushSummary> {
     let pending = invoices::list_pending_full().context("read pending invoices")?;
     if pending.is_empty() {
-        return Ok(PushSummary { attempted: 0, synced: 0, failed: 0, server_time: None });
+        return Ok(PushSummary {
+            attempted: 0,
+            synced: 0,
+            failed: 0,
+            server_time: None,
+        });
     }
 
     let items: Vec<_> = pending
@@ -67,18 +72,17 @@ pub async fn push_pending_invoices(server_url: &str, device_token: &str) -> Resu
             // CURRENT_TIMESTAMP format ("YYYY-MM-DD HH:MM:SS") which is
             // NOT RFC3339, so try to parse + reformat; fall back to
             // omitting the field on failure (it's optional server-side).
-            let occurred_at_rfc3339: Option<String> = chrono::NaiveDateTime::parse_from_str(
-                &p.created_at, "%Y-%m-%d %H:%M:%S",
-            )
-            .ok()
-            .map(|ndt| ndt.and_utc().to_rfc3339())
-            .or_else(|| {
-                // Already-RFC3339 strings (newer rows we write ourselves later)
-                // round-trip through DateTime parse just to validate shape.
-                chrono::DateTime::parse_from_rfc3339(&p.created_at)
+            let occurred_at_rfc3339: Option<String> =
+                chrono::NaiveDateTime::parse_from_str(&p.created_at, "%Y-%m-%d %H:%M:%S")
                     .ok()
-                    .map(|dt| dt.to_rfc3339())
-            });
+                    .map(|ndt| ndt.and_utc().to_rfc3339())
+                    .or_else(|| {
+                        // Already-RFC3339 strings (newer rows we write ourselves later)
+                        // round-trip through DateTime parse just to validate shape.
+                        chrono::DateTime::parse_from_rfc3339(&p.created_at)
+                            .ok()
+                            .map(|dt| dt.to_rfc3339())
+                    });
             let mut item = json!({
                 "clientId": &p.local_uuid,
                 "entityType": "invoice",
@@ -125,7 +129,10 @@ pub async fn push_pending_invoices(server_url: &str, device_token: &str) -> Resu
     let mut acked_ids = std::collections::HashSet::new();
     for ack in &parsed.acks {
         acked_ids.insert(ack.client_id.clone());
-        let ok = matches!(ack.status.as_str(), "queued" | "ok" | "accepted" | "duplicate");
+        let ok = matches!(
+            ack.status.as_str(),
+            "queued" | "ok" | "accepted" | "duplicate"
+        );
         if !ok {
             explicit_failed += 1;
             log::warn!("sync push ack rejected: {} → {}", ack.client_id, ack.status);
@@ -149,7 +156,10 @@ pub async fn push_pending_invoices(server_url: &str, device_token: &str) -> Resu
     // "failed" = explicit negative acks + any items we sent that the
     // server didn't ack at all (silent drop). Both stay 'pending' and
     // will be retried on the next push.
-    let unacked = pending.iter().filter(|p| !acked_ids.contains(&p.local_uuid)).count();
+    let unacked = pending
+        .iter()
+        .filter(|p| !acked_ids.contains(&p.local_uuid))
+        .count();
     let failed = explicit_failed + unacked;
     if unacked > 0 {
         log::warn!("sync push: {unacked} item(s) sent but not acked — staying pending for retry");
@@ -165,7 +175,10 @@ pub async fn push_pending_invoices(server_url: &str, device_token: &str) -> Resu
 
 // ─── Tauri commands ──────────────────────────────────────────────────
 #[tauri::command]
-pub async fn sync_push_now(server_url: String, device_token: String) -> Result<PushSummary, String> {
+pub async fn sync_push_now(
+    server_url: String,
+    device_token: String,
+) -> Result<PushSummary, String> {
     push_pending_invoices(&server_url, &device_token)
         .await
         .map_err(|e| e.to_string())

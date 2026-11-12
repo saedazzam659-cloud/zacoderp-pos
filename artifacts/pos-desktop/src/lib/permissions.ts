@@ -31,7 +31,7 @@ export type ScreenKey =
   | "report_supplier_balances" | "report_supplier_aging" | "report_lc_statement"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
-  | "chart_of_accounts" | "journal_entries" | "opening_balances" | "cost_centers" | "taxes"
+  | "chart_of_accounts" | "journal_entries" | "opening_balances" | "accounting_adjustments" | "cost_centers" | "taxes"
   | "posting_center" | "fiscal_periods" | "posting_control" | "pos_invoices"
   | "report_account_statement" | "report_customer_statement" | "report_income_statement"
   | "report_balance_sheet" | "report_trial_balance"
@@ -107,6 +107,7 @@ export const SCREEN_KEYS: { key: ScreenKey; label: string; icon: string; group: 
   { key: "chart_of_accounts", label: "شجرة الحسابات", icon: "🌳", group: "المحاسبة" },
   { key: "journal_entries", label: "القيود اليومية", icon: "📒", group: "المحاسبة" },
   { key: "opening_balances", label: "الأرصدة الافتتاحية", icon: "⚖️", group: "المحاسبة" },
+  { key: "accounting_adjustments", label: "التسويات الشهرية", icon: "🗓️", group: "المحاسبة" },
   { key: "posting_center", label: "مركز الترحيل", icon: "📮", group: "المحاسبة" },
   { key: "fiscal_periods", label: "الفترات المحاسبية", icon: "🗓️", group: "المحاسبة" },
   { key: "cost_centers", label: "مراكز التكلفة", icon: "🎯", group: "المحاسبة" },

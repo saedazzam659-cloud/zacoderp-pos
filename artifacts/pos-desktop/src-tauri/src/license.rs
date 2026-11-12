@@ -16,7 +16,11 @@ pub struct ActivationResponse {
 pub fn hardware_fingerprint() -> Result<String> {
     let sys = System::new_all();
     // Hash a stable composite: CPU brand + total RAM + machine id.
-    let cpu = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default();
+    let cpu = sys
+        .cpus()
+        .first()
+        .map(|c| c.brand().to_string())
+        .unwrap_or_default();
     let ram = sys.total_memory();
     let machine_id = machine_uid::get().unwrap_or_default();
     let composite = format!("{cpu}|{ram}|{machine_id}");
@@ -41,7 +45,10 @@ pub async fn activate(license_key: &str, server_url: &str) -> Result<ActivationR
         // TODO: store j["deviceToken"] in keyring
         Ok(ActivationResponse {
             success: true,
-            device_token: j.get("deviceToken").and_then(|v| v.as_str()).map(String::from),
+            device_token: j
+                .get("deviceToken")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             error: None,
         })
     } else {

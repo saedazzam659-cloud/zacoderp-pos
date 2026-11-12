@@ -125,7 +125,10 @@ pub(crate) fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
     ];
     for (col, ty) in want {
         if !existing.contains(*col) {
-            conn.execute(&format!("ALTER TABLE items_local ADD COLUMN {col} {ty}"), [])?;
+            conn.execute(
+                &format!("ALTER TABLE items_local ADD COLUMN {col} {ty}"),
+                [],
+            )?;
         }
     }
     ensure_cost_price_column(conn)?;
@@ -154,12 +157,11 @@ pub fn list(search: Option<&str>) -> Result<Vec<LocalItem>> {
     );
     let pattern = search.map(|s| format!("%{}%", s));
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(
-        rusqlite::params![search, pattern, MAX_ROWS],
-        row_to_item,
-    )?;
+    let rows = stmt.query_map(rusqlite::params![search, pattern, MAX_ROWS], row_to_item)?;
     let mut out = Vec::new();
-    for r in rows { out.push(r?); }
+    for r in rows {
+        out.push(r?);
+    }
     Ok(out)
 }
 
@@ -169,7 +171,11 @@ pub fn find_by_barcode(barcode: &str) -> Result<Option<LocalItem>> {
     let sql = format!("SELECT {SELECT_COLS} FROM items_local WHERE barcode = ?1 LIMIT 1");
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query_map([barcode], row_to_item)?;
-    if let Some(r) = rows.next() { Ok(Some(r?)) } else { Ok(None) }
+    if let Some(r) = rows.next() {
+        Ok(Some(r?))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Items whose expiry_date is non-NULL and within the next `within_days`
@@ -187,7 +193,9 @@ pub fn list_expiring(within_days: i64) -> Result<Vec<LocalItem>> {
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params![within_days, MAX_ROWS], row_to_item)?;
     let mut out = Vec::new();
-    for r in rows { out.push(r?); }
+    for r in rows {
+        out.push(r?);
+    }
     Ok(out)
 }
 
@@ -238,11 +246,11 @@ pub fn seed_demo_if_empty() -> Result<u64> {
 
     let demos = [
         ("DEMO-001", "ماء معدني 500مل", "6281007123456", 1.5_f64),
-        ("DEMO-002", "شيبس صغير",        "6281007123457", 3.0),
-        ("DEMO-003", "علبة عصير",          "6281007123458", 5.0),
-        ("DEMO-004", "بسكويت",             "6281007123459", 4.5),
-        ("DEMO-005", "شوكولاتة",           "6281007123460", 7.0),
-        ("DEMO-006", "لبن طازج 1لتر",    "6281007123461", 8.5),
+        ("DEMO-002", "شيبس صغير", "6281007123457", 3.0),
+        ("DEMO-003", "علبة عصير", "6281007123458", 5.0),
+        ("DEMO-004", "بسكويت", "6281007123459", 4.5),
+        ("DEMO-005", "شوكولاتة", "6281007123460", 7.0),
+        ("DEMO-006", "لبن طازج 1لتر", "6281007123461", 8.5),
     ];
 
     let mut inserted = 0_u64;
@@ -389,15 +397,28 @@ pub fn update_local_item(
     // collide on the partial UNIQUE index on `code`.
     let code = norm_opt(code);
     let barcode = norm_opt(barcode);
-    let n = conn.execute(
-        "UPDATE items_local SET
+    let n = conn
+        .execute(
+            "UPDATE items_local SET
            code = ?1, name_ar = ?2, name_en = ?3, barcode = ?4,
            sale_price = ?5, vat_rate = ?6, cost_price = ?7,
            metadata_json = ?8, uom_id = ?9,
            updated_at = CURRENT_TIMESTAMP
          WHERE id = ?10",
-        rusqlite::params![code, name_ar, name_en, barcode, sale_price, vat_rate, cost_price, metadata_json, uom_id, id],
-    ).map_err(map_item_write_err)?;
+            rusqlite::params![
+                code,
+                name_ar,
+                name_en,
+                barcode,
+                sale_price,
+                vat_rate,
+                cost_price,
+                metadata_json,
+                uom_id,
+                id
+            ],
+        )
+        .map_err(map_item_write_err)?;
     Ok(n as u64)
 }
 
@@ -410,7 +431,10 @@ pub fn delete_local_item(id: i64) -> Result<u64, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     ensure_schema(&conn).map_err(|e| e.to_string())?;
     let n = conn
-        .execute("DELETE FROM items_local WHERE id = ?1", rusqlite::params![id])
+        .execute(
+            "DELETE FROM items_local WHERE id = ?1",
+            rusqlite::params![id],
+        )
         .map_err(|e| e.to_string())?;
     Ok(n as u64)
 }
@@ -428,16 +452,20 @@ pub fn update_local_item_weighed(
 ) -> Result<u64, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     ensure_schema(&conn).map_err(|e| e.to_string())?;
-    let n = conn.execute(
-        "UPDATE items_local SET
+    let n = conn
+        .execute(
+            "UPDATE items_local SET
            is_weighed = ?1, price_per_kg = ?2, plu = ?3,
            updated_at = CURRENT_TIMESTAMP
          WHERE id = ?4",
-        rusqlite::params![
-            is_weighed.map(|b| if b { 1_i64 } else { 0_i64 }),
-            price_per_kg, plu, id,
-        ],
-    ).map_err(map_item_write_err)?;
+            rusqlite::params![
+                is_weighed.map(|b| if b { 1_i64 } else { 0_i64 }),
+                price_per_kg,
+                plu,
+                id,
+            ],
+        )
+        .map_err(map_item_write_err)?;
     Ok(n as u64)
 }
 
@@ -448,9 +476,7 @@ pub fn update_local_item_weighed(
 pub fn find_item_by_plu(plu: String) -> Result<Option<LocalItem>, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     ensure_schema(&conn).map_err(|e| e.to_string())?;
-    let sql = format!(
-        "SELECT {SELECT_COLS} FROM items_local WHERE plu = ?1 LIMIT 1"
-    );
+    let sql = format!("SELECT {SELECT_COLS} FROM items_local WHERE plu = ?1 LIMIT 1");
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let row = stmt.query_row([plu], row_to_item).ok();
     Ok(row)
@@ -473,20 +499,27 @@ pub fn update_local_item_extended(
 ) -> Result<u64, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     ensure_schema(&conn).map_err(|e| e.to_string())?;
-    let n = conn.execute(
-        "UPDATE items_local SET
+    let n = conn
+        .execute(
+            "UPDATE items_local SET
            active_ingredient = ?1, dosage_form = ?2, strength = ?3,
            manufacturer = ?4, requires_prescription = ?5, controlled = ?6,
            expiry_date = ?7, batch_no = ?8,
            updated_at = CURRENT_TIMESTAMP
          WHERE id = ?9",
-        rusqlite::params![
-            active_ingredient, dosage_form, strength, manufacturer,
-            requires_prescription.map(|b| if b { 1_i64 } else { 0_i64 }),
-            controlled.map(|b| if b { 1_i64 } else { 0_i64 }),
-            expiry_date, batch_no, id,
-        ],
-    ).map_err(|e| e.to_string())?;
+            rusqlite::params![
+                active_ingredient,
+                dosage_form,
+                strength,
+                manufacturer,
+                requires_prescription.map(|b| if b { 1_i64 } else { 0_i64 }),
+                controlled.map(|b| if b { 1_i64 } else { 0_i64 }),
+                expiry_date,
+                batch_no,
+                id,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
     Ok(n as u64)
 }
 
@@ -540,7 +573,14 @@ fn upsert_from_cloud(rows: Vec<CloudItem>) -> Result<u64> {
     let mut count = 0_u64;
     for r in &rows {
         stmt.execute(rusqlite::params![
-            r.cloud_id, r.code, r.name_ar, r.name_en, r.barcode, r.sale_price, r.vat_rate, r.cost_price,
+            r.cloud_id,
+            r.code,
+            r.name_ar,
+            r.name_en,
+            r.barcode,
+            r.sale_price,
+            r.vat_rate,
+            r.cost_price,
         ])?;
         count += 1;
     }

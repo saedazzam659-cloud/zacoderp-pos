@@ -95,7 +95,11 @@ fn balances_by_type(
             let acc: i64 = r.get(0)?;
             let debit: f64 = r.get(1)?;
             let credit: f64 = r.get(2)?;
-            let balance = if acct_type == "revenue" { credit - debit } else { debit - credit };
+            let balance = if acct_type == "revenue" {
+                credit - debit
+            } else {
+                debit - credit
+            };
             Ok((acc, balance, debit, credit))
         })
         .map_err(|e| e.to_string())?
@@ -108,7 +112,11 @@ fn balances_by_type(
 
 fn require_equity_account(tx: &Transaction, id: i64, label: &str) -> Result<(), String> {
     let typ: Option<String> = tx
-        .query_row("SELECT type FROM accounts_local WHERE id=?1", params![id], |r| r.get(0))
+        .query_row(
+            "SELECT type FROM accounts_local WHERE id=?1",
+            params![id],
+            |r| r.get(0),
+        )
         .optional()
         .map_err(|e| e.to_string())?;
     match typ.as_deref() {
@@ -211,15 +219,22 @@ pub fn fiscal_year_set_status(id: i64, status: String) -> Result<(), String> {
     }
     let conn = db::open().map_err(|e| e.to_string())?;
     let cur: Option<String> = conn
-        .query_row("SELECT status FROM fiscal_years_local WHERE id=?1", params![id], |r| r.get(0))
+        .query_row(
+            "SELECT status FROM fiscal_years_local WHERE id=?1",
+            params![id],
+            |r| r.get(0),
+        )
         .optional()
         .map_err(|e| e.to_string())?;
     let cur = cur.ok_or_else(|| "السنة المالية غير موجودة".to_string())?;
     if cur == "permanently_closed" && status != "permanently_closed" {
         return Err("السنة المالية مقفلة نهائياً — استخدم فك القفل من فترة بداخلها".into());
     }
-    conn.execute("UPDATE fiscal_years_local SET status=?1 WHERE id=?2", params![status, id])
-        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE fiscal_years_local SET status=?1 WHERE id=?2",
+        params![status, id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -351,7 +366,10 @@ pub struct ClosePlResult {
 
 /// Step 2 — zero out revenue & expense accounts into the P&L summary (equity).
 #[tauri::command]
-pub fn fiscal_period_close_pl(id: i64, pl_summary_account_id: i64) -> Result<ClosePlResult, String> {
+pub fn fiscal_period_close_pl(
+    id: i64,
+    pl_summary_account_id: i64,
+) -> Result<ClosePlResult, String> {
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let p = fetch_period(&tx, id)?;
@@ -390,7 +408,12 @@ pub fn fiscal_period_close_pl(id: i64, pl_summary_account_id: i64) -> Result<Clo
             .iter()
             .map(|(acc, bal)| mk(*acc, *bal, 0.0, "إقفال رصيد إيرادات"))
             .collect();
-        lines.push(mk(pl_summary_account_id, 0.0, total_rev, "إجمالي الإيرادات → الأرباح والخسائر"));
+        lines.push(mk(
+            pl_summary_account_id,
+            0.0,
+            total_rev,
+            "إجمالي الإيرادات → الأرباح والخسائر",
+        ));
         let eid = insert_closing_entry(
             &tx,
             &p.end_date,
@@ -405,8 +428,12 @@ pub fn fiscal_period_close_pl(id: i64, pl_summary_account_id: i64) -> Result<Clo
     // (b) Close expenses — Dr P&L summary, Cr each expense by its debit-balance
     if !exp_lines.is_empty() {
         total_exp = exp_lines.iter().map(|(_, b)| *b).sum();
-        let mut lines: Vec<JournalEntryLine> =
-            vec![mk(pl_summary_account_id, total_exp, 0.0, "الأرباح والخسائر → إجمالي المصروفات")];
+        let mut lines: Vec<JournalEntryLine> = vec![mk(
+            pl_summary_account_id,
+            total_exp,
+            0.0,
+            "الأرباح والخسائر → إجمالي المصروفات",
+        )];
         for (acc, bal) in &exp_lines {
             lines.push(mk(*acc, 0.0, *bal, "إقفال رصيد مصروفات"));
         }
@@ -492,26 +519,62 @@ pub fn fiscal_period_transfer_profit(
     // Loss:   Dr Retained earnings, Cr P&L summary
     let lines = if is_profit {
         vec![
-            mk(pl_summary_account_id, amount, 0.0, "إقفال رصيد الأرباح والخسائر"),
-            mk(retained_earnings_account_id, 0.0, amount, "إضافة صافي الربح للأرباح المحتجزة"),
+            mk(
+                pl_summary_account_id,
+                amount,
+                0.0,
+                "إقفال رصيد الأرباح والخسائر",
+            ),
+            mk(
+                retained_earnings_account_id,
+                0.0,
+                amount,
+                "إضافة صافي الربح للأرباح المحتجزة",
+            ),
         ]
     } else {
         vec![
-            mk(retained_earnings_account_id, amount, 0.0, "تخفيض الأرباح المحتجزة بصافي الخسارة"),
-            mk(pl_summary_account_id, 0.0, amount, "إقفال رصيد الأرباح والخسائر"),
+            mk(
+                retained_earnings_account_id,
+                amount,
+                0.0,
+                "تخفيض الأرباح المحتجزة بصافي الخسارة",
+            ),
+            mk(
+                pl_summary_account_id,
+                0.0,
+                amount,
+                "إقفال رصيد الأرباح والخسائر",
+            ),
         ]
     };
     let entry_id = insert_closing_entry(
         &tx,
         &p.end_date,
-        &format!("ترحيل {} الفترة — {}", if is_profit { "أرباح" } else { "خسائر" }, p.name),
-        if is_profit { "closing_transfer_profit" } else { "closing_transfer_loss" },
+        &format!(
+            "ترحيل {} الفترة — {}",
+            if is_profit {
+                "أرباح"
+            } else {
+                "خسائر"
+            },
+            p.name
+        ),
+        if is_profit {
+            "closing_transfer_profit"
+        } else {
+            "closing_transfer_loss"
+        },
         p.id,
         &lines,
     )?;
 
     tx.commit().map_err(|e| e.to_string())?;
-    Ok(TransferProfitResult { entry_id, is_profit, amount })
+    Ok(TransferProfitResult {
+        entry_id,
+        is_profit,
+        amount,
+    })
 }
 
 #[derive(Serialize)]
@@ -538,10 +601,17 @@ pub fn fiscal_period_soft_close(id: i64, force: bool) -> Result<SoftCloseResult,
             v.issues.join("؛ ")
         ));
     }
-    tx.execute("UPDATE fiscal_periods_local SET status='closed' WHERE id=?1", params![id])
-        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE fiscal_periods_local SET status='closed' WHERE id=?1",
+        params![id],
+    )
+    .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
-    Ok(SoftCloseResult { ok: true, forced: force, pl_closed: !v.requires_pl_close })
+    Ok(SoftCloseResult {
+        ok: true,
+        forced: force,
+        pl_closed: !v.requires_pl_close,
+    })
 }
 
 /// Step 5 — closed → permanently_closed (hard). No force override; verifies the
@@ -601,8 +671,11 @@ pub fn fiscal_period_hard_close(id: i64) -> Result<(), String> {
         ));
     }
 
-    tx.execute("UPDATE fiscal_periods_local SET status='permanently_closed' WHERE id=?1", params![id])
-        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE fiscal_periods_local SET status='permanently_closed' WHERE id=?1",
+        params![id],
+    )
+    .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -620,8 +693,11 @@ pub fn fiscal_period_force_reopen(id: i64, reason: String) -> Result<(), String>
     if p.status == "open" {
         return Ok(());
     }
-    tx.execute("UPDATE fiscal_periods_local SET status='open' WHERE id=?1", params![id])
-        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE fiscal_periods_local SET status='open' WHERE id=?1",
+        params![id],
+    )
+    .map_err(|e| e.to_string())?;
     tx.execute(
         "UPDATE fiscal_years_local SET status='open' WHERE id=?1 AND status<>'open'",
         params![p.fiscal_year_id],
@@ -639,7 +715,10 @@ fn parse_date(s: &str) -> Result<chrono::NaiveDate, String> {
 }
 
 // One (name, start, end) tuple per calendar month overlapping [start, end].
-fn month_periods(start: &chrono::NaiveDate, end: &chrono::NaiveDate) -> Vec<(String, String, String)> {
+fn month_periods(
+    start: &chrono::NaiveDate,
+    end: &chrono::NaiveDate,
+) -> Vec<(String, String, String)> {
     use chrono::Datelike;
     let mut out = Vec::new();
     let mut y = start.year();

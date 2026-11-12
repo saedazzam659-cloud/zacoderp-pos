@@ -5,7 +5,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod accounting;
+mod accounting_adjustments;
 mod backup;
+mod cleanup;
 mod clock_guard;
 mod customers;
 mod db;
@@ -22,11 +24,10 @@ mod scale;
 mod standalone;
 mod sync;
 mod updater;
-mod cleanup;
 mod zatca;
 
-use serde::{Deserialize, Serialize};
 use license::ActivationResponse;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 struct ActivationRequest {
@@ -73,7 +74,9 @@ async fn save_text_file(
             let _ = tx.send(fp);
         });
     let chosen = rx.await.map_err(|e| e.to_string())?;
-    let Some(fp) = chosen else { return Ok(None); };
+    let Some(fp) = chosen else {
+        return Ok(None);
+    };
     let path: std::path::PathBuf = fp.into_path().map_err(|e| e.to_string())?;
     std::fs::write(&path, content.as_bytes()).map_err(|e| e.to_string())?;
     Ok(Some(path.to_string_lossy().to_string()))
@@ -99,7 +102,9 @@ async fn save_export_file(
             let _ = tx.send(fp);
         });
     let chosen = rx.await.map_err(|e| e.to_string())?;
-    let Some(fp) = chosen else { return Ok(None); };
+    let Some(fp) = chosen else {
+        return Ok(None);
+    };
     let path: std::path::PathBuf = fp.into_path().map_err(|e| e.to_string())?;
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     Ok(Some(path.to_string_lossy().to_string()))
@@ -174,11 +179,17 @@ fn save_token_file(slot: &str, token: &str) -> Result<(), String> {
 
 fn load_token_file(slot: &str) -> Result<Option<String>, String> {
     let p = token_file_path(slot)?;
-    if !p.exists() { return Ok(None); }
+    if !p.exists() {
+        return Ok(None);
+    }
     match std::fs::read_to_string(&p) {
         Ok(t) => {
             let t = t.trim().to_string();
-            if t.is_empty() { Ok(None) } else { Ok(Some(t)) }
+            if t.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(t))
+            }
         }
         Err(e) => Err(e.to_string()),
     }
@@ -274,21 +285,25 @@ fn parked_carts_list(pos_session_id: i64) -> Result<Vec<ParkedCart>, String> {
         "SELECT id, pos_session_id, label, customer_note, cart_json, grand_total, created_at, updated_at
          FROM parked_carts WHERE pos_session_id = ?1 ORDER BY updated_at DESC"
     ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([pos_session_id], |r| {
-        let lines_json: String = r.get(4)?;
-        Ok(ParkedCart {
-            id: r.get(0)?,
-            pos_session_id: r.get(1)?,
-            label: r.get(2)?,
-            customer_note: r.get(3)?,
-            lines: serde_json::from_str(&lines_json).unwrap_or(serde_json::json!([])),
-            grand_total: r.get(5)?,
-            created_at: r.get(6)?,
-            updated_at: r.get(7)?,
+    let rows = stmt
+        .query_map([pos_session_id], |r| {
+            let lines_json: String = r.get(4)?;
+            Ok(ParkedCart {
+                id: r.get(0)?,
+                pos_session_id: r.get(1)?,
+                label: r.get(2)?,
+                customer_note: r.get(3)?,
+                lines: serde_json::from_str(&lines_json).unwrap_or(serde_json::json!([])),
+                grand_total: r.get(5)?,
+                created_at: r.get(6)?,
+                updated_at: r.get(7)?,
+            })
         })
-    }).map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
-    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
     Ok(out)
 }
 
@@ -301,9 +316,12 @@ struct ParkedCartUpsert {
 fn parked_carts_upsert(args: ParkedCartUpsert) -> Result<(), String> {
     let c = &args.cart;
     let id = c.get("id").and_then(|v| v.as_str()).ok_or("missing id")?;
-    let sid = c.get("posSessionId").and_then(|v| v.as_i64()).ok_or("missing posSessionId")?;
+    let sid = c
+        .get("posSessionId")
+        .and_then(|v| v.as_i64())
+        .ok_or("missing posSessionId")?;
     let label = c.get("label").and_then(|v| v.as_str()).unwrap_or("");
-    let note  = c.get("customerNote").and_then(|v| v.as_str());
+    let note = c.get("customerNote").and_then(|v| v.as_str());
     let lines = c.get("lines").cloned().unwrap_or(serde_json::json!([]));
     let total = c.get("grandTotal").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let created_at = c.get("createdAt").and_then(|v| v.as_str()).unwrap_or("");
@@ -331,14 +349,19 @@ fn parked_carts_upsert(args: ParkedCartUpsert) -> Result<(), String> {
 #[tauri::command]
 fn parked_carts_delete(id: String) -> Result<(), String> {
     let conn = db::open().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM parked_carts WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM parked_carts WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 fn parked_carts_clear_session(pos_session_id: i64) -> Result<(), String> {
     let conn = db::open().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM parked_carts WHERE pos_session_id = ?1", [pos_session_id]).map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM parked_carts WHERE pos_session_id = ?1",
+        [pos_session_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -360,10 +383,7 @@ fn main() {
             updater::cleanup_stale_helpers();
             // Task #207: if this device is configured as the LAN host, start
             // its shared-database HTTP server now. No-op for single/client.
-            lan::maybe_start_host_server(
-                get_device_name(),
-                env!("CARGO_PKG_VERSION").to_string(),
-            );
+            lan::maybe_start_host_server(get_device_name(), env!("CARGO_PKG_VERSION").to_string());
             // Remove any stale side-by-side install of an OLDER ZACOD POS
             // version left behind when a prior MSI carried a different
             // UpgradeCode. Runs in the background a few seconds after launch so
@@ -582,6 +602,14 @@ fn main() {
             accounting::journal_entry_unpost,
             accounting::journal_entry_delete,
             accounting::journal_entry_peek_number,
+            accounting_adjustments::accounting_adjustments_list,
+            accounting_adjustments::accounting_adjustment_create,
+            accounting_adjustments::accounting_adjustment_update,
+            accounting_adjustments::accounting_adjustment_set_status,
+            accounting_adjustments::accounting_adjustment_delete,
+            accounting_adjustments::accounting_adjustment_generate,
+            accounting_adjustments::accounting_adjustments_run_due,
+            accounting_adjustments::accounting_adjustment_carry_forward,
             accounting::posting_settings_get,
             accounting::posting_settings_set,
             accounting::posting_center_post,

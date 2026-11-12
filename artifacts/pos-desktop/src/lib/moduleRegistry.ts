@@ -39,7 +39,7 @@ export type WindowsView =
   | "report_sales_daily_detailed" | "report_sales_payment_mix" | "report_sales_returns" | "report_sales_top_customers"
   | "cash_boxes" | "banks" | "financial_tx"
   | "currencies" | "exchange_rates" | "treasury_transfers"
-  | "chart_of_accounts" | "journal_entries" | "opening_balances" | "user_permissions"
+  | "chart_of_accounts" | "journal_entries" | "opening_balances" | "accounting_adjustments" | "user_permissions"
   | "posting_center" | "fiscal_periods" | "posting_control" | "pos_invoices"
   | "cost_centers" | "branches" | "taxes"
   | "report_account_statement" | "report_customer_statement" | "report_income_statement"
@@ -164,6 +164,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   chart_of_accounts: { module: "accounting", profile: "erp" },
   journal_entries:   { module: "accounting", profile: "erp" },
   opening_balances:  { module: "accounting", profile: "erp" },
+  accounting_adjustments: { module: "accounting", profile: "erp" },
   posting_center:    { module: "accounting", profile: "erp" },
   fiscal_periods:    { module: "accounting", profile: "erp" },
   cost_centers:      { module: "accounting", profile: "erp" },

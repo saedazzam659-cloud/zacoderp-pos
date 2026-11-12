@@ -62,7 +62,9 @@ fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalCustomer> {
         phone: row.get(4)?,
         vat_number: row.get(5)?,
         updated_at: row.get(6)?,
-        currency_code: row.get::<_, Option<String>>(7)?.unwrap_or_else(|| "SAR".to_string()),
+        currency_code: row
+            .get::<_, Option<String>>(7)?
+            .unwrap_or_else(|| "SAR".to_string()),
         balance: row.get(8)?,
         credit_limit: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
         enforce_credit_limit: row.get::<_, Option<i64>>(10)?.unwrap_or(0) != 0,
@@ -106,7 +108,9 @@ fn list(search: Option<&str>) -> Result<Vec<LocalCustomer>> {
         row_to_customer,
     )?;
     let mut out = Vec::new();
-    for r in rows { out.push(r?); }
+    for r in rows {
+        out.push(r?);
+    }
     Ok(out)
 }
 
@@ -141,7 +145,11 @@ fn upsert_from_cloud(rows: Vec<CloudCustomer>) -> Result<u64> {
     let mut count = 0_u64;
     for r in &rows {
         stmt.execute(rusqlite::params![
-            r.cloud_id, r.name_ar, r.name_en, r.phone, r.vat_number,
+            r.cloud_id,
+            r.name_ar,
+            r.name_en,
+            r.phone,
+            r.vat_number,
         ])?;
         count += 1;
     }
@@ -190,10 +198,22 @@ pub fn create_customer_local(
     profile: Option<CustomerProfile>,
     create_ledger_account: Option<bool>,
 ) -> Result<LocalCustomer, String> {
-    create(name_ar, name_en, phone, vat_number, currency_code, opening_balance, opening_nature, opening_date,
-           credit_limit, enforce_credit_limit, payment_terms_days, profile.unwrap_or_default(),
-           create_ledger_account.unwrap_or(false))
-        .map_err(|e| e.to_string())
+    create(
+        name_ar,
+        name_en,
+        phone,
+        vat_number,
+        currency_code,
+        opening_balance,
+        opening_nature,
+        opening_date,
+        credit_limit,
+        enforce_credit_limit,
+        payment_terms_days,
+        profile.unwrap_or_default(),
+        create_ledger_account.unwrap_or(false),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -263,9 +283,15 @@ fn create(
             Some(d) if !d.trim().is_empty() => d,
             _ => tx.query_row("SELECT date('now','localtime')", [], |r| r.get(0))?,
         };
-        crate::accounting::post_party_opening_balance(&tx, "customer", id, &cur, ob, nature, &date)?;
+        crate::accounting::post_party_opening_balance(
+            &tx, "customer", id, &cur, ob, nature, &date,
+        )?;
     }
-    let balance: f64 = tx.query_row("SELECT balance FROM customers_local WHERE id=?1", rusqlite::params![id], |r| r.get(0))?;
+    let balance: f64 = tx.query_row(
+        "SELECT balance FROM customers_local WHERE id=?1",
+        rusqlite::params![id],
+        |r| r.get(0),
+    )?;
     tx.commit()?;
     Ok(LocalCustomer {
         id,
@@ -361,9 +387,19 @@ pub fn update_customer_local(
     payment_terms_days: Option<i64>,
     profile: Option<CustomerProfile>,
 ) -> Result<LocalCustomer, String> {
-    update(id, name_ar, name_en, phone, vat_number, currency_code,
-           credit_limit, enforce_credit_limit, payment_terms_days, profile.unwrap_or_default())
-        .map_err(|e| e.to_string())
+    update(
+        id,
+        name_ar,
+        name_en,
+        phone,
+        vat_number,
+        currency_code,
+        credit_limit,
+        enforce_credit_limit,
+        payment_terms_days,
+        profile.unwrap_or_default(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -414,18 +450,33 @@ fn update(
            updated_at           = CURRENT_TIMESTAMP
          WHERE id = ?1",
         rusqlite::params![
-            id, name_ar, name_en, phone, vat_number, currency_code,
-            credit_limit, enforce_int, payment_terms_days,
-            profile.cr_number, profile.email, profile.city, profile.district, profile.street,
-            profile.building_number, profile.postal_code, profile.country, profile.national_address_short,
-            profile.location_lat, profile.location_lng, profile.location_link,
-            include_int, profile.branch_id, profile.account_id,
+            id,
+            name_ar,
+            name_en,
+            phone,
+            vat_number,
+            currency_code,
+            credit_limit,
+            enforce_int,
+            payment_terms_days,
+            profile.cr_number,
+            profile.email,
+            profile.city,
+            profile.district,
+            profile.street,
+            profile.building_number,
+            profile.postal_code,
+            profile.country,
+            profile.national_address_short,
+            profile.location_lat,
+            profile.location_lng,
+            profile.location_link,
+            include_int,
+            profile.branch_id,
+            profile.account_id,
         ],
     )?;
     let sql = format!("SELECT {SELECT_COLS} FROM customers_local WHERE id = ?1");
-    conn.query_row(
-        &sql,
-        rusqlite::params![id],
-        row_to_customer,
-    ).map_err(Into::into)
+    conn.query_row(&sql, rusqlite::params![id], row_to_customer)
+        .map_err(Into::into)
 }

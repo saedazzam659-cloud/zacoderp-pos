@@ -12,14 +12,30 @@ const ESC: u8 = 0x1B;
 const GS: u8 = 0x1D;
 const LF: u8 = 0x0A;
 
-fn init() -> Vec<u8> { vec![ESC, b'@'] }                        // initialize printer
-fn align_center() -> Vec<u8> { vec![ESC, b'a', 1] }
-fn align_left() -> Vec<u8> { vec![ESC, b'a', 0] }
-fn bold_on() -> Vec<u8> { vec![ESC, b'E', 1] }
-fn bold_off() -> Vec<u8> { vec![ESC, b'E', 0] }
-fn cut_paper() -> Vec<u8> { vec![GS, b'V', 0] }                 // full cut
-fn feed(lines: u8) -> Vec<u8> { vec![ESC, b'd', lines] }
-fn kick_drawer() -> Vec<u8> { vec![ESC, b'p', 0, 25, 250] }     // pin 2, on=25ms, off=250ms
+fn init() -> Vec<u8> {
+    vec![ESC, b'@']
+} // initialize printer
+fn align_center() -> Vec<u8> {
+    vec![ESC, b'a', 1]
+}
+fn align_left() -> Vec<u8> {
+    vec![ESC, b'a', 0]
+}
+fn bold_on() -> Vec<u8> {
+    vec![ESC, b'E', 1]
+}
+fn bold_off() -> Vec<u8> {
+    vec![ESC, b'E', 0]
+}
+fn cut_paper() -> Vec<u8> {
+    vec![GS, b'V', 0]
+} // full cut
+fn feed(lines: u8) -> Vec<u8> {
+    vec![ESC, b'd', lines]
+}
+fn kick_drawer() -> Vec<u8> {
+    vec![ESC, b'p', 0, 25, 250]
+} // pin 2, on=25ms, off=250ms
 
 // QR via GS ( k — model 2.
 fn qr_bytes(data: &str) -> Vec<u8> {
@@ -32,7 +48,16 @@ fn qr_bytes(data: &str) -> Vec<u8> {
     out.extend_from_slice(&[GS, b'(', b'k', 3, 0, 49, 69, 48]);
     // Store data
     let len = data.len() + 3;
-    out.extend_from_slice(&[GS, b'(', b'k', (len & 0xFF) as u8, (len >> 8) as u8, 49, 80, 48]);
+    out.extend_from_slice(&[
+        GS,
+        b'(',
+        b'k',
+        (len & 0xFF) as u8,
+        (len >> 8) as u8,
+        49,
+        80,
+        48,
+    ]);
     out.extend_from_slice(data.as_bytes());
     // Print
     out.extend_from_slice(&[GS, b'(', b'k', 3, 0, 49, 81, 48]);
@@ -78,11 +103,19 @@ pub fn render_receipt(job: &ReceiptJob) -> Vec<u8> {
 
     let render_section = |buf: &mut Vec<u8>, lines: &[ReceiptLine]| {
         for line in lines {
-            if line.center { buf.extend(align_center()); } else { buf.extend(align_left()); }
-            if line.bold { buf.extend(bold_on()); }
+            if line.center {
+                buf.extend(align_center());
+            } else {
+                buf.extend(align_left());
+            }
+            if line.bold {
+                buf.extend(bold_on());
+            }
             buf.extend_from_slice(line.text.as_bytes());
             buf.push(LF);
-            if line.bold { buf.extend(bold_off()); }
+            if line.bold {
+                buf.extend(bold_off());
+            }
         }
     };
 
@@ -99,8 +132,12 @@ pub fn render_receipt(job: &ReceiptJob) -> Vec<u8> {
     }
 
     buf.extend(feed(3));
-    if job.cut { buf.extend(cut_paper()); }
-    if job.open_drawer { buf.extend(kick_drawer()); }
+    if job.cut {
+        buf.extend(cut_paper());
+    }
+    if job.open_drawer {
+        buf.extend(kick_drawer());
+    }
     buf
 }
 
@@ -112,7 +149,10 @@ fn print_via_spooler(printer_name: &str, bytes: &[u8]) -> Result<()> {
         .find(|p| p.name == printer_name || p.system_name == printer_name)
         .ok_or_else(|| anyhow!("printer not found: {}", printer_name))?;
     target
-        .print(bytes, printers::common::base::job::PrinterJobOptions::none())
+        .print(
+            bytes,
+            printers::common::base::job::PrinterJobOptions::none(),
+        )
         .map_err(|e| anyhow!("spooler print failed: {:?}", e))?;
     Ok(())
 }
@@ -124,7 +164,8 @@ fn print_via_serial(port: &str, baud: u32, bytes: &[u8]) -> Result<()> {
         .timeout(Duration::from_millis(2000))
         .open()
         .map_err(|e| anyhow!("open serial {}: {}", port, e))?;
-    port.write_all(bytes).map_err(|e| anyhow!("serial write: {}", e))?;
+    port.write_all(bytes)
+        .map_err(|e| anyhow!("serial write: {}", e))?;
     port.flush().map_err(|e| anyhow!("serial flush: {}", e))?;
     Ok(())
 }
@@ -204,9 +245,21 @@ mod tests {
     fn render_includes_header_body_footer() {
         let job = ReceiptJob {
             printer_name: "X".into(),
-            header: vec![ReceiptLine { text: "ZACOD".into(), bold: true, center: true }],
-            body: vec![ReceiptLine { text: "Item 1".into(), bold: false, center: false }],
-            footer: vec![ReceiptLine { text: "شكرا".into(), bold: false, center: true }],
+            header: vec![ReceiptLine {
+                text: "ZACOD".into(),
+                bold: true,
+                center: true,
+            }],
+            body: vec![ReceiptLine {
+                text: "Item 1".into(),
+                bold: false,
+                center: false,
+            }],
+            footer: vec![ReceiptLine {
+                text: "شكرا".into(),
+                bold: false,
+                center: true,
+            }],
             qr_data: Some("https://x".into()),
             open_drawer: true,
             cut: true,

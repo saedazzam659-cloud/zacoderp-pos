@@ -57,7 +57,7 @@ pub fn save(
         "CREATE UNIQUE INDEX IF NOT EXISTS uniq_offline_inv_no
             ON offline_invoices(invoice_no);
          CREATE UNIQUE INDEX IF NOT EXISTS uniq_offline_inv_idem
-            ON offline_invoices(local_uuid);"
+            ON offline_invoices(local_uuid);",
     )?;
 
     // ─── Idempotency: if the caller passes a key and we already have a row
@@ -66,17 +66,23 @@ pub fn save(
     // We piggy-back on `local_uuid` (already UNIQUE in the schema) by using
     // the idempotency key as the row's local_uuid when provided.
     if let Some(key) = idempotency_key {
-        let existing: Option<(String, String)> = conn.query_row(
-            "SELECT local_uuid, invoice_no FROM offline_invoices WHERE local_uuid = ?1",
-            [key],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        ).ok();
+        let existing: Option<(String, String)> = conn
+            .query_row(
+                "SELECT local_uuid, invoice_no FROM offline_invoices WHERE local_uuid = ?1",
+                [key],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
         if let Some((u, n)) = existing {
-            return Ok(SavedInvoice { local_uuid: u, invoice_no: n });
+            return Ok(SavedInvoice {
+                local_uuid: u,
+                invoice_no: n,
+            });
         }
     }
 
-    let local_uuid = idempotency_key.map(String::from)
+    let local_uuid = idempotency_key
+        .map(String::from)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
     // ─── invoice_no uniqueness: 10-hex-char suffix (40 bits) backed by
@@ -96,7 +102,10 @@ pub fn save(
              VALUES (?1, ?2, ?3, ?4, ?5, 'pending')",
             rusqlite::params![local_uuid, invoice_no, payload_json, signed_xml, qr_base64],
         ) {
-            Ok(_) => { saved = Some((invoice_no, conn.last_insert_rowid())); break; }
+            Ok(_) => {
+                saved = Some((invoice_no, conn.last_insert_rowid()));
+                break;
+            }
             Err(e) => {
                 // Retry only on a constraint violation on invoice_no. Any
                 // other error (incl. local_uuid clash when idempotency key
@@ -105,15 +114,20 @@ pub fn save(
                     e.sqlite_error_code(),
                     Some(rusqlite::ErrorCode::ConstraintViolation)
                 );
-                if !is_unique { return Err(e.into()); }
+                if !is_unique {
+                    return Err(e.into());
+                }
                 last_err = Some(e);
                 continue;
             }
         }
     }
-    let (invoice_no, invoice_id) = saved.ok_or_else(|| anyhow::anyhow!(
-        "could not allocate unique invoice_no after 5 retries: {:?}", last_err
-    ))?;
+    let (invoice_no, invoice_id) = saved.ok_or_else(|| {
+        anyhow::anyhow!(
+            "could not allocate unique invoice_no after 5 retries: {:?}",
+            last_err
+        )
+    })?;
 
     // Release the SQLite write handle BEFORE the accounting pass — the JE opens
     // its own transaction and SQLite is single-writer, so an overlapping handle
@@ -129,7 +143,10 @@ pub fn save(
         log::warn!("[pos-je] local JE skipped for {invoice_no}: {e}");
     }
 
-    Ok(SavedInvoice { local_uuid, invoice_no })
+    Ok(SavedInvoice {
+        local_uuid,
+        invoice_no,
+    })
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -167,7 +184,9 @@ pub fn list_pending_full() -> Result<Vec<PendingInvoiceFull>> {
         })
     })?;
     let mut out = Vec::new();
-    for r in rows { out.push(r?); }
+    for r in rows {
+        out.push(r?);
+    }
     Ok(out)
 }
 
@@ -192,7 +211,9 @@ pub fn list_pending() -> Result<Vec<PendingInvoice>> {
         })
     })?;
     let mut out = Vec::new();
-    for r in rows { out.push(r?); }
+    for r in rows {
+        out.push(r?);
+    }
     Ok(out)
 }
 
@@ -226,7 +247,11 @@ pub fn get(id: i64) -> Result<Option<FullInvoice>> {
             sync_status: r.get(7)?,
         })
     })?;
-    if let Some(r) = rows.next() { Ok(Some(r?)) } else { Ok(None) }
+    if let Some(r) = rows.next() {
+        Ok(Some(r?))
+    } else {
+        Ok(None)
+    }
 }
 
 // Full history (pending + synced + returns). Used by the Returns screen
@@ -247,8 +272,18 @@ pub fn list_all(limit: i64) -> Result<Vec<PendingInvoice>> {
         let payload: String = r.get(6)?;
         let doc_type = serde_json::from_str::<serde_json::Value>(&payload)
             .ok()
-            .and_then(|v| v.get("kind").and_then(|k| k.as_str()).map(|s| s.to_string()))
-            .map(|k| if k == "return" { "return".to_string() } else { "sale".to_string() })
+            .and_then(|v| {
+                v.get("kind")
+                    .and_then(|k| k.as_str())
+                    .map(|s| s.to_string())
+            })
+            .map(|k| {
+                if k == "return" {
+                    "return".to_string()
+                } else {
+                    "sale".to_string()
+                }
+            })
             .or_else(|| Some("sale".to_string()));
         Ok(PendingInvoice {
             id: r.get(0)?,
@@ -261,7 +296,9 @@ pub fn list_all(limit: i64) -> Result<Vec<PendingInvoice>> {
         })
     })?;
     let mut out = Vec::new();
-    for r in rows { out.push(r?); }
+    for r in rows {
+        out.push(r?);
+    }
     Ok(out)
 }
 
@@ -269,7 +306,8 @@ pub fn count_pending() -> Result<i64> {
     let conn = db::open()?;
     let n: i64 = conn.query_row(
         "SELECT COUNT(*) FROM offline_invoices WHERE sync_status = 'pending'",
-        [], |r| r.get(0),
+        [],
+        |r| r.get(0),
     )?;
     Ok(n)
 }
@@ -297,7 +335,8 @@ pub fn save_offline_invoice(
         qr_base64.as_deref(),
         signed_xml.as_deref(),
         idempotency_key.as_deref(),
-    ).map_err(|e| e.to_string())
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -352,16 +391,20 @@ pub fn list_for_range(start_utc: &str, end_utc: &str) -> Result<Vec<DailyInvoice
          WHERE created_at >= ?1 AND created_at < ?2
          ORDER BY created_at ASC, id ASC",
     )?;
-    let rows = stmt.query_map([start_utc, end_utc], |r| Ok(DailyInvoiceRow {
-        id: r.get(0)?,
-        local_uuid: r.get(1)?,
-        invoice_no: r.get(2)?,
-        payload_json: r.get(3)?,
-        sync_status: r.get(4)?,
-        created_at: r.get(5)?,
-    }))?;
+    let rows = stmt.query_map([start_utc, end_utc], |r| {
+        Ok(DailyInvoiceRow {
+            id: r.get(0)?,
+            local_uuid: r.get(1)?,
+            invoice_no: r.get(2)?,
+            payload_json: r.get(3)?,
+            sync_status: r.get(4)?,
+            created_at: r.get(5)?,
+        })
+    })?;
     let mut out = Vec::new();
-    for r in rows { out.push(r?); }
+    for r in rows {
+        out.push(r?);
+    }
     Ok(out)
 }
 
@@ -371,6 +414,9 @@ pub fn list_for_range(start_utc: &str, end_utc: &str) -> Result<Vec<DailyInvoice
 // ISO-8601 strings, which is order-preserving when both endpoints share
 // the same format ("YYYY-MM-DD HH:MM:SS" as written by CURRENT_TIMESTAMP).
 #[tauri::command]
-pub fn daily_report_invoices(start_utc: String, end_utc: String) -> Result<Vec<DailyInvoiceRow>, String> {
+pub fn daily_report_invoices(
+    start_utc: String,
+    end_utc: String,
+) -> Result<Vec<DailyInvoiceRow>, String> {
     list_for_range(&start_utc, &end_utc).map_err(|e| e.to_string())
 }

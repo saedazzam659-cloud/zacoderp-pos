@@ -83,7 +83,9 @@ pub struct Weight {
 ///   "1234 g"         (Generic — grams → 1.234 kg)
 pub fn parse_generic_ascii(line: &str) -> Option<Weight> {
     let trimmed = line.trim_matches(|c: char| c.is_control() || c.is_whitespace());
-    if trimmed.is_empty() { return None; }
+    if trimmed.is_empty() {
+        return None;
+    }
 
     // Stable bit: look for "ST" anywhere in the frame (CAS convention).
     let stable_marker = trimmed.to_uppercase();
@@ -97,9 +99,14 @@ pub fn parse_generic_ascii(line: &str) -> Option<Weight> {
     while i < bytes.len() {
         let c = bytes[i] as char;
         if num_start.is_none() {
-            if c == '-' || c == '+' || c.is_ascii_digit() { num_start = Some(i); }
+            if c == '-' || c == '+' || c.is_ascii_digit() {
+                num_start = Some(i);
+            }
         } else {
-            if !(c.is_ascii_digit() || c == '.') { num_end = i; break; }
+            if !(c.is_ascii_digit() || c == '.') {
+                num_end = i;
+                break;
+            }
         }
         i += 1;
     }
@@ -122,7 +129,9 @@ pub fn parse_generic_ascii(line: &str) -> Option<Weight> {
     };
 
     // Sanity bounds — anything beyond 1000 kg is almost certainly garbage.
-    if !value_kg.is_finite() || value_kg.abs() > 1000.0 { return None; }
+    if !value_kg.is_finite() || value_kg.abs() > 1000.0 {
+        return None;
+    }
 
     Some(Weight {
         value_kg,
@@ -189,19 +198,29 @@ pub struct EmbeddedWeightHit {
 }
 
 pub fn parse_embedded_weight(barcode: &str, cfg: &EmbeddedWeightCfg) -> Option<EmbeddedWeightHit> {
-    if !barcode.starts_with(&cfg.prefix) { return None; }
+    if !barcode.starts_with(&cfg.prefix) {
+        return None;
+    }
     let total_needed = cfg.prefix.len() + cfg.plu_len as usize + cfg.weight_len as usize;
-    if barcode.len() < total_needed { return None; }
+    if barcode.len() < total_needed {
+        return None;
+    }
     let after_prefix = &barcode[cfg.prefix.len()..];
     let plu = &after_prefix[..cfg.plu_len as usize];
-    let weight_str = &after_prefix[cfg.plu_len as usize..cfg.plu_len as usize + cfg.weight_len as usize];
+    let weight_str =
+        &after_prefix[cfg.plu_len as usize..cfg.plu_len as usize + cfg.weight_len as usize];
     if !plu.chars().all(|c| c.is_ascii_digit()) || !weight_str.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
     let raw: f64 = weight_str.parse().ok()?;
     let weight_kg = raw / 10f64.powi(cfg.weight_decimals as i32);
-    if weight_kg <= 0.0 || weight_kg > 1000.0 { return None; }
-    Some(EmbeddedWeightHit { plu: plu.to_string(), weight_kg })
+    if weight_kg <= 0.0 || weight_kg > 1000.0 {
+        return None;
+    }
+    Some(EmbeddedWeightHit {
+        plu: plu.to_string(),
+        weight_kg,
+    })
 }
 
 // ─── Tauri commands ──────────────────────────────────────────────────
@@ -230,8 +249,14 @@ pub fn read_weight_once(
     parity: Option<Parity>,
     data_bits: Option<u8>,
 ) -> Result<Option<Weight>, String> {
-    read_once(&port, baud, protocol, parity.unwrap_or_default(), data_bits.unwrap_or(8))
-        .map_err(|e| e.to_string())
+    read_once(
+        &port,
+        baud,
+        protocol,
+        parity.unwrap_or_default(),
+        data_bits.unwrap_or(8),
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn read_once(
@@ -259,12 +284,17 @@ fn read_once(
             Ok(n) => {
                 acc.extend_from_slice(&buf[..n]);
                 // Process complete lines as they arrive.
-                while let Some(idx) = acc.iter().position(|&b| b == b'\n' || b == b'\r' || b == 0x03) {
+                while let Some(idx) = acc
+                    .iter()
+                    .position(|&b| b == b'\n' || b == b'\r' || b == 0x03)
+                {
                     let line_bytes: Vec<u8> = acc.drain(..=idx).collect();
                     let line = String::from_utf8_lossy(&line_bytes);
                     if let Some(w) = parse_with(protocol, &line) {
                         // Prefer a stable reading over an unstable one.
-                        if w.stable { return Ok(Some(w)); }
+                        if w.stable {
+                            return Ok(Some(w));
+                        }
                         best = Some(w);
                     }
                 }
@@ -337,7 +367,10 @@ mod tests {
     fn embedded_weight_basic() {
         // Prefix=20, PLU=00123, weight=01234 (3 decimals → 1.234 kg)
         let cfg = EmbeddedWeightCfg {
-            prefix: "20".into(), plu_len: 5, weight_len: 5, weight_decimals: 3,
+            prefix: "20".into(),
+            plu_len: 5,
+            weight_len: 5,
+            weight_decimals: 3,
         };
         let h = parse_embedded_weight("2000123012340", &cfg).unwrap();
         assert_eq!(h.plu, "00123");
@@ -347,7 +380,10 @@ mod tests {
     #[test]
     fn embedded_weight_wrong_prefix() {
         let cfg = EmbeddedWeightCfg {
-            prefix: "20".into(), plu_len: 5, weight_len: 5, weight_decimals: 3,
+            prefix: "20".into(),
+            plu_len: 5,
+            weight_len: 5,
+            weight_decimals: 3,
         };
         assert!(parse_embedded_weight("6281234567890", &cfg).is_none());
     }
@@ -355,7 +391,10 @@ mod tests {
     #[test]
     fn embedded_weight_two_decimals() {
         let cfg = EmbeddedWeightCfg {
-            prefix: "22".into(), plu_len: 4, weight_len: 5, weight_decimals: 2,
+            prefix: "22".into(),
+            plu_len: 4,
+            weight_len: 5,
+            weight_decimals: 2,
         };
         let h = parse_embedded_weight("2200770012345", &cfg).unwrap();
         assert_eq!(h.plu, "0077");

@@ -22,10 +22,10 @@
 // release, matching the TS behavior of relying on Node's Buffer overflow
 // semantics (which also produce an invalid TLV beyond 255).
 
+use crate::db;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::Engine;
-use crate::db;
 use rusqlite::{params, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -368,7 +368,11 @@ pub fn zatca_load_secret(slot: String) -> Result<Option<String>, String> {
     match std::fs::read_to_string(&p) {
         Ok(v) => {
             let v = v.trim();
-            if v.is_empty() { Ok(None) } else { Ok(Some(zatca_decrypt(v)?)) }
+            if v.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(zatca_decrypt(v)?))
+            }
         }
         Err(e) => Err(e.to_string()),
     }
@@ -573,7 +577,14 @@ pub fn zatca_update_invoice_status(
                 response_json = COALESCE(?5, response_json),
                 submitted_at = ?6
              WHERE local_uuid = ?1",
-            params![local_uuid, status, zatca_status, warnings_json, response_json, now_iso()],
+            params![
+                local_uuid,
+                status,
+                zatca_status,
+                warnings_json,
+                response_json,
+                now_iso()
+            ],
         )
         .map_err(|e| e.to_string())?;
     if n == 0 {
@@ -611,9 +622,8 @@ pub fn zatca_list_invoices(status: Option<String>) -> Result<Vec<serde_json::Val
     let mut out = Vec::new();
     match status {
         Some(s) => {
-            let sql = format!(
-                "SELECT {cols} FROM zatca_invoices WHERE status = ?1 ORDER BY icv DESC"
-            );
+            let sql =
+                format!("SELECT {cols} FROM zatca_invoices WHERE status = ?1 ORDER BY icv DESC");
             let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
             let rows = stmt
                 .query_map(params![s], row_to_zatca_invoice)

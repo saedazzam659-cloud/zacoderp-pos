@@ -73,8 +73,10 @@ pub fn db_path() -> PathBuf {
 
 // ── app_config key/value helpers ─────────────────────────────────────────
 pub fn get_config(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
-    conn.query_row("SELECT value FROM app_config WHERE key = ?1", [key], |r| r.get(0))
-        .optional()
+    conn.query_row("SELECT value FROM app_config WHERE key = ?1", [key], |r| {
+        r.get(0)
+    })
+    .optional()
 }
 
 pub fn set_config(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
@@ -274,6 +276,48 @@ pub fn initialize() -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_je_lines_entry ON journal_entry_lines_local(entry_id);
         CREATE INDEX IF NOT EXISTS idx_je_lines_account ON journal_entry_lines_local(account_id);
+
+        -- Periodic prepaid/accrued expense schedules (standalone accounting).
+        -- Each generated installment is linked to the ordinary local JE ledger.
+        CREATE TABLE IF NOT EXISTS accounting_adjustments_local (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            type                  TEXT NOT NULL CHECK (type IN ('prepaid','accrued')),
+            name                  TEXT NOT NULL,
+            expense_account_id    INTEGER NOT NULL REFERENCES accounts_local(id),
+            contra_account_id     INTEGER NOT NULL REFERENCES accounts_local(id),
+            cost_center_id        INTEGER,
+            total_amount          REAL NOT NULL,
+            start_date            TEXT NOT NULL,
+            end_date              TEXT NOT NULL,
+            monthly_amount        REAL NOT NULL,
+            auto_generate         INTEGER NOT NULL DEFAULT 1,
+            carry_forward_enabled INTEGER NOT NULL DEFAULT 1,
+            parent_adjustment_id  INTEGER REFERENCES accounting_adjustments_local(id) ON DELETE RESTRICT,
+            status                TEXT NOT NULL DEFAULT 'active'
+                                  CHECK (status IN ('active','completed','cancelled','carried_forward')),
+            notes                 TEXT,
+            created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK (total_amount > 0),
+            CHECK (monthly_amount >= 0),
+            CHECK (expense_account_id <> contra_account_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_accounting_adjustments_status
+            ON accounting_adjustments_local(status, auto_generate);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_accounting_adjustments_parent
+            ON accounting_adjustments_local(parent_adjustment_id)
+            WHERE parent_adjustment_id IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS accounting_adjustment_runs_local (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            adjustment_id     INTEGER NOT NULL REFERENCES accounting_adjustments_local(id) ON DELETE RESTRICT,
+            period_month      TEXT NOT NULL,
+            journal_entry_id  INTEGER REFERENCES journal_entries_local(id) ON DELETE SET NULL,
+            amount            REAL NOT NULL,
+            generated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(adjustment_id, period_month)
+        );
+        CREATE INDEX IF NOT EXISTS idx_accounting_adjustment_runs_parent
+            ON accounting_adjustment_runs_local(adjustment_id, period_month);
 
         -- Purchase invoices.
         CREATE TABLE IF NOT EXISTS purchases_local (
@@ -1198,7 +1242,9 @@ pub fn initialize() -> Result<()> {
         // Pre-existing rows default to 'posted', matching their applied impact.
         "ALTER TABLE financial_transactions_local ADD COLUMN status TEXT NOT NULL DEFAULT 'posted'",
     ];
-    for sql in alters { let _ = conn.execute(sql, []); }
+    for sql in alters {
+        let _ = conn.execute(sql, []);
+    }
     let _ = conn.execute(
         "UPDATE cash_boxes_local SET code='CB-' || printf('%04d', id) WHERE code IS NULL OR trim(code)=''",
         [],
@@ -1375,19 +1421,19 @@ pub fn initialize() -> Result<()> {
         "#,
     )?;
     let seeds: &[(&str, &str, &str)] = &[
-        ("journal_entry",   "JE-",   "journal_entries_local"),
-        ("purchase",        "PUR-",  "purchases_local"),
-        ("purchase_return", "PRT-",  "purchase_returns_local"),
-        ("purchase_order",  "PO-",   "purchase_orders_local"),
-        ("goods_receipt",   "GRN-",  "goods_receipts_local"),
-        ("sales_invoice",   "SINV-", "sales_invoices_local"),
-        ("sales_return",    "SRT-",  "sales_returns_local"),
-        ("quotation",       "QT-",   "quotations_local"),
-        ("sales_order",     "SO-",   "sales_orders_local"),
+        ("journal_entry", "JE-", "journal_entries_local"),
+        ("purchase", "PUR-", "purchases_local"),
+        ("purchase_return", "PRT-", "purchase_returns_local"),
+        ("purchase_order", "PO-", "purchase_orders_local"),
+        ("goods_receipt", "GRN-", "goods_receipts_local"),
+        ("sales_invoice", "SINV-", "sales_invoices_local"),
+        ("sales_return", "SRT-", "sales_returns_local"),
+        ("quotation", "QT-", "quotations_local"),
+        ("sales_order", "SO-", "sales_orders_local"),
         ("supplier_settlement", "SETL-", "supplier_settlements_local"),
-        ("letter_of_credit",    "LC-",   "letters_of_credit_local"),
-        ("goods_delivery",      "GDN-",  "goods_deliveries_local"),
-        ("offer",               "OFR-",  "offers_local"),
+        ("letter_of_credit", "LC-", "letters_of_credit_local"),
+        ("goods_delivery", "GDN-", "goods_deliveries_local"),
+        ("offer", "OFR-", "offers_local"),
     ];
     for (doc_type, prefix, table) in seeds {
         let sql = format!(
@@ -1450,7 +1496,13 @@ fn currency_for_country(
         "LY" => ("LYD", "الدينار الليبي", "Libyan Dinar", "د.ل", 3),
         "SD" => ("SDG", "الجنيه السوداني", "Sudanese Pound", "ج.س", 2),
         "PS" => ("ILS", "الشيكل", "Israeli Shekel", "₪", 2),
-        "MR" => ("MRU", "الأوقية الموريتانية", "Mauritanian Ouguiya", "أوقية", 2),
+        "MR" => (
+            "MRU",
+            "الأوقية الموريتانية",
+            "Mauritanian Ouguiya",
+            "أوقية",
+            2,
+        ),
         "SO" => ("SOS", "الشلن الصومالي", "Somali Shilling", "ش.ص", 2),
         "DJ" => ("DJF", "الفرنك الجيبوتي", "Djiboutian Franc", "ف.ج", 2),
         "KM" => ("KMF", "الفرنك القمري", "Comorian Franc", "ف.ق", 2),
@@ -1482,7 +1534,9 @@ pub fn rebase_currency_for_country(conn: &Connection, iso: &str) -> Result<()> {
     }
     // Guard: only re-base a pristine ledger.
     let je: i64 = conn
-        .query_row("SELECT COUNT(*) FROM journal_entries_local", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM journal_entries_local", [], |r| {
+            r.get(0)
+        })
         .unwrap_or(0);
     let inv: i64 = conn
         .query_row("SELECT COUNT(*) FROM offline_invoices", [], |r| r.get(0))
@@ -1541,8 +1595,18 @@ fn seed_fiscal_year(conn: &Connection) -> Result<()> {
     )?;
     let fy_id = conn.last_insert_rowid();
     let months = [
-        "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر",
-        "أكتوبر", "نوفمبر", "ديسمبر",
+        "يناير",
+        "فبراير",
+        "مارس",
+        "أبريل",
+        "مايو",
+        "يونيو",
+        "يوليو",
+        "أغسطس",
+        "سبتمبر",
+        "أكتوبر",
+        "نوفمبر",
+        "ديسمبر",
     ];
     let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
     // Only generate periods from the install month through December.
@@ -1600,14 +1664,20 @@ fn seed_company_masters(conn: &Connection) -> Result<()> {
 fn seed_pos_payment_methods(conn: &Connection) -> Result<()> {
     use rusqlite::params;
     let n: i64 = conn
-        .query_row("SELECT COUNT(*) FROM pos_payment_methods_local", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM pos_payment_methods_local", [], |r| {
+            r.get(0)
+        })
         .unwrap_or(0);
-    if n > 0 { return Ok(()); }
+    if n > 0 {
+        return Ok(());
+    }
     // Cash → the seeded main treasury leaf (1101). Card starts UNLINKED so the
     // operator picks a bank/POS-clearing account in إعدادات حسابات نقاط البيع;
     // until then the JE falls back to the default cash account (never fails).
     let cash_acc: Option<i64> = conn
-        .query_row("SELECT id FROM accounts_local WHERE code='1101'", [], |r| r.get(0))
+        .query_row("SELECT id FROM accounts_local WHERE code='1101'", [], |r| {
+            r.get(0)
+        })
         .ok();
     conn.execute(
         "INSERT INTO pos_payment_methods_local(name_ar,kind,account_id,is_active,sort_order) VALUES('نقداً','cash',?1,1,0)",
@@ -1625,18 +1695,23 @@ fn seed_currencies(conn: &Connection) -> Result<()> {
     // Default currencies — SAR is the base, others can be activated/deactivated.
     let seed: &[(&str, &str, &str, &str, i64, i64)] = &[
         ("SAR", "الريال السعودي", "Saudi Riyal", "ر.س", 2, 1),
-        ("USD", "الدولار الأمريكي", "US Dollar", "$",   2, 0),
-        ("EUR", "اليورو",            "Euro",        "€",   2, 0),
-        ("AED", "الدرهم الإماراتي",  "UAE Dirham",  "د.إ", 2, 0),
-        ("EGP", "الجنيه المصري",     "Egyptian Pound","ج.م",2,0),
-        ("KWD", "الدينار الكويتي",   "Kuwaiti Dinar","د.ك",3, 0),
+        ("USD", "الدولار الأمريكي", "US Dollar", "$", 2, 0),
+        ("EUR", "اليورو", "Euro", "€", 2, 0),
+        ("AED", "الدرهم الإماراتي", "UAE Dirham", "د.إ", 2, 0),
+        ("EGP", "الجنيه المصري", "Egyptian Pound", "ج.م", 2, 0),
+        ("KWD", "الدينار الكويتي", "Kuwaiti Dinar", "د.ك", 3, 0),
     ];
     for (code, name_ar, name_en, symbol, dec, is_base) in seed {
-        let exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM currencies_local WHERE code=?1",
-            params![code], |r| r.get(0),
-        ).unwrap_or(0);
-        if exists > 0 { continue; }
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM currencies_local WHERE code=?1",
+                params![code],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if exists > 0 {
+            continue;
+        }
         let _ = conn.execute(
             "INSERT INTO currencies_local(code,name_ar,name_en,symbol,decimals,is_base,is_active) VALUES(?1,?2,?3,?4,?5,?6,1)",
             params![code, name_ar, name_en, symbol, dec, is_base],
@@ -1657,13 +1732,23 @@ fn seed_currencies(conn: &Connection) -> Result<()> {
         ("5900", "خسائر فروقات العملة", "expense", "5000"),
     ];
     for (code, name, typ, parent_code) in fx {
-        let exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM accounts_local WHERE code=?1", params![code], |r| r.get(0),
-        ).unwrap_or(0);
-        if exists > 0 { continue; }
-        let parent_id: Option<i64> = conn.query_row(
-            "SELECT id FROM accounts_local WHERE code=?1", params![parent_code], |r| r.get(0),
-        ).ok();
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM accounts_local WHERE code=?1",
+                params![code],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if exists > 0 {
+            continue;
+        }
+        let parent_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM accounts_local WHERE code=?1",
+                params![parent_code],
+                |r| r.get(0),
+            )
+            .ok();
         let _ = conn.execute(
             "INSERT INTO accounts_local(code,name_ar,type,parent_id,is_leaf) VALUES(?1,?2,?3,?4,1)",
             params![code, name, typ, parent_id],
@@ -1681,20 +1766,32 @@ fn seed_inventory_defaults(conn: &Connection) -> Result<()> {
         ("5300", "فروقات جرد المخزون (خسارة)", "expense", "5000"),
     ];
     for (code, name, typ, parent_code) in extras {
-        let exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM accounts_local WHERE code=?1", params![code], |r| r.get(0),
-        ).unwrap_or(0);
-        if exists > 0 { continue; }
-        let parent_id: Option<i64> = conn.query_row(
-            "SELECT id FROM accounts_local WHERE code=?1", params![parent_code], |r| r.get(0),
-        ).ok();
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM accounts_local WHERE code=?1",
+                params![code],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if exists > 0 {
+            continue;
+        }
+        let parent_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM accounts_local WHERE code=?1",
+                params![parent_code],
+                |r| r.get(0),
+            )
+            .ok();
         let _ = conn.execute(
             "INSERT INTO accounts_local(code,name_ar,type,parent_id,is_leaf) VALUES(?1,?2,?3,?4,1)",
             params![code, name, typ, parent_id],
         );
     }
     // Seed a default warehouse if none exists.
-    let n: i64 = conn.query_row("SELECT COUNT(*) FROM warehouses_local", [], |r| r.get(0)).unwrap_or(0);
+    let n: i64 = conn
+        .query_row("SELECT COUNT(*) FROM warehouses_local", [], |r| r.get(0))
+        .unwrap_or(0);
     if n == 0 {
         let _ = conn.execute(
             "INSERT INTO warehouses_local(code,name,is_default,is_active) VALUES('WH-01','المخزن الرئيسي',1,1)",
@@ -1706,55 +1803,87 @@ fn seed_inventory_defaults(conn: &Connection) -> Result<()> {
 
 fn seed_default_accounts(conn: &Connection) -> Result<()> {
     let n: i64 = conn.query_row("SELECT COUNT(*) FROM accounts_local", [], |r| r.get(0))?;
-    if n > 0 { return Ok(()); }
+    if n > 0 {
+        return Ok(());
+    }
 
     // (code, name_ar, type, parent_code, is_leaf)
     let seed: &[(&str, &str, &str, Option<&str>, i64)] = &[
-        ("1000", "الأصول",                "asset",     None,         0),
-        ("1100", "الخزن",                 "asset",     Some("1000"), 0),
-        ("1101", "الخزينة الرئيسية",      "asset",     Some("1100"), 1),
-        ("1200", "البنوك",                "asset",     Some("1000"), 0),
-        ("1201", "البنك الرئيسي",         "asset",     Some("1200"), 1),
-        ("1300", "المخزون",               "asset",     Some("1000"), 1),
-        ("11091","وسيط استلام البضاعة",   "asset",     Some("1000"), 1),
-        ("1400", "ضريبة القيمة المضافة - مدخلات", "asset", Some("1000"), 1),
-        ("1500", "العملاء (مدينون)",      "asset",     Some("1000"), 1),
-        ("1102", "العهد والسلف",          "asset",     Some("1000"), 1),
-        ("1103", "مصروفات مدفوعة مقدماً", "asset",     Some("1000"), 1),
-        ("1600", "الأصول الثابتة",        "asset",     Some("1000"), 0),
-        ("1610", "أراضٍ ومبانٍ",          "asset",     Some("1600"), 1),
-        ("1620", "أثاث ومعدات",           "asset",     Some("1600"), 1),
-        ("1630", "أجهزة وحاسبات",         "asset",     Some("1600"), 1),
-        ("1640", "سيارات ووسائل نقل",     "asset",     Some("1600"), 1),
-        ("1700", "مجمع إهلاك الأصول الثابتة","asset",  Some("1000"), 1),
-        ("2000", "الخصوم",                "liability", None,         0),
-        ("2100", "الموردون (دائنون)",     "liability", Some("2000"), 1),
-        ("2200", "ضريبة القيمة المضافة - مخرجات", "liability", Some("2000"), 1),
-        ("2105", "رواتب وأجور مستحقة",    "liability", Some("2000"), 1),
-        ("2106", "الزكاة وضريبة الدخل مستحقة","liability",Some("2000"),1),
-        ("2107", "مصروفات مستحقة",        "liability", Some("2000"), 1),
-        ("2300", "قروض طويلة الأجل",      "liability", Some("2000"), 1),
-        ("2310", "مخصص مكافأة نهاية الخدمة","liability",Some("2000"), 1),
-        ("3000", "حقوق الملكية",          "equity",    None,         1),
-        ("3100", "رأس المال المدفوع",     "equity",    Some("3000"), 1),
-        ("3200", "الأرباح المُرحّلة",      "equity",    Some("3000"), 1),
-        ("3300", "أرباح/خسائر العام الحالي","equity",  Some("3000"), 1),
-        ("3400", "المسحوبات الشخصية",     "equity",    Some("3000"), 1),
-        ("4000", "الإيرادات",             "revenue",   None,         0),
-        ("4100", "إيرادات المبيعات",      "revenue",   Some("4000"), 1),
-        ("4200", "إيرادات أخرى",          "revenue",   Some("4000"), 1),
-        ("4300", "خصم مكتسب",             "revenue",   Some("4000"), 1),
-        ("5000", "المصروفات",             "expense",   None,         0),
-        ("5100", "تكلفة البضاعة المباعة","expense",   Some("5000"), 1),
-        ("5200", "مصروفات تشغيلية",       "expense",   Some("5000"), 1),
-        ("5400", "رواتب وأجور",           "expense",   Some("5000"), 1),
-        ("5410", "إيجارات",               "expense",   Some("5000"), 1),
-        ("5420", "كهرباء ومياه واتصالات", "expense",   Some("5000"), 1),
-        ("5430", "مصروف الإهلاك",         "expense",   Some("5000"), 1),
-        ("5440", "صيانة وإصلاحات",        "expense",   Some("5000"), 1),
-        ("5450", "تسويق ودعاية",          "expense",   Some("5000"), 1),
-        ("5460", "مصروفات ورسوم بنكية",   "expense",   Some("5000"), 1),
-        ("5500", "خصم مسموح به",          "expense",   Some("5000"), 1),
+        ("1000", "الأصول", "asset", None, 0),
+        ("1100", "الخزن", "asset", Some("1000"), 0),
+        ("1101", "الخزينة الرئيسية", "asset", Some("1100"), 1),
+        ("1200", "البنوك", "asset", Some("1000"), 0),
+        ("1201", "البنك الرئيسي", "asset", Some("1200"), 1),
+        ("1300", "المخزون", "asset", Some("1000"), 1),
+        ("11091", "وسيط استلام البضاعة", "asset", Some("1000"), 1),
+        (
+            "1400",
+            "ضريبة القيمة المضافة - مدخلات",
+            "asset",
+            Some("1000"),
+            1,
+        ),
+        ("1500", "العملاء (مدينون)", "asset", Some("1000"), 1),
+        ("1102", "العهد والسلف", "asset", Some("1000"), 1),
+        ("1103", "مصروفات مدفوعة مقدماً", "asset", Some("1000"), 1),
+        ("1600", "الأصول الثابتة", "asset", Some("1000"), 0),
+        ("1610", "أراضٍ ومبانٍ", "asset", Some("1600"), 1),
+        ("1620", "أثاث ومعدات", "asset", Some("1600"), 1),
+        ("1630", "أجهزة وحاسبات", "asset", Some("1600"), 1),
+        ("1640", "سيارات ووسائل نقل", "asset", Some("1600"), 1),
+        ("1700", "مجمع إهلاك الأصول الثابتة", "asset", Some("1000"), 1),
+        ("2000", "الخصوم", "liability", None, 0),
+        ("2100", "الموردون (دائنون)", "liability", Some("2000"), 1),
+        (
+            "2200",
+            "ضريبة القيمة المضافة - مخرجات",
+            "liability",
+            Some("2000"),
+            1,
+        ),
+        ("2105", "رواتب وأجور مستحقة", "liability", Some("2000"), 1),
+        (
+            "2106",
+            "الزكاة وضريبة الدخل مستحقة",
+            "liability",
+            Some("2000"),
+            1,
+        ),
+        ("2107", "مصروفات مستحقة", "liability", Some("2000"), 1),
+        ("2300", "قروض طويلة الأجل", "liability", Some("2000"), 1),
+        (
+            "2310",
+            "مخصص مكافأة نهاية الخدمة",
+            "liability",
+            Some("2000"),
+            1,
+        ),
+        ("3000", "حقوق الملكية", "equity", None, 1),
+        ("3100", "رأس المال المدفوع", "equity", Some("3000"), 1),
+        ("3200", "الأرباح المُرحّلة", "equity", Some("3000"), 1),
+        (
+            "3300",
+            "أرباح/خسائر العام الحالي",
+            "equity",
+            Some("3000"),
+            1,
+        ),
+        ("3400", "المسحوبات الشخصية", "equity", Some("3000"), 1),
+        ("4000", "الإيرادات", "revenue", None, 0),
+        ("4100", "إيرادات المبيعات", "revenue", Some("4000"), 1),
+        ("4200", "إيرادات أخرى", "revenue", Some("4000"), 1),
+        ("4300", "خصم مكتسب", "revenue", Some("4000"), 1),
+        ("5000", "المصروفات", "expense", None, 0),
+        ("5100", "تكلفة البضاعة المباعة", "expense", Some("5000"), 1),
+        ("5200", "مصروفات تشغيلية", "expense", Some("5000"), 1),
+        ("5400", "رواتب وأجور", "expense", Some("5000"), 1),
+        ("5410", "إيجارات", "expense", Some("5000"), 1),
+        ("5420", "كهرباء ومياه واتصالات", "expense", Some("5000"), 1),
+        ("5430", "مصروف الإهلاك", "expense", Some("5000"), 1),
+        ("5440", "صيانة وإصلاحات", "expense", Some("5000"), 1),
+        ("5450", "تسويق ودعاية", "expense", Some("5000"), 1),
+        ("5460", "مصروفات ورسوم بنكية", "expense", Some("5000"), 1),
+        ("5500", "خصم مسموح به", "expense", Some("5000"), 1),
     ];
 
     use rusqlite::params;

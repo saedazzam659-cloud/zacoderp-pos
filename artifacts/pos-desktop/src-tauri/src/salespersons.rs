@@ -63,7 +63,9 @@ fn list(include_inactive: bool) -> Result<Vec<Salesperson>> {
         row_to_salesperson,
     )?;
     let mut out = Vec::new();
-    for r in rows { out.push(r?); }
+    for r in rows {
+        out.push(r?);
+    }
     Ok(out)
 }
 
@@ -91,7 +93,11 @@ fn create(input: SalespersonInput) -> Result<Salesperson> {
         return Err(anyhow::anyhow!("اسم المندوب مطلوب"));
     }
     let conn = db::open()?;
-    let code = input.code.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let code = input
+        .code
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     conn.execute(
         "INSERT INTO salespersons_local
            (code, name_ar, name_en, phone, email, commission_pct, is_active, notes)
@@ -124,7 +130,11 @@ fn update(id: i64, input: SalespersonInput) -> Result<Salesperson> {
         return Err(anyhow::anyhow!("اسم المندوب مطلوب"));
     }
     let conn = db::open()?;
-    let code = input.code.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let code = input
+        .code
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     conn.execute(
         "UPDATE salespersons_local SET
            code=?2, name_ar=?3, name_en=?4, phone=?5, email=?6,
@@ -166,6 +176,9 @@ fn delete(id: i64) -> Result<()> {
             "لا يمكن حذف المندوب لارتباطه بـ {used} فاتورة — يمكنك إلغاء تنشيطه بدلاً من ذلك"
         ));
     }
-    conn.execute("DELETE FROM salespersons_local WHERE id=?1", rusqlite::params![id])?;
+    conn.execute(
+        "DELETE FROM salespersons_local WHERE id=?1",
+        rusqlite::params![id],
+    )?;
     Ok(())
 }

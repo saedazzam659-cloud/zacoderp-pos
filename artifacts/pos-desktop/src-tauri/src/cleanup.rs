@@ -151,7 +151,11 @@ pub fn find_and_remove_old_versions(current_version: &str) -> Result<Vec<Removed
                 );
             }
             Err(e) => {
-                log::warn!("[cleanup] failed to launch uninstall for {}: {}", t.product_code, e);
+                log::warn!(
+                    "[cleanup] failed to launch uninstall for {}: {}",
+                    t.product_code,
+                    e
+                );
             }
         }
         results.push(t);

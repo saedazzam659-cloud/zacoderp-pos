@@ -114,11 +114,7 @@ pub fn lan_stock_get_all() -> Result<Vec<StockRow>, String> {
 }
 
 #[tauri::command]
-pub fn lan_stock_set(
-    item_id: i64,
-    qty: f64,
-    reorder_point: Option<f64>,
-) -> Result<f64, String> {
+pub fn lan_stock_set(item_id: i64, qty: f64, reorder_point: Option<f64>) -> Result<f64, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     ensure_schema(&conn).map_err(|e| e.to_string())?;
     let q = round3(qty.max(0.0));
@@ -336,9 +332,8 @@ pub fn lan_local_ip() -> Result<Option<String>, String> {
 // admin action initiated from a client (rare) still works; cloud PUSH stays
 // host-only and is gated in the TS layer.
 fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
-    let s_opt = |k: &str| -> Option<String> {
-        args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string())
-    };
+    let s_opt =
+        |k: &str| -> Option<String> { args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()) };
     let s_req = |k: &str| -> Result<String, String> {
         s_opt(k).ok_or_else(|| format!("missing field '{k}'"))
     };
@@ -364,10 +359,8 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "find_item_by_plu" => crate::items::find_item_by_plu(s_req("plu")?)
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
-        "list_expiring_items" => {
-            crate::items::list_expiring_items(i_req("withinDays")?)
-                .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
-        }
+        "list_expiring_items" => crate::items::list_expiring_items(i_req("withinDays")?)
+            .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "seed_demo_items" => crate::items::seed_demo_items()
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "upsert_items_from_cloud" => {
@@ -451,7 +444,8 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             f_opt("creditLimit"),
             b_opt("enforceCreditLimit"),
             i_opt("paymentTermsDays"),
-            args.get("profile").and_then(|v| serde_json::from_value(v.clone()).ok()),
+            args.get("profile")
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
             b_opt("createLedgerAccount"),
         )
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
@@ -465,7 +459,8 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             f_opt("creditLimit"),
             b_opt("enforceCreditLimit"),
             i_opt("paymentTermsDays"),
-            args.get("profile").and_then(|v| serde_json::from_value(v.clone()).ok()),
+            args.get("profile")
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
         )
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
 
@@ -493,15 +488,13 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
         }
 
         // ── Shared stock ──
-        "lan_stock_get_all" => lan_stock_get_all()
-            .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
-        "lan_stock_set" => {
-            lan_stock_set(i_req("itemId")?, f_req("qty")?, f_opt("reorderPoint"))
-                .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+        "lan_stock_get_all" => {
+            lan_stock_get_all().and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
         }
+        "lan_stock_set" => lan_stock_set(i_req("itemId")?, f_req("qty")?, f_opt("reorderPoint"))
+            .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         "lan_stock_set_reorder" => {
-            lan_stock_set_reorder(i_req("itemId")?, f_req("reorderPoint")?)
-                .map(|_| Value::Null)
+            lan_stock_set_reorder(i_req("itemId")?, f_req("reorderPoint")?).map(|_| Value::Null)
         }
         "lan_stock_adjust" => lan_stock_adjust(i_req("itemId")?, f_req("delta")?)
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
@@ -554,7 +547,10 @@ fn respond_json(req: tiny_http::Request, status: u16, body: &Value) {
 
 fn token_matches(req: &tiny_http::Request, token: &str) -> bool {
     req.headers().iter().any(|h| {
-        h.field.as_str().as_str().eq_ignore_ascii_case("x-lan-token")
+        h.field
+            .as_str()
+            .as_str()
+            .eq_ignore_ascii_case("x-lan-token")
             && h.value.as_str() == token
     })
 }
@@ -612,7 +608,11 @@ fn handle_lan_request(mut req: tiny_http::Request, token: &str, name: &str, vers
     if url.starts_with("/lan/invoke") && method == tiny_http::Method::Post {
         let mut body = String::new();
         if req.as_reader().read_to_string(&mut body).is_err() {
-            respond_json(req, 200, &json!({ "ok": false, "error": "تعذّر قراءة الطلب" }));
+            respond_json(
+                req,
+                200,
+                &json!({ "ok": false, "error": "تعذّر قراءة الطلب" }),
+            );
             return;
         }
         let parsed: Result<Value, _> = serde_json::from_str(&body);
@@ -667,9 +667,7 @@ pub fn start_lan_server(port: u16, token: String, name: String, version: String)
                 return;
             }
         };
-        log::info!(
-            "LAN host server listening on {addr} ({LAN_WORKER_THREADS} workers)"
-        );
+        log::info!("LAN host server listening on {addr} ({LAN_WORKER_THREADS} workers)");
 
         let shared = std::sync::Arc::new((token, name, version));
         let mut workers = Vec::with_capacity(LAN_WORKER_THREADS);

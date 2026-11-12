@@ -49,7 +49,8 @@ fn settings() -> Result<BackupSettings> {
     let default = db::default_data_root();
     Ok(BackupSettings {
         auto_enabled: db::get_config(&conn, "backup_auto_enabled")?.as_deref() == Some("1"),
-        auto_time: db::get_config(&conn, "backup_auto_time")?.unwrap_or_else(|| "23:00".to_string()),
+        auto_time: db::get_config(&conn, "backup_auto_time")?
+            .unwrap_or_else(|| "23:00".to_string()),
         backup_dir: db::get_config(&conn, "backup_dir")?.unwrap_or_default(),
         last_backup_at: db::get_config(&conn, "backup_last_at")?.unwrap_or_default(),
         is_custom_data_dir: effective != default,
@@ -166,12 +167,14 @@ pub fn backup_set_settings(
     backup_dir: String,
 ) -> Result<(), String> {
     let conn = db::open().map_err(|e| e.to_string())?;
-    db::set_config(&conn, "backup_auto_enabled", if auto_enabled { "1" } else { "0" })
-        .map_err(|e| e.to_string())?;
-    db::set_config(&conn, "backup_auto_time", auto_time.trim())
-        .map_err(|e| e.to_string())?;
-    db::set_config(&conn, "backup_dir", backup_dir.trim())
-        .map_err(|e| e.to_string())?;
+    db::set_config(
+        &conn,
+        "backup_auto_enabled",
+        if auto_enabled { "1" } else { "0" },
+    )
+    .map_err(|e| e.to_string())?;
+    db::set_config(&conn, "backup_auto_time", auto_time.trim()).map_err(|e| e.to_string())?;
+    db::set_config(&conn, "backup_dir", backup_dir.trim()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -203,7 +206,9 @@ pub async fn backup_export(app: tauri::AppHandle) -> Result<Option<String>, Stri
             let _ = tx.send(fp);
         });
     let chosen = rx.await.map_err(|e| e.to_string())?;
-    let Some(fp) = chosen else { return Ok(None); };
+    let Some(fp) = chosen else {
+        return Ok(None);
+    };
     let path: PathBuf = fp.into_path().map_err(|e| e.to_string())?;
     checkpoint().map_err(|e| e.to_string())?;
     std::fs::copy(db::db_path(), &path).map_err(|e| e.to_string())?;
@@ -222,7 +227,9 @@ pub async fn backup_import(app: tauri::AppHandle) -> Result<Option<String>, Stri
             let _ = tx.send(fp);
         });
     let chosen = rx.await.map_err(|e| e.to_string())?;
-    let Some(fp) = chosen else { return Ok(None); };
+    let Some(fp) = chosen else {
+        return Ok(None);
+    };
     let path: PathBuf = fp.into_path().map_err(|e| e.to_string())?;
     restore_from(&path.to_string_lossy()).map_err(|e| e.to_string())?;
     Ok(Some(path.to_string_lossy().to_string()))

@@ -24,7 +24,11 @@ fn today_iso() -> String {
 }
 
 fn account_id_by_code(conn: &Connection, code: &str) -> rusqlite::Result<i64> {
-    conn.query_row("SELECT id FROM accounts_local WHERE code=?1", params![code], |r| r.get(0))
+    conn.query_row(
+        "SELECT id FROM accounts_local WHERE code=?1",
+        params![code],
+        |r| r.get(0),
+    )
 }
 
 /// Append a ledger row AND update the on-hand cache atomically.
@@ -43,11 +47,15 @@ fn apply_ledger_delta(
     // Distinguish "no row" (→ 0) from a real DB error (→ rollback). Using
     // `unwrap_or(0.0)` previously swallowed real failures and could write a
     // wrong `balance_after`, drifting ledger vs on-hand silently.
-    let current_qty: f64 = tx.query_row(
-        "SELECT COALESCE(qty,0) FROM stock_on_hand_local WHERE item_id=?1 AND warehouse_id=?2",
-        params![item_id, warehouse_id],
-        |r| r.get(0),
-    ).optional().map_err(|e| e.to_string())?.unwrap_or(0.0);
+    let current_qty: f64 = tx
+        .query_row(
+            "SELECT COALESCE(qty,0) FROM stock_on_hand_local WHERE item_id=?1 AND warehouse_id=?2",
+            params![item_id, warehouse_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or(0.0);
     let new_qty = current_qty + qty_delta;
 
     tx.execute(
@@ -64,7 +72,8 @@ fn apply_ledger_delta(
              ON CONFLICT(item_id,warehouse_id) DO UPDATE SET
                  qty=excluded.qty, last_cost=excluded.last_cost, updated_at=CURRENT_TIMESTAMP",
             params![item_id, warehouse_id, new_qty, unit_cost],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     } else {
         tx.execute(
             "INSERT INTO stock_on_hand_local(item_id,warehouse_id,qty,updated_at)
@@ -72,7 +81,8 @@ fn apply_ledger_delta(
              ON CONFLICT(item_id,warehouse_id) DO UPDATE SET
                  qty=excluded.qty, updated_at=CURRENT_TIMESTAMP",
             params![item_id, warehouse_id, new_qty],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(new_qty)
 }
@@ -89,7 +99,17 @@ pub fn ledger_push_in_tx(
     ref_id: Option<i64>,
     entry_date: &str,
 ) -> Result<(), String> {
-    apply_ledger_delta(tx, item_id, warehouse_id, qty_delta, unit_cost, ref_type, ref_id, entry_date, None)?;
+    apply_ledger_delta(
+        tx,
+        item_id,
+        warehouse_id,
+        qty_delta,
+        unit_cost,
+        ref_type,
+        ref_id,
+        entry_date,
+        None,
+    )?;
     Ok(())
 }
 
@@ -115,18 +135,25 @@ pub fn ledger_remove_ref_in_tx(
             "SELECT DISTINCT item_id, warehouse_id FROM stock_ledger_local WHERE ref_type=?1 AND ref_id=?2",
         ).map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(params![ref_type, ref_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+            .query_map(params![ref_type, ref_id], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+            })
             .map_err(|e| e.to_string())?;
         let mut v = Vec::new();
-        for r in rows { v.push(r.map_err(|e| e.to_string())?); }
+        for r in rows {
+            v.push(r.map_err(|e| e.to_string())?);
+        }
         v
     };
-    if pairs.is_empty() { return Ok(()); }
+    if pairs.is_empty() {
+        return Ok(());
+    }
 
     tx.execute(
         "DELETE FROM stock_ledger_local WHERE ref_type=?1 AND ref_id=?2",
         params![ref_type, ref_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     for (item_id, warehouse_id) in pairs {
         // Recompute the running balance for the remaining rows in insertion order.
@@ -135,10 +162,14 @@ pub fn ledger_remove_ref_in_tx(
                 "SELECT id, qty_delta FROM stock_ledger_local WHERE item_id=?1 AND warehouse_id=?2 ORDER BY id ASC",
             ).map_err(|e| e.to_string())?;
             let rs = stmt
-                .query_map(params![item_id, warehouse_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)))
+                .query_map(params![item_id, warehouse_id], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+                })
                 .map_err(|e| e.to_string())?;
             let mut v = Vec::new();
-            for r in rs { v.push(r.map_err(|e| e.to_string())?); }
+            for r in rs {
+                v.push(r.map_err(|e| e.to_string())?);
+            }
             v
         };
         let mut run = 0.0_f64;
@@ -147,7 +178,8 @@ pub fn ledger_remove_ref_in_tx(
             tx.execute(
                 "UPDATE stock_ledger_local SET balance_after=?1 WHERE id=?2",
                 params![run, rid],
-            ).map_err(|e| e.to_string())?;
+            )
+            .map_err(|e| e.to_string())?;
         }
         // Refresh the on-hand cache to the final running balance (0 if emptied).
         tx.execute(
@@ -156,7 +188,8 @@ pub fn ledger_remove_ref_in_tx(
              ON CONFLICT(item_id,warehouse_id) DO UPDATE SET
                  qty=excluded.qty, updated_at=CURRENT_TIMESTAMP",
             params![item_id, warehouse_id, run],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -164,11 +197,19 @@ pub fn ledger_remove_ref_in_tx(
 /// Returns the id of the default warehouse, creating one if none exists.
 pub fn default_warehouse_id_in_tx(tx: &Transaction) -> Result<i64, String> {
     if let Ok(id) = tx.query_row::<i64, _, _>(
-        "SELECT id FROM warehouses_local WHERE is_default=1 LIMIT 1", [], |r| r.get(0),
-    ) { return Ok(id); }
+        "SELECT id FROM warehouses_local WHERE is_default=1 LIMIT 1",
+        [],
+        |r| r.get(0),
+    ) {
+        return Ok(id);
+    }
     if let Ok(id) = tx.query_row::<i64, _, _>(
-        "SELECT id FROM warehouses_local ORDER BY id LIMIT 1", [], |r| r.get(0),
-    ) { return Ok(id); }
+        "SELECT id FROM warehouses_local ORDER BY id LIMIT 1",
+        [],
+        |r| r.get(0),
+    ) {
+        return Ok(id);
+    }
     tx.execute(
         "INSERT INTO warehouses_local(code,name,is_default,is_active) VALUES('WH-01','المخزن الرئيسي',1,1)",
         [],
@@ -223,18 +264,37 @@ pub struct WarehouseInput {
 #[tauri::command]
 pub fn warehouses_list() -> Result<Vec<Warehouse>, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare(
-        "SELECT id,code,name,name_en,address,group_id,branch_id,city,region,\
+    let mut stmt = conn
+        .prepare(
+            "SELECT id,code,name,name_en,address,group_id,branch_id,city,region,\
                 allow_negative,negative_limit,account_id,is_default,is_active \
          FROM warehouses_local ORDER BY is_default DESC, name",
-    ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([], |r| Ok(Warehouse {
-        id: r.get(0)?, code: r.get(1)?, name: r.get(2)?, name_en: r.get(3)?, address: r.get(4)?,
-        group_id: r.get(5)?, branch_id: r.get(6)?, city: r.get(7)?, region: r.get(8)?,
-        allow_negative: r.get::<_, i64>(9)? != 0, negative_limit: r.get(10)?, account_id: r.get(11)?,
-        is_default: r.get::<_, i64>(12)? != 0, is_active: r.get::<_, i64>(13)? != 0,
-    })).map_err(|e| e.to_string())?;
-    let mut out = vec![]; for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(Warehouse {
+                id: r.get(0)?,
+                code: r.get(1)?,
+                name: r.get(2)?,
+                name_en: r.get(3)?,
+                address: r.get(4)?,
+                group_id: r.get(5)?,
+                branch_id: r.get(6)?,
+                city: r.get(7)?,
+                region: r.get(8)?,
+                allow_negative: r.get::<_, i64>(9)? != 0,
+                negative_limit: r.get(10)?,
+                account_id: r.get(11)?,
+                is_default: r.get::<_, i64>(12)? != 0,
+                is_active: r.get::<_, i64>(13)? != 0,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = vec![];
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
     Ok(out)
 }
 
@@ -253,7 +313,8 @@ pub fn warehouses_create(input: WarehouseInput) -> Result<i64, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let is_default = input.is_default.unwrap_or(false);
     if is_default {
-        tx.execute("UPDATE warehouses_local SET is_default=0", []).map_err(|e| e.to_string())?;
+        tx.execute("UPDATE warehouses_local SET is_default=0", [])
+            .map_err(|e| e.to_string())?;
     }
     tx.execute(
         "INSERT INTO warehouses_local\
@@ -276,7 +337,11 @@ pub fn warehouses_update(id: i64, input: WarehouseInput) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let is_default = input.is_default.unwrap_or(false);
     if is_default {
-        tx.execute("UPDATE warehouses_local SET is_default=0 WHERE id!=?1", params![id]).map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE warehouses_local SET is_default=0 WHERE id!=?1",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
     }
     tx.execute(
         "UPDATE warehouses_local SET code=?1, name=?2, name_en=?3, address=?4, group_id=?5, branch_id=?6, \
@@ -296,11 +361,18 @@ pub fn warehouses_update(id: i64, input: WarehouseInput) -> Result<(), String> {
 #[tauri::command]
 pub fn warehouses_delete(id: i64) -> Result<(), String> {
     let conn = db::open().map_err(|e| e.to_string())?;
-    let used: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM stock_ledger_local WHERE warehouse_id=?1", params![id], |r| r.get(0),
-    ).map_err(|e| e.to_string())?;
-    if used > 0 { return Err("لا يمكن حذف مخزن عليه حركات".into()); }
-    conn.execute("DELETE FROM warehouses_local WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+    let used: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM stock_ledger_local WHERE warehouse_id=?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if used > 0 {
+        return Err("لا يمكن حذف مخزن عليه حركات".into());
+    }
+    conn.execute("DELETE FROM warehouses_local WHERE id=?1", params![id])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -327,11 +399,23 @@ pub fn stock_on_hand_list(warehouse_id: Option<i64>) -> Result<Vec<StockOnHand>,
                WHERE (?1 IS NULL OR s.warehouse_id=?1)
                ORDER BY i.name_ar";
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(params![warehouse_id], |r| Ok(StockOnHand {
-        item_id: r.get(0)?, item_name: r.get(1)?, item_code: r.get(2)?,
-        warehouse_id: r.get(3)?, warehouse_name: r.get(4)?, qty: r.get(5)?, last_cost: r.get(6)?,
-    })).map_err(|e| e.to_string())?;
-    let mut out = vec![]; for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    let rows = stmt
+        .query_map(params![warehouse_id], |r| {
+            Ok(StockOnHand {
+                item_id: r.get(0)?,
+                item_name: r.get(1)?,
+                item_code: r.get(2)?,
+                warehouse_id: r.get(3)?,
+                warehouse_name: r.get(4)?,
+                qty: r.get(5)?,
+                last_cost: r.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = vec![];
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
     Ok(out)
 }
 
@@ -376,13 +460,31 @@ pub fn stock_movements_list(
                ORDER BY l.id DESC
                LIMIT ?5";
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(params![warehouse_id, item_id, date_from, date_to, lim], |r| Ok(StockMovement {
-        id: r.get(0)?, item_id: r.get(1)?, item_name: r.get(2)?,
-        warehouse_id: r.get(3)?, warehouse_name: r.get(4)?,
-        qty_delta: r.get(5)?, unit_cost: r.get(6)?, balance_after: r.get(7)?,
-        ref_type: r.get(8)?, ref_id: r.get(9)?, entry_date: r.get(10)?, created_at: r.get(11)?,
-    })).map_err(|e| e.to_string())?;
-    let mut out = vec![]; for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    let rows = stmt
+        .query_map(
+            params![warehouse_id, item_id, date_from, date_to, lim],
+            |r| {
+                Ok(StockMovement {
+                    id: r.get(0)?,
+                    item_id: r.get(1)?,
+                    item_name: r.get(2)?,
+                    warehouse_id: r.get(3)?,
+                    warehouse_name: r.get(4)?,
+                    qty_delta: r.get(5)?,
+                    unit_cost: r.get(6)?,
+                    balance_after: r.get(7)?,
+                    ref_type: r.get(8)?,
+                    ref_id: r.get(9)?,
+                    entry_date: r.get(10)?,
+                    created_at: r.get(11)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    let mut out = vec![];
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
     Ok(out)
 }
 
@@ -404,14 +506,24 @@ pub struct AdjustmentInput {
 
 #[derive(Serialize)]
 pub struct AdjustmentSummary {
-    pub id: i64, pub adj_no: String, pub adj_date: String,
-    pub warehouse_id: i64, pub warehouse_name: String,
-    pub reason: Option<String>, pub je_id: Option<i64>,
-    pub lines_count: i64, pub total_value: f64,
+    pub id: i64,
+    pub adj_no: String,
+    pub adj_date: String,
+    pub warehouse_id: i64,
+    pub warehouse_name: String,
+    pub reason: Option<String>,
+    pub je_id: Option<i64>,
+    pub lines_count: i64,
+    pub total_value: f64,
 }
 
 fn next_adj_no(tx: &Transaction) -> Result<String, String> {
-    let n: i64 = tx.query_row("SELECT COALESCE(MAX(id),0)+1 FROM stock_adjustments_local", [], |r| r.get(0))
+    let n: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(id),0)+1 FROM stock_adjustments_local",
+            [],
+            |r| r.get(0),
+        )
         .map_err(|e| e.to_string())?;
     Ok(format!("ADJ-{:06}", n))
 }
@@ -427,19 +539,33 @@ pub fn stock_adjustments_list() -> Result<Vec<AdjustmentSummary>, String> {
          JOIN warehouses_local w ON w.id=a.warehouse_id
          ORDER BY a.id DESC LIMIT 500",
     ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([], |r| Ok(AdjustmentSummary {
-        id: r.get(0)?, adj_no: r.get(1)?, adj_date: r.get(2)?,
-        warehouse_id: r.get(3)?, warehouse_name: r.get(4)?,
-        reason: r.get(5)?, je_id: r.get(6)?,
-        lines_count: r.get(7)?, total_value: r.get(8)?,
-    })).map_err(|e| e.to_string())?;
-    let mut out = vec![]; for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(AdjustmentSummary {
+                id: r.get(0)?,
+                adj_no: r.get(1)?,
+                adj_date: r.get(2)?,
+                warehouse_id: r.get(3)?,
+                warehouse_name: r.get(4)?,
+                reason: r.get(5)?,
+                je_id: r.get(6)?,
+                lines_count: r.get(7)?,
+                total_value: r.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = vec![];
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
     Ok(out)
 }
 
 #[tauri::command]
 pub fn stock_adjustment_create(input: AdjustmentInput) -> Result<i64, String> {
-    if input.lines.is_empty() { return Err("لا توجد بنود في التسوية".into()); }
+    if input.lines.is_empty() {
+        return Err("لا توجد بنود في التسوية".into());
+    }
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let adj_no = next_adj_no(&tx)?;
@@ -454,18 +580,34 @@ pub fn stock_adjustment_create(input: AdjustmentInput) -> Result<i64, String> {
     let mut total_loss = 0.0_f64;
 
     for l in &input.lines {
-        if l.qty_diff == 0.0 { continue; }
+        if l.qty_diff == 0.0 {
+            continue;
+        }
         let line_total = l.qty_diff.abs() * l.unit_cost;
         tx.execute(
             "INSERT INTO stock_adjustment_lines_local(adj_id,item_id,qty_diff,unit_cost,line_total)
              VALUES(?1,?2,?3,?4,?5)",
             params![adj_id, l.item_id, l.qty_diff, l.unit_cost, line_total],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
-        apply_ledger_delta(&tx, l.item_id, input.warehouse_id, l.qty_diff, l.unit_cost,
-            "adjustment", Some(adj_id), &input.adj_date, None)?;
+        apply_ledger_delta(
+            &tx,
+            l.item_id,
+            input.warehouse_id,
+            l.qty_diff,
+            l.unit_cost,
+            "adjustment",
+            Some(adj_id),
+            &input.adj_date,
+            None,
+        )?;
 
-        if l.qty_diff > 0.0 { total_gain += line_total; } else { total_loss += line_total; }
+        if l.qty_diff > 0.0 {
+            total_gain += line_total;
+        } else {
+            total_loss += line_total;
+        }
     }
 
     // Build the JE — net DR/CR against inventory.
@@ -485,7 +627,13 @@ pub fn stock_adjustment_create(input: AdjustmentInput) -> Result<i64, String> {
 
     let je_id_opt: Option<i64> = if !lines.is_empty() {
         let total: f64 = lines.iter().map(|(_, d, _)| d).sum();
-        let entry_no: i64 = tx.query_row("SELECT COALESCE(MAX(id),0)+1 FROM journal_entries_local", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+        let entry_no: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(id),0)+1 FROM journal_entries_local",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
         let entry_no_s = format!("JE-{:06}", entry_no);
         tx.execute(
             "INSERT INTO journal_entries_local(entry_no,entry_date,description,total_debit,total_credit,source_type,source_id)
@@ -499,11 +647,21 @@ pub fn stock_adjustment_create(input: AdjustmentInput) -> Result<i64, String> {
                 params![je_id, acc, dr, cr],
             ).map_err(|e| e.to_string())?;
             let signed = dr - cr;
-            tx.execute("UPDATE accounts_local SET balance=balance+?1 WHERE id=?2", params![signed, acc]).map_err(|e| e.to_string())?;
+            tx.execute(
+                "UPDATE accounts_local SET balance=balance+?1 WHERE id=?2",
+                params![signed, acc],
+            )
+            .map_err(|e| e.to_string())?;
         }
-        tx.execute("UPDATE stock_adjustments_local SET je_id=?1 WHERE id=?2", params![je_id, adj_id]).map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE stock_adjustments_local SET je_id=?1 WHERE id=?2",
+            params![je_id, adj_id],
+        )
+        .map_err(|e| e.to_string())?;
         Some(je_id)
-    } else { None };
+    } else {
+        None
+    };
     let _ = je_id_opt;
 
     tx.commit().map_err(|e| e.to_string())?;
@@ -529,14 +687,24 @@ pub struct TransferInput {
 
 #[derive(Serialize)]
 pub struct TransferSummary {
-    pub id: i64, pub transfer_no: String, pub transfer_date: String,
-    pub from_warehouse_id: i64, pub from_warehouse_name: String,
-    pub to_warehouse_id: i64, pub to_warehouse_name: String,
-    pub lines_count: i64, pub total_qty: f64,
+    pub id: i64,
+    pub transfer_no: String,
+    pub transfer_date: String,
+    pub from_warehouse_id: i64,
+    pub from_warehouse_name: String,
+    pub to_warehouse_id: i64,
+    pub to_warehouse_name: String,
+    pub lines_count: i64,
+    pub total_qty: f64,
 }
 
 fn next_transfer_no(tx: &Transaction) -> Result<String, String> {
-    let n: i64 = tx.query_row("SELECT COALESCE(MAX(id),0)+1 FROM stock_transfers_local", [], |r| r.get(0))
+    let n: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(id),0)+1 FROM stock_transfers_local",
+            [],
+            |r| r.get(0),
+        )
         .map_err(|e| e.to_string())?;
     Ok(format!("TRF-{:06}", n))
 }
@@ -554,13 +722,25 @@ pub fn stock_transfers_list() -> Result<Vec<TransferSummary>, String> {
          JOIN warehouses_local wt ON wt.id=t.to_warehouse_id
          ORDER BY t.id DESC LIMIT 500",
     ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([], |r| Ok(TransferSummary {
-        id: r.get(0)?, transfer_no: r.get(1)?, transfer_date: r.get(2)?,
-        from_warehouse_id: r.get(3)?, from_warehouse_name: r.get(4)?,
-        to_warehouse_id: r.get(5)?, to_warehouse_name: r.get(6)?,
-        lines_count: r.get(7)?, total_qty: r.get(8)?,
-    })).map_err(|e| e.to_string())?;
-    let mut out = vec![]; for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(TransferSummary {
+                id: r.get(0)?,
+                transfer_no: r.get(1)?,
+                transfer_date: r.get(2)?,
+                from_warehouse_id: r.get(3)?,
+                from_warehouse_name: r.get(4)?,
+                to_warehouse_id: r.get(5)?,
+                to_warehouse_name: r.get(6)?,
+                lines_count: r.get(7)?,
+                total_qty: r.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = vec![];
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
     Ok(out)
 }
 
@@ -569,7 +749,9 @@ pub fn stock_transfer_create(input: TransferInput) -> Result<i64, String> {
     if input.from_warehouse_id == input.to_warehouse_id {
         return Err("لا يمكن التحويل لنفس المخزن".into());
     }
-    if input.lines.is_empty() { return Err("لا توجد بنود في التحويل".into()); }
+    if input.lines.is_empty() {
+        return Err("لا توجد بنود في التحويل".into());
+    }
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let transfer_no = next_transfer_no(&tx)?;
@@ -582,17 +764,37 @@ pub fn stock_transfer_create(input: TransferInput) -> Result<i64, String> {
     let tid = tx.last_insert_rowid();
 
     for l in &input.lines {
-        if l.qty <= 0.0 { return Err("الكمية يجب أن تكون أكبر من صفر".into()); }
+        if l.qty <= 0.0 {
+            return Err("الكمية يجب أن تكون أكبر من صفر".into());
+        }
         tx.execute(
             "INSERT INTO stock_transfer_lines_local(transfer_id,item_id,qty,unit_cost) VALUES(?1,?2,?3,?4)",
             params![tid, l.item_id, l.qty, l.unit_cost],
         ).map_err(|e| e.to_string())?;
         // Out of source (negative).
-        apply_ledger_delta(&tx, l.item_id, input.from_warehouse_id, -l.qty, l.unit_cost,
-            "transfer_out", Some(tid), &input.transfer_date, None)?;
+        apply_ledger_delta(
+            &tx,
+            l.item_id,
+            input.from_warehouse_id,
+            -l.qty,
+            l.unit_cost,
+            "transfer_out",
+            Some(tid),
+            &input.transfer_date,
+            None,
+        )?;
         // Into destination (positive).
-        apply_ledger_delta(&tx, l.item_id, input.to_warehouse_id, l.qty, l.unit_cost,
-            "transfer_in", Some(tid), &input.transfer_date, None)?;
+        apply_ledger_delta(
+            &tx,
+            l.item_id,
+            input.to_warehouse_id,
+            l.qty,
+            l.unit_cost,
+            "transfer_in",
+            Some(tid),
+            &input.transfer_date,
+            None,
+        )?;
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(tid)
@@ -621,14 +823,23 @@ pub struct StocktakeInput {
 
 #[derive(Serialize)]
 pub struct StocktakeSummary {
-    pub id: i64, pub stocktake_no: String, pub stocktake_date: String,
-    pub warehouse_id: i64, pub warehouse_name: String,
-    pub status: String, pub adjustment_id: Option<i64>,
+    pub id: i64,
+    pub stocktake_no: String,
+    pub stocktake_date: String,
+    pub warehouse_id: i64,
+    pub warehouse_name: String,
+    pub status: String,
+    pub adjustment_id: Option<i64>,
     pub lines_count: i64,
 }
 
 fn next_stocktake_no(tx: &Transaction) -> Result<String, String> {
-    let n: i64 = tx.query_row("SELECT COALESCE(MAX(id),0)+1 FROM stocktakes_local", [], |r| r.get(0))
+    let n: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(id),0)+1 FROM stocktakes_local",
+            [],
+            |r| r.get(0),
+        )
         .map_err(|e| e.to_string())?;
     Ok(format!("ST-{:06}", n))
 }
@@ -643,19 +854,32 @@ pub fn stocktakes_list() -> Result<Vec<StocktakeSummary>, String> {
          JOIN warehouses_local w ON w.id=s.warehouse_id
          ORDER BY s.id DESC LIMIT 500",
     ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([], |r| Ok(StocktakeSummary {
-        id: r.get(0)?, stocktake_no: r.get(1)?, stocktake_date: r.get(2)?,
-        warehouse_id: r.get(3)?, warehouse_name: r.get(4)?,
-        status: r.get(5)?, adjustment_id: r.get(6)?,
-        lines_count: r.get(7)?,
-    })).map_err(|e| e.to_string())?;
-    let mut out = vec![]; for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(StocktakeSummary {
+                id: r.get(0)?,
+                stocktake_no: r.get(1)?,
+                stocktake_date: r.get(2)?,
+                warehouse_id: r.get(3)?,
+                warehouse_name: r.get(4)?,
+                status: r.get(5)?,
+                adjustment_id: r.get(6)?,
+                lines_count: r.get(7)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = vec![];
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
     Ok(out)
 }
 
 #[tauri::command]
 pub fn stocktake_create(input: StocktakeInput) -> Result<i64, String> {
-    if input.lines.is_empty() { return Err("لا توجد بنود في الجرد".into()); }
+    if input.lines.is_empty() {
+        return Err("لا توجد بنود في الجرد".into());
+    }
     let mut conn = db::open().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let no = next_stocktake_no(&tx)?;
@@ -663,7 +887,8 @@ pub fn stocktake_create(input: StocktakeInput) -> Result<i64, String> {
         "INSERT INTO stocktakes_local(stocktake_no,stocktake_date,warehouse_id,notes,status)
          VALUES(?1,?2,?3,?4,'draft')",
         params![no, input.stocktake_date, input.warehouse_id, input.notes],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     let sid = tx.last_insert_rowid();
     for l in &input.lines {
         let sys_qty: f64 = tx.query_row(
@@ -693,24 +918,37 @@ pub fn stocktake_post(id: i64) -> Result<i64, String> {
     if status == "posted" {
         return Ok(prior_adj.unwrap_or(0));
     }
-    if status != "draft" { return Err(format!("حالة غير معروفة: {status}")); }
+    if status != "draft" {
+        return Err(format!("حالة غير معروفة: {status}"));
+    }
 
     // Collect lines with non-zero diff into an AdjustmentInput.
     let mut stmt = tx.prepare(
         "SELECT item_id, system_qty, counted_qty, unit_cost FROM stocktake_lines_local WHERE stocktake_id=?1",
     ).map_err(|e| e.to_string())?;
-    let lines: Vec<(i64, f64, f64, f64)> = stmt.query_map(params![id], |r| Ok((
-        r.get::<_, i64>(0)?, r.get::<_, f64>(1)?, r.get::<_, f64>(2)?, r.get::<_, f64>(3)?,
-    ))).map_err(|e| e.to_string())?
-        .collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?;
+    let lines: Vec<(i64, f64, f64, f64)> = stmt
+        .query_map(params![id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, f64>(1)?,
+                r.get::<_, f64>(2)?,
+                r.get::<_, f64>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(|e| e.to_string())?;
     drop(stmt);
 
-    let diffs: Vec<(i64, f64, f64)> = lines.into_iter()
+    let diffs: Vec<(i64, f64, f64)> = lines
+        .into_iter()
         .map(|(item_id, sys, cnt, cost)| (item_id, cnt - sys, cost))
         .filter(|(_, d, _)| d.abs() > 1e-6)
         .collect();
 
-    let adj_id_opt: Option<i64> = if diffs.is_empty() { None } else {
+    let adj_id_opt: Option<i64> = if diffs.is_empty() {
+        None
+    } else {
         let adj_no = next_adj_no(&tx)?;
         tx.execute(
             "INSERT INTO stock_adjustments_local(adj_no,adj_date,warehouse_id,reason) VALUES(?1,?2,?3,?4)",
@@ -718,16 +956,30 @@ pub fn stocktake_post(id: i64) -> Result<i64, String> {
         ).map_err(|e| e.to_string())?;
         let adj_id = tx.last_insert_rowid();
 
-        let mut total_gain = 0.0_f64; let mut total_loss = 0.0_f64;
+        let mut total_gain = 0.0_f64;
+        let mut total_loss = 0.0_f64;
         for (item_id, qty_diff, unit_cost) in &diffs {
             let line_total = qty_diff.abs() * unit_cost;
             tx.execute(
                 "INSERT INTO stock_adjustment_lines_local(adj_id,item_id,qty_diff,unit_cost,line_total) VALUES(?1,?2,?3,?4,?5)",
                 params![adj_id, item_id, qty_diff, unit_cost, line_total],
             ).map_err(|e| e.to_string())?;
-            apply_ledger_delta(&tx, *item_id, warehouse_id, *qty_diff, *unit_cost,
-                "stocktake", Some(adj_id), &st_date, None)?;
-            if *qty_diff > 0.0 { total_gain += line_total; } else { total_loss += line_total; }
+            apply_ledger_delta(
+                &tx,
+                *item_id,
+                warehouse_id,
+                *qty_diff,
+                *unit_cost,
+                "stocktake",
+                Some(adj_id),
+                &st_date,
+                None,
+            )?;
+            if *qty_diff > 0.0 {
+                total_gain += line_total;
+            } else {
+                total_loss += line_total;
+            }
         }
 
         // Post the offsetting JE (same logic as stock_adjustment_create).
@@ -735,11 +987,23 @@ pub fn stocktake_post(id: i64) -> Result<i64, String> {
         let gain_acc = account_id_by_code(&tx, "1310").map_err(|e| e.to_string())?;
         let loss_acc = account_id_by_code(&tx, "5300").map_err(|e| e.to_string())?;
         let mut je_lines: Vec<(i64, f64, f64)> = vec![];
-        if total_gain > 0.0 { je_lines.push((inv_acc, total_gain, 0.0)); je_lines.push((gain_acc, 0.0, total_gain)); }
-        if total_loss > 0.0 { je_lines.push((loss_acc, total_loss, 0.0)); je_lines.push((inv_acc, 0.0, total_loss)); }
+        if total_gain > 0.0 {
+            je_lines.push((inv_acc, total_gain, 0.0));
+            je_lines.push((gain_acc, 0.0, total_gain));
+        }
+        if total_loss > 0.0 {
+            je_lines.push((loss_acc, total_loss, 0.0));
+            je_lines.push((inv_acc, 0.0, total_loss));
+        }
         if !je_lines.is_empty() {
             let total: f64 = je_lines.iter().map(|(_, d, _)| d).sum();
-            let entry_no: i64 = tx.query_row("SELECT COALESCE(MAX(id),0)+1 FROM journal_entries_local", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+            let entry_no: i64 = tx
+                .query_row(
+                    "SELECT COALESCE(MAX(id),0)+1 FROM journal_entries_local",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
             let entry_no_s = format!("JE-{:06}", entry_no);
             tx.execute(
                 "INSERT INTO journal_entries_local(entry_no,entry_date,description,total_debit,total_credit,source_type,source_id)
@@ -753,9 +1017,17 @@ pub fn stocktake_post(id: i64) -> Result<i64, String> {
                     params![je_id, acc, dr, cr],
                 ).map_err(|e| e.to_string())?;
                 let signed = dr - cr;
-                tx.execute("UPDATE accounts_local SET balance=balance+?1 WHERE id=?2", params![signed, acc]).map_err(|e| e.to_string())?;
+                tx.execute(
+                    "UPDATE accounts_local SET balance=balance+?1 WHERE id=?2",
+                    params![signed, acc],
+                )
+                .map_err(|e| e.to_string())?;
             }
-            tx.execute("UPDATE stock_adjustments_local SET je_id=?1 WHERE id=?2", params![je_id, adj_id]).map_err(|e| e.to_string())?;
+            tx.execute(
+                "UPDATE stock_adjustments_local SET je_id=?1 WHERE id=?2",
+                params![je_id, adj_id],
+            )
+            .map_err(|e| e.to_string())?;
         }
         Some(adj_id)
     };
@@ -763,7 +1035,8 @@ pub fn stocktake_post(id: i64) -> Result<i64, String> {
     tx.execute(
         "UPDATE stocktakes_local SET status='posted', adjustment_id=?1 WHERE id=?2",
         params![adj_id_opt, id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(adj_id_opt.unwrap_or(0))
 }
