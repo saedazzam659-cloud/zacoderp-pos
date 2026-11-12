@@ -173,12 +173,15 @@ export async function materializeVerifiedBackup(
       timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
     });
     const entries = String(listing.stdout).split(/\r?\n/).filter(Boolean).map((entry) => entry.replace(/^\.\//, ""));
-    const allowed = new Set(["manifest.json", "runtime-release.tgz", "database.dump"]);
+    const required = new Set(["manifest.json", "runtime-release.tgz", "database.dump"]);
+    // Older v1 archives included this source snapshot. Accept it for compatibility,
+    // but never extract or restore it; code restore uses only the runtime release.
+    const allowed = new Set([...required, "source-code.tar.gz"]);
     if (entries.some((entry) => entry.includes("..") || entry.startsWith("/") || !allowed.has(entry))) {
       throw new Error("محتويات النسخة غير آمنة");
     }
-    for (const required of allowed) {
-      if (!entries.includes(required)) throw new Error("النسخة لا تحتوي كل الملفات المطلوبة");
+    for (const requiredEntry of required) {
+      if (!entries.includes(requiredEntry)) throw new Error("النسخة لا تحتوي كل الملفات المطلوبة");
     }
     await execFileAsync("tar", [
       "--no-same-owner", "--no-same-permissions", "-xzf", bundlePath, "-C", dir,
