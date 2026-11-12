@@ -2508,35 +2508,6 @@ pub fn purchase_unpost(id: i64) -> Result<(), String> {
         return Err("لا يمكن فك ترحيل فاتورة لها سندات صرف مرحّلة؛ فك ترحيل السندات أولاً".into());
     }
     guard_period_open_for_date(&tx, &date).map_err(|e| e.to_string())?;
-    let delete_after_unpost = unpost_deletes_document(&tx);
-    if delete_after_unpost {
-        let returns: i64 = tx
-            .query_row(
-                "SELECT COUNT(*) FROM purchase_returns_local WHERE purchase_id=?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if returns > 0 {
-            return Err("لا يمكن حذف فاتورة لها مرتجعات مرتبطة؛ فك ترحيل المرتجعات أولاً".into());
-        }
-        let linked_records: i64 = tx
-            .query_row(
-                "SELECT
-                    (SELECT COUNT(*) FROM financial_transactions_local
-                     WHERE applied_doc_type='purchase' AND applied_doc_id=?1)
-                  + (SELECT COUNT(*) FROM financial_transaction_allocations_local
-                     WHERE doc_type='purchase' AND doc_id=?1)
-                  + (SELECT COUNT(*) FROM purchase_orders_local WHERE converted_invoice_id=?1)
-                  + (SELECT COUNT(*) FROM goods_receipts_local WHERE converted_invoice_id=?1)",
-                params![id],
-                |row| row.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if linked_records > 0 {
-            return Err("لا يمكن حذف فاتورة مرتبطة بسندات أو أمر شراء أو استلام؛ احتفظ بها كمسودة أو أزل الروابط أولاً".into());
-        }
-    }
     let (input, default_wh) = load_purchase_input(&tx, id)?;
     reverse_purchase_impact(&tx, id)?;
     insert_purchase_lines_only(&tx, id, &input, default_wh)?;
@@ -4258,35 +4229,6 @@ pub fn sales_invoice_unpost(id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     if active_returns > 0 {
         return Err("لا يمكن فك ترحيل فاتورة لها مرتجعات مرحّلة؛ فك ترحيل المرتجعات أولاً".into());
-    }
-    let delete_after_unpost = unpost_deletes_document(&tx);
-    if delete_after_unpost {
-        let linked_returns: i64 = tx
-            .query_row(
-                "SELECT COUNT(*) FROM sales_returns_local WHERE invoice_id=?1",
-                params![id],
-                |row| row.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if linked_returns > 0 {
-            return Err("لا يمكن حذف فاتورة لها مرتجعات مرتبطة؛ احذف المرتجعات أولاً".into());
-        }
-        let linked_records: i64 = tx
-            .query_row(
-                "SELECT
-                    (SELECT COUNT(*) FROM financial_transactions_local
-                     WHERE applied_doc_type='sales_invoice' AND applied_doc_id=?1)
-                  + (SELECT COUNT(*) FROM financial_transaction_allocations_local
-                     WHERE doc_type='sales_invoice' AND doc_id=?1)
-                  + (SELECT COUNT(*) FROM quotations_local WHERE converted_invoice_id=?1)
-                  + (SELECT COUNT(*) FROM sales_orders_local WHERE converted_invoice_id=?1)",
-                params![id],
-                |row| row.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if linked_records > 0 {
-            return Err("لا يمكن حذف فاتورة مرتبطة بسندات أو عرض سعر أو أمر بيع؛ احتفظ بها كمسودة أو أزل الروابط أولاً".into());
-        }
     }
     // Snapshot the input BEFORE reverse drops the line rows, then reverse and
     // re-insert the lines impact-free so the draft keeps its detail.
