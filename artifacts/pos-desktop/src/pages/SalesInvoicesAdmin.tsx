@@ -63,6 +63,13 @@ const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page .zsales-section{margin:10px 0;padding:10px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:var(--si-panel);}
   .zsales-invoice-single-page .zsales-section-heading{display:flex;align-items:center;gap:9px;margin:0 0 8px;color:#0f172a;}
   .zsales-invoice-single-page .zsales-section-heading>span{padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--si-accent) 12%,white);color:var(--si-accent);font-size:11px;font-weight:700;}
+  .zsales-invoice-single-page .zsales-action-bar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 8px;padding:7px 8px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:rgba(255,255,255,.97);box-shadow:0 5px 16px #0f172a20;backdrop-filter:blur(8px);}
+  .zsales-invoice-single-page .zsales-action-buttons{display:flex;align-items:center;gap:6px;flex:1 1 420px;min-width:0;flex-wrap:wrap;}
+  .zsales-invoice-single-page .zsales-action-buttons button{min-height:32px;}
+  .zsales-invoice-single-page .zsales-quick-payment{display:flex;align-items:center;gap:6px;flex:0 1 250px;min-width:200px;}
+  .zsales-invoice-single-page .zsales-quick-payment-label{font-size:11px;font-weight:700;color:#475569;white-space:nowrap;}
+  .zsales-invoice-single-page .zsales-action-total{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:var(--si-radius);background:color-mix(in srgb,var(--si-accent) 10%,white);color:#0f172a;font-size:11px;white-space:nowrap;}
+  .zsales-invoice-single-page .zsales-action-feedback{flex:1 1 100%;max-height:92px;overflow:auto;}
   .zsales-invoice-single-page .zsales-items-section{background:#fff;}
   .zsales-invoice-single-page .zsales-items-section .zlines-wrap{max-height:none!important;overflow-x:auto!important;overflow-y:visible!important;border-color:var(--si-border);}
   .zsales-invoice-single-page .zlines-wrap thead th{background:var(--si-grid)!important;color:var(--si-grid-text,#1e293b)!important;}
@@ -81,6 +88,8 @@ const salesInvoiceTemplateStyles = `
   @media(max-width:1100px){.zsales-invoice-single-page .zsales-header-fields,.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
   @media(max-width:700px){.zsales-invoice-single-page .zsales-header-fields,.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
   @media(max-width:900px){.zsales-invoice-single-page .zsales-layout-row{align-items:stretch;flex-direction:column}.zsales-invoice-single-page .zsales-layout-select{max-width:none;width:100%}}
+  @media(max-width:700px){.zsales-invoice-single-page .zsales-action-buttons{flex-basis:100%}.zsales-invoice-single-page .zsales-quick-payment{flex:1 1 180px}.zsales-invoice-single-page .zsales-action-total{margin-inline-start:auto}}
+  @media(max-height:680px){.zsales-invoice-single-page .zsales-layout-row{margin:4px 0 6px;padding:4px 8px}.zsales-invoice-single-page .zsales-layout-label small{display:none}.zsales-invoice-single-page .zsales-section{margin:6px 0;padding:7px}.zsales-invoice-single-page .zsales-action-bar{margin:4px 0 6px;padding:5px 7px}.zsales-invoice-single-page .zsales-section-heading{margin-bottom:5px}}
 `;
 
 export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
@@ -667,12 +676,18 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     const root = formRef.current;
     if (!root || !el) return;
     const nodes = Array.from(root.querySelectorAll<HTMLElement>("[data-fnav]"));
-    const i = nodes.indexOf(el);
+    // Keep the submit action last in the keyboard sequence even though its
+    // visual shortcut now stays at the top of the invoice.
+    const orderedNodes = [
+      ...nodes.filter((node) => node.dataset.fnavLast !== "1"),
+      ...nodes.filter((node) => node.dataset.fnavLast === "1"),
+    ];
+    const i = orderedNodes.indexOf(el);
     if (i === -1) return;
     // Walk forward to the next *focusable* node: skip disabled or hidden
     // controls (e.g. locked fields, collapsed rows) so focus never stalls.
-    for (let j = i + 1; j < nodes.length; j++) {
-      const nxt = nodes[j];
+    for (let j = i + 1; j < orderedNodes.length; j++) {
+      const nxt = orderedNodes[j];
       const disabled = (nxt as HTMLInputElement).disabled === true || nxt.getAttribute("aria-disabled") === "true";
       const hidden = nxt.offsetParent === null;
       if (disabled || hidden) continue;
@@ -894,6 +909,21 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     lines.map((l) => ({ qty: l.qty, unit: l.unitPrice, vatRate: l.vatRate, disc: l.disc, discType: l.discType })),
     headerDisc, headerDiscType,
   );
+  const paymentOptions = [
+    { value: "cash", label: text("نقدي", "Cash") },
+    { value: "bank", label: text("بنك", "Bank") },
+    { value: "credit", label: text("آجل (على الحساب)", "Credit (on account)") },
+    { value: "mixed", label: text("متعدد الطرق", "Split payment") },
+  ];
+  function changePaymentChoice(value: string | number) {
+    const next = value as SalesPaymentChoice;
+    if (next === "mixed") {
+      if (paymentChoice === "cash") { setCashAmount(result.grandTotal); setBankAmount(0); }
+      else if (paymentChoice === "bank") { setCashAmount(0); setBankAmount(result.grandTotal); }
+      else if (paymentChoice === "credit") { setCashAmount(0); setBankAmount(0); }
+    }
+    setPaymentChoice(next);
+  }
 
   async function save() {
     setBusy(true); setErr(null); setIssues([]);
@@ -1037,6 +1067,69 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           <option value="modern">{text("شبكة حديثة", "Modern grid")}</option>
           <option value="erp">{text("ERP مكثف", "Dense ERP")}</option>
         </select>
+      </div>
+
+      <div className="zsales-action-bar" role="group" aria-label={text("إجراءات الفاتورة السريعة", "Quick invoice actions")}>
+        <div className="zsales-action-buttons">
+          <button
+            onClick={addLine}
+            type="button"
+            data-testid="button-add-sales-invoice-line"
+            title={text("إضافة صنف إلى الفاتورة", "Add an item line")}
+            aria-label={text("إضافة صنف إلى الفاتورة", "Add an item line")}
+            style={{ ...btnSecondary, padding: "6px 8px", color: "#087f69", borderColor: "#9bd6c9", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+          >+ {text("إضافة صنف", "Add item")}</button>
+          <button
+            onClick={() => setItemPickerOpen(true)}
+            type="button"
+            data-testid="button-select-sales-invoice-items"
+            title={text("اختيار عدة أصناف موجودة", "Select multiple existing items")}
+            aria-label={text("اختيار أصناف", "Select items")}
+            style={{ ...btnSecondary, padding: "6px 8px", color: "#315e56", borderColor: "#b8d4cb", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+          >{text("اختيار أصناف", "Select items")}</button>
+          <button
+            onClick={() => { setQuickCreateError(null); setQuickCreate("item"); }}
+            type="button"
+            data-testid="button-create-sales-invoice-item"
+            title={text("إنشاء صنف جديد وإضافته للفاتورة", "Create a new item for this invoice")}
+            aria-label={text("إنشاء صنف جديد", "Create a new item")}
+            style={{ ...btnSecondary, padding: "6px 8px", color: "#4338ca", borderColor: "#c7d2fe", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+          >✨ {text("صنف جديد", "New item")}</button>
+          <button
+            onClick={onCancel}
+            type="button"
+            data-testid="button-cancel-sales-invoice"
+            style={{ ...btnSecondary, padding: "6px 9px", whiteSpace: "nowrap" }}
+          >{text("إلغاء", "Cancel")}</button>
+          <button
+            onClick={save}
+            disabled={busy}
+            type="button"
+            data-fnav="1"
+            data-fnav-last="1"
+            data-testid="button-save-sales-invoice"
+            style={{ ...btnPrimary, padding: "6px 12px", whiteSpace: "nowrap" }}
+          >{busy ? "..." : (isEdit ? text("حفظ التعديل", "Save changes") : text("حفظ وترحيل", "Save and post"))}</button>
+        </div>
+        <div className="zsales-quick-payment" data-testid="sales-invoice-quick-payment">
+          <span className="zsales-quick-payment-label">{text("الدفع السريع", "Quick payment")}</span>
+          <SearchCombobox
+            value={paymentChoice}
+            onChange={changePaymentChoice}
+            style={{ ...input, height: 32, minWidth: 0, padding: "5px 7px", fontSize: 12 }}
+            options={paymentOptions}
+          />
+        </div>
+        <div className="zsales-action-total" data-testid="sales-invoice-total" aria-live="polite">
+          <span>{text("الإجمالي", "Total")}</span>
+          <strong>{docSym} {fmt(result.grandTotal)}</strong>
+        </div>
+        {(issues.length > 0 || err) && (
+          <div className="zsales-action-feedback" aria-live="polite">
+            <ValidationPanel issues={issues} />
+            <ErrorMsg text={err} />
+          </div>
+        )}
       </div>
 
       <section className="zsales-section zsales-header-section">
@@ -1261,23 +1354,10 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         <Field label={text("طريقة الدفع", "Payment method")}>
           <SearchCombobox
             value={paymentChoice}
-            onChange={(v) => {
-              const next = v as SalesPaymentChoice;
-              if (next === "mixed") {
-                if (paymentChoice === "cash") { setCashAmount(result.grandTotal); setBankAmount(0); }
-                else if (paymentChoice === "bank") { setCashAmount(0); setBankAmount(result.grandTotal); }
-                else if (paymentChoice === "credit") { setCashAmount(0); setBankAmount(0); }
-              }
-              setPaymentChoice(next);
-            }}
+            onChange={changePaymentChoice}
             {...navCombo}
             style={input}
-            options={[
-              { value: "cash", label: text("نقدي", "Cash") },
-              { value: "bank", label: text("بنك", "Bank") },
-              { value: "credit", label: text("آجل (على الحساب)", "Credit (on account)") },
-              { value: "mixed", label: text("متعدد الطرق", "Split payment") },
-            ]}
+            options={paymentOptions}
           />
         </Field>
         {paymentChoice === "mixed" && (
@@ -1336,47 +1416,6 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       </Field>
       </section>
 
-      <div className="zsales-form-footer" style={docFormPinned}>
-      <ValidationPanel issues={issues} />
-      <ErrorMsg text={err} />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <>
-              <button
-                onClick={addLine}
-                type="button"
-                title={text("إضافة صنف", "Add item")}
-                aria-label={text("إضافة صنف", "Add item")}
-                style={{ ...btnSecondary, padding: "5px 7px", color: "#087f69", borderColor: "#9bd6c9", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}
-              >
-                + {text("إضافة صنف", "Add item")}
-              </button>
-              <button
-                onClick={() => setItemPickerOpen(true)}
-                type="button"
-                title={text("اختيار عدة أصناف موجودة", "Select multiple existing items")}
-                aria-label={text("اختيار عدة أصناف موجودة", "Select multiple existing items")}
-                style={{ ...btnSecondary, padding: "5px 7px", color: "#315e56", borderColor: "#b8d4cb", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}
-              >
-                {text("اختيار أصناف", "Select items")}
-              </button>
-              <button
-                onClick={() => { setQuickCreateError(null); setQuickCreate("item"); }}
-                type="button"
-                title={text("صنف جديد سريع", "Quick new item")}
-                aria-label={text("صنف جديد سريع", "Quick new item")}
-                style={{ ...btnSecondary, padding: "5px 7px", color: "#4338ca", borderColor: "#c7d2fe", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}
-              >
-                ✨ {text("صنف جديد", "New item")}
-              </button>
-            </>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
-          <button onClick={save} disabled={busy} type="button" data-fnav="1" style={btnPrimary}>{busy ? "..." : (isEdit ? text("حفظ التعديل", "Save changes") : text("حفظ وترحيل", "Save and post"))}</button>
-        </div>
-      </div>
-      </div>
       {itemPickerOpen && (
         <DocumentItemPicker items={deps.items} onCancel={() => setItemPickerOpen(false)} onAdd={appendCatalogItems} />
       )}
