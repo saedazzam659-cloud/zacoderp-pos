@@ -6,6 +6,8 @@ import { Page, Card, Table, Th, Td, Empty, btnPrimary, btnSecondary, fmt, todayS
 import { useDimensions, useReportAccounts, DateField, BranchField, CostCenterField, AccountHierarchyFields } from "./_reportFilters";
 import type { ExportColumn } from "../lib/exporters";
 import { filterAccountReportRows, type AccountLevelMode } from "../lib/accountReportFilters";
+import { ReportSummaryCards } from "../components/ReportSummaryCards";
+import { ReportDisplayLayout } from "../components/ReportDisplayLayout";
 
 type Row = { accountId: number; code: string; name: string; balance: number };
 
@@ -207,6 +209,7 @@ export default function BalanceSheetReport() {
       </Card>
 
       {shownData && (
+        <ReportDisplayLayout reportKey="balance-sheet">
         <>
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <button type="button" onClick={printReport} style={btnSecondary}>🖨️ {uiText("طباعة", "Print")}</button>
@@ -216,7 +219,13 @@ export default function BalanceSheetReport() {
             background: balanced ? "#ecfdf5" : "#fef2f2", color: balanced ? "#15803d" : "#991b1b" }}>
             {balanced ? `✓ الميزانية متوازنة — ${fmt(Math.abs(shownData.totalAssets))}` : `⚠️ فرق: ${fmt(Math.abs(shownData.totalAssets - totalLE))}`}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+          <ReportSummaryCards items={[
+            { label: "إجمالي الأصول", value: shownData.totalAssets, accent: "#059669" },
+            { label: "إجمالي الخصوم", value: shownData.totalLiabilities, accent: "#dc2626" },
+            { label: "حقوق الملكية", value: shownData.totalEquity - shownData.netIncome, accent: "#2563eb" },
+            { label: "صافي دخل الفترة الحالية", value: shownData.netIncome, accent: "#0f766e" },
+          ]} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: 12, alignItems: "start" }}>
             <Section title="الأصول" rows={shownData.assets} total={shownData.totalAssets} color="#1e40af" natural="debit" />
             <div>
               <Section title="الخصوم" rows={shownData.liabilities} total={shownData.totalLiabilities} color="#b91c1c" natural="credit" />
@@ -232,6 +241,7 @@ export default function BalanceSheetReport() {
             </div>
           </div>
         </>
+        </ReportDisplayLayout>
       )}
     </Page>
   );

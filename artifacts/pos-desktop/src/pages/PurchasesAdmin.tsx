@@ -14,9 +14,9 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, DocumentFormHeader,
-  documentFormStyles, invoiceEditorShell, tabPanel, EmptyItemsRow,
-  linesPanel, linesScroll, docFormPinned, contentPanel,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, DocumentFormHeader,
+  documentFormStyles, docFormShell, EmptyItemsRow,
+  linesScroll, docFormPinned,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols, errText,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
@@ -32,6 +32,8 @@ import {
 import { setPurchaseReturnPrefill } from "../lib/returnPrefill";
 import { printSalesDoc, type PrintKind } from "../lib/invoicePrint";
 import { type WindowsView } from "../lib/moduleRegistry";
+import { setDocumentEditorLayout, useDocumentEditorLayout } from "../lib/appSettings";
+import { DocumentEditorShell } from "../components/DocumentEditorShell";
 
 type FLine = PurchaseLine & DiscFields;
 
@@ -426,7 +428,7 @@ function CreateForm({ deps, seed, documentCount, onCancel, onDone }: {
   onCancel: () => void; onDone: () => void;
 }) {
   const isEdit = seed.editId != null;
-  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
+  const documentLayout = useDocumentEditorLayout();
   const [supplierId, setSupplierId] = useState<number>(seed.supplierId || deps.suppliers[0]?.id || 0);
   const [date, setDate] = useState(seed.invoiceDate || todayStr());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(seed.paymentMethod);
@@ -573,22 +575,20 @@ function CreateForm({ deps, seed, documentCount, onCancel, onDone }: {
   }
 
   return (
-    <div className="zdoc-form" style={invoiceEditorShell}>
+    <div className="zdoc-form" style={docFormShell}>
       <style>{documentFormStyles}</style>
       <DocumentFormHeader
         title={isEdit ? "تعديل فاتورة الشراء" : "فاتورة شراء جديدة"}
         hint={`${documentCount} فاتورة — يتم ترحيل القيد تلقائيًا عند الحفظ`}
-        actionLabel="فاتورة شراء"
-        actionTitle="عرض بيانات الفاتورة"
-        onAction={() => setActiveTab("basic")}
       />
-      <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
-        { key: "basic", label: "البيانات الأساسية" },
-        { key: "lines", label: `بنود الأصناف (${selectedLineCount})` },
-        { key: "payments", label: "المدفوعات" },
-      ]} />
-
-      <div style={contentPanel(activeTab, "basic")}>
+      <DocumentEditorShell
+        layout={documentLayout}
+        onLayoutChange={setDocumentEditorLayout}
+        label="تصميم المستند"
+        helperText="يُطبّق الاختيار على جميع المستندات"
+        selectorAriaLabel="اختيار تصميم المستند"
+      >
+      <div className="zdoc-editor-section">
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="المورد *">
           <SearchCombobox
@@ -642,7 +642,7 @@ function CreateForm({ deps, seed, documentCount, onCancel, onDone }: {
       </div>
       </div>
 
-      <div className="zlines-panel" style={linesPanel(activeTab)}>
+      <div className="zdoc-editor-section zlines-panel">
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
         <strong style={{ fontSize: 15 }}>بنود الأصناف</strong>
         <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>
@@ -711,7 +711,7 @@ function CreateForm({ deps, seed, documentCount, onCancel, onDone }: {
       </div>
       </div>
 
-      <div style={contentPanel(activeTab, "payments")}>
+      <div className="zdoc-editor-section">
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="طريقة الدفع">
           <SearchCombobox
@@ -759,6 +759,7 @@ function CreateForm({ deps, seed, documentCount, onCancel, onDone }: {
         <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : (isEdit ? "حفظ التعديلات" : "حفظ وترحيل")}</button>
       </Actions>
       </div>
+      </DocumentEditorShell>
     </div>
   );
 }

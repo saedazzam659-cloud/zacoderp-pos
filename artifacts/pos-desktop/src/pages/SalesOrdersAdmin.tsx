@@ -11,6 +11,7 @@ import { listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
+import { ItemCodeHistoryButton, ItemHistoryDialog, NoCustomerHistoryDialog } from "../components/DocumentItemDialogs";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
@@ -278,9 +279,18 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   const [err, setErr] = useState<string | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [historyTarget, setHistoryTarget] = useState<{ item: LocalItem; customer: LocalCustomer } | null>(null);
+  const [historyNeedsCustomer, setHistoryNeedsCustomer] = useState(false);
   const { taxes, taxId, setTaxId, taxOptions, selectedRate } = useInvoiceTaxes("sales");
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
+
+  function openItemHistory(itemId: number) {
+    if (!customerId) { setHistoryNeedsCustomer(true); return; }
+    const item = deps.items.find((entry) => entry.id === itemId);
+    const customer = deps.customers.find((entry) => entry.id === customerId);
+    if (item && customer) setHistoryTarget({ item, customer });
+  }
 
   const skipCustomerFill = React.useRef(isEdit);
   useEffect(() => {
@@ -492,7 +502,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </DocumentEditorSection>
 
       <DocumentEditorSection>
-      <div style={{ overflowX: "auto", marginTop: 10 }}>
+      <div className="zlines-wrap" style={{ overflowX: "auto", marginTop: 10 }}>
       <Table style={{ minWidth: 1250 }}>
         <thead><tr>
           <Th style={{ minWidth: 240 }}>الصنف</Th>
@@ -511,15 +521,25 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>
-                <SearchCombobox
-                  value={l.itemId}
-                  onChange={(v) => setLine(i, { itemId: Number(v) })}
-                  style={input}
-                  options={[
-                    { value: 0, label: "— اختر —" },
-                    ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
-                  ]}
-                />
+                <div style={{ display: "flex", alignItems: "center", gap: 5, direction: "rtl" }}>
+                  <ItemCodeHistoryButton
+                    code={deps.items.find((item) => item.id === l.itemId)?.code}
+                    itemName={l.itemName ?? text("الصنف", "item")}
+                    disabled={!l.itemId}
+                    onClick={() => openItemHistory(l.itemId)}
+                  />
+                  <div style={{ flex: "1 1 0%", minWidth: 0 }}>
+                    <SearchCombobox
+                      value={l.itemId}
+                      onChange={(v) => setLine(i, { itemId: Number(v) })}
+                      style={{ ...input, minWidth: 0 }}
+                      options={[
+                        { value: 0, label: "— اختر —" },
+                        ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
+                      ]}
+                    />
+                  </div>
+                </div>
               </Td>
               <Td>
                 <SearchCombobox
@@ -543,7 +563,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </Table>
       </div>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
-      <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       </DocumentEditorSection>
 
       <DocumentEditorSection>
@@ -584,6 +604,12 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </Actions>
       </DocumentEditorSection>
       </DocumentEditorShell>
+      {historyTarget && (
+        <ItemHistoryDialog itemId={historyTarget.item.id} itemName={historyTarget.item.nameAr}
+          customerId={historyTarget.customer.id} customerName={historyTarget.customer.nameAr}
+          onClose={() => setHistoryTarget(null)} />
+      )}
+      {historyNeedsCustomer && <NoCustomerHistoryDialog onClose={() => setHistoryNeedsCustomer(false)} />}
     </div>
   );
 }

@@ -4,6 +4,40 @@ import type { LocalItem } from "../lib/items";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 import { fmt, input, btnPrimary, btnSecondary } from "../pages/_adminUi";
 
+export function ItemCodeHistoryButton({ code, itemName, disabled, onClick }: {
+  code?: string | null;
+  itemName: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
+  const displayCode = code?.trim() || text("بدون كود", "No code");
+  return (
+    <button
+      type="button"
+      className="zdoc-item-code-history"
+      onClick={onClick}
+      disabled={disabled}
+      dir="ltr"
+      aria-label={text(`عرض سجل أسعار ${itemName}`, `View price history for ${itemName}`)}
+      title={text(`اضغط لعرض أسعار ${itemName} السابقة لهذا العميل`, `Click to view previous prices for ${itemName} with this customer`)}
+      style={{
+        flex: "0 0 auto", minWidth: 72, maxWidth: 108, height: 32,
+        display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
+        padding: "0 7px", overflow: "hidden", border: "1px solid #b8d4cb", borderRadius: 7,
+        background: disabled ? "#f8fafc" : "linear-gradient(180deg,#fff,#eff9f6)",
+        color: disabled ? "#94a3b8" : "#087f69", fontFamily: "inherit", fontSize: 11,
+        fontWeight: 800, whiteSpace: "nowrap", textOverflow: "ellipsis",
+        cursor: disabled ? "not-allowed" : "pointer",
+      }}
+    >
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{displayCode}</span>
+      <span aria-hidden="true" style={{ flex: "0 0 auto", fontSize: 12 }}>◷</span>
+    </button>
+  );
+}
+
 export function DocumentItemPicker({ items, onCancel, onAdd }: {
   items: LocalItem[];
   onCancel: () => void;

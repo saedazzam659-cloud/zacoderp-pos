@@ -9,6 +9,8 @@ import { DateField, FilterField } from "./_reportFilters";
 import { useDataRefresh } from "../lib/dataBus";
 import type { ExportColumn } from "../lib/exporters";
 import { uiText, useUiLanguage } from "../lib/appSettings";
+import { ReportSummaryCards } from "../components/ReportSummaryCards";
+import { ReportDisplayLayout } from "../components/ReportDisplayLayout";
 
 // Flat row mirroring the on-screen statement table (opening row + per-line
 // running balance + totals/closing row) for Excel/PDF export.
@@ -300,6 +302,7 @@ export default function CustomerStatementReport() {
       </Card>
 
       {result && (
+        <ReportDisplayLayout reportKey="customer-statement">
         <Card>
           {exportRows.length > 0 && (
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
@@ -317,6 +320,12 @@ export default function CustomerStatementReport() {
             {result.customer.phone && <div><b>{text("الهاتف:", "Phone:")}</b> {result.customer.phone}</div>}
             <div><b>{text("الفترة:", "Period:")}</b> {fromDate} → {toDate}</div>
           </div>
+          <ReportSummaryCards items={[
+            { label: text("الرصيد الافتتاحي", "Opening balance"), value: result.opening, accent: "#64748b" },
+            { label: text("إجمالي المدين", "Total debit"), value: totals.dr, accent: "#2563eb" },
+            { label: text("إجمالي الدائن", "Total credit"), value: totals.cr, accent: "#d97706" },
+            { label: text("الرصيد الختامي", "Closing balance"), value: closing, accent: "#0f766e" },
+          ]} />
           <Table>
             <thead>
               <tr>
@@ -363,6 +372,7 @@ export default function CustomerStatementReport() {
             </tbody>
           </Table>
         </Card>
+        </ReportDisplayLayout>
       )}
     </Page>
   );

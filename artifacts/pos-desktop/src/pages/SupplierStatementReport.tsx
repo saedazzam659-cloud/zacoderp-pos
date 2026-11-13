@@ -8,6 +8,8 @@ import { DateField, FilterField } from "./_reportFilters";
 import { useDataRefresh } from "../lib/dataBus";
 import type { ExportColumn } from "../lib/exporters";
 import { uiText, useUiLanguage } from "../lib/appSettings";
+import { ReportSummaryCards } from "../components/ReportSummaryCards";
+import { ReportDisplayLayout } from "../components/ReportDisplayLayout";
 
 function firstOfYear(): string { return todayStr().slice(0, 4) + "-01-01"; }
 
@@ -246,6 +248,7 @@ export default function SupplierStatementReport() {
       </Card>
 
       {result && (
+        <ReportDisplayLayout reportKey="supplier-statement">
         <Card>
           {exportRows.length > 0 && (
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 8 }}>
@@ -263,6 +266,12 @@ export default function SupplierStatementReport() {
             {result.supplier.phone && <div><b>{text("الهاتف:", "Phone:")}</b> {result.supplier.phone}</div>}
             <div><b>{text("الفترة:", "Period:")}</b> {fromDate} → {toDate}</div>
           </div>
+          <ReportSummaryCards items={[
+            { label: text("الرصيد الافتتاحي", "Opening balance"), value: result.opening, accent: "#64748b" },
+            { label: text("إجمالي المدين", "Total debit"), value: totals.dr, accent: "#2563eb" },
+            { label: text("إجمالي الدائن", "Total credit"), value: totals.cr, accent: "#d97706" },
+            { label: text("الرصيد الختامي", "Closing balance"), value: closing, accent: "#0f766e" },
+          ]} />
           <Table>
             <thead>
               <tr>
@@ -309,6 +318,7 @@ export default function SupplierStatementReport() {
             </tbody>
           </Table>
         </Card>
+        </ReportDisplayLayout>
       )}
     </Page>
   );

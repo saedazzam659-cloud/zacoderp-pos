@@ -7,6 +7,8 @@ import { Page, Card, Table, Th, Td, Empty, btnPrimary, btnSecondary, fmt, todayS
 import { useDimensions, DateField, BranchField, CostCenterField, FilterField } from "./_reportFilters";
 import { useDataRefresh } from "../lib/dataBus";
 import type { ExportColumn } from "../lib/exporters";
+import { ReportSummaryCards } from "../components/ReportSummaryCards";
+import { ReportDisplayLayout } from "../components/ReportDisplayLayout";
 
 type ASExportRow = {
   date: string; entryNo: string; description: string;
@@ -178,11 +180,18 @@ export default function AccountStatementReport({ initialAccountId, onConsumed }:
       </Card>
 
       {result && (
+        <ReportDisplayLayout reportKey="account-statement">
         <Card>
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <button type="button" onClick={printReport} style={btnSecondary}>🖨️ {uiText("طباعة", "Print")}</button>
             <ExportButtons columns={exportCols} rows={exportRows} filenameBase="كشف-حساب" title={`كشف حساب — ${acctLabel} — ${fromDate} ← ${toDate}`} />
           </div>
+          <ReportSummaryCards items={[
+            { label: uiText("الرصيد الافتتاحي", "Opening balance"), value: result.opening, accent: "#64748b" },
+            { label: uiText("إجمالي المدين", "Total debit"), value: totals.dr, accent: "#2563eb" },
+            { label: uiText("إجمالي الدائن", "Total credit"), value: totals.cr, accent: "#d97706" },
+            { label: uiText("الرصيد الختامي", "Closing balance"), value: closing, accent: "#0f766e" },
+          ]} />
           <Table>
             <thead>
               <tr>
@@ -225,6 +234,7 @@ export default function AccountStatementReport({ initialAccountId, onConsumed }:
             </tbody>
           </Table>
         </Card>
+        </ReportDisplayLayout>
       )}
     </Page>
   );

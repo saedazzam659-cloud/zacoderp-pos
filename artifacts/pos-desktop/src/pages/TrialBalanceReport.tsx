@@ -6,6 +6,8 @@ import { Page, Card, Table, Th, Td, Empty, btnPrimary, btnSecondary, fmt, todayS
 import { useDimensions, useReportAccounts, DateField, BranchField, CostCenterField, AccountHierarchyFields } from "./_reportFilters";
 import type { ExportColumn } from "../lib/exporters";
 import { filterAccountReportRows, type AccountLevelMode } from "../lib/accountReportFilters";
+import { ReportSummaryCards } from "../components/ReportSummaryCards";
+import { ReportDisplayLayout } from "../components/ReportDisplayLayout";
 
 type Agg = {
   accountId: number; code: string; name: string;
@@ -206,6 +208,7 @@ export default function TrialBalanceReport() {
       </Card>
 
       {visibleRows && (
+        <ReportDisplayLayout reportKey="trial-balance">
         <Card>
           {visibleRows.length > 0 && (
             <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
@@ -213,6 +216,14 @@ export default function TrialBalanceReport() {
               <ExportButtons columns={exportCols} rows={exportRows} filenameBase="ميزان-المراجعة" title={`ميزان المراجعة بالمجاميع — ${fromDate} ← ${toDate}`} />
             </div>
           )}
+          {visibleRows.length > 0 && <ReportSummaryCards items={[
+            { label: "افتتاحي مدين", value: totals.openDr, accent: "#b45309" },
+            { label: "افتتاحي دائن", value: totals.openCr, accent: "#b45309" },
+            { label: "حركة مدين", value: totals.periodDr, accent: "#2563eb" },
+            { label: "حركة دائن", value: totals.periodCr, accent: "#2563eb" },
+            { label: "ختامي مدين", value: totals.closeDr, accent: "#059669" },
+            { label: "ختامي دائن", value: totals.closeCr, accent: "#059669" },
+          ]} />}
           {visibleRows.length === 0 ? <Empty text="لا توجد حركة في الفترة المحددة" /> : (
             <Table>
               <thead>
@@ -260,6 +271,7 @@ export default function TrialBalanceReport() {
             </div>
           )}
         </Card>
+        </ReportDisplayLayout>
       )}
     </Page>
   );

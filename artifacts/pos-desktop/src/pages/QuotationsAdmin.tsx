@@ -9,7 +9,7 @@ import { listCustomers, type LocalCustomer } from "../lib/customers";
 import { createItem, listItems, type LocalItem } from "../lib/items";
 import { listUom, type Uom } from "../lib/uom";
 import QuickCreateDialog from "../components/QuickCreateDialog";
-import { DocumentItemPicker, ItemHistoryDialog, NoCustomerHistoryDialog } from "../components/DocumentItemDialogs";
+import { DocumentItemPicker, ItemCodeHistoryButton, ItemHistoryDialog, NoCustomerHistoryDialog } from "../components/DocumentItemDialogs";
 import { listBrands, setItemBrands } from "../lib/brands";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
@@ -569,9 +569,10 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
     const customer = deps.customers.find((entry) => entry.id === customerId);
     if (item && customer) setHistoryTarget({ item, customer });
   }
-  async function createQuickItem(itemInput: { nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number; brandId: number | null }, action: "close" | "add-another" = "close") {
+  async function createQuickItem(itemInput: { nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number; brandId: number | null; quantity?: number }, action: "close" | "add-another" = "close") {
     if (!itemInput.nameAr.trim()) { setQuickCreateError("اكتب اسم الصنف بالعربية"); return false; }
     if (!Number.isFinite(itemInput.salePrice) || itemInput.salePrice < 0) { setQuickCreateError("أدخل سعرًا صحيحًا"); return false; }
+    if (!Number.isFinite(itemInput.quantity ?? 1) || (itemInput.quantity ?? 1) <= 0) { setQuickCreateError("أدخل كمية أكبر من صفر"); return false; }
     if (!Number.isFinite(itemInput.vatRate) || itemInput.vatRate < 0 || itemInput.vatRate > 100) { setQuickCreateError("نسبة الضريبة يجب أن تكون بين 0 و100"); return false; }
     const uom = uoms.find((unit) => unit.id === itemInput.uomId);
     if (!uom) { setQuickCreateError("اختر وحدة قياس للصنف"); return false; }
@@ -596,6 +597,7 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
           ...blankLine(),
           itemId: item.id,
           itemName: item.nameAr,
+          qty: itemInput.quantity ?? 1,
           unitPrice: item.salePrice,
           vatRate: selectedRate ?? item.vatRate,
           uomId: item.uomId ?? uom.id,
@@ -765,7 +767,7 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
       </DocumentEditorSection>
 
       <DocumentEditorSection>
-      <div style={{ overflowX: "auto", marginTop: 10 }}>
+      <div className="zlines-wrap" style={{ overflowX: "auto", overflowY: "auto", maxHeight: 390, scrollbarGutter: "stable", overscrollBehavior: "contain", marginTop: 10, border: "1px solid #e2e8f0", borderRadius: 8 }}>
       <Table style={{ minWidth: 1250 }}>
         <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
         <tr>
@@ -785,15 +787,25 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
           {lines.map((l, i) => (
             <tr key={i}>
               <Td>
-                <SearchCombobox
-                  value={l.itemId}
-                  onChange={(v) => setLine(i, { itemId: Number(v) })}
-                  style={input}
-                  options={[
-                    { value: 0, label: "— اختر —" },
-                    ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
-                  ]}
-                />
+                <div style={{ display: "flex", alignItems: "center", gap: 5, direction: "rtl" }}>
+                  <ItemCodeHistoryButton
+                    code={deps.items.find((item) => item.id === l.itemId)?.code}
+                    itemName={l.itemName ?? text("الصنف", "item")}
+                    disabled={!l.itemId}
+                    onClick={() => openItemHistory(l.itemId)}
+                  />
+                  <div style={{ flex: "1 1 0%", minWidth: 0 }}>
+                    <SearchCombobox
+                      value={l.itemId}
+                      onChange={(v) => setLine(i, { itemId: Number(v) })}
+                      style={{ ...input, minWidth: 0 }}
+                      options={[
+                        { value: 0, label: "— اختر —" },
+                        ...deps.items.map((it) => ({ value: it.id, label: it.nameAr })),
+                      ]}
+                    />
+                  </div>
+                </div>
               </Td>
               <Td>
                 <SearchCombobox
@@ -823,7 +835,7 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
         </tbody>
       </Table>
       </div>
-      <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       </DocumentEditorSection>
 
       <DocumentEditorSection>
@@ -875,6 +887,7 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
           kind="item"
           documentLabel={{ ar: "عرض السعر", en: "quotation" }}
           initialVatRate={selectedRate ?? 0}
+          includeQuantity
           busy={quickCreateBusy}
           error={quickCreateError}
           onCancel={() => { if (!quickCreateBusy) setQuickCreateOpen(false); }}

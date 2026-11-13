@@ -6,6 +6,8 @@ import { Page, Card, Table, Th, Td, Empty, btnPrimary, btnSecondary, fmt, todayS
 import { useDimensions, useReportAccounts, DateField, BranchField, CostCenterField, AccountHierarchyFields } from "./_reportFilters";
 import type { ExportColumn } from "../lib/exporters";
 import { filterAccountReportRows, type AccountLevelMode } from "../lib/accountReportFilters";
+import { ReportSummaryCards } from "../components/ReportSummaryCards";
+import { ReportDisplayLayout } from "../components/ReportDisplayLayout";
 
 type Row = { accountId: number; code: string; name: string; amount: number };
 
@@ -164,11 +166,18 @@ export default function IncomeStatementReport() {
       </Card>
 
       {shownData && (
+        <ReportDisplayLayout reportKey="income-statement">
         <>
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <button type="button" onClick={printReport} style={btnSecondary}>🖨️ {uiText("طباعة", "Print")}</button>
             <ExportButtons columns={exportCols} rows={exportRows} filenameBase="قائمة-الدخل" title={`قائمة الدخل — ${fromDate} ← ${toDate}`} />
           </div>
+          <ReportSummaryCards items={[
+            { label: uiText("إجمالي الإيرادات", "Total revenue"), value: shownData.totalRevenue, accent: "#15803d" },
+            { label: uiText("إجمالي المصروفات", "Total expenses"), value: shownData.totalExpenses, accent: "#b91c1c" },
+            { label: isProfit ? uiText("صافي الربح", "Net profit") : uiText("صافي الخسارة", "Net loss"), value: netIncome, accent: isProfit ? "#0f766e" : "#b91c1c" },
+          ]} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: 12, alignItems: "start" }}>
           <Card style={{ marginBottom: 16 }}>
             <h3 style={{ margin: "0 0 8px", color: "#15803d" }}>الإيرادات</h3>
             {shownData.revenues.length === 0 ? <Empty text="لا توجد إيرادات" /> : (
@@ -194,6 +203,7 @@ export default function IncomeStatementReport() {
               </Table>
             )}
           </Card>
+          </div>
 
           <Card style={{ background: isProfit ? "#ecfdf5" : "#fef2f2", border: `2px solid ${isProfit ? "#86efac" : "#fca5a5"}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -202,6 +212,7 @@ export default function IncomeStatementReport() {
             </div>
           </Card>
         </>
+        </ReportDisplayLayout>
       )}
     </Page>
   );

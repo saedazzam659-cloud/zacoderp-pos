@@ -1013,10 +1013,34 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
     setErr(null);
   }
 
-  function applyVat() {
+  function changeVatMode(nextMode: "exclusive" | "inclusive") {
+    if (readOnly || taxesLoading || nextMode === vatMode) return;
+    if (applyVat(nextMode, true)) setVatMode(nextMode);
+  }
+
+  function applyVat(mode: "exclusive" | "inclusive" = vatMode, existingOnly = false): boolean {
+    const hasUnlinkedInclusiveLine = lines.some((line, index) =>
+      !isGeneratedTaxLine(line)
+      && (line.description ?? "").includes(NET_MARKER)
+      && !isGeneratedTaxLine(lines[index + 1])
+    );
+    if (existingOnly && hasUnlinkedInclusiveLine) {
+      setErr(uiText(
+        "تعذر إعادة احتساب سطر شامل بلا سطر ضريبة مرتبط؛ أعد إدخال المبلغ الإجمالي",
+        "An inclusive line has no linked tax row to restore its gross amount; re-enter the gross amount",
+        language,
+      ));
+      return false;
+    }
+    const hasTaxedLinesToRecalculate = lines.some((line, index) =>
+      !isGeneratedTaxLine(line)
+      && isGeneratedTaxLine(lines[index + 1])
+      && !(lines[index + 1].description ?? "").startsWith("ضريبة صفرية")
+    );
+    if (existingOnly && !hasTaxedLinesToRecalculate) return true;
     if (!Number.isFinite(vatRate) || vatRate <= 0) {
       setErr(uiText("نسبة الضريبة صفر؛ استخدم الضريبة الصفرية لكل سطر", "Tax rate is zero; use the per-line zero-rated option", language));
-      return;
+      return false;
     }
     const out: ManualJeLine[] = [];
     let applied = 0;
@@ -1029,6 +1053,19 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
         index += 1;
         continue;
       }
+      const wasInclusive = (line.description ?? "").includes(NET_MARKER);
+      if (wasInclusive && !existingTax) {
+        setErr(uiText(
+          "تعذر إعادة احتساب سطر شامل بلا سطر ضريبة مرتبط؛ أعد إدخال المبلغ الإجمالي",
+          "An inclusive line has no linked tax row to restore its gross amount; re-enter the gross amount",
+          language,
+        ));
+        return false;
+      }
+      if (existingOnly && !existingTax) {
+        out.push(line);
+        continue;
+      }
       const debit = Number(line.debit) || 0;
       const credit = Number(line.credit) || 0;
       if (!line.accountId || isVatAccount(line.accountId) || (debit <= 0 && credit <= 0)) {
@@ -1038,31 +1075,22 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
       }
       const direction = debit > 0 ? "input" : "output";
       const taxAccountId = resolveTaxAccount(direction);
-      if (taxAccountId == null) return;
+      if (taxAccountId == null) return false;
       if (line.accountId === taxAccountId) {
         out.push(line);
         if (existingTax) { out.push(existingTax); index += 1; }
         continue;
       }
       const side = direction === "input" ? "debit" : "credit";
-      const wasInclusive = (line.description ?? "").includes(NET_MARKER);
-      if (wasInclusive && !existingTax) {
-        setErr(uiText(
-          "تعذر إعادة احتساب سطر شامل بلا سطر ضريبة مرتبط؛ أعد إدخال المبلغ الإجمالي",
-          "An inclusive line has no linked tax row to restore its gross amount; re-enter the gross amount",
-          language,
-        ));
-        return;
-      }
       const previousTaxAmount = wasInclusive
         ? round2((Number(existingTax?.debit) || 0) + (Number(existingTax?.credit) || 0))
         : 0;
       const amount = round2((direction === "input" ? debit : credit) + previousTaxAmount);
-      const taxAmount = vatMode === "exclusive"
+      const taxAmount = mode === "exclusive"
         ? round2(amount * vatRate / 100)
         : round2(amount * vatRate / (100 + vatRate));
       const baseDescription = (line.description ?? "").replace(NET_MARKER, "").trim() || null;
-      const source = vatMode === "inclusive"
+      const source = mode === "inclusive"
         ? {
             ...line,
             [side]: round2(amount - taxAmount),
@@ -1071,22 +1099,25 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
         : { ...line, [side]: amount, description: baseDescription };
       out.push(source, {
         ...emptyLine(),
+        ...(existingTax?.id != null ? { id: existingTax.id } : {}),
         accountId: taxAccountId,
         debit: direction === "input" ? taxAmount : 0,
         credit: direction === "output" ? taxAmount : 0,
-        description: `${direction === "input" ? "ضريبة المدخلات — مشتريات" : "ضريبة المخرجات — مبيعات"} ${ratePctLabel}${vatMode === "inclusive" ? " (شاملة)" : ""} ${vatMode === "inclusive" ? "من" : "على"} ${fmt(amount)}`,
+        description: `${direction === "input" ? "ضريبة المدخلات — مشتريات" : "ضريبة المخرجات — مبيعات"} ${ratePctLabel}${mode === "inclusive" ? " (شاملة)" : ""} ${mode === "inclusive" ? "من" : "على"} ${fmt(amount)}`,
         costCenterId: null,
       });
       applied += 1;
       if (existingTax) index += 1;
     }
     if (applied === 0) {
+      if (existingOnly) return true;
       setErr(uiText("لا توجد سطور مدين أو دائن مؤهلة للضريبة", "No eligible debit or credit lines to tax", language));
-      return;
+      return false;
     }
     setLines(out);
     setTaxPopoverLine(null);
     setErr(null);
+    return true;
   }
 
   function buildPayload(status: JeStatus) {
@@ -1276,11 +1307,11 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
         <span style={{ color: "#64748b", fontSize: 12 }}>
           {selectedTax ? `${selectedTax.nameAr} · ${ratePctLabel}` : `${uiText("معدل الإعدادات", "Settings rate", language)} · ${ratePctLabel}`}
         </span>
-        <select value={vatMode} onChange={(e) => setVatMode(e.target.value as "exclusive" | "inclusive")} style={{ ...input, width: 260 }}>
+        <select value={vatMode} onChange={(e) => changeVatMode(e.target.value as "exclusive" | "inclusive")} disabled={readOnly || taxesLoading} style={{ ...input, width: 260 }}>
           <option value="exclusive">{uiText("غير شامل — تُضاف الضريبة للمبلغ", "Exclusive — add tax to amount", language)}</option>
           <option value="inclusive">{uiText("شامل — المبلغ يتضمن الضريبة", "Inclusive — amount includes tax", language)}</option>
         </select>
-        <button type="button" onClick={applyVat} disabled={readOnly || taxesLoading}
+        <button type="button" onClick={() => applyVat()} disabled={readOnly || taxesLoading}
           data-testid="button-recalculate-journal-entry-tax" style={btnSecondary}>
           {uiText("إعادة احتساب الضريبة لكل السطور", "Recalculate tax for all lines", language)}
         </button>
@@ -1335,7 +1366,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
                               {selectedTax ? `${selectedTax.nameAr} · ${ratePctLabel}` : `${uiText("معدل الإعدادات", "Settings rate", language)} · ${ratePctLabel}`}
                             </div>
                             <label style={{ display: "flex", alignItems: "center", gap: 6, margin: "7px 0", fontSize: 12 }}>
-                              <input type="checkbox" checked={vatMode === "inclusive"} onChange={(e) => setVatMode(e.target.checked ? "inclusive" : "exclusive")} />
+                              <input type="checkbox" checked={vatMode === "inclusive"} disabled={taxesLoading || readOnly} onChange={(e) => changeVatMode(e.target.checked ? "inclusive" : "exclusive")} />
                               {uiText("المبلغ شامل الضريبة", "Amount includes tax", language)}
                             </label>
                             <button type="button" disabled={readOnly || !(Number(l.debit) > 0)}

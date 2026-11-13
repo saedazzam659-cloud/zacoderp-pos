@@ -157,26 +157,36 @@ export default function App() {
   }, [state.phase]);
 
   // ── Periodic remote license refresh ───────────────────────────────────
-  // Refresh signed standalone licenses every 6h and when the window regains
+  // Refresh signed standalone licenses every minute and when the window regains
   // focus, so approved module changes appear promptly. Admin file licenses
   // tolerate unreachable servers; normal local work remains available offline.
   useEffect(() => {
     if (state.phase !== "standalone-signed-in") return;
     let cancelled = false;
+    let running = false;
     const license = state.license;
     const run = async () => {
-      const verdict = await revalidateStandalone(license);
-      if (cancelled) return;
-      if (verdict.lock) { setState({ phase: "standalone-revalidation-needed", reason: verdict.reason }); return; }
-      // Apply a refreshed payload (e.g. SuperAdmin renewed/extended expiry) so
-      // the change takes effect immediately without waiting for a restart.
-      if (verdict.license) {
-        setState((s) => (s.phase === "standalone-signed-in"
-          ? { ...s, license: verdict.license! }
-          : s));
+      if (running) return;
+      running = true;
+      try {
+        const verdict = await revalidateStandalone(license);
+        if (cancelled) return;
+        if (verdict.lock) { setState({ phase: "standalone-revalidation-needed", reason: verdict.reason }); return; }
+        // Apply a refreshed payload (including module entitlements) so the
+        // change takes effect without restarting the Windows app.
+        if (verdict.license) {
+          setState((s) => (s.phase === "standalone-signed-in"
+            ? { ...s, license: verdict.license! }
+            : s));
+        }
+      } finally {
+        running = false;
       }
     };
-    const id = window.setInterval(() => { void run(); }, 6 * 60 * 60 * 1000);
+    // Admin-edited module entitlements are delivered in the signed license
+    // file. Refresh frequently enough that a running Windows app removes a
+    // disabled module promptly instead of keeping it active for six hours.
+    const id = window.setInterval(() => { void run(); }, 60 * 1000);
     const onFocus = () => { void run(); };
     window.addEventListener("focus", onFocus);
     return () => { cancelled = true; window.clearInterval(id); window.removeEventListener("focus", onFocus); };

@@ -194,13 +194,19 @@ const documentEditorShellStyles = `
   .zdoc-editor-shell .zlines-wrap {
     min-width: 0;
     border-color: var(--zdoc-border);
-    max-height: none !important;
+    max-height: 390px !important;
     overflow-x: auto !important;
-    overflow-y: visible !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
   }
   .zdoc-editor-shell .zlines-wrap thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
     background: var(--zdoc-grid) !important;
     color: #1e293b !important;
+    white-space: nowrap;
   }
   .zdoc-editor-shell[data-layout="erp"] .zlines-wrap thead th {
     color: #fff !important;
@@ -244,7 +250,7 @@ const documentEditorShellStyles = `
     overflow: visible !important;
   }
   .zdoc-editor-shell .zlines-panel {
-    display: block !important;
+    display: block;
     flex: none !important;
     min-height: 0 !important;
     overflow: visible !important;

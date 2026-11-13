@@ -13,11 +13,17 @@
 // screen says "تقدر تغيّرها لاحقًا" rather than implying permanence.
 
 import { useState } from "react";
-import { setVertical, type Vertical } from "../lib/standalone";
+import { setAppProfile, setVertical, type Vertical } from "../lib/standalone";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 
-type Opt = { id: Vertical; icon: string; titleAr: string; titleEn: string; descAr: string; descEn: string };
+type Opt = { id: Vertical | "erp"; icon: string; titleAr: string; titleEn: string; descAr: string; descEn: string };
 const OPTIONS: Opt[] = [
+  {
+    id: "erp", icon: "🏢",
+    titleAr: "نظام محاسبي متكامل ERP", titleEn: "Full ERP system",
+    descAr: "إدارة المبيعات والمشتريات والمخزون والخزائن والبنوك والحسابات والتقارير من برنامج واحد.",
+    descEn: "Manage sales, purchasing, inventory, cash and banks, accounting, and reports in one system.",
+  },
   {
     id: "pharmacy", icon: "💊",
     titleAr: "صيدلية", titleEn: "Pharmacy",
@@ -84,11 +90,20 @@ export default function VerticalSelector({ onChosen }: { onChosen: (v: Vertical)
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
   const [saving, setSaving] = useState(false);
-  const [picked, setPicked] = useState<Vertical | null>(null);
+  const [picked, setPicked] = useState<Vertical | "erp" | null>(null);
 
-  async function commit(v: Vertical) {
+  async function commit(v: Vertical | "erp") {
     setSaving(true); setPicked(v);
-    try { await setVertical(v); onChosen(v); }
+    try {
+      if (v === "erp") {
+        await setVertical("general");
+        await setAppProfile("erp");
+        onChosen("general");
+      } else {
+        await setVertical(v);
+        onChosen(v);
+      }
+    }
     finally { setSaving(false); }
   }
 
@@ -102,10 +117,12 @@ export default function VerticalSelector({ onChosen }: { onChosen: (v: Vertical)
           {OPTIONS.map((o) => (
             <button
               key={o.id}
+              data-testid={`button-business-type-${o.id}`}
               disabled={saving}
               onClick={() => void commit(o.id)}
               style={{
                 ...S.opt,
+                ...(o.id === "erp" ? { borderColor: "#8b5cf6", background: "#faf5ff" } : {}),
                 ...(picked === o.id ? S.optPicked : {}),
                 ...(saving && picked !== o.id ? S.optDim : {}),
                 textAlign: language === "en" ? "left" : "right",

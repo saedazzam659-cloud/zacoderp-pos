@@ -4,13 +4,15 @@ import {
   listSalesInvoices, getSalesInvoice, createSalesInvoice, updateSalesInvoice, deleteSalesInvoice,
   unpostSalesInvoice, postSalesInvoice, listCashBoxes, listBanks, listFinancialTx,
   confirmUnpostAction, getPostingSettings,
+  listQuotations, getQuotation, listSalesOrders, getSalesOrder,
   type SalesInvoice, type SalesLine, type PaymentMethod, type CashBox, type Bank,
+  type Quotation, type SalesOrder,
 } from "../lib/accounting";
 import { createCustomer, listCustomers, type LocalCustomer } from "../lib/customers";
 import { emitData } from "../lib/dataBus";
 import { createItem, listItems, type LocalItem } from "../lib/items";
 import QuickCreateDialog from "../components/QuickCreateDialog";
-import { DocumentItemPicker, ItemHistoryDialog, NoCustomerHistoryDialog } from "../components/DocumentItemDialogs";
+import { DocumentItemPicker, ItemCodeHistoryButton, ItemHistoryDialog, NoCustomerHistoryDialog } from "../components/DocumentItemDialogs";
 import {
   listItemBrands, itemHasBrands, saveInvoiceLineBrands, getInvoiceLineBrands, dropInvoiceLineBrands, listBrands, setItemBrands,
 } from "../lib/brands";
@@ -60,19 +62,27 @@ const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page .zsales-layout-label{display:flex;flex-direction:column;gap:2px;color:#334155;font-size:12px;font-weight:700;}
   .zsales-invoice-single-page .zsales-layout-label small{color:#64748b;font-size:10px;font-weight:500;}
   .zsales-invoice-single-page .zsales-layout-select{min-width:210px;max-width:340px;height:34px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:#fff;color:#0f172a;padding:4px 9px;font:inherit;font-size:12px;}
+  .zsales-invoice-single-page .zsales-source-loader{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(220px,1.2fr) auto;align-items:end;gap:10px;margin:8px 0 10px;padding:10px;border:1px solid var(--si-border);border-inline-start:4px solid var(--si-accent);border-radius:var(--si-radius);background:var(--si-panel);}
+  .zsales-invoice-single-page .zsales-source-loader-title{grid-column:1/-1;margin:0;color:#334155;font-size:12px;font-weight:800;}
+  .zsales-invoice-single-page .zsales-source-loader-status{grid-column:1/-1;margin:0;font-size:12px;line-height:1.5;}
   .zsales-invoice-single-page .zsales-section{margin:10px 0;padding:10px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:var(--si-panel);}
-  .zsales-invoice-single-page .zsales-section-heading{display:flex;align-items:center;gap:9px;margin:0 0 8px;color:#0f172a;}
-  .zsales-invoice-single-page .zsales-section-heading>span{padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--si-accent) 12%,white);color:var(--si-accent);font-size:11px;font-weight:700;}
+  .zsales-invoice-single-page .zsales-section-heading{display:flex;align-items:center;justify-content:space-between;gap:9px;margin:0 0 8px;color:#0f172a;}
+  .zsales-invoice-single-page .zsales-items-heading-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .zsales-invoice-single-page .zsales-items-heading-actions button{min-height:32px;white-space:nowrap;}
+  .zsales-invoice-single-page .zsales-section-heading>span,.zsales-invoice-single-page .zsales-items-heading-actions>span{padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--si-accent) 12%,white);color:var(--si-accent);font-size:11px;font-weight:700;}
   .zsales-invoice-single-page .zsales-action-bar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 8px;padding:7px 8px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:rgba(255,255,255,.97);box-shadow:0 5px 16px #0f172a20;backdrop-filter:blur(8px);}
   .zsales-invoice-single-page .zsales-action-buttons{display:flex;align-items:center;gap:6px;flex:1 1 420px;min-width:0;flex-wrap:wrap;}
   .zsales-invoice-single-page .zsales-action-buttons button{min-height:32px;}
-  .zsales-invoice-single-page .zsales-quick-payment{display:flex;align-items:center;gap:6px;flex:0 1 250px;min-width:200px;}
+  .zsales-invoice-single-page .zsales-quick-payment{display:flex;align-items:center;gap:8px;flex:1 1 390px;min-width:300px;}
   .zsales-invoice-single-page .zsales-quick-payment-label{font-size:11px;font-weight:700;color:#475569;white-space:nowrap;}
+  .zsales-invoice-single-page .zsales-payment-methods{display:grid;grid-template-columns:repeat(4,minmax(54px,1fr));gap:4px;flex:1;min-width:0;}
+  .zsales-invoice-single-page .zsales-payment-methods button{min-height:32px;padding:5px 7px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:#fff;color:#334155;font:inherit;font-size:11px;font-weight:700;white-space:nowrap;cursor:pointer;}
+  .zsales-invoice-single-page .zsales-payment-methods button[aria-pressed="true"]{border-color:var(--si-accent);background:color-mix(in srgb,var(--si-accent) 11%,white);color:var(--si-accent);box-shadow:inset 0 0 0 1px var(--si-accent);}
   .zsales-invoice-single-page .zsales-action-total{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:var(--si-radius);background:color-mix(in srgb,var(--si-accent) 10%,white);color:#0f172a;font-size:11px;white-space:nowrap;}
   .zsales-invoice-single-page .zsales-action-feedback{flex:1 1 100%;max-height:92px;overflow:auto;}
   .zsales-invoice-single-page .zsales-items-section{background:#fff;}
-  .zsales-invoice-single-page .zsales-items-section .zlines-wrap{max-height:none!important;overflow-x:auto!important;overflow-y:visible!important;border-color:var(--si-border);}
-  .zsales-invoice-single-page .zlines-wrap thead th{background:var(--si-grid)!important;color:var(--si-grid-text,#1e293b)!important;}
+  .zsales-invoice-single-page .zsales-items-section .zlines-wrap{max-height:min(42vh,320px)!important;overflow-x:auto!important;overflow-y:auto!important;border-color:var(--si-border);overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:auto;}
+  .zsales-invoice-single-page .zlines-wrap thead th{position:sticky;top:0;z-index:3;background:var(--si-grid)!important;color:var(--si-grid-text,#1e293b)!important;}
   .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap thead th{--si-grid-text:#fff;}
   .zsales-invoice-single-page .zlines-wrap tbody td{padding:var(--si-density) 5px!important;}
   .zsales-invoice-single-page .zfield:focus{border-color:var(--si-accent)!important;box-shadow:0 0 0 2px color-mix(in srgb,var(--si-accent) 20%,transparent)!important;}
@@ -87,8 +97,8 @@ const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap .zfield{height:28px!important;padding:3px 4px!important;font-size:11px!important;}
   @media(max-width:1100px){.zsales-invoice-single-page .zsales-header-fields,.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
   @media(max-width:700px){.zsales-invoice-single-page .zsales-header-fields,.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
-  @media(max-width:900px){.zsales-invoice-single-page .zsales-layout-row{align-items:stretch;flex-direction:column}.zsales-invoice-single-page .zsales-layout-select{max-width:none;width:100%}}
-  @media(max-width:700px){.zsales-invoice-single-page .zsales-action-buttons{flex-basis:100%}.zsales-invoice-single-page .zsales-quick-payment{flex:1 1 180px}.zsales-invoice-single-page .zsales-action-total{margin-inline-start:auto}}
+  @media(max-width:900px){.zsales-invoice-single-page .zsales-layout-row{align-items:stretch;flex-direction:column}.zsales-invoice-single-page .zsales-layout-select{max-width:none;width:100%}.zsales-invoice-single-page .zsales-source-loader{grid-template-columns:1fr 1fr}}
+  @media(max-width:700px){.zsales-invoice-single-page .zsales-action-buttons{flex-basis:100%}.zsales-invoice-single-page .zsales-quick-payment{flex:1 1 100%;min-width:0;align-items:flex-start;flex-direction:column}.zsales-invoice-single-page .zsales-payment-methods{width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}.zsales-invoice-single-page .zsales-action-total{margin-inline-start:auto}.zsales-invoice-single-page .zsales-source-loader{grid-template-columns:1fr}}
   @media(max-height:680px){.zsales-invoice-single-page .zsales-layout-row{margin:4px 0 6px;padding:4px 8px}.zsales-invoice-single-page .zsales-layout-label small{display:none}.zsales-invoice-single-page .zsales-section{margin:6px 0;padding:7px}.zsales-invoice-single-page .zsales-action-bar{margin:4px 0 6px;padding:5px 7px}.zsales-invoice-single-page .zsales-section-heading{margin-bottom:5px}}
 `;
 
@@ -660,6 +670,10 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   const [quickCreate, setQuickCreate] = useState<"customer" | "item" | null>(null);
   const [quickCreateBusy, setQuickCreateBusy] = useState(false);
   const [quickCreateError, setQuickCreateError] = useState<string | null>(null);
+  const [sourceKind, setSourceKind] = useState<"quotation" | "sales_order">("quotation");
+  const [sourceDocNo, setSourceDocNo] = useState("");
+  const [sourceBusy, setSourceBusy] = useState(false);
+  const [sourceFeedback, setSourceFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [itemPickerOpen, setItemPickerOpen] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<{ item: LocalItem; customer: LocalCustomer } | null>(null);
   const [historyNeedsCustomer, setHistoryNeedsCustomer] = useState(false);
@@ -776,6 +790,8 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         if (patch.unitKey.startsWith("add:") && it) {
           const u = it.units?.find((x) => x.id === patch.unitKey!.slice(4));
           if (u) { next.uomId = null; next.uomName = u.name; next.conversionFactor = u.factor; next.unitPrice = u.price; }
+        } else if (patch.unitKey === "source") {
+          // Keep the source document's unit, conversion factor, and price as-is.
         } else {
           const bu = it?.uomId != null ? uoms.find((x) => x.id === it.uomId) : defUom;
           next.uomId = bu?.id ?? null; next.uomName = bu?.nameAr ?? null; next.conversionFactor = bu?.baseQty ?? 1;
@@ -852,9 +868,10 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     } finally { setQuickCreateBusy(false); }
   }
 
-  async function createQuickItem(input: { nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number; brandId: number | null }, action: "close" | "add-another" = "close") {
+  async function createQuickItem(input: { nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number; brandId: number | null; quantity?: number }, action: "close" | "add-another" = "close") {
     if (!input.nameAr.trim()) { setQuickCreateError(text("اكتب اسم الصنف بالعربية", "Enter the item's Arabic name.")); return false; }
     if (!Number.isFinite(input.salePrice) || input.salePrice < 0) { setQuickCreateError(text("أدخل سعرًا صحيحًا", "Enter a valid price.")); return false; }
+    if (!Number.isFinite(input.quantity ?? 1) || (input.quantity ?? 1) <= 0) { setQuickCreateError(text("أدخل كمية أكبر من صفر", "Enter a quantity greater than zero.")); return false; }
     if (!Number.isFinite(input.vatRate) || input.vatRate < 0 || input.vatRate > 100) { setQuickCreateError(text("نسبة الضريبة يجب أن تكون بين 0 و100", "Tax must be between 0 and 100.")); return false; }
     const uom = uoms.find((unit) => unit.id === input.uomId);
     if (!uom) { setQuickCreateError(text("اختر وحدة قياس للصنف", "Choose a unit of measure.")); return false; }
@@ -875,7 +892,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       if (chosenBrand) setExpandedLineIndices((current) => new Set(current).add(lines.length));
       try { await onRefreshDeps(); } catch { /* the new local item still gets its document line */ }
       setLines((current) => {
-        const next: FLine = { ...blankLine(), itemId: item.id, itemName: item.nameAr, unitPrice: item.salePrice, vatRate: selectedRate ?? item.vatRate, uomId: item.uomId ?? uom.id, uomName: uom.nameAr, conversionFactor: uom.baseQty, brandId: chosenBrand?.id ?? null, brandName: chosenBrand?.nameAr ?? null };
+        const next: FLine = { ...blankLine(), itemId: item.id, itemName: item.nameAr, qty: input.quantity ?? 1, unitPrice: item.salePrice, vatRate: selectedRate ?? item.vatRate, uomId: item.uomId ?? uom.id, uomName: uom.nameAr, conversionFactor: uom.baseQty, brandId: chosenBrand?.id ?? null, brandName: chosenBrand?.nameAr ?? null };
         const { net } = lineNet(next.qty, next.unitPrice, next.disc, next.discType);
         next.lineTotal = net + net * next.vatRate / 100;
         return [...current, next];
@@ -912,9 +929,9 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   const paymentOptions = [
     { value: "cash", label: text("نقدي", "Cash") },
     { value: "bank", label: text("بنك", "Bank") },
-    { value: "credit", label: text("آجل (على الحساب)", "Credit (on account)") },
-    { value: "mixed", label: text("متعدد الطرق", "Split payment") },
-  ];
+    { value: "credit", label: text("آجل", "Credit") },
+    { value: "mixed", label: text("مختلط", "Mixed") },
+  ] as const;
   function changePaymentChoice(value: string | number) {
     const next = value as SalesPaymentChoice;
     if (next === "mixed") {
@@ -923,6 +940,113 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       else if (paymentChoice === "credit") { setCashAmount(0); setBankAmount(0); }
     }
     setPaymentChoice(next);
+  }
+
+  async function loadSourceDocument() {
+    const requestedNo = sourceDocNo.trim().replace(/\s+/g, "").toLocaleUpperCase();
+    if (!requestedNo) {
+      setSourceFeedback({ kind: "error", text: text("أدخل رقم عرض السعر أو أمر البيع.", "Enter a quotation or sales-order number.") });
+      return;
+    }
+    if (lines.some((line) => line.itemId > 0) && !window.confirm(text(
+      "سيتم استبدال بنود الفاتورة الحالية ببيانات المستند المحمّل. هل تريد المتابعة؟",
+      "The current invoice lines will be replaced by the loaded document. Continue?",
+    ))) return;
+
+    setSourceBusy(true);
+    setSourceFeedback(null);
+    try {
+      let source: Quotation | SalesOrder;
+      if (sourceKind === "quotation") {
+        const match = (await listQuotations(5000)).find(
+          (row) => row.docNo.trim().replace(/\s+/g, "").toLocaleUpperCase() === requestedNo,
+        );
+        if (!match) throw new Error(text("لم يتم العثور على عرض السعر بهذا الرقم.", "No quotation was found with that number."));
+        source = await getQuotation(match.id);
+        if (source.status === "converted" || source.status === "rejected") {
+          throw new Error(text("لا يمكن تحميل عرض سعر محوّل أو مرفوض.", "Converted or rejected quotations cannot be loaded."));
+        }
+      } else {
+        const match = (await listSalesOrders(5000)).find(
+          (row) => row.docNo.trim().replace(/\s+/g, "").toLocaleUpperCase() === requestedNo,
+        );
+        if (!match) throw new Error(text("لم يتم العثور على أمر البيع بهذا الرقم.", "No sales order was found with that number."));
+        source = await getSalesOrder(match.id);
+        if (source.status === "converted" || source.status === "cancelled") {
+          throw new Error(text("لا يمكن تحميل أمر بيع محوّل أو ملغى.", "Converted or cancelled sales orders cannot be loaded."));
+        }
+      }
+
+      if (!source.lines.length) {
+        throw new Error(text("المستند لا يحتوي على بنود أصناف لتحميلها.", "The source document has no item lines to load."));
+      }
+      const missingLine = source.lines.find((line) => !deps.items.some((item) => item.id === line.itemId));
+      if (missingLine) {
+        throw new Error(text(
+          `الصنف رقم ${missingLine.itemId} في المستند غير موجود في دليل الأصناف الحالي.`,
+          `Item ${missingLine.itemId} from the source document is missing from the current catalog.`,
+        ));
+      }
+      const loadedLines: FLine[] = source.lines.map((line) => {
+        const item = deps.items.find((entry) => entry.id === line.itemId)!;
+        const matchingUnit = item.units?.find((unit) => unit.name === line.uomName
+          && (line.conversionFactor == null || Math.abs(unit.factor - line.conversionFactor) < 0.000001));
+        const baseUom = item.uomId != null ? uoms.find((unit) => unit.id === item.uomId) : defUom;
+        const isBaseUnit = (!line.uomName || line.uomName === baseUom?.nameAr)
+          && (line.conversionFactor == null || Math.abs((baseUom?.baseQty ?? 1) - line.conversionFactor) < 0.000001);
+        const unitKey = matchingUnit
+          ? `add:${matchingUnit.id}`
+          : isBaseUnit ? "base" : "source";
+        return {
+          ...line,
+          itemName: line.itemName ?? item.nameAr,
+          uomId: line.uomId ?? baseUom?.id ?? null,
+          uomName: line.uomName ?? matchingUnit?.name ?? baseUom?.nameAr ?? null,
+          conversionFactor: line.conversionFactor ?? matchingUnit?.factor ?? baseUom?.baseQty ?? 1,
+          unitKey,
+          disc: 0,
+          discType: "percent",
+          brandId: null,
+          brandName: null,
+        };
+      });
+
+      setLines(loadedLines);
+      setExpandedLineIndices(new Set(loadedLines.flatMap((line, index) => line.note?.trim() ? [index] : [])));
+      setHeaderDisc(0);
+      setHeaderDiscType("percent");
+      setCustomerId(source.customerId ?? 0);
+      setWarehouseId(source.warehouseId ?? warehouseId);
+      setBranchId(source.branchId ?? "");
+      setCostCenterId(source.costCenterId ?? "");
+      setSalesRepId(source.salesRepId ?? "");
+      setInvoiceType(source.invoiceType === "standard" ? "standard" : "simplified");
+      setBuyerName(source.buyerName ?? "");
+      setBuyerVat(source.buyerVat ?? "");
+      setBuyerAddress(source.buyerAddress ?? "");
+      setNotes(source.notes ?? "");
+      if ("paymentMethod" in source) {
+        setPaymentChoice(source.paymentMethod);
+        setCashAmount(source.paymentMethod === "cash" ? source.grandTotal : 0);
+        setBankAmount(source.paymentMethod === "bank" ? source.grandTotal : 0);
+        setCashBoxId(source.cashBoxId ?? cashBoxId);
+        setBankId(source.bankId ?? bankId);
+      }
+      setSourceFeedback({
+        kind: "success",
+        text: text(
+          `تم تحميل ${sourceKind === "quotation" ? "عرض السعر" : "أمر البيع"} ${source.docNo}. تم نسخ البيانات إلى الفاتورة، والمستند الأصلي لم يتغير.`,
+          `Loaded ${sourceKind === "quotation" ? "quotation" : "sales order"} ${source.docNo}. Its data was copied into this invoice; the source document was not changed.`,
+        ),
+      });
+    } catch (error: unknown) {
+      setSourceFeedback({
+        kind: "error",
+        text: error instanceof Error ? error.message : text("تعذر تحميل المستند.", "Could not load the document."),
+      });
+    } finally {
+      setSourceBusy(false);
+    }
   }
 
   async function save() {
@@ -1069,6 +1193,33 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         </select>
       </div>
 
+      {!isEdit && (
+        <div className="zsales-source-loader" role="group" aria-label={text("تحميل عرض سعر أو أمر بيع", "Load a quotation or sales order")}>
+          <p className="zsales-source-loader-title">{text("تحميل مستند سابق إلى الفاتورة", "Load a source document into this invoice")}</p>
+          <Field label={text("نوع المستند", "Document type")}>
+            <select value={sourceKind} onChange={(event) => setSourceKind(event.target.value as "quotation" | "sales_order")} disabled={sourceBusy} style={input}>
+              <option value="quotation">{text("عرض سعر", "Quotation")}</option>
+              <option value="sales_order">{text("أمر بيع", "Sales order")}</option>
+            </select>
+          </Field>
+          <Field label={text("رقم المستند", "Document number")}>
+            <input value={sourceDocNo} onChange={(event) => setSourceDocNo(event.target.value)} disabled={sourceBusy}
+              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void loadSourceDocument(); } }}
+              dir="ltr" placeholder={text("أدخل رقم المستند", "Enter document number")} style={input} />
+          </Field>
+          <button type="button" onClick={() => void loadSourceDocument()} disabled={sourceBusy || !sourceDocNo.trim()}
+            style={{ ...btnSecondary, minHeight: 36, padding: "7px 15px", color: "#fff", background: "var(--si-accent)", borderColor: "var(--si-accent)", fontWeight: 800, whiteSpace: "nowrap", opacity: sourceBusy || !sourceDocNo.trim() ? 0.6 : 1 }}>
+            {sourceBusy ? text("جارٍ التحميل…", "Loading…") : text("تحميل إلى الفاتورة", "Load into invoice")}
+          </button>
+          {sourceFeedback && (
+            <div className="zsales-source-loader-status" role={sourceFeedback.kind === "error" ? "alert" : "status"}
+              style={{ color: sourceFeedback.kind === "error" ? "#991b1b" : "#166534", background: sourceFeedback.kind === "error" ? "#fef2f2" : "#f0fdf4", border: `1px solid ${sourceFeedback.kind === "error" ? "#fecaca" : "#bbf7d0"}`, borderRadius: 7, padding: "7px 9px" }}>
+              {sourceFeedback.text}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="zsales-action-bar" role="group" aria-label={text("إجراءات الفاتورة السريعة", "Quick invoice actions")}>
         <div className="zsales-action-buttons">
           <button
@@ -1103,7 +1254,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           >{text("إلغاء", "Cancel")}</button>
           <button
             onClick={save}
-            disabled={busy}
+            disabled={busy || sourceBusy}
             type="button"
             data-fnav="1"
             data-fnav-last="1"
@@ -1112,13 +1263,21 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           >{busy ? "..." : (isEdit ? text("حفظ التعديل", "Save changes") : text("حفظ وترحيل", "Save and post"))}</button>
         </div>
         <div className="zsales-quick-payment" data-testid="sales-invoice-quick-payment">
-          <span className="zsales-quick-payment-label">{text("الدفع السريع", "Quick payment")}</span>
-          <SearchCombobox
-            value={paymentChoice}
-            onChange={changePaymentChoice}
-            style={{ ...input, height: 32, minWidth: 0, padding: "5px 7px", fontSize: 12 }}
-            options={paymentOptions}
-          />
+          <span className="zsales-quick-payment-label">{text("طريقة الدفع", "Payment method")}</span>
+          <div className="zsales-payment-methods" role="group" aria-label={text("اختيار طريقة الدفع", "Choose payment method")}>
+            {paymentOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                data-testid={`button-sales-invoice-payment-${option.value}`}
+                aria-label={text(`طريقة الدفع: ${option.label}`, `Payment method: ${option.label}`)}
+                aria-pressed={paymentChoice === option.value}
+                onClick={() => changePaymentChoice(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="zsales-action-total" data-testid="sales-invoice-total" aria-live="polite">
           <span>{text("الإجمالي", "Total")}</span>
@@ -1219,9 +1378,21 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       <section className="zsales-section zsales-items-section zsales-invoice-lines">
       <div className="zsales-section-heading">
         <strong style={{ fontSize: 15 }}>{text("بنود الأصناف", "Invoice items")}</strong>
-        <span>
-          {selectedLineCount} {text("صنف", "items")}
-        </span>
+        <div className="zsales-items-heading-actions">
+          <span>{selectedLineCount} {text("صنف", "items")}</span>
+          <button
+            onClick={addLine}
+            type="button"
+            data-testid="button-add-sales-invoice-line-inline"
+            style={{ ...btnSecondary, padding: "5px 9px", color: "#087f69", borderColor: "#9bd6c9", fontSize: 12, fontWeight: 700 }}
+          >+ {text("إضافة صنف", "Add item")}</button>
+          <button
+            onClick={() => setItemPickerOpen(true)}
+            type="button"
+            data-testid="button-select-sales-invoice-items-inline"
+            style={{ ...btnSecondary, padding: "5px 9px", color: "#315e56", borderColor: "#b8d4cb", fontSize: 12, fontWeight: 700 }}
+          >{text("اختيار أصناف", "Select items")}</button>
+        </div>
       </div>
       <div className="zlines-wrap" style={{ ...linesScroll, marginTop: 8 }}>
       <Table style={{ width: "100%", minWidth: 900, tableLayout: "fixed" }}>
@@ -1241,18 +1412,29 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           {lines.length === 0 && <EmptyItemsRow colSpan={showFreeQuantityColumn ? 10 : 9} />}
           {lines.map((l, i) => {
             const expanded = expandedLineIndices.has(i);
+            const selectedItem = deps.items.find((item) => item.id === l.itemId);
             return (
               <React.Fragment key={`line-${i}`}>
                 <tr className="zrow" style={{ background: i % 2 ? "#fbfdff" : "#fff" }}>
                   <Td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 600 }}>{i + 1}</Td>
                   <Td>
-                    <SearchCombobox
-                      value={l.itemId}
-                      onChange={(v) => setLine(i, { itemId: Number(v) })}
-                      {...navCombo}
-                      style={input}
-                      options={itemOptions}
-                    />
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, direction: "rtl" }}>
+                      <ItemCodeHistoryButton
+                        code={selectedItem?.code}
+                        itemName={l.itemName ?? text("الصنف", "item")}
+                        disabled={!selectedItem}
+                        onClick={() => openItemHistory(l.itemId)}
+                      />
+                      <div style={{ flex: "1 1 0%", minWidth: 0 }}>
+                        <SearchCombobox
+                          value={l.itemId}
+                          onChange={(v) => setLine(i, { itemId: Number(v) })}
+                          {...navCombo}
+                          style={{ ...input, minWidth: 0 }}
+                          options={itemOptions}
+                        />
+                      </div>
+                    </div>
                   </Td>
                   <Td>
                     {(() => {
@@ -1264,6 +1446,9 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                         ? [
                             { value: "base", label: baseName || text("أساسي", "Base") },
                             ...((selItem.units ?? []).map((u) => ({ value: `add:${u.id}`, label: `${u.name} (×${u.factor})` }))),
+                              ...(l.unitKey === "source" && l.uomName
+                                ? [{ value: "source", label: `${l.uomName} (${text("من المستند", "from source")})` }]
+                                : []),
                           ]
                         : [{ value: "base", label: defUom?.nameAr ?? "" }];
                       return (
@@ -1351,15 +1536,6 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
 
       <section className="zsales-section zsales-payment-section">
       <div className="zsales-payment-fields" style={{ display: "grid", gridTemplateColumns: `repeat(${paymentColumns}, minmax(0, 1fr))`, gap: "0 var(--si-density)", alignItems: "start" }}>
-        <Field label={text("طريقة الدفع", "Payment method")}>
-          <SearchCombobox
-            value={paymentChoice}
-            onChange={changePaymentChoice}
-            {...navCombo}
-            style={input}
-            options={paymentOptions}
-          />
-        </Field>
         {paymentChoice === "mixed" && (
           <Field label={`${text("المبلغ النقدي", "Cash amount")} · ${docSym}`}>
             <input type="number" min="0" max={Math.max(0, result.grandTotal - bankAmount)} step="0.01"
@@ -1431,6 +1607,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           kind={quickCreate}
           documentLabel={{ ar: "الفاتورة", en: "invoice" }}
           initialVatRate={selectedRate ?? 0}
+          includeQuantity={quickCreate === "item"}
           busy={quickCreateBusy}
           error={quickCreateError}
           onCancel={() => { if (!quickCreateBusy) setQuickCreate(null); }}

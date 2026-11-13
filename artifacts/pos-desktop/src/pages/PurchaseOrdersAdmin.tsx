@@ -473,7 +473,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
       </DocumentEditorSection>
 
       <DocumentEditorSection>
-      <div style={{ overflowX: "auto", marginTop: 10 }}>
+      <div className="zlines-wrap" style={{ overflowX: "auto", marginTop: 10 }}>
       <Table style={{ minWidth: 1250 }}>
         <thead><tr>
           <Th style={{ minWidth: 240 }}>الصنف</Th>
@@ -520,7 +520,7 @@ function CreateForm({ deps, seed, onCancel, onDone }: {
       </Table>
       </div>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
-      <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       </DocumentEditorSection>
 
       <DocumentEditorSection>

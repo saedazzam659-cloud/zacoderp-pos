@@ -186,7 +186,7 @@ export const documentFormStyles = `
   .zdoc-form .zline-details-panel{display:grid;grid-template-columns:minmax(220px,1fr) minmax(280px,2fr);gap:12px;align-items:end;}
   .zdoc-form .zline-detail-label{display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:5px;}
   .zdoc-form .zlines-panel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
-  .zdoc-form .zlines-wrap{flex:0 1 auto !important;min-height:0;max-height:286px;overflow:auto !important;}
+  .zdoc-form .zlines-wrap{flex:0 1 auto !important;min-height:0;max-height:390px;overflow:auto !important;overscroll-behavior:contain;scrollbar-gutter:stable;}
   .zdoc-form .zsales-invoice-lines .zlines-wrap{max-height:360px;}
   .zdoc-form .zlines-wrap [data-testid="empty-items-state"] > td{height:140px !important;}
   .zdoc-form .zlines-wrap [data-testid="empty-items-state"] > td > div{height:140px !important;}
@@ -203,14 +203,8 @@ export function tabPanel(active: string, key: string): CSSProperties {
 }
 
 // ── Document-form layout (natural page flow, web parity) ───────────────────
-// The back-office document forms flow naturally inside the page wrapper
-// (PosShell `pagePad`, which already owns the vertical scroll). They are NOT
-// bounded to a fixed viewport height: the lines grid shows all of its rows and
-// the whole page scrolls as one. New documents start with a clean six-row-height
-// empty state; actual editable rows appear only after adding an item.
-// exactly like the web app. A prior fixed-height shell (calc(100vh-200px) +
-// internal scroll) collapsed the grid to a tiny header-only box on smaller
-// windows, so it was removed.
+// Back-office forms use the page wrapper for outer vertical scrolling. Item
+// grids have their own capped vertical scroll so long documents stay usable.
 export const docFormShell: CSSProperties = { display: "block" };
 export const invoiceEditorShell: CSSProperties = {
   ...docFormShell, display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden",
@@ -225,8 +219,8 @@ export function linesPanel(active: string): CSSProperties {
 export function contentPanel(active: string, key: string): CSSProperties {
   return active === key ? { display: "block" } : { display: "none" };
 }
-// The lines-grid wrapper — grows with its rows; only scrolls HORIZONTALLY for
-// the wide multi-column table. Vertical scrolling is owned by the page wrapper.
+// The page wrapper owns outer scrolling; shared zlines-wrap styles cap the grid
+// and provide its independent vertical scroll. This object adds horizontal flow.
 export const linesScroll: CSSProperties = {
   overflowX: "auto",
   border: "1px solid #e2e8f0", borderRadius: 10,

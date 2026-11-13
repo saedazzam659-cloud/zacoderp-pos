@@ -15,6 +15,8 @@ import {
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { printVoucher } from "../lib/invoicePrint";
 import { uiText, useUiLanguage } from "../lib/appSettings";
+import { ReportSummaryCards } from "../components/ReportSummaryCards";
+import { ReportDisplayLayout } from "../components/ReportDisplayLayout";
 
 function txWalletName(
   deps: { cashBoxes: CashBox[]; banks: Bank[] } | null,
@@ -36,6 +38,10 @@ export default function FinancialTransactionsAdmin() {
   const [deps, setDeps] = useState<{ suppliers: Supplier[]; customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; accounts: Account[] } | null>(null);
 
   const sel = useRowSelect(rows);
+  const receiptCount = rows.filter((row) => row.txType === "receipt").length;
+  const paymentCount = rows.filter((row) => row.txType === "payment").length;
+  const draftCount = rows.filter((row) => row.status === "draft").length;
+  const postedCount = rows.filter((row) => row.status !== "draft").length;
 
   async function refresh() { setRows(await listFinancialTx()); }
   function refreshAfterVoucherChange() {
@@ -83,6 +89,12 @@ export default function FinancialTransactionsAdmin() {
           </div>
         </Card>
       )}
+      {!creating && <ReportSummaryCards items={[
+        { label: text("سندات القبض", "Receipt vouchers"), value: `${receiptCount} ${text("سند", "vouchers")}`, accent: "#15803d" },
+        { label: text("سندات الصرف", "Payment vouchers"), value: `${paymentCount} ${text("سند", "vouchers")}`, accent: "#b91c1c" },
+        { label: text("المسودات", "Drafts"), value: draftCount, accent: "#d97706" },
+        { label: text("المرحّلة", "Posted"), value: postedCount, accent: "#2563eb" },
+      ]} />}
       {rows.length > 0 && !creating && (
         <ActionBar selectedLabel={sel.selected ? sel.selected.txNo : null}>
           <ActionBtn label={text("طباعة", "Print")} icon="🖨️" tone="primary" disabled={!sel.selected}
@@ -135,6 +147,7 @@ export default function FinancialTransactionsAdmin() {
             }} />
         </ActionBar>
       )}
+      <ReportDisplayLayout reportKey="financial-transactions">
       <Card>
         {rows.length === 0 ? <Empty text={text("لا توجد معاملات", "No transactions")} /> : (
           <Table>
@@ -167,6 +180,7 @@ export default function FinancialTransactionsAdmin() {
           </Table>
         )}
       </Card>
+      </ReportDisplayLayout>
     </Page>
     </div>
   );

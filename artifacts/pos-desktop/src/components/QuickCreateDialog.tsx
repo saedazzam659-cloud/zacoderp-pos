@@ -6,12 +6,13 @@ import { listBrands } from "../lib/brands";
 
 export type QuickCreatePayload =
   | { kind: "customer"; nameAr: string; phone: string; vatNumber: string }
-  | { kind: "item"; nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number; brandId: number | null };
+  | { kind: "item"; nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number; brandId: number | null; quantity?: number };
 
-export default function QuickCreateDialog({ kind, documentLabel, initialVatRate, busy, error, onCancel, onSubmit, uoms }: {
+export default function QuickCreateDialog({ kind, documentLabel, initialVatRate, includeQuantity = false, busy, error, onCancel, onSubmit, uoms }: {
   kind: "customer" | "item";
   documentLabel: { ar: string; en: string };
   initialVatRate: number;
+  includeQuantity?: boolean;
   busy: boolean;
   error: string | null;
   onCancel: () => void;
@@ -26,6 +27,7 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
   const [code, setCode] = useState("");
   const [barcode, setBarcode] = useState("");
   const [salePrice, setSalePrice] = useState(0);
+  const [quantity, setQuantity] = useState(1);
   const [vatRate, setVatRate] = useState(initialVatRate);
   const [nature, setNature] = useState<"stock" | "service">("stock");
   const [uomId, setUomId] = useState(() => getDefaultUom()?.id ?? uoms[0]?.id ?? 0);
@@ -38,10 +40,11 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
   async function submit(action: "close" | "add-another" = "close") {
     const payload: QuickCreatePayload = isCustomer
       ? { kind, nameAr, phone, vatNumber }
-      : { kind, nameAr, code, barcode, salePrice, vatRate, nature, uomId, brandId };
+      : { kind, nameAr, code, barcode, salePrice, vatRate, nature, uomId, brandId, ...(includeQuantity ? { quantity } : {}) };
     const result = await onSubmit(payload, action);
     if (action === "add-another" && result === true) {
       setNameAr(""); setCode(""); setBarcode(""); setSalePrice(0);
+      setQuantity(1);
       setVatRate(initialVatRate); setNature("stock"); setUomId(() => getDefaultUom()?.id ?? uoms[0]?.id ?? 0);
       setBrandId(null);
     }
@@ -90,6 +93,13 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
           ) : (
             <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                {includeQuantity && (
+                  <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
+                    {text("الكمية المضافة للمستند", "Quantity to add")}
+                    <input type="number" min="0.001" step="0.001" value={quantity}
+                      onChange={(e) => setQuantity(Number(e.target.value) || 0)} style={fieldStyle} />
+                  </label>
+                )}
                 <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
                   {text("سعر البيع", "Sale price")}
                   <input type="number" min="0" step="0.01" value={salePrice} onChange={(e) => setSalePrice(Number(e.target.value) || 0)} style={fieldStyle} />
