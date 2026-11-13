@@ -19,13 +19,16 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
-import { getCompanyProfile, useHideZeros, useShowFreeQuantityColumn, blankIfZero, uiText, useUiLanguage } from "../lib/appSettings";
+import {
+  getCompanyProfile, useHideZeros, useShowFreeQuantityColumn, blankIfZero, uiText, useUiLanguage,
+  setSalesInvoiceLayout, useSalesInvoiceLayout, type SalesInvoiceLayout,
+} from "../lib/appSettings";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, DocumentFormHeader,
-  documentFormStyles, invoiceEditorShell, tabPanel, EmptyItemsRow,
-  linesPanel, linesScroll, docFormPinned, contentPanel,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, DocumentFormHeader,
+  documentFormStyles, docFormShell, EmptyItemsRow,
+  linesScroll, docFormPinned,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
   ExportButtons, gridToExportCols,
   errText,
@@ -45,6 +48,40 @@ import { type WindowsView } from "../lib/moduleRegistry";
 
 type FLine = SalesLine & DiscFields & { unitKey?: string; brandId?: number | null; brandName?: string | null };
 type SalesPaymentChoice = PaymentMethod | "mixed";
+
+const salesInvoiceTemplateStyles = `
+  .zsales-invoice-single-page{height:auto!important;min-height:0!important;overflow:visible!important;display:block!important;--si-accent:#2563eb;--si-panel:#f7faff;--si-border:#cbd8e8;--si-grid:#edf3fb;--si-radius:8px;--si-density:8px;}
+  .zsales-invoice-single-page[data-layout="quick"]{--si-accent:#087f69;--si-panel:#f5faf6;--si-border:#d5e4d9;--si-grid:#e9f3ec;--si-radius:5px;--si-density:6px;}
+  .zsales-invoice-single-page[data-layout="modern"]{--si-accent:#c2410c;--si-panel:#fff;--si-border:#d8dee8;--si-grid:#f0f1f2;--si-radius:3px;--si-density:9px;}
+  .zsales-invoice-single-page[data-layout="erp"]{--si-accent:#294477;--si-panel:#f1f4f8;--si-border:#b9c5d6;--si-grid:#294477;--si-radius:3px;--si-density:4px;}
+  .zsales-invoice-single-page>div:first-of-type{border-color:var(--si-border)!important;border-right-color:var(--si-accent)!important;border-radius:var(--si-radius)!important;background:var(--si-panel)!important;}
+  .zsales-invoice-single-page>div:first-of-type strong{color:var(--si-accent)!important;}
+  .zsales-invoice-single-page .zsales-layout-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 10px;padding:8px 10px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:var(--si-panel);}
+  .zsales-invoice-single-page .zsales-layout-label{display:flex;flex-direction:column;gap:2px;color:#334155;font-size:12px;font-weight:700;}
+  .zsales-invoice-single-page .zsales-layout-label small{color:#64748b;font-size:10px;font-weight:500;}
+  .zsales-invoice-single-page .zsales-layout-select{min-width:210px;max-width:340px;height:34px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:#fff;color:#0f172a;padding:4px 9px;font:inherit;font-size:12px;}
+  .zsales-invoice-single-page .zsales-section{margin:10px 0;padding:10px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:var(--si-panel);}
+  .zsales-invoice-single-page .zsales-section-heading{display:flex;align-items:center;gap:9px;margin:0 0 8px;color:#0f172a;}
+  .zsales-invoice-single-page .zsales-section-heading>span{padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--si-accent) 12%,white);color:var(--si-accent);font-size:11px;font-weight:700;}
+  .zsales-invoice-single-page .zsales-items-section{background:#fff;}
+  .zsales-invoice-single-page .zsales-items-section .zlines-wrap{max-height:none!important;overflow-x:auto!important;overflow-y:visible!important;border-color:var(--si-border);}
+  .zsales-invoice-single-page .zlines-wrap thead th{background:var(--si-grid)!important;color:var(--si-grid-text,#1e293b)!important;}
+  .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap thead th{--si-grid-text:#fff;}
+  .zsales-invoice-single-page .zlines-wrap tbody td{padding:var(--si-density) 5px!important;}
+  .zsales-invoice-single-page .zfield:focus{border-color:var(--si-accent)!important;box-shadow:0 0 0 2px color-mix(in srgb,var(--si-accent) 20%,transparent)!important;}
+  .zsales-invoice-single-page .zsales-totals-grid{border-color:var(--si-border);}
+  .zsales-invoice-single-page .zsales-form-footer{margin-top:12px;padding:10px 0 4px;border-top:2px solid var(--si-border);background:linear-gradient(180deg,var(--si-panel),transparent);}
+  .zsales-invoice-single-page[data-layout="quick"] .zsales-section{padding:8px;border-radius:5px;}
+  .zsales-invoice-single-page[data-layout="quick"] .zsales-section-heading{font-size:14px;}
+  .zsales-invoice-single-page[data-layout="modern"] .zsales-section{box-shadow:0 1px 4px #0f172a0c;}
+  .zsales-invoice-single-page[data-layout="modern"] .zlines-wrap tbody tr:nth-child(odd) td{background:#fbfcfd;}
+  .zsales-invoice-single-page[data-layout="erp"] .zsales-section{padding:7px;margin:7px 0;}
+  .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap thead th{padding:6px 4px!important;font-size:10px!important;}
+  .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap .zfield{height:28px!important;padding:3px 4px!important;font-size:11px!important;}
+  @media(max-width:1100px){.zsales-invoice-single-page .zsales-header-fields,.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
+  @media(max-width:700px){.zsales-invoice-single-page .zsales-header-fields,.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+  @media(max-width:900px){.zsales-invoice-single-page .zsales-layout-row{align-items:stretch;flex-direction:column}.zsales-invoice-single-page .zsales-layout-select{max-width:none;width:100%}}
+`;
 
 export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
   onNavigate?: (v: WindowsView) => void;
@@ -537,7 +574,9 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   const isEdit = !!initial;
   const hideZeros = useHideZeros();
   const showFreeQuantityColumn = useShowFreeQuantityColumn();
-  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
+  const salesInvoiceLayout = useSalesInvoiceLayout();
+  const headerColumns = salesInvoiceLayout === "erp" ? 7 : salesInvoiceLayout === "quick" ? 4 : 5;
+  const paymentColumns = salesInvoiceLayout === "erp" ? 6 : salesInvoiceLayout === "quick" ? 4 : 5;
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.invoiceDate ?? todayStr());
   const [paymentChoice, setPaymentChoice] = useState<SalesPaymentChoice>(() => {
@@ -826,7 +865,6 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         next.lineTotal = net + net * next.vatRate / 100;
         return [...current, next];
       });
-      setActiveTab("lines");
       if (action === "close") setQuickCreate(null);
       return true;
     } catch (e: any) {
@@ -970,23 +1008,39 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   }
 
   return (
-    <div ref={formRef} className="zdoc-form" style={invoiceEditorShell}>
-      <style>{documentFormStyles}</style>
+    <div
+      ref={formRef}
+      className={`zdoc-form zsales-invoice-single-page zsales-layout-${salesInvoiceLayout}`}
+      data-layout={salesInvoiceLayout}
+      style={docFormShell}
+    >
+      <style>{documentFormStyles + salesInvoiceTemplateStyles}</style>
       <DocumentFormHeader
         title={isEdit ? `${text("تعديل الفاتورة", "Edit invoice")} ${initial?.invoiceNo ?? ""}` : text("فاتورة مبيعات جديدة", "New sales invoice")}
         hint={text(`${invoiceCount} فاتورة — يتم ترحيل القيد تلقائيًا عند الحفظ`, `${invoiceCount} invoices — entries post automatically when saved`)}
-        actionLabel={text("فاتورة مبيعات", "Sales invoice")}
-        actionTitle={text("عرض بيانات الفاتورة", "Show invoice details")}
-        onAction={() => setActiveTab("basic")}
       />
-      <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
-        { key: "basic", label: text("البيانات الأساسية", "Basic information") },
-        { key: "lines", label: `${text("بنود الأصناف", "Items")} (${selectedLineCount})` },
-        { key: "payments", label: text("المدفوعات", "Payments") },
-      ]} />
+      <div className="zsales-layout-row">
+        <label className="zsales-layout-label" htmlFor="sales-invoice-layout">
+          {text("نموذج شاشة الفاتورة", "Invoice screen template")}
+          <small>{text("يُحفظ اختيارك كافتراضي على هذا الجهاز", "Your choice is saved as the default on this device")}</small>
+        </label>
+        <select
+          id="sales-invoice-layout"
+          data-testid="input-sales-invoice-layout"
+          className="zsales-layout-select"
+          value={salesInvoiceLayout}
+          onChange={(event) => setSalesInvoiceLayout(event.target.value as SalesInvoiceLayout)}
+          aria-label={text("اختيار نموذج شاشة فاتورة المبيعات", "Choose sales invoice screen template")}
+        >
+          <option value="classic">{text("تقليدي", "Classic")}</option>
+          <option value="quick">{text("إدخال سريع", "Quick entry")}</option>
+          <option value="modern">{text("شبكة حديثة", "Modern grid")}</option>
+          <option value="erp">{text("ERP مكثف", "Dense ERP")}</option>
+        </select>
+      </div>
 
-      <div style={contentPanel(activeTab, "basic")}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+      <section className="zsales-section zsales-header-section">
+      <div className="zsales-header-fields" style={{ display: "grid", gridTemplateColumns: `repeat(${headerColumns}, minmax(0, 1fr))`, gap: "0 var(--si-density)", alignItems: "start" }}>
         <Field label={text("العميل *", "Customer *")}>
           <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -1053,7 +1107,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         {invoiceType === "standard" && (
           <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{text("بيانات المشتري (للفاتورة الضريبية)", "Buyer details (for tax invoices)")}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(headerColumns, 3)}, minmax(0, 1fr))`, gap: "0 10px" }}>
               <Field label={text("اسم المشتري", "Buyer name")}>
                 <input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} style={input} {...navInput} />
               </Field>
@@ -1067,17 +1121,12 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           </div>
         )}
       </div>
-      </div>
+      </section>
 
-      <div
-        className="zlines-panel zsales-invoice-lines"
-        style={activeTab === "lines"
-          ? { display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }
-          : linesPanel(activeTab)}
-      >
-      <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
+      <section className="zsales-section zsales-items-section zsales-invoice-lines">
+      <div className="zsales-section-heading">
         <strong style={{ fontSize: 15 }}>{text("بنود الأصناف", "Invoice items")}</strong>
-        <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>
+        <span>
           {selectedLineCount} {text("صنف", "items")}
         </span>
       </div>
@@ -1205,10 +1254,10 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       <div style={docFormPinned}>
       <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       </div>
-      </div>
+      </section>
 
-      <div style={contentPanel(activeTab, "payments")}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+      <section className="zsales-section zsales-payment-section">
+      <div className="zsales-payment-fields" style={{ display: "grid", gridTemplateColumns: `repeat(${paymentColumns}, minmax(0, 1fr))`, gap: "0 var(--si-density)", alignItems: "start" }}>
         <Field label={text("طريقة الدفع", "Payment method")}>
           <SearchCombobox
             value={paymentChoice}
@@ -1285,14 +1334,13 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       <Field label={text("ملاحظات", "Notes")} style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
-      </div>
+      </section>
 
-      <div style={docFormPinned}>
+      <div className="zsales-form-footer" style={docFormPinned}>
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {activeTab === "lines" && (
             <>
               <button
                 onClick={addLine}
@@ -1322,7 +1370,6 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                 ✨ {text("صنف جديد", "New item")}
               </button>
             </>
-          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>

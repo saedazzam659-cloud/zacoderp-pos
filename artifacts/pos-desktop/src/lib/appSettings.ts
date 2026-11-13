@@ -27,9 +27,13 @@ const LS_HIDE_ZEROS = "pos_desktop_hide_zeros";
 const LS_SHOW_FREE_QTY_COLUMN = "pos_desktop_show_free_qty_column";
 const LS_NUMBER_SYSTEM = "pos_desktop_number_system";
 const LS_UI_LANGUAGE = "pos_desktop_ui_language";
+const LS_SALES_INVOICE_LAYOUT = "pos_desktop_sales_invoice_layout";
 
 export type NumberSystem = "arabic" | "latin";
 export type UiLanguage = "ar" | "en";
+export type SalesInvoiceLayout = "classic" | "quick" | "modern" | "erp";
+
+const SALES_INVOICE_LAYOUTS: SalesInvoiceLayout[] = ["classic", "quick", "modern", "erp"];
 
 export const DECIMALS_MIN = 0;
 export const DECIMALS_MAX = 6;
@@ -294,6 +298,39 @@ export function useShowFreeQuantityColumn(): boolean {
     };
   }, []);
   return show;
+}
+
+// ─── Sales invoice editor layout ─────────────────────────────────────
+// The selected layout is an app-level preference, not invoice data. Keep the
+// current tabbed form as the default so existing installs do not change until
+// a user explicitly selects another template.
+export function getSalesInvoiceLayout(): SalesInvoiceLayout {
+  if (typeof window === "undefined") return "classic";
+  const value = localStorage.getItem(LS_SALES_INVOICE_LAYOUT);
+  return SALES_INVOICE_LAYOUTS.includes(value as SalesInvoiceLayout)
+    ? value as SalesInvoiceLayout
+    : "classic";
+}
+
+export function setSalesInvoiceLayout(layout: SalesInvoiceLayout): void {
+  if (!SALES_INVOICE_LAYOUTS.includes(layout)) return;
+  writeKey(LS_SALES_INVOICE_LAYOUT, layout);
+  window.dispatchEvent(new Event(EVT));
+}
+
+/** Live sales-invoice layout preference, shared across app windows and reloads. */
+export function useSalesInvoiceLayout(): SalesInvoiceLayout {
+  const [layout, setLayout] = useState<SalesInvoiceLayout>(() => getSalesInvoiceLayout());
+  useEffect(() => {
+    const refresh = () => setLayout(getSalesInvoiceLayout());
+    window.addEventListener(EVT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(EVT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return layout;
 }
 
 /** Input-value helper: returns "" for a zero amount when `hide` is on. */
