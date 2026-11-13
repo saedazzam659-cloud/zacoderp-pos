@@ -14,9 +14,41 @@ import {
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { printVoucher } from "../lib/invoicePrint";
-import { uiText, useUiLanguage } from "../lib/appSettings";
+import {
+  setCashBankVoucherLayout, uiText, useCashBankVoucherLayout, useUiLanguage,
+} from "../lib/appSettings";
 import { ReportSummaryCards } from "../components/ReportSummaryCards";
 import { ReportDisplayLayout } from "../components/ReportDisplayLayout";
+import { DocumentEditorSection, DocumentEditorShell } from "../components/DocumentEditorShell";
+
+const cashBankVoucherStyles = `
+  .zvoucher-editor .zvoucher-title {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--zdoc-border);
+    border-inline-start: 4px solid var(--zdoc-accent);
+    border-radius: var(--zdoc-radius);
+    background: var(--zdoc-panel);
+  }
+  .zvoucher-editor .zvoucher-primary-grid,
+  .zvoucher-editor .zvoucher-pair-grid { gap: 12px !important; }
+  .zvoucher-editor .zvoucher-amount-input {
+    min-height: 42px;
+    font-size: 18px !important;
+    font-weight: 700 !important;
+    text-align: left;
+  }
+  .zvoucher-editor[data-layout="quick"] .zvoucher-primary-grid { gap: 8px !important; }
+  .zvoucher-editor[data-layout="modern"] .zvoucher-primary-section { box-shadow: 0 6px 18px #0f172a0c; }
+  .zvoucher-editor[data-layout="modern"] .zvoucher-amount-input { border-width: 2px !important; }
+  .zvoucher-editor[data-layout="erp"] .zvoucher-primary-grid,
+  .zvoucher-editor[data-layout="erp"] .zvoucher-pair-grid { gap: 6px !important; }
+  .zvoucher-editor[data-layout="erp"] .zvoucher-amount-input { min-height: 32px; font-size: 15px !important; }
+  @media (max-width: 700px) {
+    .zvoucher-editor .zvoucher-primary-grid,
+    .zvoucher-editor .zvoucher-pair-grid { grid-template-columns: 1fr !important; }
+  }
+`;
 
 function txWalletName(
   deps: { cashBoxes: CashBox[]; banks: Bank[] } | null,
@@ -78,7 +110,7 @@ export default function FinancialTransactionsAdmin() {
       </div>}
     >
       {creating && deps && (
-        <Card style={{ marginBottom: 12, border: `2px solid ${creating.type === "receipt" ? "#15803d" : "#b91c1c"}` }}>
+        <Card style={{ marginBottom: 12, border: "1px solid #d9e0e8" }}>
           <div style={{ padding: 16 }}>
             <CreateForm
               type={creating.type}
@@ -201,6 +233,7 @@ function CreateForm({ type, deps, onCancel, onDone }: {
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
+  const voucherLayout = useCashBankVoucherLayout();
   const { branches, costCenters } = useDimensions();
   const [date, setDate] = useState(todayStr());
   const [branchId, setBranchId] = useState<number | "">("");
@@ -240,110 +273,124 @@ function CreateForm({ type, deps, onCancel, onDone }: {
   }
 
   return (
-    <div>
-      <h3 style={{ marginTop: 0, color: type === "receipt" ? "#15803d" : "#b91c1c" }}>
-        {type === "receipt" ? text("سند قبض جديد", "New receipt voucher") : text("سند صرف جديد", "New payment voucher")}
-      </h3>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-        <Field label={text("المبلغ", "Amount")}><input type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} autoFocus /></Field>
-        <Field label={text("المحفظة", "Wallet")}>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? btnPrimary : btnSecondary}>{text("خزينة", "Cashbox")}</button>
-            <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? btnPrimary : btnSecondary}>{text("بنك", "Bank")}</button>
-          </div>
-        </Field>
-      </div>
+    <DocumentEditorShell
+      layout={voucherLayout}
+      onLayoutChange={setCashBankVoucherLayout}
+      label={text("شكل نموذج السند", "Voucher form layout")}
+      helperText={text("اختر الشكل المناسب؛ سيتم حفظه لسندات القبض والصرف.", "Choose a layout; it will be saved for both receipt and payment vouchers.")}
+      selectorAriaLabel={text("شكل نموذج سند القبض والصرف", "Receipt and payment form layout")}
+      className="zvoucher-editor"
+    >
+      <style>{cashBankVoucherStyles}</style>
+      <DocumentEditorSection className="zvoucher-section zvoucher-primary-section">
+        <h3 className="zvoucher-title" style={{ color: type === "receipt" ? "#15803d" : "#b91c1c" }}>
+          {type === "receipt" ? text("سند قبض جديد", "New receipt voucher") : text("سند صرف جديد", "New payment voucher")}
+        </h3>
+        <div className="zvoucher-primary-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+          <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+          <Field label={text("المبلغ", "Amount")}><input className="zvoucher-amount-input" type="number" step="0.01" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value) || 0)} style={input} autoFocus /></Field>
+          <Field label={text("المحفظة", "Wallet")}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? btnPrimary : btnSecondary}>{text("خزينة", "Cashbox")}</button>
+              <button onClick={() => setWalletKind("bank")} type="button" style={walletKind === "bank" ? btnPrimary : btnSecondary}>{text("بنك", "Bank")}</button>
+            </div>
+          </Field>
+        </div>
+      </DocumentEditorSection>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {walletKind === "cash" ? (
-          <Field label={text("الخزينة", "Cashbox")}>
+      <DocumentEditorSection className="zvoucher-section">
+        <div className="zvoucher-pair-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          {walletKind === "cash" ? (
+            <Field label={text("الخزينة", "Cashbox")}>
+              <SearchCombobox
+                value={cashBoxId ?? ""}
+                onChange={(v) => setCashBoxId(Number(v) || null)}
+                style={input}
+                options={deps.cashBoxes.map((c) => ({ value: c.id, label: `${c.name} (${fmt(c.balance)})` }))}
+              />
+            </Field>
+          ) : (
+            <Field label={text("البنك", "Bank")}>
+              <SearchCombobox
+                value={bankId ?? ""}
+                onChange={(v) => setBankId(Number(v) || null)}
+                style={input}
+                options={deps.banks.map((b) => ({ value: b.id, label: `${b.name} (${fmt(b.balance)})` }))}
+              />
+            </Field>
+          )}
+
+          <Field label={text("الطرف الآخر", "Counterparty")}>
             <SearchCombobox
-              value={cashBoxId ?? ""}
-              onChange={(v) => setCashBoxId(Number(v) || null)}
+              value={partyType}
+              onChange={(v) => { setPartyType(v as PartyType); setPartyId(null); }}
               style={input}
-              options={deps.cashBoxes.map((c) => ({ value: c.id, label: `${c.name} (${fmt(c.balance)})` }))}
+              options={[
+                { value: "none", label: text("حساب من شجرة الحسابات (إيراد / مصروف / ...)", "Account from chart of accounts (income / expense / …)") },
+                { value: "supplier", label: text("مورد", "Supplier") },
+                ...(type === "receipt" ? [{ value: "customer", label: text("عميل", "Customer") }] : []),
+              ]}
             />
           </Field>
-        ) : (
-          <Field label={text("البنك", "Bank")}>
+        </div>
+
+        {partyType === "supplier" && (
+          <Field label={text("المورد", "Supplier")}>
             <SearchCombobox
-              value={bankId ?? ""}
-              onChange={(v) => setBankId(Number(v) || null)}
+              value={partyId ?? ""}
+              onChange={(v) => setPartyId(Number(v) || null)}
               style={input}
-              options={deps.banks.map((b) => ({ value: b.id, label: `${b.name} (${fmt(b.balance)})` }))}
+              options={[
+                { value: "", label: text("— اختر —", "— Select —") },
+                ...deps.suppliers.map((s) => ({ value: s.id, label: `${s.nameAr} (${text("الرصيد", "Balance")}: ${fmt(s.balance)})` })),
+              ]}
             />
           </Field>
         )}
+        {partyType === "customer" && (
+          <Field label={text("العميل", "Customer")}>
+            <SearchCombobox
+              value={partyId ?? ""}
+              onChange={(v) => setPartyId(Number(v) || null)}
+              style={input}
+              options={[
+                { value: "", label: text("— اختر —", "— Select —") },
+                ...deps.customers.map((c) => ({ value: c.id, label: `${c.nameAr} (${text("الرصيد", "Balance")}: ${fmt(c.balance ?? 0)})` })),
+              ]}
+            />
+          </Field>
+        )}
+        {partyType === "none" && (
+          <Field label={type === "receipt" ? text("حساب الإيراد / الدائن", "Income / credit account") : text("حساب المصروف / المدين", "Expense / debit account")}>
+            <SearchCombobox
+              value={counterAccountId ?? ""}
+              onChange={(v) => setCounterAccountId(Number(v) || null)}
+              style={input}
+              options={[
+                { value: "", label: text("— اختر —", "— Select —") },
+                ...leafAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` })),
+              ]}
+            />
+          </Field>
+        )}
+      </DocumentEditorSection>
 
-        <Field label={text("الطرف الآخر", "Counterparty")}>
-          <SearchCombobox
-            value={partyType}
-            onChange={(v) => { setPartyType(v as PartyType); setPartyId(null); }}
-            style={input}
-            options={[
-              { value: "none", label: text("حساب من شجرة الحسابات (إيراد / مصروف / ...)", "Account from chart of accounts (income / expense / …)") },
-              { value: "supplier", label: text("مورد", "Supplier") },
-              ...(type === "receipt" ? [{ value: "customer", label: text("عميل", "Customer") }] : []),
-            ]}
-          />
-        </Field>
-      </div>
-
-      {partyType === "supplier" && (
-        <Field label={text("المورد", "Supplier")}>
-          <SearchCombobox
-            value={partyId ?? ""}
-            onChange={(v) => setPartyId(Number(v) || null)}
-            style={input}
-            options={[
-              { value: "", label: text("— اختر —", "— Select —") },
-              ...deps.suppliers.map((s) => ({ value: s.id, label: `${s.nameAr} (${text("الرصيد", "Balance")}: ${fmt(s.balance)})` })),
-            ]}
-          />
-        </Field>
-      )}
-      {partyType === "customer" && (
-        <Field label={text("العميل", "Customer")}>
-          <SearchCombobox
-            value={partyId ?? ""}
-            onChange={(v) => setPartyId(Number(v) || null)}
-            style={input}
-            options={[
-              { value: "", label: text("— اختر —", "— Select —") },
-              ...deps.customers.map((c) => ({ value: c.id, label: `${c.nameAr} (${text("الرصيد", "Balance")}: ${fmt(c.balance ?? 0)})` })),
-            ]}
-          />
-        </Field>
-      )}
-      {partyType === "none" && (
-        <Field label={type === "receipt" ? text("حساب الإيراد / الدائن", "Income / credit account") : text("حساب المصروف / المدين", "Expense / debit account")}>
-          <SearchCombobox
-            value={counterAccountId ?? ""}
-            onChange={(v) => setCounterAccountId(Number(v) || null)}
-            style={input}
-            options={[
-              { value: "", label: text("— اختر —", "— Select —") },
-              ...leafAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` })),
-            ]}
-          />
-        </Field>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label={text("الفرع", "Branch")}>
-          <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
-        </Field>
-        <Field label={text("مركز التكلفة", "Cost center")}>
-          <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
-        </Field>
-      </div>
-      <Field label={text("البيان", "Description")}><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
-      <ErrorMsg text={err} />
+      <DocumentEditorSection className="zvoucher-section">
+        <div className="zvoucher-pair-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field label={text("الفرع", "Branch")}>
+            <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
+          </Field>
+          <Field label={text("مركز التكلفة", "Cost center")}>
+            <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
+          </Field>
+        </div>
+        <Field label={text("البيان", "Description")}><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
+        <ErrorMsg text={err} />
+      </DocumentEditorSection>
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
         <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : text("حفظ وترحيل", "Save and post")}</button>
       </Actions>
-    </div>
+    </DocumentEditorShell>
   );
 }

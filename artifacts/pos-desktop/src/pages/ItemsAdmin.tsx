@@ -19,7 +19,71 @@ import { currencySymbol } from "../lib/currency";
 import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
 import { exportToExcel, exportToPdf, type ExportColumn } from "../lib/exporters";
 import { useDataRefresh, emitData } from "../lib/dataBus";
-import { useHideZeros, blankIfZero, uiText, useUiLanguage, type UiLanguage } from "../lib/appSettings";
+import {
+  useHideZeros, blankIfZero, setItemFormLayout, uiText, useItemFormLayout, useUiLanguage, type UiLanguage,
+} from "../lib/appSettings";
+import { DocumentEditorSection, DocumentEditorShell } from "../components/DocumentEditorShell";
+
+const itemFormTemplateStyles = `
+  .zitem-form-editor .zitem-form-panel {
+    margin-bottom: 16px;
+    padding: 18px;
+    border: 1px solid var(--zdoc-border) !important;
+    border-radius: var(--zdoc-radius) !important;
+    background: var(--zdoc-panel) !important;
+  }
+  .zitem-form-editor .zitem-form-title {
+    margin: 0 0 14px;
+    padding: 8px 10px;
+    border: 1px solid var(--zdoc-border);
+    border-inline-start: 4px solid var(--zdoc-accent);
+    border-radius: var(--zdoc-radius);
+    background: #fff;
+  }
+  .zitem-form-editor .zitem-form-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 7px;
+    border: 1px solid var(--zdoc-border);
+    border-radius: var(--zdoc-radius);
+    background: var(--zdoc-grid);
+  }
+  .zitem-form-editor .zitem-form-tabs [role="tab"] {
+    border-radius: var(--zdoc-radius) !important;
+    transition: background-color .15s ease, color .15s ease, box-shadow .15s ease;
+  }
+  .zitem-form-editor .zitem-form-tabs [role="tab"][aria-selected="true"] {
+    border-color: var(--zdoc-accent) !important;
+    background: var(--zdoc-accent) !important;
+    color: #fff !important;
+    box-shadow: 0 2px 6px color-mix(in srgb, var(--zdoc-accent) 24%, transparent);
+  }
+  .zitem-form-editor .zitem-form-tab-section { background: #fff; }
+  .zitem-form-editor .zitem-form-tab-panel { min-height: 260px; padding-top: 10px; }
+  .zitem-form-editor .zitem-form-panel input:not([type="checkbox"]),
+  .zitem-form-editor .zitem-form-panel select,
+  .zitem-form-editor .zitem-form-panel textarea {
+    border-color: var(--zdoc-border) !important;
+    border-radius: var(--zdoc-radius) !important;
+  }
+  .zitem-form-editor[data-layout="quick"] .zitem-form-panel { padding: 12px !important; }
+  .zitem-form-editor[data-layout="quick"] .zitem-form-tabs { gap: 4px; padding: 5px; }
+  .zitem-form-editor[data-layout="modern"] .zitem-form-panel {
+    border-top: 3px solid var(--zdoc-accent) !important;
+    box-shadow: 0 8px 24px #0f172a0b;
+  }
+  .zitem-form-editor[data-layout="modern"] .zitem-form-tabs { background: #fff; }
+  .zitem-form-editor[data-layout="erp"] .zitem-form-panel { padding: 10px !important; }
+  .zitem-form-editor[data-layout="erp"] .zitem-form-tab-panel { min-height: 240px; padding-top: 5px; }
+  .zitem-form-editor[data-layout="erp"] .zitem-form-panel input:not([type="checkbox"]),
+  .zitem-form-editor[data-layout="erp"] .zitem-form-panel select { min-height: 30px; }
+  .zitem-form-editor .zitem-form-actions {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--zdoc-border);
+  }
+`;
 
 // ─── Excel-like grid: column defs, filtering, sorting, export ───────
 type ColKey = "name" | "qty" | "barcode" | "code" | "price" | "vat" | "source";
@@ -1066,6 +1130,7 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
+  const itemFormLayout = useItemFormLayout();
   const uoms = listUom();
   const itemGroups = listItemGroups();
   const hideZeros = useHideZeros();
@@ -1594,9 +1659,18 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
   const posSubgroupSuggestions = Array.from(new Set(availableItems.map((item) => item.metadata?.posSubgroupName?.trim()).filter((value): value is string => !!value)));
 
   return (
-    <div style={{ background: "#fff", border: "1px solid #d9e0e8", borderRadius: 10, padding: 20, marginBottom: 16 }}>
-      <h3 style={{ ...S.modalTitle, color: initial ? "#1e40af" : "#15803d" }}>{initial ? `✏️ ${text("تعديل صنف", "Edit item")}` : `➕ ${text("صنف جديد", "New item")}`}</h3>
-      <div role="tablist" aria-label={text("أقسام بيانات الصنف", "Item data sections")} style={S.formTabs}>
+    <DocumentEditorShell
+      layout={itemFormLayout}
+      onLayoutChange={setItemFormLayout}
+      label={text("شكل نموذج الصنف", "Item form layout")}
+      helperText={text("اختر طريقة العرض؛ سيُحفظ اختيارك لهذه الشاشة.", "Choose a display style; your choice is saved for this screen.")}
+      selectorAriaLabel={text("شكل نموذج الصنف", "Item form layout")}
+      className="zitem-form-editor"
+    >
+      <style>{itemFormTemplateStyles}</style>
+      <div className="zitem-form-panel">
+      <h3 className="zitem-form-title" style={{ ...S.modalTitle, color: initial ? "#1e40af" : "#15803d" }}>{initial ? `✏️ ${text("تعديل صنف", "Edit item")}` : `➕ ${text("صنف جديد", "New item")}`}</h3>
+      <div className="zitem-form-tabs" role="tablist" aria-label={text("أقسام بيانات الصنف", "Item data sections")} style={S.formTabs}>
         {tabDefinitions.map((tab) => (
           <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)} style={activeTab === tab.id ? S.formTabActive : S.formTab}>
@@ -1604,7 +1678,8 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
           </button>
         ))}
       </div>
-      <div style={{ minHeight: 260, paddingTop: 16 }}>
+      <DocumentEditorSection className="zitem-form-tab-section">
+      <div className="zitem-form-tab-panel">
         {activeTab === "basic" && (
           <>
           <div style={S.formGrid4}>
@@ -2012,8 +2087,9 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
           </div>
         )}
       </div>
+      </DocumentEditorSection>
       {err && <div style={S.err}>{err}</div>}
-      <div style={S.btnRow}>
+      <div className="zitem-form-actions" style={S.btnRow}>
         <button onClick={submit} disabled={saving} style={S.btnPrimary}>{saving ? "..." : initial ? `💾 ${text("حفظ التعديلات", "Save changes")}` : `✅ ${text("إضافة", "Add item")}`}</button>
         <button onClick={onClose} style={S.btnGhost}>{text("إلغاء", "Cancel")}</button>
       </div>
@@ -2066,7 +2142,8 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </DocumentEditorShell>
   );
 }
 

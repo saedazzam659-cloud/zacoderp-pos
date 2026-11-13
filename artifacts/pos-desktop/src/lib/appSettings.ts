@@ -32,6 +32,8 @@ const LS_UI_LANGUAGE = "pos_desktop_ui_language";
 const LS_SALES_INVOICE_LAYOUT = "pos_desktop_sales_invoice_layout";
 const LS_DOCUMENT_EDITOR_LAYOUT = "pos_desktop_document_editor_layout";
 const LS_JOURNAL_ENTRY_LAYOUT = "pos_desktop_journal_entry_layout";
+const LS_CASH_BANK_VOUCHER_LAYOUT = "pos_desktop_cash_bank_voucher_layout";
+const LS_ITEM_FORM_LAYOUT = "pos_desktop_item_form_layout";
 
 export type NumberSystem = "arabic" | "latin";
 export type UiLanguage = "ar" | "en";
@@ -371,6 +373,60 @@ export function useJournalEntryLayout(): DocumentEditorLayout {
     };
   }, []);
   return layout;
+}
+
+function getScopedEditorLayout(key: string, fallback: DocumentEditorLayout): DocumentEditorLayout {
+  if (typeof window === "undefined") return fallback;
+  const value = localStorage.getItem(key);
+  return DOCUMENT_EDITOR_LAYOUTS.includes(value as DocumentEditorLayout)
+    ? value as DocumentEditorLayout
+    : fallback;
+}
+
+function setScopedEditorLayout(key: string, layout: DocumentEditorLayout): void {
+  if (!DOCUMENT_EDITOR_LAYOUTS.includes(layout)) return;
+  writeKey(key, layout);
+  window.dispatchEvent(new Event(EVT));
+}
+
+function useScopedEditorLayout(key: string, fallback: DocumentEditorLayout): DocumentEditorLayout {
+  const [layout, setLayout] = useState<DocumentEditorLayout>(() => getScopedEditorLayout(key, fallback));
+  useEffect(() => {
+    const refresh = () => setLayout(getScopedEditorLayout(key, fallback));
+    window.addEventListener(EVT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(EVT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, [key, fallback]);
+  return layout;
+}
+
+/** Cash receipt and payment forms share a separate, modern-by-default layout. */
+export function getCashBankVoucherLayout(): DocumentEditorLayout {
+  return getScopedEditorLayout(LS_CASH_BANK_VOUCHER_LAYOUT, "modern");
+}
+
+export function setCashBankVoucherLayout(layout: DocumentEditorLayout): void {
+  setScopedEditorLayout(LS_CASH_BANK_VOUCHER_LAYOUT, layout);
+}
+
+export function useCashBankVoucherLayout(): DocumentEditorLayout {
+  return useScopedEditorLayout(LS_CASH_BANK_VOUCHER_LAYOUT, "modern");
+}
+
+/** Item entry forms have their own preference, independent from voucher layouts. */
+export function getItemFormLayout(): DocumentEditorLayout {
+  return getScopedEditorLayout(LS_ITEM_FORM_LAYOUT, "modern");
+}
+
+export function setItemFormLayout(layout: DocumentEditorLayout): void {
+  setScopedEditorLayout(LS_ITEM_FORM_LAYOUT, layout);
+}
+
+export function useItemFormLayout(): DocumentEditorLayout {
+  return useScopedEditorLayout(LS_ITEM_FORM_LAYOUT, "modern");
 }
 
 // Backwards-compatible names retained for the existing sales invoice editor.
