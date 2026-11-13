@@ -73,11 +73,18 @@ const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page .zsales-action-bar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 8px;padding:7px 8px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:rgba(255,255,255,.97);box-shadow:0 5px 16px #0f172a20;backdrop-filter:blur(8px);}
   .zsales-invoice-single-page .zsales-action-buttons{display:flex;align-items:center;gap:6px;flex:1 1 420px;min-width:0;flex-wrap:wrap;}
   .zsales-invoice-single-page .zsales-action-buttons button{min-height:32px;}
-  .zsales-invoice-single-page .zsales-quick-payment{display:flex;align-items:center;gap:8px;flex:1 1 390px;min-width:300px;}
-  .zsales-invoice-single-page .zsales-quick-payment-label{font-size:11px;font-weight:700;color:#475569;white-space:nowrap;}
-  .zsales-invoice-single-page .zsales-payment-methods{display:grid;grid-template-columns:repeat(4,minmax(54px,1fr));gap:4px;flex:1;min-width:0;}
-  .zsales-invoice-single-page .zsales-payment-methods button{min-height:32px;padding:5px 7px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:#fff;color:#334155;font:inherit;font-size:11px;font-weight:700;white-space:nowrap;cursor:pointer;}
-  .zsales-invoice-single-page .zsales-payment-methods button[aria-pressed="true"]{border-color:var(--si-accent);background:color-mix(in srgb,var(--si-accent) 11%,white);color:var(--si-accent);box-shadow:inset 0 0 0 1px var(--si-accent);}
+  .zsales-invoice-single-page .zsales-payment-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;}
+  .zsales-invoice-single-page .zsales-payment-intro{display:flex;flex-direction:column;gap:3px;min-width:190px;}
+  .zsales-invoice-single-page .zsales-payment-intro strong{font-size:14px;color:#0f172a;}
+  .zsales-invoice-single-page .zsales-payment-intro small{font-size:11px;line-height:1.5;color:#64748b;}
+  .zsales-invoice-single-page .zsales-payment-methods{display:grid;grid-template-columns:repeat(4,minmax(88px,1fr));gap:6px;flex:1 1 440px;min-width:0;}
+  .zsales-invoice-single-page .zsales-payment-methods button{min-height:40px;padding:7px 12px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:#fff;color:#334155;font:inherit;font-size:12px;font-weight:700;white-space:nowrap;cursor:pointer;transition:background .15s,border-color .15s,color .15s,box-shadow .15s;}
+  .zsales-invoice-single-page .zsales-payment-methods button:hover{border-color:var(--si-accent);background:color-mix(in srgb,var(--si-accent) 5%,white);}
+  .zsales-invoice-single-page .zsales-payment-methods button[aria-pressed="true"]{border-color:var(--si-accent);background:var(--si-accent);color:#fff;box-shadow:0 2px 6px color-mix(in srgb,var(--si-accent) 28%,transparent);}
+  .zsales-invoice-single-page .zsales-payment-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:start;}
+  .zsales-invoice-single-page .zsales-payment-fields[data-count="1"]{grid-template-columns:minmax(0,1fr);}
+  .zsales-invoice-single-page .zsales-payment-card{display:grid;gap:9px;align-content:start;padding:10px;border:1px solid var(--si-border);border-top:3px solid var(--si-accent);border-radius:var(--si-radius);background:#fff;min-width:0;}
+  .zsales-invoice-single-page .zsales-payment-card-title{font-size:12px;font-weight:800;color:var(--si-accent);}
   .zsales-invoice-single-page .zsales-action-total{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:var(--si-radius);background:color-mix(in srgb,var(--si-accent) 10%,white);color:#0f172a;font-size:11px;white-space:nowrap;}
   .zsales-invoice-single-page .zsales-action-feedback{flex:1 1 100%;max-height:92px;overflow:auto;}
   .zsales-invoice-single-page .zsales-items-section{background:#fff;}
@@ -95,10 +102,10 @@ const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page[data-layout="erp"] .zsales-section{padding:7px;margin:7px 0;}
   .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap thead th{padding:6px 4px!important;font-size:10px!important;}
   .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap .zfield{height:28px!important;padding:3px 4px!important;font-size:11px!important;}
-  @media(max-width:1100px){.zsales-invoice-single-page .zsales-header-fields,.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
-  @media(max-width:700px){.zsales-invoice-single-page .zsales-header-fields,.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+  @media(max-width:1100px){.zsales-invoice-single-page .zsales-header-fields{grid-template-columns:repeat(3,minmax(0,1fr))!important}.zsales-invoice-single-page .zsales-payment-fields[data-count="3"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media(max-width:700px){.zsales-invoice-single-page .zsales-header-fields{grid-template-columns:repeat(2,minmax(0,1fr))!important}.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:minmax(0,1fr)}}
   @media(max-width:900px){.zsales-invoice-single-page .zsales-layout-row{align-items:stretch;flex-direction:column}.zsales-invoice-single-page .zsales-layout-select{max-width:none;width:100%}.zsales-invoice-single-page .zsales-source-loader{grid-template-columns:1fr 1fr}}
-  @media(max-width:700px){.zsales-invoice-single-page .zsales-action-buttons{flex-basis:100%}.zsales-invoice-single-page .zsales-quick-payment{flex:1 1 100%;min-width:0;align-items:flex-start;flex-direction:column}.zsales-invoice-single-page .zsales-payment-methods{width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}.zsales-invoice-single-page .zsales-action-total{margin-inline-start:auto}.zsales-invoice-single-page .zsales-source-loader{grid-template-columns:1fr}}
+  @media(max-width:700px){.zsales-invoice-single-page .zsales-action-buttons{flex-basis:100%}.zsales-invoice-single-page .zsales-payment-methods{width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}.zsales-invoice-single-page .zsales-action-total{margin-inline-start:auto}.zsales-invoice-single-page .zsales-source-loader{grid-template-columns:1fr}}
   @media(max-height:680px){.zsales-invoice-single-page .zsales-layout-row{margin:4px 0 6px;padding:4px 8px}.zsales-invoice-single-page .zsales-layout-label small{display:none}.zsales-invoice-single-page .zsales-section{margin:6px 0;padding:7px}.zsales-invoice-single-page .zsales-action-bar{margin:4px 0 6px;padding:5px 7px}.zsales-invoice-single-page .zsales-section-heading{margin-bottom:5px}}
 `;
 
@@ -599,7 +606,6 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   const showFreeQuantityColumn = useShowFreeQuantityColumn();
   const salesInvoiceLayout = useSalesInvoiceLayout();
   const headerColumns = salesInvoiceLayout === "erp" ? 7 : salesInvoiceLayout === "quick" ? 4 : 5;
-  const paymentColumns = salesInvoiceLayout === "erp" ? 6 : salesInvoiceLayout === "quick" ? 4 : 5;
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.invoiceDate ?? todayStr());
   const [paymentChoice, setPaymentChoice] = useState<SalesPaymentChoice>(() => {
@@ -1326,23 +1332,6 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
             style={{ ...btnPrimary, padding: "6px 12px", whiteSpace: "nowrap" }}
           >{busy ? "..." : (isEdit ? text("حفظ التعديل", "Save changes") : text("حفظ وترحيل", "Save and post"))}</button>
         </div>
-        <div className="zsales-quick-payment" data-testid="sales-invoice-quick-payment">
-          <span className="zsales-quick-payment-label">{text("طريقة الدفع", "Payment method")}</span>
-          <div className="zsales-payment-methods" role="group" aria-label={text("اختيار طريقة الدفع", "Choose payment method")}>
-            {paymentOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                data-testid={`button-sales-invoice-payment-${option.value}`}
-                aria-label={text(`طريقة الدفع: ${option.label}`, `Payment method: ${option.label}`)}
-                aria-pressed={paymentChoice === option.value}
-                onClick={() => changePaymentChoice(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
         <div className="zsales-action-total" data-testid="sales-invoice-total" aria-live="polite">
           <span>{text("الإجمالي", "Total")}</span>
           <strong>{docSym} {fmt(result.grandTotal)}</strong>
@@ -1599,47 +1588,82 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       </section>
 
       <section className="zsales-section zsales-payment-section">
-      <div className="zsales-payment-fields" style={{ display: "grid", gridTemplateColumns: `repeat(${paymentColumns}, minmax(0, 1fr))`, gap: "0 var(--si-density)", alignItems: "start" }}>
-        <Field label={`${text("المبلغ النقدي", "Cash amount")} · ${docSym}`}>
-          <input type="number" min="0" max={result.grandTotal} step="0.01"
-            data-testid="input-sales-invoice-cash-amount"
-            value={cashAmountText} onChange={(e) => updatePaymentAmount("cash", e.target.value)}
-            style={input} {...navInput} />
-        </Field>
-        {cashAmount > 0.005 && (
-          <Field label={text("الخزينة", "Cashbox")}>
-            <SearchCombobox
-              value={cashBoxId ?? ""}
-              onChange={(v) => setCashBoxId(Number(v) || null)}
-              {...navCombo}
-              style={input}
-              options={invoiceCashBoxes.map((c) => ({ value: c.id, label: `${language === "en" ? c.nameEn || c.name : c.name} · ${c.currencyCode}` }))}
-            />
-          </Field>
+      <div className="zsales-payment-header">
+        <div className="zsales-payment-intro">
+          <strong>{text("طريقة الدفع", "Payment method")}</strong>
+          <small>{text("اختر طريقة واحدة، أو «مختلط» لتقسيم المبلغ بين أكثر من طريقة.", "Choose one method, or select “Mixed” to split the amount.")}</small>
+        </div>
+        <div className="zsales-payment-methods" role="group" aria-label={text("اختيار طريقة الدفع", "Choose payment method")} data-testid="sales-invoice-payment-methods">
+          {paymentOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              data-testid={`button-sales-invoice-payment-${option.value}`}
+              aria-label={text(`طريقة الدفع: ${option.label}`, `Payment method: ${option.label}`)}
+              aria-pressed={paymentChoice === option.value}
+              onClick={() => changePaymentChoice(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="zsales-payment-fields" data-count={paymentChoice === "mixed" ? 3 : 1}>
+        {(paymentChoice === "mixed" || paymentChoice === "cash") && (
+          <div className="zsales-payment-card">
+            <div className="zsales-payment-card-title">{text("الدفع النقدي", "Cash payment")}</div>
+            <Field label={`${text("المبلغ النقدي", "Cash amount")} · ${docSym}`}>
+              <input type="number" min="0" max={result.grandTotal} step="0.01"
+                data-testid="input-sales-invoice-cash-amount"
+                value={cashAmountText} onChange={(e) => updatePaymentAmount("cash", e.target.value)}
+                style={input} {...navInput} />
+            </Field>
+            {cashAmount > 0.005 && (
+              <Field label={text("الخزينة", "Cashbox")}>
+                <SearchCombobox
+                  value={cashBoxId ?? ""}
+                  onChange={(v) => setCashBoxId(Number(v) || null)}
+                  {...navCombo}
+                  style={input}
+                  options={invoiceCashBoxes.map((c) => ({ value: c.id, label: `${language === "en" ? c.nameEn || c.name : c.name} · ${c.currencyCode}` }))}
+                />
+              </Field>
+            )}
+          </div>
         )}
-        <Field label={`${text("المبلغ البنكي", "Bank amount")} · ${docSym}`}>
-          <input type="number" min="0" max={result.grandTotal} step="0.01"
-            data-testid="input-sales-invoice-bank-amount"
-            value={bankAmountText} onChange={(e) => updatePaymentAmount("bank", e.target.value)}
-            style={input} {...navInput} />
-        </Field>
-        {bankAmount > 0.005 && (
-          <Field label={text("البنك", "Bank")}>
-            <SearchCombobox
-              value={bankId ?? ""}
-              onChange={(v) => setBankId(Number(v) || null)}
-              {...navCombo}
-              style={input}
-              options={invoiceBanks.map((b) => ({ value: b.id, label: `${language === "en" ? b.nameEn || b.name : b.name} · ${b.currencyCode}` }))}
-            />
-          </Field>
+        {(paymentChoice === "mixed" || paymentChoice === "bank") && (
+          <div className="zsales-payment-card">
+            <div className="zsales-payment-card-title">{text("الدفع البنكي", "Bank payment")}</div>
+            <Field label={`${text("المبلغ البنكي", "Bank amount")} · ${docSym}`}>
+              <input type="number" min="0" max={result.grandTotal} step="0.01"
+                data-testid="input-sales-invoice-bank-amount"
+                value={bankAmountText} onChange={(e) => updatePaymentAmount("bank", e.target.value)}
+                style={input} {...navInput} />
+            </Field>
+            {bankAmount > 0.005 && (
+              <Field label={text("البنك", "Bank")}>
+                <SearchCombobox
+                  value={bankId ?? ""}
+                  onChange={(v) => setBankId(Number(v) || null)}
+                  {...navCombo}
+                  style={input}
+                  options={invoiceBanks.map((b) => ({ value: b.id, label: `${language === "en" ? b.nameEn || b.name : b.name} · ${b.currencyCode}` }))}
+                />
+              </Field>
+            )}
+          </div>
         )}
-        <Field label={`${text("المبلغ الآجل", "Credit amount")} · ${docSym}`}>
-          <input type="number" min="0" max={result.grandTotal} step="0.01"
-            data-testid="input-sales-invoice-credit-amount"
-            value={creditAmountText} onChange={(e) => updatePaymentAmount("credit", e.target.value)}
-            style={input} {...navInput} />
-        </Field>
+        {(paymentChoice === "mixed" || paymentChoice === "credit") && (
+          <div className="zsales-payment-card">
+            <div className="zsales-payment-card-title">{text("الدفع الآجل", "Credit payment")}</div>
+            <Field label={`${text("المبلغ الآجل", "Credit amount")} · ${docSym}`}>
+              <input type="number" min="0" max={result.grandTotal} step="0.01"
+                data-testid="input-sales-invoice-credit-amount"
+                value={creditAmountText} onChange={(e) => updatePaymentAmount("credit", e.target.value)}
+                style={input} {...navInput} />
+            </Field>
+          </div>
+        )}
       </div>
       <div
         data-testid="sales-invoice-payment-balance"
