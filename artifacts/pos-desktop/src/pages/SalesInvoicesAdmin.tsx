@@ -1041,6 +1041,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
 
       <section className="zsales-section zsales-header-section">
       <div className="zsales-header-fields" style={{ display: "grid", gridTemplateColumns: `repeat(${headerColumns}, minmax(0, 1fr))`, gap: "0 var(--si-density)", alignItems: "start" }}>
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} {...navInput} /></Field>
         <Field label={text("العميل *", "Customer *")}>
           <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -1058,7 +1059,18 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
               style={quickAddButton("#2563eb")}>＋</button>
           </div>
         </Field>
-        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} {...navInput} /></Field>
+        <Field label={text("مندوب المبيعات", "Sales representative")}>
+          <SearchCombobox
+            value={salesRepId}
+            onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
+            {...navCombo}
+            style={input}
+            options={[
+              { value: "", label: text("— بدون —", "— None —") },
+              ...deps.salespersons.map((s) => ({ value: s.id, label: s.nameAr })),
+            ]}
+          />
+        </Field>
         <Field label={text("المستودع", "Warehouse")}>
           <SearchCombobox
             value={warehouseId}
@@ -1076,18 +1088,6 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         </Field>
         <Field label={text("مركز التكلفة", "Cost center")}>
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} {...navCombo} options={costCenterPickerOptions(costCenters)} style={input} />
-        </Field>
-        <Field label={text("مندوب المبيعات", "Sales representative")}>
-          <SearchCombobox
-            value={salesRepId}
-            onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
-            {...navCombo}
-            style={input}
-            options={[
-              { value: "", label: text("— بدون —", "— None —") },
-              ...deps.salespersons.map((s) => ({ value: s.id, label: s.nameAr })),
-            ]}
-          />
         </Field>
         {isZatcaCountry() && (
         <Field label={text("نوع الفاتورة (زاتكا)", "Invoice type (ZATCA)")}>
