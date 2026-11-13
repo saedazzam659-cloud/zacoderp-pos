@@ -633,7 +633,7 @@ fn generate_adjustment(
             params![entry_no, due_date, description, total_debit, total_credit, if post { "posted" } else { "draft" }],
         ).map_err(|e| e.to_string())?;
         let entry_id = tx.last_insert_rowid();
-        accounting::write_manual_lines(&tx, entry_id, &valid, None, post)
+        accounting::write_manual_lines(&tx, entry_id, &valid, None, post, false)
             .map_err(|e| e.to_string())?;
         tx.execute(
             "INSERT INTO accounting_adjustment_runs_local(adjustment_id,period_month,journal_entry_id,amount)

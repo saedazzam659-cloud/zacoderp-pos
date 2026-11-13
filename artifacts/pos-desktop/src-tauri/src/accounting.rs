@@ -377,6 +377,7 @@ pub struct ManualJeDetail {
     pub entry_no: String,
     pub entry_date: String,
     pub description: Option<String>,
+    pub reference: Option<String>,
     pub entry_type: String,
     pub status: String,
     pub source_type: Option<String>,
@@ -392,6 +393,8 @@ pub struct ManualJeDetail {
 pub struct ManualJeInput {
     pub entry_date: String,
     pub description: Option<String>,
+    #[serde(default)]
+    pub reference: Option<String>,
     #[serde(default)]
     pub entry_type: Option<String>,
     /// Manual document-number override. When None/empty the next sequence
@@ -432,6 +435,21 @@ pub(crate) fn valid_manual_lines(lines: &[ManualJeLine]) -> Vec<&ManualJeLine> {
         .collect()
 }
 
+/// Zero-valued zero-rated lines are retained only in the manual JE editor.
+pub(crate) fn valid_manual_je_lines(lines: &[ManualJeLine]) -> Vec<&ManualJeLine> {
+    lines
+        .iter()
+        .filter(|l| {
+            l.account_id > 0
+                && (l.debit.abs() > 1e-9
+                    || l.credit.abs() > 1e-9
+                    || l.description
+                        .as_deref()
+                        .is_some_and(|d| d.starts_with("ضريبة صفرية")))
+        })
+        .collect()
+}
+
 /// Validates a manual entry that is about to be POSTED. Draft entries skip this.
 pub(crate) fn validate_posted(valid: &[&ManualJeLine]) -> Result<(f64, f64), String> {
     if valid.len() < 2 {
@@ -450,18 +468,29 @@ pub(crate) fn validate_posted(valid: &[&ManualJeLine]) -> Result<(f64, f64), Str
     Ok((total_debit, total_credit))
 }
 
-/// Inserts the manual-entry lines for `je_id`, propagating the header cost
-/// center to any line that has none. Applies the balance impact only when the
-/// entry is being posted (drafts have zero balance effect).
+/// Inserts manual lines for `je_id`; tax-generated lines may bypass header cost
+/// center inheritance. Applies balance impact only when posting.
 pub(crate) fn write_manual_lines(
     tx: &Transaction,
     je_id: i64,
     valid: &[&ManualJeLine],
     header_cc: Option<i64>,
     post: bool,
+    clear_tax_line_cost_center: bool,
 ) -> Result<()> {
     for l in valid {
-        let line_cc = l.cost_center_id.or(header_cc);
+        let is_tax_line = clear_tax_line_cost_center
+            && l.description.as_deref().is_some_and(|description| {
+                description.starts_with("ضريبة المدخلات")
+                    || description.starts_with("ضريبة المخرجات")
+                    || description.starts_with("ضريبة صفرية")
+                    || description.starts_with("ضريبة القيمة المضافة")
+            });
+        let line_cc = if is_tax_line {
+            None
+        } else {
+            l.cost_center_id.or(header_cc)
+        };
         tx.execute(
             "INSERT INTO journal_entry_lines_local(entry_id,account_id,debit,credit,description,cost_center_id) VALUES(?1,?2,?3,?4,?5,?6)",
             params![je_id, l.account_id, l.debit, l.credit, l.description, line_cc],
@@ -1277,12 +1306,16 @@ pub fn journal_entry_create(input: ManualJeInput) -> Result<i64, String> {
         _ => "posted",
     };
     let entry_type = norm_entry_type(input.entry_type.as_deref());
-    let valid = valid_manual_lines(&input.lines);
+    let valid = valid_manual_je_lines(&input.lines);
     let post = status == "posted";
     let (total_debit, total_credit) = if post {
         validate_posted(&valid)?
     } else {
-        if valid.is_empty() {
+        if valid.is_empty()
+            || !valid
+                .iter()
+                .any(|l| l.debit.abs() > 1e-9 || l.credit.abs() > 1e-9)
+        {
             return Err("أضف سطراً واحداً صالحاً على الأقل".into());
         }
         (
@@ -1313,12 +1346,12 @@ pub fn journal_entry_create(input: ManualJeInput) -> Result<i64, String> {
     let entry_no =
         resolve_manual_entry_no(&tx, input.doc_number.as_deref()).map_err(|e| e.to_string())?;
     tx.execute(
-        "INSERT INTO journal_entries_local(entry_no,entry_date,description,total_debit,total_credit,source_type,source_id,branch_id,cost_center_id,entry_type,status) \
-         VALUES(?1,?2,?3,?4,?5,'manual',NULL,?6,?7,?8,?9)",
-        params![entry_no, input.entry_date, input.description, total_debit, total_credit, input.branch_id, input.cost_center_id, entry_type, status],
+        "INSERT INTO journal_entries_local(entry_no,entry_date,description,reference,total_debit,total_credit,source_type,source_id,branch_id,cost_center_id,entry_type,status) \
+         VALUES(?1,?2,?3,?4,?5,?6,'manual',NULL,?7,?8,?9,?10)",
+        params![entry_no, input.entry_date, input.description, input.reference, total_debit, total_credit, input.branch_id, input.cost_center_id, entry_type, status],
     ).map_err(map_entry_no_conflict)?;
     let je_id = tx.last_insert_rowid();
-    write_manual_lines(&tx, je_id, &valid, input.cost_center_id, post)
+    write_manual_lines(&tx, je_id, &valid, input.cost_center_id, post, true)
         .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(je_id)
@@ -1329,11 +1362,11 @@ pub fn journal_entry_create(input: ManualJeInput) -> Result<i64, String> {
 pub fn journal_entry_detail(id: i64) -> Result<ManualJeDetail, String> {
     let conn = db::open().map_err(|e| e.to_string())?;
     let mut entry: ManualJeDetail = conn.query_row(
-        "SELECT id,entry_no,entry_date,description,entry_type,status,source_type,branch_id,cost_center_id,total_debit,total_credit FROM journal_entries_local WHERE id=?1",
+        "SELECT id,entry_no,entry_date,description,reference,entry_type,status,source_type,branch_id,cost_center_id,total_debit,total_credit FROM journal_entries_local WHERE id=?1",
         params![id], |r| Ok(ManualJeDetail {
             id: r.get(0)?, entry_no: r.get(1)?, entry_date: r.get(2)?, description: r.get(3)?,
-            entry_type: r.get(4)?, status: r.get(5)?, source_type: r.get(6)?,
-            branch_id: r.get(7)?, cost_center_id: r.get(8)?, total_debit: r.get(9)?, total_credit: r.get(10)?,
+            reference: r.get(4)?, entry_type: r.get(5)?, status: r.get(6)?, source_type: r.get(7)?,
+            branch_id: r.get(8)?, cost_center_id: r.get(9)?, total_debit: r.get(10)?, total_credit: r.get(11)?,
             lines: Vec::new(),
         })
     ).map_err(|e| e.to_string())?;
@@ -1374,12 +1407,16 @@ pub fn journal_entry_update(id: i64, input: ManualJeInput) -> Result<(), String>
         _ => "posted",
     };
     let entry_type = norm_entry_type(input.entry_type.as_deref());
-    let valid = valid_manual_lines(&input.lines);
+    let valid = valid_manual_je_lines(&input.lines);
     let post = new_status == "posted";
     let (total_debit, total_credit) = if post {
         validate_posted(&valid)?
     } else {
-        if valid.is_empty() {
+        if valid.is_empty()
+            || !valid
+                .iter()
+                .any(|l| l.debit.abs() > 1e-9 || l.credit.abs() > 1e-9)
+        {
             return Err("أضف سطراً واحداً صالحاً على الأقل".into());
         }
         (
@@ -1421,10 +1458,11 @@ pub fn journal_entry_update(id: i64, input: ManualJeInput) -> Result<(), String>
     )
     .map_err(|e| e.to_string())?;
     tx.execute(
-        "UPDATE journal_entries_local SET entry_date=?1,description=?2,total_debit=?3,total_credit=?4,branch_id=?5,cost_center_id=?6,entry_type=?7,status=?8 WHERE id=?9",
-        params![input.entry_date, input.description, total_debit, total_credit, input.branch_id, input.cost_center_id, entry_type, new_status, id],
+        "UPDATE journal_entries_local SET entry_date=?1,description=?2,reference=?3,total_debit=?4,total_credit=?5,branch_id=?6,cost_center_id=?7,entry_type=?8,status=?9 WHERE id=?10",
+        params![input.entry_date, input.description, input.reference, total_debit, total_credit, input.branch_id, input.cost_center_id, entry_type, new_status, id],
     ).map_err(|e| e.to_string())?;
-    write_manual_lines(&tx, id, &valid, input.cost_center_id, post).map_err(|e| e.to_string())?;
+    write_manual_lines(&tx, id, &valid, input.cost_center_id, post, true)
+        .map_err(|e| e.to_string())?;
     // Adjustment runs remain generated after a manual draft edit or unpost.
     // Keep their recognized amount aligned with the edited balanced JE.
     tx.execute(
@@ -12158,4 +12196,31 @@ pub fn lc_expense_delete(id: i64) -> Result<(), String> {
     conn.execute("DELETE FROM lc_expenses_local WHERE id=?1", params![id])
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod manual_je_tax_line_tests {
+    use super::{valid_manual_je_lines, valid_manual_lines, ManualJeLine};
+
+    #[test]
+    fn zero_rated_lines_are_retained_only_for_manual_journal_entries() {
+        let zero_rated = ManualJeLine {
+            account_id: 42,
+            description: Some("ضريبة صفرية — مبيعات 0%".to_string()),
+            ..ManualJeLine::default()
+        };
+        assert!(valid_manual_lines(&[zero_rated.clone()]).is_empty());
+        assert_eq!(valid_manual_je_lines(&[zero_rated]).len(), 1);
+    }
+
+    #[test]
+    fn ordinary_zero_lines_are_still_discarded() {
+        let empty = ManualJeLine {
+            account_id: 42,
+            description: Some("سطر فارغ".to_string()),
+            ..ManualJeLine::default()
+        };
+        assert!(valid_manual_lines(&[empty.clone()]).is_empty());
+        assert!(valid_manual_je_lines(&[empty]).is_empty());
+    }
 }

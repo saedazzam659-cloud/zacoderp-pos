@@ -17,10 +17,11 @@ import {
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { getTaxRate } from "../lib/taxSettings";
-import { getDefaultTax } from "../lib/taxes";
+import { isTaxEnabledFor, listTaxes, type Tax, type TaxDirection } from "../lib/taxes";
 import {
   formatUiDate, getCompanyProfile, getUiLanguage, safeLogoSrc, uiText, useUiLanguage,
-  type CompanyProfile, type UiLanguage,
+  setJournalEntryLayout, useJournalEntryLayout,
+  type CompanyProfile, type DocumentEditorLayout, type UiLanguage,
 } from "../lib/appSettings";
 
 const ENTRY_TYPES: { value: JeEntryType; labelAr: string; labelEn: string }[] = [
@@ -37,7 +38,35 @@ const VAT_IN_CODE = "1400";   // ضريبة القيمة المضافة - مدخ
 const VAT_OUT_CODE = "2200";  // ضريبة القيمة المضافة - مخرجات (التزام)
 const NET_MARKER = " (صافٍ من الضريبة)";
 const VAT_DESC_PREFIX = "ضريبة القيمة المضافة";
+const GENERATED_TAX_PREFIXES = ["ضريبة المدخلات", "ضريبة المخرجات", "ضريبة صفرية", VAT_DESC_PREFIX];
 const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+const journalEntryTemplateStyles = `
+  .zje-form{height:auto!important;min-height:0!important;overflow:visible!important;display:block!important;--je-accent:#2563eb;--je-panel:#f7faff;--je-border:#cbd8e8;--je-grid:#edf3fb;--je-radius:9px;--je-density:10px;}
+  .zje-form .zje-layout-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:8px 0 10px;padding:9px 11px;border:1px solid var(--je-border);border-radius:var(--je-radius);background:var(--je-panel);}
+  .zje-form .zje-layout-label{display:flex;flex-direction:column;gap:2px;color:#334155;font-size:12px;font-weight:700;}
+  .zje-form .zje-layout-label small{color:#64748b;font-size:10px;font-weight:500;}
+  .zje-form .zje-layout-select{min-width:210px;max-width:340px;height:34px;border:1px solid var(--je-border);border-radius:var(--je-radius);background:#fff;color:#0f172a;padding:4px 9px;font:inherit;font-size:12px;}
+  .zje-form .zje-section{margin:9px 0;padding:var(--je-density);border:1px solid var(--je-border);border-radius:var(--je-radius);background:var(--je-panel);}
+  .zje-form .zje-header-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0 10px;align-items:start;}
+  .zje-form .zje-dimension-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .zje-form .zje-tax-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:9px 0;padding:8px 10px;border:1px solid var(--je-border);border-radius:var(--je-radius);background:var(--je-panel);}
+  .zje-form .zje-lines-wrap{overflow-x:auto;border:1px solid var(--je-border);border-radius:var(--je-radius);background:#fff;}
+  .zje-form .zje-lines-wrap table{min-width:850px;}
+  .zje-form table.z-admin-table thead th{background:var(--je-grid)!important;color:#334155!important;}
+  .zje-form .zje-action-cell{position:relative;overflow:visible!important;text-align:center;white-space:nowrap;}
+  .zje-form .zje-tax-popover{position:fixed;z-index:1000;width:278px;max-width:min(278px,80vw);max-height:320px;overflow:auto;padding:10px;border:1px solid var(--je-border);border-radius:10px;background:#fff;color:#1e293b;box-shadow:0 12px 32px #0f172a30;text-align:start;white-space:normal;}
+  .zje-form .zje-tax-popover button{width:100%;margin-top:5px;text-align:start;white-space:normal;}
+  .zje-form .zje-total-summary{display:flex;align-items:center;justify-content:flex-end;gap:18px;flex-wrap:wrap;margin-top:8px;padding:8px 10px;border-radius:var(--je-radius);background:color-mix(in srgb,var(--je-accent) 8%,white);font-size:13px;font-weight:700;}
+  .zje-form[data-layout="classic"]{--je-accent:#2563eb;--je-panel:#fff;--je-border:#d8dee8;--je-grid:#f1f5f9;--je-radius:4px;--je-density:8px;}
+  .zje-form[data-layout="quick"]{--je-accent:#087f69;--je-panel:#f5faf6;--je-border:#d2e4d9;--je-grid:#e8f3eb;--je-radius:6px;--je-density:7px;}
+  .zje-form[data-layout="modern"]{--je-accent:#c2410c;--je-panel:#fffaf7;--je-border:#f0d5c5;--je-grid:#fff0e7;--je-radius:12px;--je-density:12px;}
+  .zje-form[data-layout="modern"] .zje-section{box-shadow:0 2px 8px #7c2d120d;}
+  .zje-form[data-layout="erp"]{--je-accent:#294477;--je-panel:#f1f4f8;--je-border:#b9c5d6;--je-grid:#294477;--je-radius:3px;--je-density:6px;}
+  .zje-form[data-layout="erp"] table.z-admin-table thead th{color:#fff!important;}
+  @media(max-width:1000px){.zje-form .zje-header-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+  @media(max-width:620px){.zje-form .zje-header-grid,.zje-form .zje-dimension-grid{grid-template-columns:1fr}.zje-form .zje-layout-select{width:100%;max-width:none}}
+  @media(max-height:680px){.zje-form .zje-layout-row,.zje-form .zje-section{margin-block:5px;padding:7px;}.zje-form .zje-tax-toolbar{margin-block:5px;padding:6px;}}
+`;
 
 // ── Month grouping (audit-grid visual polish, mirrors the web list) ──────
 // Rows are grouped under a month-accent separator derived from `entryDate`.
@@ -714,14 +743,18 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
 
   const [date, setDate] = useState(isEdit && init ? init.entryDate : todayStr());
   const [desc, setDesc] = useState(init?.description ?? "");
+  const [reference, setReference] = useState(init?.reference ?? "");
   const [entryType, setEntryType] = useState<JeEntryType>(init?.entryType ?? "general");
   const [docNumber, setDocNumber] = useState(isEdit && init ? init.entryNo : "");
   const [branchId, setBranchId] = useState<number | "">(init?.branchId ?? "");
   const [costCenterId, setCostCenterId] = useState<number | "">(init?.costCenterId ?? "");
   const [autoCopyDesc, setAutoCopyDesc] = useState(true);
   const [vatMode, setVatMode] = useState<"exclusive" | "inclusive">("exclusive");
+  const [taxPopoverLine, setTaxPopoverLine] = useState<number | null>(null);
+  const [taxPopoverPosition, setTaxPopoverPosition] = useState<{ top: number; left: number } | null>(null);
   const [suggestedNo, setSuggestedNo] = useState("");
   const [activeLine, setActiveLine] = useState<number | null>(null);
+  const journalLayout = useJournalEntryLayout();
   const [lines, setLines] = useState<ManualJeLine[]>(
     init && init.lines.length
       ? init.lines.map((l) => ({ ...l, id: isEdit ? l.id : undefined }))
@@ -729,23 +762,56 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
   );
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // VAT driving applyVat: the system default tax's percent rate + its own GL
-  // account if one is configured; otherwise the country/localStorage rate and
-  // the hardcoded VAT account codes (1400/2200). Loaded once.
-  const [vatRate, setVatRate] = useState<number>(() => getTaxRate());
-  const [vatTaxAccountId, setVatTaxAccountId] = useState<number | null>(null);
+  const [taxes, setTaxes] = useState<Tax[]>([]);
+  const [selectedTaxId, setSelectedTaxId] = useState<number | "">("");
+  const [taxesLoading, setTaxesLoading] = useState(true);
+  const selectedTax = selectedTaxId === "" ? null : taxes.find((t) => t.id === selectedTaxId) ?? null;
+  const vatRate = selectedTax?.rateValue ?? getTaxRate();
+  const ratePctLabel = `${fmt(vatRate)}%`;
+
+  function toggleTaxPopover(lineIndex: number, button: HTMLButtonElement) {
+    if (taxPopoverLine === lineIndex) {
+      setTaxPopoverLine(null);
+      return;
+    }
+    const rect = button.getBoundingClientRect();
+    const popoverWidth = Math.min(278, window.innerWidth - 16);
+    const popoverHeight = 320;
+    setTaxPopoverPosition({
+      top: rect.bottom + popoverHeight + 8 <= window.innerHeight
+        ? rect.bottom + 4
+        : Math.max(8, rect.top - popoverHeight - 4),
+      left: Math.min(Math.max(8, rect.right - popoverWidth), window.innerWidth - popoverWidth - 8),
+    });
+    setTaxPopoverLine(lineIndex);
+  }
 
   useEffect(() => {
-    void getDefaultTax()
-      .then((t) => {
-        if (t && t.rateType === "percent") {
-          const n = Number(t.rateValue);
-          if (Number.isFinite(n) && n >= 0) setVatRate(n);
-        }
-        setVatTaxAccountId(t?.accountId ?? null);
+    void listTaxes()
+      .then((all) => {
+        const usable = all.filter(
+          (tax) => tax.isActive && tax.rateType === "percent" && (tax.salesEnabled || tax.purchaseEnabled),
+        );
+        setTaxes(usable);
+        const defaultTax = usable.find((tax) => tax.isDefault);
+        if (defaultTax) setSelectedTaxId(defaultTax.id);
       })
-      .catch(() => { /* keep the getTaxRate() fallback */ });
+      .catch((e: unknown) => {
+        setErr(errText(e, "تعذر تحميل قائمة الضرائب / Could not load the tax list"));
+      })
+      .finally(() => setTaxesLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (taxPopoverLine == null) return;
+    const closeOnViewportChange = () => setTaxPopoverLine(null);
+    window.addEventListener("resize", closeOnViewportChange);
+    window.addEventListener("scroll", closeOnViewportChange, true);
+    return () => {
+      window.removeEventListener("resize", closeOnViewportChange);
+      window.removeEventListener("scroll", closeOnViewportChange, true);
+    };
+  }, [taxPopoverLine]);
 
   // Peek the next sequence number for the "الرقم المقترح" hint (create/duplicate only).
   useEffect(() => {
@@ -769,7 +835,38 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
     setLines((ls) => ls.map((l, k) => k === i ? { ...l, ...patch } : l));
   }
   function addLine() { setLines((ls) => [...ls, { ...emptyLine(), costCenterId: costCenterId === "" ? null : costCenterId }]); }
-  function removeLine(i: number) { setLines((ls) => ls.length > 1 ? ls.filter((_, k) => k !== i) : ls); }
+
+  function isVatAccount(accountId: number | null | undefined): boolean {
+    if (accountId == null || accountId <= 0) return false;
+    const account = accounts.find((a) => a.id === accountId);
+    return account?.code === VAT_IN_CODE || account?.code === VAT_OUT_CODE
+      || taxes.some((tax) => tax.accountId === accountId);
+  }
+  function isGeneratedTaxLine(line: ManualJeLine | undefined): boolean {
+    const description = (line?.description ?? "").trim();
+    return !!line && GENERATED_TAX_PREFIXES.some((prefix) => description.startsWith(prefix));
+  }
+  function removeLine(i: number) {
+    if (lines.length <= 1) return;
+    const line = lines[i];
+    const nextIsTax = !isGeneratedTaxLine(line) && isGeneratedTaxLine(lines[i + 1]);
+    if (isGeneratedTaxLine(line) && i > 0 && (lines[i - 1].description ?? "").includes(NET_MARKER)) {
+      const source = lines[i - 1];
+      const taxAmount = round2((Number(line.debit) || 0) + (Number(line.credit) || 0));
+      const side = (Number(source.debit) || 0) > 0 ? "debit" : "credit";
+      setLines((current) => current
+        .filter((_, k) => k !== i)
+        .map((entry, k) => k === i - 1
+          ? { ...entry, [side]: round2((Number(entry[side]) || 0) + taxAmount), description: (entry.description ?? "").replace(NET_MARKER, "").trim() || null }
+          : entry));
+    } else {
+      setLines((current) => {
+        const remaining = current.filter((_, k) => k !== i && !(nextIsTax && k === i + 1));
+        return remaining.length ? remaining : [emptyLine()];
+      });
+    }
+    setTaxPopoverLine(null);
+  }
 
   // Smart auto-balance: drop the remaining imbalance onto a suitable line so
   // the entry becomes balanced in one click. Prefers an empty-amount line
@@ -797,86 +894,208 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
 
   function onHeaderDescChange(v: string) {
     setDesc(v);
-    if (autoCopyDesc) setLines((ls) => ls.map((l) => ({ ...l, description: v || null })));
+    if (autoCopyDesc) setLines((ls) => ls.map((l) => isGeneratedTaxLine(l) ? l : ({
+      ...l, description: `${v}${(l.description ?? "").includes(NET_MARKER) ? NET_MARKER : ""}` || null,
+    })));
   }
   function copyDescToLines() {
-    setLines((ls) => ls.map((l) => ({ ...l, description: desc || null })));
+    setLines((ls) => ls.map((l) => isGeneratedTaxLine(l) ? l : ({
+      ...l, description: `${desc}${(l.description ?? "").includes(NET_MARKER) ? NET_MARKER : ""}` || null,
+    })));
+  }
+
+  function resolveTaxAccount(direction: "input" | "output"): number | null {
+    const taxDirection: TaxDirection = direction === "input" ? "purchase" : "sales";
+    if (selectedTax && !isTaxEnabledFor(selectedTax, taxDirection)) {
+      setErr(uiText(
+        direction === "input" ? "الضريبة المختارة غير مفعّلة للمشتريات" : "الضريبة المختارة غير مفعّلة للمبيعات",
+        direction === "input" ? "The selected tax is not enabled for purchases" : "The selected tax is not enabled for sales",
+        language,
+      ));
+      return null;
+    }
+    if (selectedTax?.accountId != null) {
+      if (!accounts.some((account) => account.id === selectedTax.accountId)) {
+        setErr(uiText("حساب الضريبة المختارة غير موجود في شجرة الحسابات", "The selected tax account is missing from the chart of accounts", language));
+        return null;
+      }
+      return selectedTax.accountId;
+    }
+    const fallbackCode = direction === "input" ? VAT_IN_CODE : VAT_OUT_CODE;
+    const fallbackId = accounts.find((account) => account.code === fallbackCode)?.id;
+    if (!fallbackId) {
+      setErr(uiText(
+        `لا يوجد حساب ضريبة ${direction === "input" ? "المشتريات" : "المبيعات"} — حدّد حسابًا في شاشة الضرائب أو أضف الحساب ${fallbackCode}`,
+        `No ${direction === "input" ? "purchase" : "sales"} tax account is configured. Set one in Taxes or add account ${fallbackCode}.`,
+        language,
+      ));
+      return null;
+    }
+    return fallbackId;
+  }
+
+  function applyTaxToLine(direction: "input" | "output", sourceIndex: number, zeroRated = false) {
+    if (readOnly) return;
+    const source = lines[sourceIndex];
+    const side = direction === "input" ? "debit" : "credit";
+    const description = (source?.description ?? "").trim();
+    const existingTaxIndex = isGeneratedTaxLine(lines[sourceIndex + 1]) ? sourceIndex + 1 : -1;
+    const existingTax = existingTaxIndex >= 0 ? lines[existingTaxIndex] : undefined;
+    const wasInclusive = description.includes(NET_MARKER);
+    if (!source?.accountId || isGeneratedTaxLine(source)) {
+      setErr(uiText(
+        direction === "input" ? "اختر سطر مشتريات مدينًا صالحًا" : "اختر سطر مبيعات دائنًا صالحًا",
+        direction === "input" ? "Choose a valid debit purchase line" : "Choose a valid credit sales line",
+        language,
+      ));
+      return;
+    }
+    if (wasInclusive && !existingTax) {
+      setErr(uiText(
+        "تعذر إعادة احتساب السطر الشامل؛ أعد إدخال المبلغ الإجمالي أولاً",
+        "This inclusive line has no linked tax line to restore its gross amount; re-enter the gross amount first",
+        language,
+      ));
+      return;
+    }
+    const previousTaxAmount = wasInclusive
+      ? round2((Number(existingTax?.debit) || 0) + (Number(existingTax?.credit) || 0))
+      : 0;
+    const amount = round2((Number(source[side]) || 0) + previousTaxAmount);
+    if (amount <= 0) {
+      setErr(uiText(
+        direction === "input" ? "اختر سطر مشتريات مدينًا صالحًا" : "اختر سطر مبيعات دائنًا صالحًا",
+        direction === "input" ? "Choose a valid debit purchase line" : "Choose a valid credit sales line",
+        language,
+      ));
+      return;
+    }
+    const accountId = resolveTaxAccount(direction);
+    if (accountId == null) return;
+    if (source.accountId === accountId) {
+      setErr(uiText("لا يمكن احتساب الضريبة على سطر يستخدم حساب الضريبة نفسه", "Tax cannot be calculated on the tax account line", language));
+      return;
+    }
+    const rate = Number(vatRate);
+    const taxAmount = zeroRated ? 0 : (vatMode === "inclusive"
+      ? round2(amount * rate / (100 + rate))
+      : round2(amount * rate / 100));
+    if (!zeroRated && taxAmount <= 0) {
+      setErr(uiText("نسبة الضريبة صفر؛ استخدم خيار الضريبة الصفرية", "The tax rate is zero; use the zero-rated option", language));
+      return;
+    }
+    const baseDescription = (source.description ?? "").replace(NET_MARKER, "").trim() || null;
+    const updatedSource: ManualJeLine = vatMode === "inclusive" && !zeroRated
+      ? {
+          ...source,
+          [side]: round2(amount - taxAmount),
+          description: baseDescription ? `${baseDescription}${NET_MARKER}` : NET_MARKER.trim(),
+        }
+      : { ...source, [side]: amount, description: baseDescription };
+    const taxLine: ManualJeLine = {
+      ...emptyLine(),
+      accountId,
+      debit: zeroRated ? 0 : (direction === "input" ? taxAmount : 0),
+      credit: zeroRated ? 0 : (direction === "output" ? taxAmount : 0),
+      description: zeroRated
+        ? `ضريبة صفرية — ${direction === "input" ? "مشتريات / مدخلات" : "مبيعات / مخرجات"} (0%) على ${fmt(amount)}`
+        : `${direction === "input" ? "ضريبة المدخلات — مشتريات" : "ضريبة المخرجات — مبيعات"} ${ratePctLabel}${vatMode === "inclusive" ? " (شاملة)" : ""} ${vatMode === "inclusive" ? "من" : "على"} ${fmt(amount)}`,
+      costCenterId: null,
+    };
+    setLines((current) => {
+      const next = [...current];
+      next[sourceIndex] = updatedSource;
+      if (existingTaxIndex >= 0) next[existingTaxIndex] = taxLine;
+      else next.splice(sourceIndex + 1, 0, taxLine);
+      return next;
+    });
+    setTaxPopoverLine(null);
+    setErr(null);
   }
 
   function applyVat() {
-    // Account resolution: the default tax (شاشة الضرائب) owns ONE GL account
-    // used on either side. If a default tax is configured WITH an account, that
-    // account MUST exist — we never silently fall back, so a bad configuration
-    // surfaces instead of posting to the wrong account. Only when there is no
-    // default-tax account at all do we fall back to the legacy codes 1400/2200.
-    let vatInId: number | undefined;
-    let vatOutId: number | undefined;
-    if (vatTaxAccountId != null) {
-      if (!accounts.some((a) => a.id === vatTaxAccountId)) {
-        setErr("حساب الضريبة المرتبط بالضريبة الافتراضية غير موجود في شجرة الحسابات — افتح شاشة الضرائب واختر حسابًا صحيحًا");
-        return;
-      }
-      vatInId = vatTaxAccountId;
-      vatOutId = vatTaxAccountId;
-    } else {
-      vatInId = accounts.find((a) => a.code === VAT_IN_CODE)?.id;
-      vatOutId = accounts.find((a) => a.code === VAT_OUT_CODE)?.id;
-      if (!vatInId || !vatOutId) {
-        setErr(`لا يوجد حساب ضريبة افتراضي — افتح شاشة الضرائب وحدّد ضريبة افتراضية بحساب، أو أضف الحسابين (${VAT_IN_CODE} مدخلات / ${VAT_OUT_CODE} مخرجات) في شجرة الحسابات`);
-        return;
-      }
+    if (!Number.isFinite(vatRate) || vatRate <= 0) {
+      setErr(uiText("نسبة الضريبة صفر؛ استخدم الضريبة الصفرية لكل سطر", "Tax rate is zero; use the per-line zero-rated option", language));
+      return;
     }
-    setErr(null);
-    const defCc = costCenterId === "" ? null : costCenterId;
-    const rate = vatRate;
-    const vatDesc = `${VAT_DESC_PREFIX} ${fmt(rate)}%`;
-    const isVatAccount = (accId: number | null | undefined) => {
-      const code = accounts.find((a) => a.id === accId)?.code;
-      return code === VAT_IN_CODE || code === VAT_OUT_CODE ||
-        (vatTaxAccountId != null && accId === vatTaxAccountId);
-    };
-    setLines((prev) => {
-      // Idempotent: drop the VAT lines a previous click already generated so
-      // re-running the tool rebuilds ONE correct set instead of stacking a new
-      // tax line for every base line on every press (the reported duplication).
-      const base = prev.filter(
-        (l) => !(isVatAccount(l.accountId) && (l.description ?? "").startsWith(VAT_DESC_PREFIX)),
-      );
-      const out: ManualJeLine[] = [];
-      const vatLines: ManualJeLine[] = [];
-      for (const l of base) {
-        const dr = Number(l.debit) || 0, cr = Number(l.credit) || 0;
-        if (!l.accountId || isVatAccount(l.accountId) || (dr <= 0 && cr <= 0)) { out.push(l); continue; }
-        const onDebit = dr > 0;
-        const amount = onDebit ? dr : cr;
-        const alreadyNet = (l.description ?? "").includes(NET_MARKER);
-        let vat: number;
-        if (alreadyNet) {
-          // Line is already the net base from a prior inclusive run — tax the net
-          // and keep it as-is; never re-net (that compounded on each click).
-          vat = round2(amount * rate / 100);
-          out.push(l);
-        } else if (vatMode === "exclusive") {
-          vat = round2(amount * rate / 100);
-          out.push(l);
-        } else {
-          vat = round2(amount * rate / (100 + rate));
-          const net = round2(amount - vat);
-          out.push({ ...l, debit: onDebit ? net : 0, credit: onDebit ? 0 : net, description: `${l.description ?? ""}${NET_MARKER}` });
-        }
-        vatLines.push({
-          accountId: onDebit ? vatInId : vatOutId,
-          debit: onDebit ? vat : 0, credit: onDebit ? 0 : vat,
-          description: vatDesc, costCenterId: l.costCenterId ?? defCc,
-        });
+    const out: ManualJeLine[] = [];
+    let applied = 0;
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (isGeneratedTaxLine(line)) continue;
+      const existingTax = isGeneratedTaxLine(lines[index + 1]) ? lines[index + 1] : undefined;
+      if (existingTax && (existingTax.description ?? "").startsWith("ضريبة صفرية")) {
+        out.push(line, existingTax);
+        index += 1;
+        continue;
       }
-      return [...out, ...vatLines];
-    });
+      const debit = Number(line.debit) || 0;
+      const credit = Number(line.credit) || 0;
+      if (!line.accountId || isVatAccount(line.accountId) || (debit <= 0 && credit <= 0)) {
+        out.push(line);
+        if (existingTax) { out.push(existingTax); index += 1; }
+        continue;
+      }
+      const direction = debit > 0 ? "input" : "output";
+      const taxAccountId = resolveTaxAccount(direction);
+      if (taxAccountId == null) return;
+      if (line.accountId === taxAccountId) {
+        out.push(line);
+        if (existingTax) { out.push(existingTax); index += 1; }
+        continue;
+      }
+      const side = direction === "input" ? "debit" : "credit";
+      const wasInclusive = (line.description ?? "").includes(NET_MARKER);
+      if (wasInclusive && !existingTax) {
+        setErr(uiText(
+          "تعذر إعادة احتساب سطر شامل بلا سطر ضريبة مرتبط؛ أعد إدخال المبلغ الإجمالي",
+          "An inclusive line has no linked tax row to restore its gross amount; re-enter the gross amount",
+          language,
+        ));
+        return;
+      }
+      const previousTaxAmount = wasInclusive
+        ? round2((Number(existingTax?.debit) || 0) + (Number(existingTax?.credit) || 0))
+        : 0;
+      const amount = round2((direction === "input" ? debit : credit) + previousTaxAmount);
+      const taxAmount = vatMode === "exclusive"
+        ? round2(amount * vatRate / 100)
+        : round2(amount * vatRate / (100 + vatRate));
+      const baseDescription = (line.description ?? "").replace(NET_MARKER, "").trim() || null;
+      const source = vatMode === "inclusive"
+        ? {
+            ...line,
+            [side]: round2(amount - taxAmount),
+            description: baseDescription ? `${baseDescription}${NET_MARKER}` : NET_MARKER.trim(),
+          }
+        : { ...line, [side]: amount, description: baseDescription };
+      out.push(source, {
+        ...emptyLine(),
+        accountId: taxAccountId,
+        debit: direction === "input" ? taxAmount : 0,
+        credit: direction === "output" ? taxAmount : 0,
+        description: `${direction === "input" ? "ضريبة المدخلات — مشتريات" : "ضريبة المخرجات — مبيعات"} ${ratePctLabel}${vatMode === "inclusive" ? " (شاملة)" : ""} ${vatMode === "inclusive" ? "من" : "على"} ${fmt(amount)}`,
+        costCenterId: null,
+      });
+      applied += 1;
+      if (existingTax) index += 1;
+    }
+    if (applied === 0) {
+      setErr(uiText("لا توجد سطور مدين أو دائن مؤهلة للضريبة", "No eligible debit or credit lines to tax", language));
+      return;
+    }
+    setLines(out);
+    setTaxPopoverLine(null);
+    setErr(null);
   }
 
   function buildPayload(status: JeStatus) {
     const cleaned = lines
-      .filter((l) => l.accountId && ((Number(l.debit) || 0) > 0 || (Number(l.credit) || 0) > 0))
+      .filter((l) => l.accountId && (
+        (Number(l.debit) || 0) > 0
+        || (Number(l.credit) || 0) > 0
+        || (l.description ?? "").startsWith("ضريبة صفرية")
+      ))
       .map((l) => ({
         id: isEdit ? l.id ?? null : undefined,
         accountId: l.accountId,
@@ -888,6 +1107,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
     return {
       entryDate: date,
       description: desc || null,
+      reference: reference.trim() || null,
       entryType,
       docNumber: isEdit ? undefined : (docNumber.trim() || null),
       status,
@@ -916,7 +1136,12 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
       if (busy) return;
-      if (ev.key === "Escape") { ev.preventDefault(); onCancel(); return; }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        if (taxPopoverLine != null) { setTaxPopoverLine(null); return; }
+        onCancel();
+        return;
+      }
       if (readOnly) return; // source-locked: Esc still closes, all edit shortcuts are inert
       if (!(ev.ctrlKey || ev.metaKey)) return;
       const k = ev.key.toLowerCase();
@@ -927,14 +1152,15 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, readOnly, lines, date, desc, entryType, docNumber, branchId, costCenterId]);
+  }, [busy, readOnly, lines, date, desc, reference, entryType, docNumber, branchId, costCenterId, taxPopoverLine]);
 
   const title = isEdit ? `تعديل القيد ${init?.entryNo ?? ""}` : state.kind === "duplicate" ? `نسخة من ${init?.entryNo ?? ""}` : "إضافة قيد يومية يدوي";
 
   const badgeText = isEdit ? (init?.entryNo ?? "") : (docNumber || suggestedNo);
 
   return (
-    <div>
+    <div className="zdoc-form zje-form" data-layout={journalLayout}>
+      <style>{journalEntryTemplateStyles}</style>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
         <h3 style={{ margin: 0 }}>{title}</h3>
         {badgeText && (
@@ -962,6 +1188,21 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
         )}
       </div>
 
+      <div className="zje-layout-row">
+        <label className="zje-layout-label">
+          {uiText("قالب شاشة القيد", "Journal-entry layout", language)}
+          <small>{uiText("حُفظ بشكل مستقل عن قالب فواتير المبيعات", "Saved independently from the sales-invoice layout", language)}</small>
+        </label>
+        <select className="zje-layout-select" value={journalLayout}
+          data-testid="input-journal-entry-layout"
+          onChange={(e) => setJournalEntryLayout(e.target.value as DocumentEditorLayout)}>
+          <option value="classic">{uiText("كلاسيكي", "Classic", language)}</option>
+          <option value="quick">{uiText("سريع", "Quick", language)}</option>
+          <option value="modern">{uiText("حديث", "Modern", language)}</option>
+          <option value="erp">{uiText("نظام ERP", "ERP", language)}</option>
+        </select>
+      </div>
+
       {sourceLocked && (
         <div style={{
           marginBottom: 12, padding: "10px 14px", borderRadius: 6,
@@ -979,7 +1220,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "180px 180px 1fr", gap: 10 }}>
+      <div className="zje-section zje-header-grid">
         <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="نوع القيد">
           <select value={entryType} onChange={(e) => setEntryType(e.target.value as JeEntryType)} style={input}>
@@ -992,9 +1233,14 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
             placeholder={isEdit ? "" : suggestedNo}
             style={{ ...input, ...(isEdit ? { background: "#f1f5f9", color: "#64748b" } : {}) }} />
         </Field>
+        <Field label={uiText("المرجع", "Reference", language)}>
+          <input value={reference} onChange={(e) => setReference(e.target.value)} style={input}
+            data-testid="input-journal-entry-reference"
+            placeholder={uiText("رقم المستند أو مرجعه", "Document number or reference", language)} />
+        </Field>
       </div>
 
-      <div style={{ marginTop: 10 }}>
+      <div className="zje-section">
         <Field label="البيان العام"><input value={desc} onChange={(e) => onHeaderDescChange(e.target.value)} style={input} /></Field>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 13, color: "#475569" }}>
           <input type="checkbox" checked={autoCopyDesc} onChange={(e) => setAutoCopyDesc(e.target.checked)} />
@@ -1003,7 +1249,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
         </label>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+      <div className="zje-section zje-header-grid zje-dimension-grid">
         <Field label="الفرع">
           <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
         </Field>
@@ -1012,43 +1258,124 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
         </Field>
       </div>
 
-      <div style={{ marginTop: 12, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <strong style={{ fontSize: 13 }}>{`أداة الضريبة ${fmt(vatRate)}%:`}</strong>
-        <select value={vatMode} onChange={(e) => setVatMode(e.target.value as any)} style={{ ...input, width: 220 }}>
-          <option value="exclusive">غير شامل — تُضاف الضريبة فوق المبلغ</option>
-          <option value="inclusive">شامل — المبلغ يتضمن الضريبة</option>
+      <div className="zje-tax-toolbar">
+        <strong style={{ fontSize: 13 }}>{uiText("الضريبة:", "Tax:", language)}</strong>
+        <div data-testid="control-journal-entry-tax-selector">
+          <SearchCombobox value={selectedTaxId}
+            onChange={(v) => setSelectedTaxId(v === "" ? "" : Number(v))}
+            disabled={taxesLoading || readOnly}
+            style={{ ...input, width: 290 }}
+            options={[
+              { value: "", label: uiText(`معدل الإعدادات (${fmt(getTaxRate())}%)`, `Settings rate (${fmt(getTaxRate())}%)`, language) },
+              ...taxes.map((tax) => ({
+                value: tax.id,
+                label: `${tax.code ? `${tax.code} — ` : ""}${tax.nameAr} (${fmt(tax.rateValue)}%)`,
+              })),
+            ]} />
+        </div>
+        <span style={{ color: "#64748b", fontSize: 12 }}>
+          {selectedTax ? `${selectedTax.nameAr} · ${ratePctLabel}` : `${uiText("معدل الإعدادات", "Settings rate", language)} · ${ratePctLabel}`}
+        </span>
+        <select value={vatMode} onChange={(e) => setVatMode(e.target.value as "exclusive" | "inclusive")} style={{ ...input, width: 260 }}>
+          <option value="exclusive">{uiText("غير شامل — تُضاف الضريبة للمبلغ", "Exclusive — add tax to amount", language)}</option>
+          <option value="inclusive">{uiText("شامل — المبلغ يتضمن الضريبة", "Inclusive — amount includes tax", language)}</option>
         </select>
-        <button type="button" onClick={applyVat} style={btnSecondary}>أضف سطور الضريبة</button>
+        <button type="button" onClick={applyVat} disabled={readOnly || taxesLoading}
+          data-testid="button-recalculate-journal-entry-tax" style={btnSecondary}>
+          {uiText("إعادة احتساب الضريبة لكل السطور", "Recalculate tax for all lines", language)}
+        </button>
       </div>
 
-      <Table>
-        <thead><tr>
-          <Th style={{ minWidth: 200 }}>الحساب</Th><Th>البيان</Th><Th style={{ width: 180 }}>مركز التكلفة</Th>
-          <Th style={{ width: 120 }}>مدين</Th><Th style={{ width: 120 }}>دائن</Th><Th style={{ width: 50 }}></Th>
-        </tr></thead>
-        <tbody>
-          {lines.map((l, i) => (
-            <tr key={i}>
-              <Td>
-                <SearchCombobox value={l.accountId} onChange={(v) => setLine(i, { accountId: Number(v) })} style={input} options={accountOptions} />
-              </Td>
-              <Td><input value={l.description ?? ""} onChange={(e) => setLine(i, { description: e.target.value || null })} style={input} /></Td>
-              <Td>
-                <SearchCombobox value={l.costCenterId ?? ""} onChange={(v) => setLine(i, { costCenterId: v === "" ? null : Number(v) })} style={input} options={ccOptions} />
-              </Td>
-              <Td><input type="number" step="0.01" value={l.debit || ""} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { debit: Number(e.target.value) || 0, credit: 0 })} style={input} /></Td>
-              <Td><input type="number" step="0.01" value={l.credit || ""} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { credit: Number(e.target.value) || 0, debit: 0 })} style={input} /></Td>
-              <Td><button onClick={() => removeLine(i)} type="button" disabled={readOnly} style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
+      <div className="zje-lines-wrap">
+        <Table>
+          <thead><tr>
+            <Th style={{ minWidth: 200 }}>الحساب</Th><Th>البيان</Th><Th style={{ width: 180 }}>مركز التكلفة</Th>
+            <Th style={{ width: 120 }}>مدين</Th><Th style={{ width: 120 }}>دائن</Th>
+            <Th style={{ width: 58 }}>{uiText("ضريبة", "Tax", language)}</Th><Th style={{ width: 42 }}></Th>
+          </tr></thead>
+          <tbody>
+            {lines.map((l, i) => {
+              const isTaxLine = isGeneratedTaxLine(l);
+              const isZeroRated = (l.description ?? "").startsWith("ضريبة صفرية");
+              return (
+                <tr key={i}>
+                  <Td>
+                    <SearchCombobox value={l.accountId} onChange={(v) => setLine(i, { accountId: Number(v) })} style={input} options={accountOptions} />
+                  </Td>
+                  <Td><input value={l.description ?? ""} onChange={(e) => setLine(i, { description: e.target.value || null })} style={input} /></Td>
+                  <Td>
+                    <SearchCombobox value={l.costCenterId ?? ""} onChange={(v) => setLine(i, { costCenterId: v === "" ? null : Number(v) })} style={input} options={ccOptions} />
+                  </Td>
+                  <Td><input type="number" step="0.01" value={l.debit || (isZeroRated && (l.description ?? "").includes("مشتريات") ? "0.00" : "")} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { debit: Number(e.target.value) || 0, credit: 0 })} style={input} /></Td>
+                  <Td><input type="number" step="0.01" value={l.credit || (isZeroRated && (l.description ?? "").includes("مبيعات") ? "0.00" : "")} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { credit: Number(e.target.value) || 0, debit: 0 })} style={input} /></Td>
+                  <Td style={{ position: "relative", overflow: "visible", textAlign: "center", whiteSpace: "nowrap" }}>
+                    {isTaxLine ? (
+                      <span title={uiText("سطر ضريبة", "Tax line", language)} style={{ color: "#64748b", fontSize: 11, fontWeight: 700 }}>
+                        {isZeroRated ? "0%" : "%"}
+                      </span>
+                    ) : (
+                      <>
+                        <button type="button" disabled={readOnly || taxesLoading}
+                          data-testid={`button-journal-line-tax-${i}`}
+                          aria-label={uiText("خيارات الضريبة لهذا السطر", "Tax options for this line", language)}
+                          aria-expanded={taxPopoverLine === i}
+                          onClick={(e) => toggleTaxPopover(i, e.currentTarget)}
+                          style={{ ...btnLink, border: "1px solid var(--je-border)", borderRadius: 6, padding: "4px 7px", color: "var(--je-accent)", fontWeight: 800 }}>
+                          %
+                        </button>
+                        {taxPopoverLine === i && (
+                          <div className="zje-tax-popover" role="dialog"
+                            style={{ top: taxPopoverPosition?.top ?? 8, left: taxPopoverPosition?.left ?? 8 }}
+                            aria-label={uiText("خيارات ضريبة السطر", "Line tax options", language)}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                              <strong>{uiText("معالجة الضريبة", "Tax treatment", language)}</strong>
+                              <button type="button" onClick={() => setTaxPopoverLine(null)} style={btnLink} aria-label={uiText("إغلاق", "Close", language)}>×</button>
+                            </div>
+                            <div style={{ margin: "5px 0", color: "#64748b", fontSize: 11 }}>
+                              {selectedTax ? `${selectedTax.nameAr} · ${ratePctLabel}` : `${uiText("معدل الإعدادات", "Settings rate", language)} · ${ratePctLabel}`}
+                            </div>
+                            <label style={{ display: "flex", alignItems: "center", gap: 6, margin: "7px 0", fontSize: 12 }}>
+                              <input type="checkbox" checked={vatMode === "inclusive"} onChange={(e) => setVatMode(e.target.checked ? "inclusive" : "exclusive")} />
+                              {uiText("المبلغ شامل الضريبة", "Amount includes tax", language)}
+                            </label>
+                            <button type="button" disabled={readOnly || !(Number(l.debit) > 0)}
+                              data-testid={`button-journal-purchase-tax-${i}`}
+                              onClick={() => applyTaxToLine("input", i)} style={btnSecondary}>
+                              {uiText("ضريبة مشتريات / مدخلات", "Purchase / input tax", language)}
+                            </button>
+                            <button type="button" disabled={readOnly || !(Number(l.debit) > 0)}
+                              data-testid={`button-journal-purchase-zero-tax-${i}`}
+                              onClick={() => applyTaxToLine("input", i, true)} style={btnSecondary}>
+                              {uiText("مشتريات — صفرية 0%", "Purchase — zero-rated 0%", language)}
+                            </button>
+                            <button type="button" disabled={readOnly || !(Number(l.credit) > 0)}
+                              data-testid={`button-journal-sales-tax-${i}`}
+                              onClick={() => applyTaxToLine("output", i)} style={btnSecondary}>
+                              {uiText("ضريبة مبيعات / مخرجات", "Sales / output tax", language)}
+                            </button>
+                            <button type="button" disabled={readOnly || !(Number(l.credit) > 0)}
+                              data-testid={`button-journal-sales-zero-tax-${i}`}
+                              onClick={() => applyTaxToLine("output", i, true)} style={btnSecondary}>
+                              {uiText("مبيعات — صفرية 0%", "Sales — zero-rated 0%", language)}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </Td>
+                  <Td><button onClick={() => removeLine(i)} type="button" disabled={readOnly} style={{ ...btnLink, color: "#dc2626" }}>×</button></Td>
+                </tr>
+              );
+            })}
+            <tr style={{ background: "var(--je-grid)", fontWeight: 700 }}>
+              <Td colSpan={3 as any}>الإجمالي</Td>
+              <Td num>{fmt(totalDr)}</Td>
+              <Td num>{fmt(totalCr)}</Td>
+              <Td></Td><Td></Td>
             </tr>
-          ))}
-          <tr style={{ background: "#f8fafc", fontWeight: 700 }}>
-            <Td colSpan={3 as any}>الإجمالي</Td>
-            <Td num>{fmt(totalDr)}</Td>
-            <Td num>{fmt(totalCr)}</Td>
-            <Td></Td>
-          </tr>
-        </tbody>
-      </Table>
+          </tbody>
+        </Table>
+      </div>
 
       <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button onClick={addLine} type="button" disabled={readOnly} style={btnSecondary}>+ سطر</button>
@@ -1152,7 +1479,7 @@ body { direction: ${isEnglish ? "ltr" : "rtl"}; font-family: "Segoe UI","Tahoma"
   <div class="je-banner">
     <div>
       <div class="je-docno">${uiText("قيد رقم:", "Entry no.:", language)} <b>${jeEscapeHtml(data.entryNo)}</b></div>
-      <div class="je-docmeta">${uiText("التاريخ:", "Date:", language)} ${jeEscapeHtml(formatUiDate(data.entryDate, language))} • ${uiText("النوع:", "Type:", language)} ${jeEscapeHtml(typeLabel)}</div>
+      <div class="je-docmeta">${uiText("التاريخ:", "Date:", language)} ${jeEscapeHtml(formatUiDate(data.entryDate, language))} • ${uiText("النوع:", "Type:", language)} ${jeEscapeHtml(typeLabel)}${data.reference ? ` • ${uiText("المرجع:", "Reference:", language)} ${jeEscapeHtml(data.reference)}` : ""}</div>
     </div>
     <div class="je-status">${statusLabel}</div>
   </div>

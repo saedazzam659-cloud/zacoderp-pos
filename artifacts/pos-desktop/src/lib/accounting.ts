@@ -440,6 +440,7 @@ export type ManualJeLine = {
 };
 export type ManualJeDetail = {
   id: number; entryNo: string; entryDate: string; description: string | null;
+  reference: string | null;
   entryType: JeEntryType; status: JeStatus; sourceType: string | null;
   branchId: number | null; costCenterId: number | null;
   totalDebit: number; totalCredit: number;
@@ -447,6 +448,7 @@ export type ManualJeDetail = {
 };
 export type ManualJeInput = {
   entryDate: string; description: string | null;
+  reference?: string | null;
   entryType?: JeEntryType;
   /** Manual document-number override; omit/empty to consume the next sequence. */
   docNumber?: string | null;

@@ -29,6 +29,7 @@ const LS_NUMBER_SYSTEM = "pos_desktop_number_system";
 const LS_UI_LANGUAGE = "pos_desktop_ui_language";
 const LS_SALES_INVOICE_LAYOUT = "pos_desktop_sales_invoice_layout";
 const LS_DOCUMENT_EDITOR_LAYOUT = "pos_desktop_document_editor_layout";
+const LS_JOURNAL_ENTRY_LAYOUT = "pos_desktop_journal_entry_layout";
 
 export type NumberSystem = "arabic" | "latin";
 export type UiLanguage = "ar" | "en";
@@ -325,6 +326,35 @@ export function useDocumentEditorLayout(): DocumentEditorLayout {
   const [layout, setLayout] = useState<DocumentEditorLayout>(() => getDocumentEditorLayout());
   useEffect(() => {
     const refresh = () => setLayout(getDocumentEditorLayout());
+    window.addEventListener(EVT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(EVT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return layout;
+}
+
+/** Journal-entry presentation is saved separately from invoice layouts. */
+export function getJournalEntryLayout(): DocumentEditorLayout {
+  if (typeof window === "undefined") return "modern";
+  const value = localStorage.getItem(LS_JOURNAL_ENTRY_LAYOUT);
+  return DOCUMENT_EDITOR_LAYOUTS.includes(value as DocumentEditorLayout)
+    ? value as DocumentEditorLayout
+    : "modern";
+}
+
+export function setJournalEntryLayout(layout: DocumentEditorLayout): void {
+  if (!DOCUMENT_EDITOR_LAYOUTS.includes(layout)) return;
+  writeKey(LS_JOURNAL_ENTRY_LAYOUT, layout);
+  window.dispatchEvent(new Event(EVT));
+}
+
+export function useJournalEntryLayout(): DocumentEditorLayout {
+  const [layout, setLayout] = useState<DocumentEditorLayout>(() => getJournalEntryLayout());
+  useEffect(() => {
+    const refresh = () => setLayout(getJournalEntryLayout());
     window.addEventListener(EVT, refresh);
     window.addEventListener("storage", refresh);
     return () => {

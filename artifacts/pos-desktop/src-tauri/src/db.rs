@@ -1143,6 +1143,7 @@ pub fn initialize() -> Result<()> {
         // filter without a header join. All nullable — old rows = untagged.
         "ALTER TABLE journal_entries_local ADD COLUMN branch_id INTEGER",
         "ALTER TABLE journal_entries_local ADD COLUMN cost_center_id INTEGER",
+        "ALTER TABLE journal_entries_local ADD COLUMN reference TEXT",
         // ── Warehouse master parity with web (Phase W3) ──
         // English name, classification group, home branch, city/region,
         // negative-stock policy (+ optional limit) and a dedicated inventory
