@@ -562,7 +562,7 @@ fn generate_adjustment(
         if generated.len() >= result.total_months {
             break;
         }
-        if due_date > as_of_date {
+        if due_date.as_str() > as_of_date {
             break;
         }
         if generated.contains_key(&month) {

@@ -376,6 +376,8 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             s_opt("barcode"),
             f_req("salePrice")?,
             f_req("vatRate")?,
+            f_opt("costPrice"),
+            s_opt("metadataJson"),
             i_opt("uomId"),
             s_opt("activeIngredient"),
             s_opt("dosageForm"),
@@ -398,6 +400,8 @@ fn dispatch(cmd: &str, args: &Value) -> Result<Value, String> {
             s_opt("barcode"),
             f_req("salePrice")?,
             f_req("vatRate")?,
+            f_req("costPrice")?,
+            s_opt("metadataJson"),
             i_opt("uomId"),
         )
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
