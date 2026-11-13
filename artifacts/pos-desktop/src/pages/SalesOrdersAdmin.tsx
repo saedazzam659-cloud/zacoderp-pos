@@ -20,6 +20,8 @@ import {
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
 import { useInvoiceTaxes } from "./_invoiceTax";
+import { setDocumentEditorLayout, uiText, useDocumentEditorLayout, useUiLanguage } from "../lib/appSettings";
+import { DocumentEditorSection, DocumentEditorShell } from "../components/DocumentEditorShell";
 import { baseCurrencyCode, currencyByCode } from "../lib/currency";
 import { computeDiscount, lineNet, type DiscType, type DiscFields } from "../lib/discount";
 
@@ -232,6 +234,9 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   onCancel: () => void; onDone: () => void;
 }) {
   const isEdit = !!initial;
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
+  const documentLayout = useDocumentEditorLayout();
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.orderDate ?? todayStr());
   const [expectedDelivery, setExpectedDelivery] = useState(initial?.expectedDelivery ?? "");
@@ -394,7 +399,16 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
   return (
     <div>
       <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل أمر البيع ${initial?.docNo ?? ""}` : "أمر بيع جديد"}</h3>
+      <DocumentEditorShell
+        layout={documentLayout}
+        onLayoutChange={setDocumentEditorLayout}
+        label={text("تصميم المستند", "Document layout")}
+        helperText={text("يُطبّق الاختيار على جميع المستندات", "This choice applies to all document forms")}
+        selectorAriaLabel={text("اختيار تصميم المستند", "Choose document layout")}
+      >
+      <DocumentEditorSection>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="العميل *">
           <SearchCombobox
             value={customerId}
@@ -406,17 +420,14 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
             ]}
           />
         </Field>
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-        <Field label="التسليم المتوقع"><input type="date" value={expectedDelivery} onChange={(e) => setExpectedDelivery(e.target.value)} style={input} /></Field>
-        <Field label="طريقة الدفع">
+        <Field label={text("مندوب المبيعات", "Sales representative")}>
           <SearchCombobox
-            value={paymentMethod}
-            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            value={salesRepId}
+            onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
             style={input}
             options={[
-              { value: "cash", label: "نقدي" },
-              { value: "bank", label: "بنك" },
-              { value: "credit", label: "آجل (على الحساب)" },
+              { value: "", label: text("— بدون —", "— None —") },
+              ...deps.salespersons.map((s) => ({ value: s.id, label: s.nameAr })),
             ]}
           />
         </Field>
@@ -431,6 +442,7 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
             ]}
           />
         </Field>
+        <Field label={text("التسليم المتوقع", "Expected delivery")}><input type="date" value={expectedDelivery} onChange={(e) => setExpectedDelivery(e.target.value)} style={input} /></Field>
         <Field label="الضريبة">
           <SearchCombobox value={taxId} onChange={onSelectTax} options={taxOptions} style={input} />
         </Field>
@@ -439,17 +451,6 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
         </Field>
         <Field label="مركز التكلفة">
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
-        </Field>
-        <Field label="مندوب المبيعات">
-          <SearchCombobox
-            value={salesRepId}
-            onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
-            style={input}
-            options={[
-              { value: "", label: "— بدون —" },
-              ...deps.salespersons.map((s) => ({ value: s.id, label: s.nameAr })),
-            ]}
-          />
         </Field>
         <Field label="نوع المستند (زاتكا)">
           <SearchCombobox
@@ -463,26 +464,6 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           />
         </Field>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
-        {paymentMethod === "cash" && (
-          <Field label="الخزينة">
-            <SearchCombobox
-              value={cashBoxId ?? ""}
-              onChange={(v) => setCashBoxId(Number(v) || null)}
-              style={input}
-              options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))}
-            />
-          </Field>
-        )}
-        {paymentMethod === "bank" && (
-          <Field label="البنك">
-            <SearchCombobox
-              value={bankId ?? ""}
-              onChange={(v) => setBankId(Number(v) || null)}
-              style={input}
-              options={deps.banks.map((b) => ({ value: b.id, label: b.name }))}
-            />
-          </Field>
-        )}
         {invoiceType === "standard" && (
           <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>بيانات المشتري</div>
@@ -508,7 +489,9 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
           </div>
         )}
       </div>
+      </DocumentEditorSection>
 
+      <DocumentEditorSection>
       <div style={{ overflowX: "auto", marginTop: 10 }}>
       <Table style={{ minWidth: 1250 }}>
         <thead><tr>
@@ -561,16 +544,46 @@ function CreateForm({ deps, initial, onCancel, onDone }: {
       </div>
       <button onClick={addLine} type="button" style={{ ...btnSecondary, marginTop: 8 }}>+ سطر</button>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      </DocumentEditorSection>
 
+      <DocumentEditorSection>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label={text("طريقة الدفع", "Payment method")}>
+          <SearchCombobox
+            value={paymentMethod}
+            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
+            style={input}
+            options={[
+              { value: "cash", label: text("نقدي", "Cash") },
+              { value: "bank", label: text("بنك", "Bank") },
+              { value: "credit", label: text("آجل (على الحساب)", "Credit") },
+            ]}
+          />
+        </Field>
+        {paymentMethod === "cash" && (
+          <Field label={text("الخزينة", "Cashbox")}>
+            <SearchCombobox value={cashBoxId ?? ""} onChange={(v) => setCashBoxId(Number(v) || null)} style={input} options={deps.cashBoxes.map((c) => ({ value: c.id, label: c.name }))} />
+          </Field>
+        )}
+        {paymentMethod === "bank" && (
+          <Field label={text("البنك", "Bank")}>
+            <SearchCombobox value={bankId ?? ""} onChange={(v) => setBankId(Number(v) || null)} style={input} options={deps.banks.map((b) => ({ value: b.id, label: b.name }))} />
+          </Field>
+        )}
+      </div>
       <Field label="ملاحظات" style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
+      </DocumentEditorSection>
+      <DocumentEditorSection>
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>إلغاء</button>
         <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ"}</button>
       </Actions>
+      </DocumentEditorSection>
+      </DocumentEditorShell>
     </div>
   );
 }

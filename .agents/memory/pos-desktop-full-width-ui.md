@@ -15,11 +15,11 @@ For invoice item tabs, follow the web invoice's compact, full-width grid and hor
 
 **How to apply:** Change only the presentation unless the user asks for workflow changes; preserve pricing, discounts, taxes, validation, and natural page scrolling.
 
-For the sales-invoice editor, keep invoice details, item lines, totals, settlement, and notes in one continuous screen with no Basic / Items / Payments tabs. The four selectable layouts share the same invoice behavior; the saved choice is an app-level display preference, defaulting to the existing familiar layout.
+For sales invoices, sales and purchase returns, quotations, and sales and purchase orders, keep all entry sections in one continuous screen with no Basic / Items / Payments tabs. The four selectable layouts share one app-level display preference across these forms; preserve the existing sales-invoice choice when migrating to the shared setting.
 
-**Why:** The user clarified that all invoice-entry work should remain together in one screen, with four visual options inspired by the supplied references.
+**Why:** The user requested the same reference ordering and four visual options across the named sales and purchasing documents, then chose one shared default for all of them.
 
-**How to apply:** Keep all required fields and actions reachable in each layout, and never fork accounting, tax, inventory, payment, ZATCA, validation, or keyboard behavior by template.
+**How to apply:** Keep document-specific fields and actions in the shared sequence, and never fork accounting, tax, inventory, payment, ZATCA, validation, or keyboard behavior by template.
 
 Keep the essential item, unit, quantity, free quantity, price, discount, tax, and line-total fields visible. Put less-used line notes and conditional brand selection in expandable row details; automatically open details for existing notes or saved brands.
 

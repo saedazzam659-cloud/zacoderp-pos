@@ -10,9 +10,9 @@ import { listWarehouses, type Warehouse } from "../lib/inventory";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, DocumentFormHeader,
-  documentFormStyles, invoiceEditorShell, tabPanel, EmptyItemsRow,
-  linesPanel, linesScroll, docFormPinned, contentPanel,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, DocumentFormHeader,
+  documentFormStyles, docFormShell, EmptyItemsRow,
+  linesScroll, docFormPinned,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { ValidationPanel, collectDocIssues } from "./_adminUi";
@@ -24,7 +24,8 @@ import {
   type DiscType, type DiscFields,
 } from "../lib/discount";
 import { takePurchaseReturnPrefill, type PurchaseReturnPrefill } from "../lib/returnPrefill";
-import { localizeStaticUiText, useUiLanguage } from "../lib/appSettings";
+import { localizeStaticUiText, setDocumentEditorLayout, uiText, useDocumentEditorLayout, useUiLanguage } from "../lib/appSettings";
+import { DocumentEditorSection, DocumentEditorShell } from "../components/DocumentEditorShell";
 
 type FLine = PurchaseLine & DiscFields;
 
@@ -173,7 +174,8 @@ function ReturnDetail({ r }: { r: PurchaseReturn }) {
 
 function CreateForm({ deps, initial, documentCount, onCancel, onDone }: { deps: { suppliers: Supplier[]; items: LocalItem[]; warehouses: Warehouse[] }; initial?: PurchaseReturnPrefill | null; documentCount: number; onCancel: () => void; onDone: () => void }) {
   const language = useUiLanguage();
-  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
+  const text = (ar: string, en: string) => uiText(ar, en, language);
+  const documentLayout = useDocumentEditorLayout();
   const [supplierId, setSupplierId] = useState<number>(initial?.supplierId ?? deps.suppliers[0]?.id ?? 0);
   const [date, setDate] = useState(todayStr());
   const [warehouseId, setWarehouseId] = useState<number>(
@@ -299,23 +301,22 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: { deps: 
   }
 
   return (
-    <div className="zdoc-form" style={invoiceEditorShell}>
+    <div className="zdoc-form" style={docFormShell}>
       <style>{documentFormStyles}</style>
       <DocumentFormHeader
-        title="مرتجع شراء جديد"
-        hint={`${documentCount} مرتجع`}
-        actionLabel="مرتجع شراء"
-        actionTitle="عرض بيانات المرتجع"
-        onAction={() => setActiveTab("basic")}
+        title={text("مرتجع شراء جديد", "New purchase return")}
+        hint={text(`${documentCount} مرتجع`, `${documentCount} returns`)}
       />
-      <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
-        { key: "basic", label: "البيانات الأساسية" },
-        { key: "lines", label: `بنود الأصناف (${selectedLineCount})` },
-        { key: "payments", label: "المدفوعات" },
-      ]} />
-
-      <div style={contentPanel(activeTab, "basic")}>
+      <DocumentEditorShell
+        layout={documentLayout}
+        onLayoutChange={setDocumentEditorLayout}
+        label={text("تصميم المستند", "Document layout")}
+        helperText={text("يُطبّق الاختيار على جميع المستندات", "This choice applies to all document forms")}
+        selectorAriaLabel={text("اختيار تصميم المستند", "Choose document layout")}
+      >
+      <DocumentEditorSection>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="المورد *">
           <SearchCombobox
             value={supplierId}
@@ -327,7 +328,6 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: { deps: 
             ]}
           />
         </Field>
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="المستودع">
           <SearchCombobox
             value={warehouseId}
@@ -350,9 +350,9 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: { deps: 
         </Field>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
       </div>
-      </div>
+      </DocumentEditorSection>
 
-      <div className="zlines-panel" style={linesPanel(activeTab)}>
+      <DocumentEditorSection>
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
         <strong style={{ fontSize: 15 }}>بنود الأصناف</strong>
         <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>
@@ -417,9 +417,9 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: { deps: 
       <div style={docFormPinned}>
       <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       </div>
-      </div>
+      </DocumentEditorSection>
 
-      <div style={contentPanel(activeTab, "payments")}>
+      <DocumentEditorSection>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label="سبب الإرجاع">
           <SearchCombobox
@@ -434,7 +434,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: { deps: 
         </Field>
       </div>
       <Field label="ملاحظات" style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
-      </div>
+      </DocumentEditorSection>
 
       <div style={docFormPinned}>
       <ValidationPanel issues={issues} />
@@ -444,6 +444,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: { deps: 
         <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ وترحيل"}</button>
       </Actions>
       </div>
+      </DocumentEditorShell>
     </div>
   );
 }

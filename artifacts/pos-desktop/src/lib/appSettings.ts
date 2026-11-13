@@ -28,12 +28,14 @@ const LS_SHOW_FREE_QTY_COLUMN = "pos_desktop_show_free_qty_column";
 const LS_NUMBER_SYSTEM = "pos_desktop_number_system";
 const LS_UI_LANGUAGE = "pos_desktop_ui_language";
 const LS_SALES_INVOICE_LAYOUT = "pos_desktop_sales_invoice_layout";
+const LS_DOCUMENT_EDITOR_LAYOUT = "pos_desktop_document_editor_layout";
 
 export type NumberSystem = "arabic" | "latin";
 export type UiLanguage = "ar" | "en";
-export type SalesInvoiceLayout = "classic" | "quick" | "modern" | "erp";
+export type DocumentEditorLayout = "classic" | "quick" | "modern" | "erp";
+export type SalesInvoiceLayout = DocumentEditorLayout;
 
-const SALES_INVOICE_LAYOUTS: SalesInvoiceLayout[] = ["classic", "quick", "modern", "erp"];
+const DOCUMENT_EDITOR_LAYOUTS: DocumentEditorLayout[] = ["classic", "quick", "modern", "erp"];
 
 export const DECIMALS_MIN = 0;
 export const DECIMALS_MAX = 6;
@@ -300,29 +302,29 @@ export function useShowFreeQuantityColumn(): boolean {
   return show;
 }
 
-// ─── Sales invoice editor layout ─────────────────────────────────────
-// The selected layout is an app-level preference, not invoice data. Keep the
-// current tabbed form as the default so existing installs do not change until
-// a user explicitly selects another template.
-export function getSalesInvoiceLayout(): SalesInvoiceLayout {
+// ─── Shared document editor layout ────────────────────────────────────
+// One app-level choice controls every supported sales and purchasing form.
+// Read the old invoice-only key as a migration fallback for existing installs.
+export function getDocumentEditorLayout(): DocumentEditorLayout {
   if (typeof window === "undefined") return "classic";
-  const value = localStorage.getItem(LS_SALES_INVOICE_LAYOUT);
-  return SALES_INVOICE_LAYOUTS.includes(value as SalesInvoiceLayout)
-    ? value as SalesInvoiceLayout
+  const value = localStorage.getItem(LS_DOCUMENT_EDITOR_LAYOUT)
+    ?? localStorage.getItem(LS_SALES_INVOICE_LAYOUT);
+  return DOCUMENT_EDITOR_LAYOUTS.includes(value as DocumentEditorLayout)
+    ? value as DocumentEditorLayout
     : "classic";
 }
 
-export function setSalesInvoiceLayout(layout: SalesInvoiceLayout): void {
-  if (!SALES_INVOICE_LAYOUTS.includes(layout)) return;
-  writeKey(LS_SALES_INVOICE_LAYOUT, layout);
+export function setDocumentEditorLayout(layout: DocumentEditorLayout): void {
+  if (!DOCUMENT_EDITOR_LAYOUTS.includes(layout)) return;
+  writeKey(LS_DOCUMENT_EDITOR_LAYOUT, layout);
   window.dispatchEvent(new Event(EVT));
 }
 
-/** Live sales-invoice layout preference, shared across app windows and reloads. */
-export function useSalesInvoiceLayout(): SalesInvoiceLayout {
-  const [layout, setLayout] = useState<SalesInvoiceLayout>(() => getSalesInvoiceLayout());
+/** Live shared document layout preference, synchronized across app windows and reloads. */
+export function useDocumentEditorLayout(): DocumentEditorLayout {
+  const [layout, setLayout] = useState<DocumentEditorLayout>(() => getDocumentEditorLayout());
   useEffect(() => {
-    const refresh = () => setLayout(getSalesInvoiceLayout());
+    const refresh = () => setLayout(getDocumentEditorLayout());
     window.addEventListener(EVT, refresh);
     window.addEventListener("storage", refresh);
     return () => {
@@ -332,6 +334,11 @@ export function useSalesInvoiceLayout(): SalesInvoiceLayout {
   }, []);
   return layout;
 }
+
+// Backwards-compatible names retained for the existing sales invoice editor.
+export const getSalesInvoiceLayout = getDocumentEditorLayout;
+export const setSalesInvoiceLayout = setDocumentEditorLayout;
+export const useSalesInvoiceLayout = useDocumentEditorLayout;
 
 /** Input-value helper: returns "" for a zero amount when `hide` is on. */
 export function blankIfZero(n: number | string | null | undefined, hide: boolean): number | string {

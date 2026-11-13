@@ -14,9 +14,9 @@ import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, FormTabs, DocumentFormHeader,
-  documentFormStyles, invoiceEditorShell, tabPanel, EmptyItemsRow,
-  linesPanel, linesScroll, docFormPinned, contentPanel,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, DocumentFormHeader,
+  documentFormStyles, docFormShell, EmptyItemsRow,
+  linesScroll, docFormPinned,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
   errText,
 } from "./_adminUi";
@@ -30,7 +30,8 @@ import {
   type DiscType, type DiscFields,
 } from "../lib/discount";
 import { takeSalesReturnPrefill, type SalesReturnPrefill } from "../lib/returnPrefill";
-import { uiText, useUiLanguage } from "../lib/appSettings";
+import { setDocumentEditorLayout, uiText, useDocumentEditorLayout, useUiLanguage } from "../lib/appSettings";
+import { DocumentEditorSection, DocumentEditorShell } from "../components/DocumentEditorShell";
 
 type FLine = SalesLine & DiscFields;
 
@@ -305,6 +306,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
+  const documentLayout = useDocumentEditorLayout();
   const customerOptions = useMemo(() => [
     { value: 0, label: text("— بدون عميل —", "— No customer —") },
     ...deps.customers.map((customer) => ({ value: customer.id, label: customer.nameAr })),
@@ -317,7 +319,6 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
     { value: 0, label: text("— اختر —", "— Select —") },
     ...deps.items.map((item) => ({ value: item.id, label: item.nameAr })),
   ], [deps.items, language]);
-  const [activeTab, setActiveTab] = useState<"basic" | "lines" | "payments">("basic");
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(todayStr());
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "cash");
@@ -519,23 +520,22 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
   }
 
   return (
-    <div className="zdoc-form" style={invoiceEditorShell}>
+    <div className="zdoc-form" style={docFormShell}>
       <style>{documentFormStyles}</style>
       <DocumentFormHeader
         title={text("مرتجع مبيعات جديد", "New sales return")}
         hint={text(`${documentCount} مرتجع — يتم عكس قيد المبيعات وإرجاع المخزون تلقائيًا`, `${documentCount} returns — the sales entry and stock are reversed automatically`)}
-        actionLabel={text("مرتجع مبيعات", "Sales return")}
-        actionTitle={text("عرض بيانات المرتجع", "Show return details")}
-        onAction={() => setActiveTab("basic")}
       />
-      <FormTabs active={activeTab} onChange={setActiveTab} accentColor="#079b83" tabs={[
-        { key: "basic", label: text("البيانات الأساسية", "Basic information") },
-        { key: "lines", label: `${text("بنود الأصناف", "Items")} (${selectedLineCount})` },
-        { key: "payments", label: text("المدفوعات", "Payments") },
-      ]} />
-
-      <div style={contentPanel(activeTab, "basic")}>
+      <DocumentEditorShell
+        layout={documentLayout}
+        onLayoutChange={setDocumentEditorLayout}
+        label={text("تصميم المستند", "Document layout")}
+        helperText={text("يُطبّق الاختيار على جميع المستندات", "This choice applies to all document forms")}
+        selectorAriaLabel={text("اختيار تصميم المستند", "Choose document layout")}
+      >
+      <DocumentEditorSection>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label={text("العميل *", "Customer *")}>
           <SearchCombobox
             value={customerId}
@@ -544,7 +544,6 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
             options={customerOptions}
           />
         </Field>
-        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label={text("المستودع", "Warehouse")}>
           <SearchCombobox
             value={warehouseId}
@@ -564,9 +563,9 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
         </Field>
         <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
       </div>
-      </div>
+      </DocumentEditorSection>
 
-      <div className="zlines-panel" style={linesPanel(activeTab)}>
+      <DocumentEditorSection>
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
         <strong style={{ fontSize: 15 }}>{text("بنود الأصناف", "Return items")}</strong>
         <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>
@@ -653,9 +652,9 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
       <div style={docFormPinned}>
       <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
       </div>
-      </div>
+      </DocumentEditorSection>
 
-      <div style={contentPanel(activeTab, "payments")}>
+      <DocumentEditorSection>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
         <Field label={text("طريقة الاسترداد", "Refund method")}>
           <SearchCombobox
@@ -691,7 +690,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
         )}
       </div>
       <Field label={text("ملاحظات", "Notes")} style={{ marginTop: 12 }}><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} /></Field>
-      </div>
+      </DocumentEditorSection>
 
       <div style={docFormPinned}>
       <ValidationPanel issues={issues} />
@@ -701,6 +700,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
         <button onClick={save} disabled={busy || (!!initial?.invoiceId && returnAvailability === null)} type="button" style={btnPrimary}>{busy ? "..." : text("حفظ وترحيل", "Save and post")}</button>
       </Actions>
       </div>
+      </DocumentEditorShell>
     </div>
   );
 }

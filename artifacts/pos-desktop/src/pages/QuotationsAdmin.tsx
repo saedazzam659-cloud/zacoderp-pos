@@ -14,7 +14,8 @@ import { listBrands, setItemBrands } from "../lib/brands";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
-import { getCompanyProfile, uiText, useShowFreeQuantityColumn, useUiLanguage } from "../lib/appSettings";
+import { getCompanyProfile, setDocumentEditorLayout, uiText, useDocumentEditorLayout, useShowFreeQuantityColumn, useUiLanguage } from "../lib/appSettings";
+import { DocumentEditorSection, DocumentEditorShell } from "../components/DocumentEditorShell";
 import { saveText } from "../lib/saveFile";
 import { printQuotationDocs, printQuotationSummary } from "../lib/invoicePrint";
 import {
@@ -450,6 +451,9 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
   onItemCreated: (item: LocalItem) => void;
 }) {
   const isEdit = !!initial;
+  const language = useUiLanguage();
+  const text = (ar: string, en: string) => uiText(ar, en, language);
+  const documentLayout = useDocumentEditorLayout();
   const showFreeQuantityColumn = useShowFreeQuantityColumn();
   const [customerId, setCustomerId] = useState<number>(initial?.customerId ?? 0);
   const [date, setDate] = useState(initial?.quotationDate ?? todayStr());
@@ -676,7 +680,16 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
   return (
     <div>
       <h3 style={{ marginTop: 0 }}>{isEdit ? `تعديل عرض السعر ${initial?.docNo ?? ""}` : "عرض سعر جديد"}</h3>
+      <DocumentEditorShell
+        layout={documentLayout}
+        onLayoutChange={setDocumentEditorLayout}
+        label={text("تصميم المستند", "Document layout")}
+        helperText={text("يُطبّق الاختيار على جميع المستندات", "This choice applies to all document forms")}
+        selectorAriaLabel={text("اختيار تصميم المستند", "Choose document layout")}
+      >
+      <DocumentEditorSection>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0 10px", alignItems: "start" }}>
+        <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
         <Field label="العميل *">
           <SearchCombobox
             value={customerId}
@@ -688,8 +701,17 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
             ]}
           />
         </Field>
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
-        <Field label="صالح حتى"><input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} style={input} /></Field>
+        <Field label={text("مندوب المبيعات", "Sales representative")}>
+          <SearchCombobox
+            value={salesRepId}
+            onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
+            style={input}
+            options={[
+              { value: "", label: text("— بدون —", "— None —") },
+              ...deps.salespersons.map((s) => ({ value: s.id, label: s.nameAr })),
+            ]}
+          />
+        </Field>
         <Field label="المستودع">
           <SearchCombobox
             value={warehouseId}
@@ -701,6 +723,7 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
             ]}
           />
         </Field>
+        <Field label="صالح حتى"><input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} style={input} /></Field>
         <Field label="الضريبة">
           <SearchCombobox value={taxId} onChange={onSelectTax} options={taxOptions} style={input} />
         </Field>
@@ -709,17 +732,6 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
         </Field>
         <Field label="مركز التكلفة">
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={costCenterPickerOptions(costCenters)} style={input} />
-        </Field>
-        <Field label="مندوب المبيعات">
-          <SearchCombobox
-            value={salesRepId}
-            onChange={(v) => setSalesRepId(v === "" ? "" : Number(v))}
-            style={input}
-            options={[
-              { value: "", label: "— بدون —" },
-              ...deps.salespersons.map((s) => ({ value: s.id, label: s.nameAr })),
-            ]}
-          />
         </Field>
         <Field label="نوع المستند (زاتكا)">
           <SearchCombobox
@@ -750,8 +762,10 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
           </div>
         )}
       </div>
+      </DocumentEditorSection>
 
-      <div style={{ overflow: "auto", marginTop: 10, maxHeight: 360 }}>
+      <DocumentEditorSection>
+      <div style={{ overflowX: "auto", marginTop: 10 }}>
       <Table style={{ minWidth: 1250 }}>
         <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
         <tr>
@@ -810,12 +824,16 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
       </Table>
       </div>
       <InvoiceTotals result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      </DocumentEditorSection>
 
+      <DocumentEditorSection>
       <Field label="ملاحظات" style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
       <ValidationPanel issues={issues} />
       <ErrorMsg text={err} />
+      </DocumentEditorSection>
+      <DocumentEditorSection>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button
@@ -851,6 +869,7 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
           <button onClick={save} disabled={busy} type="button" style={btnPrimary}>{busy ? "..." : "حفظ"}</button>
         </div>
       </div>
+      </DocumentEditorSection>
       {quickCreateOpen && (
         <QuickCreateDialog
           kind="item"
@@ -870,6 +889,7 @@ function CreateForm({ deps, initial, onCancel, onDone, onItemCreated }: {
           onClose={() => setHistoryTarget(null)} />
       )}
       {historyNeedsCustomer && <NoCustomerHistoryDialog onClose={() => setHistoryNeedsCustomer(false)} />}
+      </DocumentEditorShell>
     </div>
   );
 }
