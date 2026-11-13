@@ -91,6 +91,8 @@ function buildHtml(model: AccountingReportPrintModel, company: CompanyProfile): 
     : "";
   const companyDetails = [
     company.phone && `${uiText("هاتف", "Phone", language)}: ${company.phone}`,
+    company.address && `${uiText("العنوان", "Address", language)}: ${company.address}`,
+    company.email && `${uiText("البريد الإلكتروني", "Email", language)}: ${company.email}`,
     company.cr && `${uiText("سجل تجاري", "CR", language)}: ${company.cr}`,
     company.vat && `${uiText("الرقم الضريبي", "VAT", language)}: ${company.vat}`,
   ].filter(Boolean).map(escapeHtml).join(" · ");

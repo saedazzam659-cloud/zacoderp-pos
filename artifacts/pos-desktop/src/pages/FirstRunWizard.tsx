@@ -39,6 +39,10 @@ export default function FirstRunWizard({ onChosen }: { onChosen: (m: AppMode) =>
 
   async function pickMode(m: AppMode) {
     await setAppMode(m);
+    if (m === "standalone") {
+      onChosen(m);
+      return;
+    }
     setMode(m);
     setStep("role");
   }

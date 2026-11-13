@@ -18,7 +18,7 @@
 // localStorage; later boots skip straight into the matching path.
 
 import { useState, useEffect, useRef } from "react";
-import { uiText, useUiLanguage } from "./lib/appSettings";
+import { getCompanyProfile, setCompanyProfile, uiText, useUiLanguage } from "./lib/appSettings";
 import Activation from "./pages/Activation";
 import CashierLogin from "./pages/CashierLogin";
 import PosShell from "./pages/PosShell";
@@ -27,7 +27,7 @@ import FirstRunWizard from "./pages/FirstRunWizard";
 import VerticalSelector from "./pages/VerticalSelector";
 import CountrySelector from "./pages/CountrySelector";
 import ProfileSelector from "./pages/ProfileSelector";
-import { hasChosenCountry } from "./lib/currency";
+import { hasChosenCountry, setCountryIso } from "./lib/currency";
 import StandaloneOnboard from "./pages/StandaloneOnboard";
 import StandaloneCompanyRegistration from "./pages/StandaloneCompanyRegistration";
 import StandaloneLogin from "./pages/StandaloneLogin";
@@ -44,14 +44,16 @@ import { clearSessionParkedCarts } from "./lib/parkedCarts";
 import {
   getAppMode, setAppMode, loadLicense, loadLocalSession,
   clearLocalSession, verifyLicenseFile, wipeStandalone,
-  getVertical, getAppProfile,
+  getVertical, getAppProfile, setVertical, setAppProfile,
+  getNetRole, getLanToken, getLanPort,
+  setNetRole, setLanHostUrl, setLanToken, setLanPort,
   revalidateLicense, saveLicense,
   getLastLicenseCheck, setLastLicenseCheck, isGraceExpired,
   getPendingLicenseKey,
-  type AppMode, type OfflineLicensePayload, type LocalSession,
+  type AppMode, type OfflineLicensePayload, type LocalSession, type Vertical,
 } from "./lib/standalone";
 import { getFingerprint } from "./lib/tauri-shim";
-import { initBridge } from "./lib/bridge";
+import { initBridge, refreshBridge } from "./lib/bridge";
 import { clockGuardCheck, clockGuardClearOnline } from "./lib/clockGuard";
 import ClockTamperLocked from "./pages/ClockTamperLocked";
 import { observeNumberSystem } from "./lib/numberDisplay";
@@ -78,6 +80,7 @@ type BootState =
   // Standalone paths
   | { phase: "needs-standalone-license" }
   | { phase: "needs-standalone-approval"; licenseKey: string }
+  | { phase: "standalone-restart-needed" }
   | { phase: "needs-standalone-login"; license: OfflineLicensePayload }
   | { phase: "standalone-revalidation-needed"; reason: RevalidationReason }
   | { phase: "standalone-signed-in"; license: OfflineLicensePayload; session: LocalSession };
@@ -153,15 +156,12 @@ export default function App() {
     return () => window.clearTimeout(id);
   }, [state.phase]);
 
-  // ── Periodic remote revalidation (Task #236) ──────────────────────────
-  // While a self-registered standalone device is signed in, re-check the cloud
-  // every 6h and whenever the window regains focus. This picks up remote
-  // revoke/expiry promptly and resets the offline-grace timer on success. A
-  // mere network failure is ignored here — only an authoritative lock verdict
-  // or an elapsed grace window (evaluated inside revalidateStandalone) locks.
+  // ── Periodic remote license refresh ───────────────────────────────────
+  // Refresh signed standalone licenses every 6h and when the window regains
+  // focus, so approved module changes appear promptly. Admin file licenses
+  // tolerate unreachable servers; normal local work remains available offline.
   useEffect(() => {
     if (state.phase !== "standalone-signed-in") return;
-    if (state.license.source !== "self_register") return;
     let cancelled = false;
     const license = state.license;
     const run = async () => {
@@ -224,22 +224,17 @@ export default function App() {
         return;
       }
     }
-    // ── First-run mode selection ──────────────────────────────────────
+    // Keep the existing cloud/standalone mode choice. Once standalone is
+    // selected, its setup comes from the signed license instead of this device.
     const mode = await getAppMode();
     if (!mode) { setState({ phase: "needs-mode" }); return; }
-    // ── Vertical preset (Task #200) — applies to BOTH cloud + standalone.
-    // We block boot here so first-launch users land on the catalog flavor
-    // that matches their business. Returning users skip this branch.
+    if (mode === "standalone") return bootStandalone();
+    // Cloud setup retains its existing selectors.
     const vertical = await getVertical();
     if (!vertical) { setState({ phase: "needs-vertical" }); return; }
-    // ── Country / currency (applies to BOTH cloud + standalone). Sets the
-    // default POS currency symbol + VAT rate. Returning users skip this.
     if (!hasChosenCountry()) { setState({ phase: "needs-country" }); return; }
-    // ── App profile (Task #226) — POS-only vs Full ERP. Applies to BOTH
-    // cloud + standalone. Chosen once at first run; returning users skip it.
     const profile = await getAppProfile();
     if (!profile) { setState({ phase: "needs-profile" }); return; }
-    if (mode === "standalone") return bootStandalone();
     return bootCloud();
   }
 
@@ -285,22 +280,78 @@ export default function App() {
         return;
       }
     }
-    // Layer 1c: remote revalidation. Self-registered (online) licenses must
-    // phone home within their grace window. Admin-issued file licenses also
-    // revalidate WHEN ONLINE so the SuperAdmin's remote expiry/revoke takes
-    // effect — but they tolerate being offline indefinitely (no grace lock),
-    // preserving their 100%-offline design (Task #233). revalidateStandalone
-    // branches on license.source for that difference.
+    // Layer 1c: remote revalidation. Self-registered licenses retain their
+    // offline-grace policy. Admin-issued files refresh when online but tolerate
+    // an unreachable server indefinitely, so local work stays available offline.
     let license = r.payload;
     {
       const verdict = await revalidateStandalone(license);
       if (verdict.lock) { setState({ phase: "standalone-revalidation-needed", reason: verdict.reason }); return; }
       if (verdict.license) license = verdict.license;
     }
+    // Older license files predate SuperAdmin-managed setup. Preserve their
+    // existing local selections and prompt only if a legacy install lacks one.
+    if (!license.country && !hasChosenCountry()) { setState({ phase: "needs-country" }); return; }
+    if (!license.appProfile && !(await getAppProfile())) { setState({ phase: "needs-profile" }); return; }
+    const restartRequired = await applyStandaloneSetup(license);
+    seedCompanyProfileFromLicense(license);
+    if (restartRequired) { setState({ phase: "standalone-restart-needed" }); return; }
     // Layer 2: local user session
     const session = await loadLocalSession();
     if (!session) { setState({ phase: "needs-standalone-login", license }); return; }
     setState({ phase: "standalone-signed-in", license, session });
+  }
+
+  async function applyStandaloneSetup(license: OfflineLicensePayload): Promise<boolean> {
+    await setAppMode("standalone");
+    if (license.vertical) await setVertical(license.vertical as Vertical);
+    if (license.country) setCountryIso(license.country);
+    if (license.appProfile) await setAppProfile(license.appProfile);
+    else if (!(await getAppProfile())) await setAppProfile("pos");
+    const previousRole = await getNetRole();
+    const previousToken = await getLanToken();
+    const previousPort = await getLanPort();
+    if (license.netRole) {
+      await setNetRole(license.netRole);
+      if (license.netRole === "host") {
+        await setLanHostUrl("");
+        await setLanToken(license.lanToken ?? "");
+        await setLanPort(license.lanPort ?? 7711);
+      } else if (license.netRole === "client") {
+        await setLanHostUrl(license.lanHostUrl ?? "");
+        await setLanToken(license.lanToken ?? "");
+      } else {
+        await setLanHostUrl("");
+        await setLanToken("");
+      }
+      await refreshBridge();
+    }
+    return TAURI_MODE === "tauri" && license.netRole !== undefined && (
+      (previousRole === "host") !== (license.netRole === "host") ||
+      (license.netRole === "host" && (
+        previousToken !== (license.lanToken ?? "") ||
+        previousPort !== (license.lanPort ?? 7711)
+      ))
+    );
+  }
+
+  function seedCompanyProfileFromLicense(license: OfflineLicensePayload) {
+    const current = getCompanyProfile();
+    const next = {
+      ...current,
+      name: current.name.trim() || license.customerName || "",
+      vat: current.vat.trim() || license.companyTaxNumber || "",
+      cr: current.cr.trim() || license.companyCrNumber || "",
+      phone: current.phone.trim() || license.companyPhone || "",
+      address: current.address.trim() || license.companyAddress || "",
+      email: current.email.trim() || license.companyEmail || "",
+    };
+    if (
+      next.name !== current.name || next.vat !== current.vat || next.cr !== current.cr ||
+      next.phone !== current.phone || next.address !== current.address || next.email !== current.email
+    ) {
+      setCompanyProfile(next);
+    }
   }
 
   // Revalidate an online-registered license against the cloud. Returns a lock
@@ -346,9 +397,9 @@ export default function App() {
       await setLastLicenseCheck(Date.now());
       return { lock: false };
     }
-    // Offline. Admin file licenses tolerate this indefinitely (never phone-home
-    // required); self-registered licenses tolerate it only until the grace window
-    // elapses. If we have never recorded a successful check (lastCheck null), the
+    // Offline. Admin file licenses tolerate this indefinitely; self-registered
+    // licenses tolerate it only until the grace window elapses. If we have never
+    // recorded a successful check (lastCheck null), the
     // window anchors to the license's signed issuedAt so an imported self-register
     // file cannot run forever offline.
     if (offlineTolerant) return { lock: false };
@@ -360,10 +411,9 @@ export default function App() {
     return { lock: false };
   }
 
-  // Build the standalone context for the clock-lock screen: only self-register
-  // licenses revalidate online, so only they can be unblocked online. Returns
-  // undefined for admin file licenses (offline-only) or when no/invalid license
-  // file exists — in those cases the lock screen offers the offline code only.
+  // The clock-unblock signal is available only to self-registered licenses.
+  // Admin file licenses may refresh entitlements online, but clock tamper is
+  // still cleared with their offline signed unlock code.
   async function loadClockLockStandalone(): Promise<{ licenseKey: string } | undefined> {
     try {
       const file = await loadLicense();
@@ -507,12 +557,13 @@ export default function App() {
 
   async function handleStandaloneFullReset() {
     if (!confirm(uiText(
-      "سيؤدي هذا إلى حذف كل بيانات الوضع المستقل (الترخيص، المستخدمين، الجلسة) والعودة لاختيار الوضع. متأكد؟",
-      "This will delete all standalone data (license, users, and session) and return to the mode-selection screen. Continue?",
+      "سيؤدي هذا إلى حذف كل بيانات الوضع المستقل (الترخيص، المستخدمين، الجلسة) وبدء طلب ترخيص جديد. متأكد؟",
+      "This will delete all standalone data (license, users, and session) and start a new license request. Continue?",
       language,
     ))) return;
     await wipeStandalone();
-    setState({ phase: "needs-mode" });
+    await setAppMode("standalone");
+    setState({ phase: "needs-standalone-license" });
   }
 
   // ── Render ──────────────────────────────────────────────────────────
@@ -635,7 +686,6 @@ export default function App() {
           // signed-in state from here.
           void (async () => { setState({ phase: "checking" }); await boot(); })();
         }}
-        onCancel={() => { void (async () => { await wipeStandalone(); setState({ phase: "needs-mode" }); })(); }}
       />
     );
   }
@@ -646,8 +696,26 @@ export default function App() {
         onDone={() => {
           void (async () => { setState({ phase: "checking" }); await boot(); })();
         }}
-        onBack={() => { void (async () => { await wipeStandalone(); setState({ phase: "needs-mode" }); })(); }}
       />
+    );
+  }
+  if (state.phase === "standalone-restart-needed") {
+    return (
+      <div dir={language === "en" ? "ltr" : "rtl"} style={loaderStyle}>
+        <div style={{ maxWidth: 520, padding: 32, borderRadius: 18, background: "#fff", boxShadow: "0 18px 50px rgba(15,23,42,.18)", textAlign: "center" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🔄</div>
+          <h1 style={{ margin: "0 0 10px", color: "#0f172a", fontSize: 22 }}>
+            {uiText("تم تفعيل إعداد الشبكة", "Network setup is activated", language)}
+          </h1>
+          <p style={{ color: "#475569", lineHeight: 1.8, margin: 0 }}>
+            {uiText(
+              "أُعدّ هذا الجهاز كرئيسي على الشبكة. أغلق البرنامج وافتحه من جديد لبدء خادم الشبكة وتطبيق الإعدادات بالكامل.",
+              "This device is configured as the network host. Close and reopen the app to start the LAN server and apply the setup.",
+              language,
+            )}
+          </p>
+        </div>
+      </div>
     );
   }
   if (state.phase === "standalone-revalidation-needed") {

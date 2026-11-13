@@ -5,12 +5,12 @@
 // combining TWO independent gates on top of the existing per-user permission
 // check (see lib/permissions.ts `can()`):
 //
-//   1. PROFILE gate  — the first-run "POS only vs Full ERP" choice. A machine
-//      set up as "pos" never shows ERP-only screens, regardless of cloud flags.
-//   2. CLOUD MODULE gate — the per-company { <module>: boolean } map pushed by
-//      the SuperAdmin through /api/sync/pull. A module set to `false` hides
-//      every view that rolls up to it. Only meaningful in CLOUD mode — a
-//      standalone device has no cloud link, so it ignores this gate.
+//   1. STANDALONE LICENSE gate — when present, the signed module list is the
+//      authority for standalone screens. Legacy licenses without the field keep
+//      their previous profile behavior.
+//   2. PROFILE gate — the first-run "POS only vs Full ERP" choice, used when no
+//      explicit standalone module list is present.
+//   3. CLOUD MODULE gate — the per-company map pushed through /api/sync/pull.
 //
 // Missing/legacy data fails OPEN (enabled) so existing installs are never
 // locked out by a key that simply isn't present yet.
@@ -54,13 +54,20 @@ type GateOpts = {
   standalone: boolean;
   /** Pre-loaded flags (avoids re-reading LS on every nav item). */
   flags?: Record<string, boolean>;
+  /** Signed SuperAdmin entitlements. Missing means this is a legacy license. */
+  licenseModules?: readonly string[];
 };
 
-/** Master visibility gate for a Windows screen (profile + cloud module). */
+/** Master visibility gate for a Windows screen. */
 export function isModuleEnabled(view: WindowsView, opts: GateOpts): boolean {
-  // 1) Profile gate — "pos" hides ERP-only screens.
+  // A new standalone license is the complete module authority. This lets a
+  // SuperAdmin enable additional ERP modules without requiring local setup.
+  if (opts.standalone && opts.licenseModules !== undefined) {
+    return opts.licenseModules.includes(moduleForView(view));
+  }
+  // Legacy profile gate — "pos" hides ERP-only screens.
   if (opts.profile === "pos" && profileForView(view) === "erp") return false;
-  // 2) Cloud module gate — cloud mode only.
+  // Cloud module gate — cloud mode only.
   if (!opts.standalone) {
     const flags = opts.flags ?? loadWindowsModuleFlags();
     if (!moduleAllowedByCloud(moduleForView(view), flags)) return false;

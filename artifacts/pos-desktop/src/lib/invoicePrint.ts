@@ -184,6 +184,8 @@ function buildA4Html(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, zatca
       ${zatca && co.vat ? `<div class="row"><b>${L("الرقم الضريبي", "Tax number")}:</b><span class="mono">${esc(co.vat)}</span></div>` : ""}
       ${co.cr ? `<div class="row"><b>${L("السجل التجاري", "Commercial registration")}:</b><span class="mono">${esc(co.cr)}</span></div>` : ""}
       ${co.phone ? `<div class="row"><b>${L("الهاتف", "Phone")}:</b><span class="mono">${esc(co.phone)}</span></div>` : ""}
+      ${co.address ? `<div class="row"><b>${L("العنوان", "Address")}:</b><span>${esc(co.address)}</span></div>` : ""}
+      ${co.email ? `<div class="row"><b>${L("البريد", "Email")}:</b><span>${esc(co.email)}</span></div>` : ""}
     </div>
 
     <div class="col-mid">
@@ -283,6 +285,8 @@ function buildThermalHtml(doc: PrintDoc, co: CompanyProfile, qrDataUrl: string, 
     ${zatca && co.vat ? `<div class="muted">${L("الرقم الضريبي", "Tax number")}: ${esc(co.vat)}</div>` : ""}
     ${co.cr ? `<div class="muted">${L("س.ت:", "CR:")} ${esc(co.cr)}</div>` : ""}
     ${co.phone ? `<div class="muted">${L("هاتف:", "Phone:")} ${esc(co.phone)}</div>` : ""}
+    ${co.address ? `<div class="muted">${L("العنوان:", "Address:")} ${esc(co.address)}</div>` : ""}
+    ${co.email ? `<div class="muted">${L("البريد:", "Email:")} ${esc(co.email)}</div>` : ""}
     <div class="doc-title">${esc(thermalTitle)}</div>
   </div>
   <div class="sep"></div>
@@ -437,6 +441,9 @@ export function printQuotationDocs(docs: QuotationPrintDoc[]): void {
           ${co.logo ? `<img src="${esc(co.logo)}" alt="logo" />` : ""}
           <div><div class="quote-company-name">${esc(co.name)}</div>
             ${co.phone ? `<div>${L("الهاتف", "Phone")}: ${esc(co.phone)}</div>` : ""}
+            ${co.address ? `<div>${L("العنوان", "Address")}: ${esc(co.address)}</div>` : ""}
+            ${co.email ? `<div>${L("البريد", "Email")}: ${esc(co.email)}</div>` : ""}
+            ${co.cr ? `<div>${L("السجل التجاري", "Commercial registration")}: ${esc(co.cr)}</div>` : ""}
             ${co.vat ? `<div>${L("الرقم الضريبي", "Tax number")}: ${esc(co.vat)}</div>` : ""}
           </div>
         </div>
@@ -488,7 +495,12 @@ export function printQuotationSummary(docs: QuotationSummaryPrintDoc[]): void {
   const grandTotal = docs.reduce((sum, doc) => sum + Number(doc.grandTotal || 0), 0);
   const html = `<!DOCTYPE html><html dir="${language === "en" ? "ltr" : "rtl"}" lang="${language}"><head><meta charset="UTF-8"><title>${L("ملخص عروض الأسعار", "Quotation summary")}</title><style>${quotationPrintStyles(language)}</style></head><body>
     <section class="quote-page">
-      <header class="quote-head"><div><div class="quote-company-name">${esc(co.name)}</div>${co.phone ? `<div>${L("الهاتف", "Phone")}: ${esc(co.phone)}</div>` : ""}</div>
+       <header class="quote-head"><div><div class="quote-company-name">${esc(co.name)}</div>
+         ${co.phone ? `<div>${L("الهاتف", "Phone")}: ${esc(co.phone)}</div>` : ""}
+         ${co.address ? `<div>${L("العنوان", "Address")}: ${esc(co.address)}</div>` : ""}
+         ${co.email ? `<div>${L("البريد", "Email")}: ${esc(co.email)}</div>` : ""}
+         ${co.cr ? `<div>${L("السجل التجاري", "Commercial registration")}: ${esc(co.cr)}</div>` : ""}
+       </div>
         <div class="quote-title">${L("ملخص عروض الأسعار المحددة", "Selected quotations summary")}<small>${esc(new Date().toLocaleDateString(language === "en" ? "en-GB" : "ar-SA"))}</small></div>
       </header>
       <table class="quote-table"><thead><tr>
@@ -685,6 +697,8 @@ function buildVoucherHtml(v: VoucherDoc, co: CompanyProfile, zatca: boolean): st
       ${co.cr ? `<div class="row"><b>${text("س.ت:", "C.R.:")}</b> ${esc(co.cr)}</div>` : ""}
       ${zatca && co.vat ? `<div class="row"><b>${text("الرقم الضريبي:", "VAT number:")}</b> ${esc(co.vat)}</div>` : ""}
       ${co.phone ? `<div class="row"><b>${text("الهاتف:", "Phone:")}</b> ${esc(co.phone)}</div>` : ""}
+      ${co.address ? `<div class="row"><b>${text("العنوان:", "Address:")}</b> ${esc(co.address)}</div>` : ""}
+      ${co.email ? `<div class="row"><b>${text("البريد:", "Email:")}</b> ${esc(co.email)}</div>` : ""}
     </div>
     ${co.logo ? `<div class="logo"><img src="${esc(co.logo)}" alt="logo" /></div>` : ""}
   </div>

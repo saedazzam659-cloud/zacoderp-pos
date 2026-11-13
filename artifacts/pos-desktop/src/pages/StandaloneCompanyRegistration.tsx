@@ -20,7 +20,6 @@ import {
   type OfflineLicensePayload, type StandaloneCompanyInfo,
 } from "../lib/standalone";
 import { getFingerprint } from "../lib/tauri-shim";
-import { getCountryIso } from "../lib/currency";
 
 type Phase = "form" | "submitting" | "pending-approval" | "admin-create" | "done";
 
@@ -29,7 +28,7 @@ const APPROVAL_POLL_MS = 8000;
 
 export default function StandaloneCompanyRegistration({ onDone, onBack, resumePendingKey }: {
   onDone: (payload: OfflineLicensePayload) => void;
-  onBack: () => void;
+  onBack?: () => void;
   // When the app reopens while a request is still awaiting approval, App.tsx
   // re-mounts this component with the persisted pending key so we resume the
   // "awaiting approval" wait (skipping the form) instead of losing the request.
@@ -41,12 +40,12 @@ export default function StandaloneCompanyRegistration({ onDone, onBack, resumePe
   const [needsAdmin, setNeedsAdmin] = useState<boolean>(true);
   const [pendingKey, setPendingKey] = useState<string | null>(resumePendingKey ?? null);
   const [checking, setChecking] = useState(false);
-  useEffect(() => { void countLocalUsers().then((n) => setNeedsAdmin(n === 0)); }, []);
+  useEffect(() => {
+    void countLocalUsers().then((n) => setNeedsAdmin(n === 0));
+  }, []);
 
   const [c, setC] = useState<StandaloneCompanyInfo>({
     customerName: "",
-    vertical: "retail",
-    country: getCountryIso(),
     companyTaxNumber: "",
     companyCrNumber: "",
     companyAddress: "",
@@ -128,8 +127,6 @@ export default function StandaloneCompanyRegistration({ onDone, onBack, resumePe
       const fp = await getFingerprint();
       const clean: StandaloneCompanyInfo = {
         customerName: c.customerName.trim(),
-        vertical: c.vertical,
-        country: c.country?.trim() || undefined,
         companyTaxNumber: c.companyTaxNumber?.trim() || undefined,
         companyCrNumber: c.companyCrNumber?.trim() || undefined,
         companyAddress: c.companyAddress?.trim() || undefined,
@@ -181,7 +178,7 @@ export default function StandaloneCompanyRegistration({ onDone, onBack, resumePe
       <div style={S.card}>
         <header style={S.head}>
           <h1 style={S.title}>تسجيل جديد عبر الإنترنت</h1>
-          <button onClick={onBack} style={S.linkBtn}>← رجوع</button>
+          {onBack && <button onClick={onBack} style={S.linkBtn}>← رجوع</button>}
         </header>
         <div style={{ fontSize: 11, color: PINNED_PUBKEY_FINGERPRINT === "EMPTY" ? "#dc2626" : "#16a34a", fontFamily: "monospace", padding: "4px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4, marginBottom: 12, direction: "ltr", textAlign: "left" }}>
           build v{__APP_VERSION__} · pinned pubkey: {PINNED_PUBKEY_FINGERPRINT}
@@ -197,25 +194,12 @@ export default function StandaloneCompanyRegistration({ onDone, onBack, resumePe
         {(phase === "form" || phase === "submitting") && (
           <div>
             <p style={S.lead}>
-              أدخل بيانات منشأتك. سيتم إنشاء ترخيص موقّع مرتبط بهذا الجهاز، ويمكن لمزوّد الخدمة
-              التحكم في تجديده أو إيقافه لاحقاً عن بُعد. يتطلب هذا اتصالاً بالإنترنت لمرة واحدة على الأقل.
+              أدخل بيانات منشأتك لإرسال طلب الترخيص للموافقة عبر الإنترنت. بعد التفعيل، تعمل
+              المبيعات والبيانات محلياً دون اتصال؛ يلزم الإنترنت للتجديد ووصول تغييرات الوحدات من المشرف.
             </p>
             <Field label="اسم الشركة / المنشأة *">
               <input value={c.customerName} onChange={(e) => setC({ ...c, customerName: e.target.value })} style={S.input} placeholder="مؤسسة ..." />
             </Field>
-            <div style={S.row2}>
-              <Field label="النشاط">
-                <select value={c.vertical} onChange={(e) => setC({ ...c, vertical: e.target.value as StandaloneCompanyInfo["vertical"] })} style={S.input}>
-                  <option value="retail">تجزئة عامة</option>
-                  <option value="grocery">بقالة/سوبرماركت</option>
-                  <option value="pharmacy">صيدلية</option>
-                  <option value="restaurant">مطعم</option>
-                </select>
-              </Field>
-              <Field label="الدولة (رمز ISO)">
-                <input value={c.country ?? ""} maxLength={2} onChange={(e) => setC({ ...c, country: e.target.value.toUpperCase() })} style={S.input} placeholder="SA" />
-              </Field>
-            </div>
             <div style={S.row2}>
               <Field label="الرقم الضريبي">
                 <input value={c.companyTaxNumber ?? ""} onChange={(e) => setC({ ...c, companyTaxNumber: e.target.value })} style={S.input} placeholder="3xxxxxxxxxxxxx3" />
@@ -248,8 +232,8 @@ export default function StandaloneCompanyRegistration({ onDone, onBack, resumePe
               <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6 }}>بانتظار موافقة المشرف</div>
               <p style={{ fontSize: 13, lineHeight: 1.7, margin: 0 }}>
                 تم استلام طلب تسجيلك بنجاح. يجب أن يوافق عليه مزوّد الخدمة (المشرف) ويحدّد مدة
-                التفعيل (تجريبية أو دائمة) قبل أن يبدأ التطبيق بالعمل. سيتم التفعيل تلقائياً بمجرد
-                الموافقة — أبقِ الجهاز متصلاً بالإنترنت.
+                التفعيل وإعداد نسخة البرنامج والوحدات قبل أن يبدأ التطبيق بالعمل. سيتم التفعيل تلقائياً
+                بمجرد الموافقة — أبقِ الجهاز متصلاً بالإنترنت.
               </p>
             </div>
             <div style={{ fontSize: 12, color: "#64748b", fontFamily: "monospace", padding: "6px 8px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4, marginBottom: 12, direction: "ltr", textAlign: "left", wordBreak: "break-all" }}>

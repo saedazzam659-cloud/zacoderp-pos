@@ -496,18 +496,22 @@ export default function PosShell({
     ? currentPermissionLoadState.message
     : null;
 
-  // Task #226 — module/profile visibility gate, additive to `can()`:
-  //   • profile  — the first-run "POS only vs Full ERP" choice.
-  //   • flags     — the SuperAdmin-pushed per-company module map (cloud only).
-  // Both are refreshed on mount; `flags` also after every pull (see pull effect).
+  // Module visibility remains additive to per-user `can()`. Standalone signed
+  // entitlements take effect after online revalidation; cloud flags still refresh
+  // after each pull. Legacy licenses retain the local profile gate.
   const [appProfile, setAppProfileState] = useState<AppProfile | null>(null);
   const [moduleFlags, setModuleFlags] = useState<Record<string, boolean>>(
     () => loadWindowsModuleFlags(),
   );
   useEffect(() => { void getAppProfile().then(setAppProfileState); }, []);
   const moduleVisible = useCallback(
-    (v: View) => isModuleEnabled(v, { profile: appProfile, standalone, flags: moduleFlags }),
-    [appProfile, standalone, moduleFlags],
+    (v: View) => isModuleEnabled(v, {
+      profile: appProfile,
+      standalone,
+      flags: moduleFlags,
+      licenseModules: standaloneLicense?.modules,
+    }),
+    [appProfile, standalone, moduleFlags, standaloneLicense?.modules],
   );
   // Low-stock count drives the sidebar badge under "أصناف تحت الحد".
   // Refreshed on view-switch (cheap) + after import/sale (no realtime needed).

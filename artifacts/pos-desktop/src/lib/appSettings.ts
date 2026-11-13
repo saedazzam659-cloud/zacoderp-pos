@@ -22,6 +22,8 @@ const LS_NAME = "pos_desktop_company_name";
 const LS_VAT = "pos_desktop_company_vat";
 const LS_CR = "pos_desktop_company_cr";
 const LS_PHONE = "pos_desktop_company_phone";
+const LS_ADDRESS = "pos_desktop_company_address";
+const LS_EMAIL = "pos_desktop_company_email";
 const LS_DECIMALS = "pos_desktop_decimal_places";
 const LS_HIDE_ZEROS = "pos_desktop_hide_zeros";
 const LS_SHOW_FREE_QTY_COLUMN = "pos_desktop_show_free_qty_column";
@@ -52,6 +54,8 @@ export type CompanyProfile = {
   vat: string;
   cr: string;
   phone: string;
+  address: string;
+  email: string;
   decimals: number;
 };
 
@@ -187,6 +191,8 @@ export function getCompanyProfile(): CompanyProfile {
     vat: ls(LS_VAT),
     cr: ls(LS_CR),
     phone: ls(LS_PHONE),
+    address: ls(LS_ADDRESS),
+    email: ls(LS_EMAIL),
     decimals: readDecimals(),
   };
 }
@@ -207,6 +213,8 @@ export function setCompanyProfile(p: CompanyProfile): void {
   writeKey(LS_VAT, (p.vat ?? "").trim());
   writeKey(LS_CR, (p.cr ?? "").trim());
   writeKey(LS_PHONE, (p.phone ?? "").trim());
+  writeKey(LS_ADDRESS, (p.address ?? "").trim());
+  writeKey(LS_EMAIL, (p.email ?? "").trim());
   const dp = Math.min(DECIMALS_MAX, Math.max(DECIMALS_MIN, Math.floor(Number(p.decimals) || 0)));
   writeKey(LS_DECIMALS, String(dp));
   _decimals = dp;

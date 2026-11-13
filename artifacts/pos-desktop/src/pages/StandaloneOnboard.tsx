@@ -1,11 +1,3 @@
-// Standalone onboarding chooser — Task #236.
-//
-// First thing a standalone device sees when it has no stored license. Offers
-// two routes:
-//   • "تسجيل جديد عبر الإنترنت" → StandaloneCompanyRegistration (new online flow)
-//   • "لدي ملف ترخيص"           → StandaloneActivation (original offline file-drop)
-// Both ultimately call onDone(payload) with a verified, stored license.
-
 import { useState } from "react";
 import StandaloneActivation from "./StandaloneActivation";
 import StandaloneCompanyRegistration from "./StandaloneCompanyRegistration";
@@ -13,46 +5,38 @@ import type { OfflineLicensePayload } from "../lib/standalone";
 
 type Choice = "menu" | "register" | "file";
 
+/** Standalone-only activation choices; neither route offers cloud mode. */
 export default function StandaloneOnboard({ onDone, onCancel }: {
   onDone: (payload: OfflineLicensePayload) => void;
-  onCancel: () => void;
+  onCancel?: () => void;
 }) {
   const [choice, setChoice] = useState<Choice>("menu");
-
   if (choice === "register") {
     return <StandaloneCompanyRegistration onDone={onDone} onBack={() => setChoice("menu")} />;
   }
   if (choice === "file") {
     return <StandaloneActivation onDone={onDone} onCancel={() => setChoice("menu")} />;
   }
-
   return (
     <div dir="rtl" style={S.wrap}>
       <div style={S.card}>
         <header style={S.head}>
-          <h1 style={S.title}>تفعيل الوضع المستقل</h1>
-          <button onClick={onCancel} style={S.linkBtn}>← العودة لاختيار الوضع</button>
+          <h1 style={S.title}>تفعيل نسخة Standalone</h1>
+          {onCancel && <button onClick={onCancel} style={S.linkBtn}>العودة</button>}
         </header>
-        <p style={S.lead}>اختر طريقة تفعيل هذا الجهاز:</p>
-
+        <p style={S.lead}>سجّل بيانات المنشأة لانتظار الموافقة، أو استخدم ملف ترخيص جاهز.</p>
         <button onClick={() => setChoice("register")} style={S.option}>
           <div style={{ fontSize: 28 }}>🌐</div>
           <div style={{ textAlign: "right" }}>
-            <div style={S.optTitle}>تسجيل جديد عبر الإنترنت</div>
-            <div style={S.optDesc}>
-              أدخل بيانات منشأتك واحصل على ترخيص فوري. يتيح لمزوّد الخدمة تجديد الترخيص أو إيقافه عن بُعد.
-              (يتطلب اتصالاً بالإنترنت)
-            </div>
+            <div style={S.optTitle}>تسجيل منشأة جديدة</div>
+            <div style={S.optDesc}>أدخل بيانات المنشأة فقط. يختار المشرف إعدادات النسخة والوحدات قبل الموافقة.</div>
           </div>
         </button>
-
         <button onClick={() => setChoice("file")} style={S.option}>
           <div style={{ fontSize: 28 }}>📄</div>
           <div style={{ textAlign: "right" }}>
             <div style={S.optTitle}>لدي ملف ترخيص</div>
-            <div style={S.optDesc}>
-              استخدم ملف الترخيص <code>.zacolic.json</code> الذي تسلّمته من مزوّد الخدمة. يعمل بدون إنترنت.
-            </div>
+            <div style={S.optDesc}>فعّل ملف الترخيص المستقل الموقّع الذي سلّمه لك المشرف.</div>
           </div>
         </button>
       </div>

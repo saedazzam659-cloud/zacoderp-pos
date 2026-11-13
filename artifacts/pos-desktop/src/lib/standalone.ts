@@ -10,6 +10,7 @@
 // only — production MSI builds always have Tauri.
 
 import * as ed from "@noble/ed25519";
+import { WINDOWS_MODULES, type WindowsModuleKey } from "./moduleRegistry";
 
 // ─── invoke loader (lazy, same pattern as tauri-shim) ────────────────
 let _invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
@@ -52,6 +53,13 @@ export type OfflineLicensePayload = {
   companyEmail?: string;
   source?: "admin" | "self_register";
   graceDays?: number;
+  // Missing means a legacy license; retain its existing profile-based behavior.
+  modules?: WindowsModuleKey[];
+  appProfile?: "pos" | "erp";
+  netRole?: NetRole;
+  lanHostUrl?: string;
+  lanToken?: string;
+  lanPort?: number;
 };
 export type SignedLicenseFile = {
   v: 1; alg: "ed25519";
@@ -240,6 +248,16 @@ export async function verifyLicenseFile(file: SignedLicenseFile, nowMs: number =
   }
   if (JSON.stringify(payload) !== JSON.stringify(file.payload)) {
     return { ok: false, error: "العرض غير مطابق للمحتوى الموقّع — الملف معدّل" };
+  }
+  if (payload.modules !== undefined) {
+    const moduleKeys = new Set(WINDOWS_MODULES.map((module) => module.key));
+    if (
+      !Array.isArray(payload.modules) ||
+      payload.modules.length === 0 ||
+      payload.modules.some((module) => !moduleKeys.has(module))
+    ) {
+      return { ok: false, error: "قائمة وحدات الترخيص غير صالحة" };
+    }
   }
   // `nowMs` is the clock-guard's effectiveNow = max(systemNow, high-water-mark)
   // so a rolled-back Windows clock can never make an expired license re-pass.
@@ -537,7 +555,7 @@ export function isGraceExpired(
 
 export type StandaloneCompanyInfo = {
   customerName: string;
-  vertical: "retail" | "pharmacy" | "restaurant" | "grocery";
+  vertical?: Vertical;
   country?: string;
   companyTaxNumber?: string;
   companyCrNumber?: string;

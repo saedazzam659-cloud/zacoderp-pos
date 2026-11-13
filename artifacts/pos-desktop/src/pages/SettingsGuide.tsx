@@ -20,6 +20,8 @@ export default function SettingsGuide() {
   const [vat, setVat] = useState("");
   const [cr, setCr] = useState("");
   const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [email, setEmail] = useState("");
   const [decimals, setDecimals] = useState<number>(DECIMALS_DEFAULT);
   const [hideZeros, setHideZerosState] = useState<boolean>(true);
   const [err, setErr] = useState<string | null>(null);
@@ -33,6 +35,8 @@ export default function SettingsGuide() {
     setVat(p.vat);
     setCr(p.cr);
     setPhone(p.phone);
+    setAddress(p.address);
+    setEmail(p.email);
     setDecimals(p.decimals);
     setHideZerosState(getHideZeros());
   }, []);
@@ -73,7 +77,7 @@ export default function SettingsGuide() {
   function save() {
     setErr(null);
     const dp = Math.min(DECIMALS_MAX, Math.max(DECIMALS_MIN, Math.floor(Number(decimals) || 0)));
-    setCompanyProfile({ logo, name, vat, cr, phone, decimals: dp });
+    setCompanyProfile({ logo, name, vat, cr, phone, address, email, decimals: dp });
     setHideZeros(hideZeros);
     setDecimals(dp);
     setSaved(true);
@@ -131,6 +135,12 @@ export default function SettingsGuide() {
           </Field>
           <Field label="رقم الهاتف">
             <input style={input} value={phone} onChange={(e) => { setPhone(e.target.value); setSaved(false); }} inputMode="tel" placeholder="مثال: 0555555555" dir="ltr" />
+          </Field>
+          <Field label="عنوان الشركة">
+            <input style={input} value={address} onChange={(e) => { setAddress(e.target.value); setSaved(false); }} placeholder="المدينة، الحي، الشارع" />
+          </Field>
+          <Field label="البريد الإلكتروني">
+            <input style={input} value={email} onChange={(e) => { setEmail(e.target.value); setSaved(false); }} type="email" placeholder="info@example.com" dir="ltr" />
           </Field>
         </div>
         <span style={{ fontSize: 12, color: "#64748b" }}>
