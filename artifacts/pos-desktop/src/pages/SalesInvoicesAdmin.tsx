@@ -10,8 +10,12 @@ import {
 } from "../lib/accounting";
 import { createCustomer, listCustomers, type LocalCustomer } from "../lib/customers";
 import { emitData } from "../lib/dataBus";
-import { createItem, listItems, type LocalItem } from "../lib/items";
-import QuickCreateDialog from "../components/QuickCreateDialog";
+import { createItem, listItems, updateItem, type LocalItem } from "../lib/items";
+import QuickCreateDialog, {
+  type QuickCreateSavedItem,
+  type QuickCreateSubmitContext,
+  type QuickCreateSubmitResult,
+} from "../components/QuickCreateDialog";
 import { DocumentItemPicker, ItemCodeHistoryButton, ItemHistoryDialog, NoCustomerHistoryDialog } from "../components/DocumentItemDialogs";
 import {
   listItemBrands, itemHasBrands, saveInvoiceLineBrands, getInvoiceLineBrands, dropInvoiceLineBrands, listBrands, setItemBrands,
@@ -51,8 +55,12 @@ import {
 import { setSalesReturnPrefill } from "../lib/returnPrefill";
 import { type WindowsView } from "../lib/moduleRegistry";
 
-type FLine = SalesLine & DiscFields & { unitKey?: string; brandId?: number | null; brandName?: string | null };
+type FLine = SalesLine & DiscFields & { unitKey?: string; brandId?: number | null; brandName?: string | null; quickCreateEntryKey?: string };
 type SalesPaymentChoice = PaymentMethod | "mixed";
+
+function normalizeQuickCreateItemName(value: string): string {
+  return value.normalize("NFKC").replace(/[\u0640\u064B-\u065F\u0670]/g, "").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+}
 
 const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page{height:auto!important;min-height:0!important;overflow:visible!important;display:block!important;--si-accent:#2563eb;--si-panel:#f7faff;--si-border:#cbd8e8;--si-grid:#edf3fb;--si-radius:8px;--si-density:8px;}
@@ -910,37 +918,125 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     } finally { setQuickCreateBusy(false); }
   }
 
-  async function createQuickItem(input: { nameAr: string; code: string; barcode: string; salePrice: number; vatRate: number; nature: "stock" | "service"; uomId: number; brandId: number | null; quantity?: number }, action: "close" | "add-another" = "close") {
+  async function createQuickItem(
+    input: { nameAr: string; code: string; barcode: string; salePrice: number; salePriceTouched?: boolean; vatRate: number; vatRateTouched?: boolean; nature: "stock" | "service"; uomId: number; brandId: number | null; quantity?: number },
+    action: "close" | "add-another" = "close",
+    context?: QuickCreateSubmitContext,
+  ): Promise<QuickCreateSubmitResult> {
     if (!input.nameAr.trim()) { setQuickCreateError(text("اكتب اسم الصنف بالعربية", "Enter the item's Arabic name.")); return false; }
     if (!Number.isFinite(input.salePrice) || input.salePrice < 0) { setQuickCreateError(text("أدخل سعرًا صحيحًا", "Enter a valid price.")); return false; }
     if (!Number.isFinite(input.quantity ?? 1) || (input.quantity ?? 1) <= 0) { setQuickCreateError(text("أدخل كمية أكبر من صفر", "Enter a quantity greater than zero.")); return false; }
     if (!Number.isFinite(input.vatRate) || input.vatRate < 0 || input.vatRate > 100) { setQuickCreateError(text("نسبة الضريبة يجب أن تكون بين 0 و100", "Tax must be between 0 and 100.")); return false; }
-    const uom = uoms.find((unit) => unit.id === input.uomId);
-    if (!uom) { setQuickCreateError(text("اختر وحدة قياس للصنف", "Choose a unit of measure.")); return false; }
     setQuickCreateBusy(true); setQuickCreateError(null);
     try {
-      const item = await createItem({
-        nameAr: input.nameAr.trim(),
-        code: input.code.trim() || null,
-        barcode: input.barcode.trim() || null,
-        salePrice: input.salePrice,
-        vatRate: selectedRate ?? input.vatRate,
-        costPrice: 0,
-        uomId: uom.id,
-        nature: input.nature,
-      });
-      const chosenBrand = input.brandId == null ? null : listBrands().find((brand) => brand.id === input.brandId) ?? null;
-      if (chosenBrand) setItemBrands(item.id, [{ brandId: chosenBrand.id, salePrice1: item.salePrice, status: "active" }]);
-      if (chosenBrand) setExpandedLineIndices((current) => new Set(current).add(lines.length));
+      const uom = uoms.find((unit) => unit.id === input.uomId);
+      if (!uom) throw new Error(text("اختر وحدة قياس للصنف", "Choose a unit of measure."));
+
+      // Re-read the local catalog at submit time so a repeated Arabic name
+      // reuses the existing item instead of creating another master record.
+      const catalog = await listItems();
+      const editing = context?.editingEntry ?? null;
+      const editingItem = editing ? catalog.find((candidate) => candidate.id === editing.itemId) ?? null : null;
+      if (editing && !editingItem) {
+        throw new Error(text("لم يعد الصنف المحدد موجودًا في دليل الأصناف. أغلق النافذة واختره من جديد.", "The selected item is no longer in the catalog. Close this dialog and select it again."));
+      }
+      if (editing && !lines.some((line) => line.quickCreateEntryKey === context?.entryKey)) {
+        throw new Error(text("تعذر العثور على بند الفاتورة المراد تعديله.", "Could not find the invoice line to update."));
+      }
+      const matchingName = catalog.find((candidate) =>
+        candidate.id !== editingItem?.id && normalizeQuickCreateItemName(candidate.nameAr) === normalizeQuickCreateItemName(input.nameAr),
+      ) ?? null;
+
+      let item: LocalItem;
+      let createdInSession = false;
+      let reusedExisting = false;
+      if (editing && !editing.createdInSession) {
+        // Existing catalog items are edited only at the invoice-line level.
+        item = editingItem!;
+        reusedExisting = true;
+      } else if (matchingName) {
+        // A rename that collides with another item safely resolves to that
+        // item; it does not create a duplicate catalog row.
+        item = matchingName;
+        reusedExisting = true;
+      } else if (editing) {
+        const updated = await updateItem(editingItem!.id, {
+          nameAr: input.nameAr.trim(),
+          code: input.code.trim() || null,
+          barcode: input.barcode.trim() || null,
+          salePrice: input.salePrice,
+          vatRate: selectedRate ?? input.vatRate,
+          uomId: uom.id,
+          nature: input.nature,
+        });
+        if (!updated) throw new Error(text("تعذر تحديث الصنف المحفوظ.", "Could not update the saved item."));
+        item = updated;
+        createdInSession = true;
+      } else {
+        item = await createItem({
+          nameAr: input.nameAr.trim(),
+          code: input.code.trim() || null,
+          barcode: input.barcode.trim() || null,
+          salePrice: input.salePrice,
+          vatRate: selectedRate ?? input.vatRate,
+          costPrice: 0,
+          uomId: uom.id,
+          nature: input.nature,
+        });
+        createdInSession = true;
+      }
+
+      const resolvedUom = uoms.find((unit) => unit.id === item.uomId) ?? uom;
+      const linePrice = reusedExisting && !input.salePriceTouched ? item.salePrice : (createdInSession ? item.salePrice : input.salePrice);
+      const lineVatRate = selectedRate ?? (reusedExisting && !input.vatRateTouched ? item.vatRate : input.vatRate);
+      const requestedBrand = input.brandId == null ? null : listBrands().find((brand) => brand.id === input.brandId) ?? null;
+      const linkedBrands = reusedExisting ? listItemBrands(item.id).filter((brand) => brand.status === "active") : [];
+      const linkedBrand = requestedBrand && linkedBrands.some((brand) => brand.brandId === requestedBrand.id)
+        ? requestedBrand
+        : linkedBrands.length ? listBrands().find((brand) => brand.id === linkedBrands[0].brandId) ?? null : null;
+      const chosenBrand = reusedExisting ? linkedBrand : requestedBrand;
+      if (!reusedExisting) {
+        setItemBrands(item.id, chosenBrand ? [{ brandId: chosenBrand.id, salePrice1: item.salePrice, status: "active" }] : []);
+      }
+
       try { await onRefreshDeps(); } catch { /* the new local item still gets its document line */ }
+      const targetLineIndex = editing ? lines.findIndex((line) => line.quickCreateEntryKey === context?.entryKey) : lines.length;
+      if (chosenBrand) setExpandedLineIndices((current) => new Set(current).add(targetLineIndex));
       setLines((current) => {
-        const next: FLine = { ...blankLine(), itemId: item.id, itemName: item.nameAr, qty: input.quantity ?? 1, unitPrice: item.salePrice, vatRate: selectedRate ?? item.vatRate, uomId: item.uomId ?? uom.id, uomName: uom.nameAr, conversionFactor: uom.baseQty, brandId: chosenBrand?.id ?? null, brandName: chosenBrand?.nameAr ?? null };
+        const next: FLine = {
+          ...(editing ? current.find((line) => line.quickCreateEntryKey === context?.entryKey)! : blankLine()),
+          itemId: item.id, itemName: item.nameAr, qty: input.quantity ?? 1, unitPrice: linePrice,
+          vatRate: lineVatRate, uomId: resolvedUom.id, uomName: resolvedUom.nameAr,
+          conversionFactor: resolvedUom.baseQty, brandId: chosenBrand?.id ?? null, brandName: chosenBrand?.nameAr ?? null,
+          ...(context ? { quickCreateEntryKey: context.entryKey } : {}),
+        };
         const { net } = lineNet(next.qty, next.unitPrice, next.disc, next.discType);
         next.lineTotal = net + net * next.vatRate / 100;
+        if (editing) return current.map((line) => line.quickCreateEntryKey === context?.entryKey ? next : line);
         return [...current, next];
       });
+
+      const savedItem: QuickCreateSavedItem = {
+        entryKey: context?.entryKey ?? `quick-item-${item.id}`,
+        itemId: item.id,
+        nameAr: item.nameAr,
+        quantity: input.quantity ?? 1,
+        salePrice: linePrice,
+        vatRate: lineVatRate,
+        code: item.code ?? "",
+        barcode: item.barcode ?? "",
+        nature: item.nature ?? input.nature,
+        uomId: resolvedUom.id,
+        brandId: chosenBrand?.id ?? null,
+        createdInSession,
+      };
+      const notice = reusedExisting && !editing
+        ? text(`الصنف «${item.nameAr}» موجود بالفعل؛ أُضيف للفاتورة باستخدام السجل الموجود دون إنشاء نسخة.`, `“${item.nameAr}” already exists; it was added from the existing catalog record without creating a duplicate.`)
+        : reusedExisting && editing?.createdInSession
+          ? text(`الاسم مستخدم لصنف موجود؛ تم ربط بند الفاتورة به دون إنشاء نسخة.`, `That name already belongs to an item; the invoice line now uses the existing item without creating a duplicate.`)
+          : undefined;
       if (action === "close") setQuickCreate(null);
-      return true;
+      return { ok: true, savedItem, ...(notice ? { notice } : {}) };
     } catch (e: any) {
       setQuickCreateError(e?.message ?? text("تعذر إضافة الصنف", "Could not add item."));
       return false;
@@ -987,6 +1083,33 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
 
   function updatePaymentAmount(method: "cash" | "bank" | "credit", value: string) {
     const parsed = Math.max(0, Number(value) || 0);
+    if (paymentChoice === "mixed") {
+      let nextCash = cashAmount;
+      let nextBank = bankAmount;
+      if (method === "cash") {
+        const maximum = Math.max(0, result.grandTotal - bankAmount);
+        const bounded = Math.min(parsed, maximum);
+        nextCash = value === "" ? 0 : bounded;
+        setCashAmountText(value === "" ? "" : bounded < parsed ? String(bounded) : value);
+      } else if (method === "bank") {
+        const maximum = Math.max(0, result.grandTotal - cashAmount);
+        const bounded = Math.min(parsed, maximum);
+        nextBank = value === "" ? 0 : bounded;
+        setBankAmountText(value === "" ? "" : bounded < parsed ? String(bounded) : value);
+      } else {
+        const maximum = Math.max(0, result.grandTotal - cashAmount - bankAmount);
+        const bounded = Math.min(parsed, maximum);
+        setCreditAmountText(value === "" ? "" : bounded < parsed ? String(bounded) : value);
+      }
+      if (method !== "credit") {
+        const remainder = Math.max(0, result.grandTotal - nextCash - nextBank);
+        setCreditAmountText(remainder > 0.005 ? String(remainder) : "");
+      }
+      return;
+    }
+
+    // Keep existing single-method behavior unchanged. Editing its amount moves
+    // the invoice into the explicit mixed allocation mode, as before.
     let maximum = result.grandTotal;
     if (method === "cash") {
       maximum = Math.max(0, result.grandTotal - bankAmount - creditAmount);
@@ -1654,7 +1777,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       <div className="zsales-payment-header">
         <div className="zsales-payment-intro">
           <strong>{text("طريقة الدفع", "Payment method")}</strong>
-          <small>{text("اختر طريقة واحدة، أو «مختلط» لتقسيم المبلغ بين أكثر من طريقة.", "Choose one method, or select “Mixed” to split the amount.")}</small>
+          <small>{text("اختر طريقة واحدة، أو «مختلط» لتقسيم المبلغ؛ المتبقي يُوزّع تلقائيًا على الآجل.", "Choose one method or “Mixed” to split payment; the remaining balance is assigned to credit automatically.")}</small>
         </div>
         <div className="zsales-payment-methods" role="group" aria-label={text("اختيار طريقة الدفع", "Choose payment method")} data-testid="sales-invoice-payment-methods">
           {paymentOptions.map((option) => (
@@ -1722,8 +1845,10 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
             <Field label={`${text("المبلغ الآجل", "Credit amount")} · ${docSym}`}>
               <input type="number" min="0" max={result.grandTotal} step="0.01"
                 data-testid="input-sales-invoice-credit-amount"
+                readOnly={paymentChoice === "mixed"}
+                title={paymentChoice === "mixed" ? text("يُحسب المتبقي تلقائيًا بعد النقد والبنك", "Automatically calculated from cash and bank amounts") : undefined}
                 value={creditAmountText} onChange={(e) => updatePaymentAmount("credit", e.target.value)}
-                style={input} {...navInput} />
+                style={paymentChoice === "mixed" ? { ...input, background: "#f1f5f9", cursor: "default" } : input} {...navInput} />
             </Field>
           </div>
         )}
@@ -1780,10 +1905,12 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           includeQuantity={quickCreate === "item"}
           busy={quickCreateBusy}
           error={quickCreateError}
+          showSavedItems={quickCreate === "item"}
+          documentItemCount={selectedLineCount}
           onCancel={() => { if (!quickCreateBusy) setQuickCreate(null); }}
-          onSubmit={(payload, action) => {
+          onSubmit={(payload, action, context) => {
             if (payload.kind === "customer") return createQuickCustomer(payload);
-            return createQuickItem(payload, action);
+            return createQuickItem(payload, action, context);
           }}
           uoms={uoms}
         />
