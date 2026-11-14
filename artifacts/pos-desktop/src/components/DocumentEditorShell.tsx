@@ -263,6 +263,28 @@ const documentEditorShellStyles = `
     border-radius: var(--zdoc-radius);
     background: var(--zdoc-panel);
   }
+  .zdoc-editor-shell.zvoucher-editor .zvoucher-title {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--zdoc-border);
+    border-inline-start: 4px solid var(--zdoc-accent);
+    border-radius: var(--zdoc-radius);
+    background: var(--zdoc-panel);
+  }
+  .zdoc-editor-shell.zvoucher-editor .zvoucher-primary-grid,
+  .zdoc-editor-shell.zvoucher-editor .zvoucher-pair-grid { gap: 12px !important; }
+  .zdoc-editor-shell.zvoucher-editor .zvoucher-amount-input {
+    min-height: 42px;
+    font-size: 18px !important;
+    font-weight: 700 !important;
+    text-align: left;
+  }
+  .zdoc-editor-shell.zvoucher-editor[data-layout="quick"] .zvoucher-primary-grid { gap: 8px !important; }
+  .zdoc-editor-shell.zvoucher-editor[data-layout="modern"] .zvoucher-primary-section { box-shadow: 0 6px 18px #0f172a0c; }
+  .zdoc-editor-shell.zvoucher-editor[data-layout="modern"] .zvoucher-amount-input { border-width: 2px !important; }
+  .zdoc-editor-shell.zvoucher-editor[data-layout="erp"] .zvoucher-primary-grid,
+  .zdoc-editor-shell.zvoucher-editor[data-layout="erp"] .zvoucher-pair-grid { gap: 6px !important; }
+  .zdoc-editor-shell.zvoucher-editor[data-layout="erp"] .zvoucher-amount-input { min-height: 32px; font-size: 15px !important; }
   @media (max-width: 900px) {
     .zdoc-editor-shell__layout-row {
       align-items: stretch;

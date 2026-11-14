@@ -15,8 +15,11 @@ import {
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn,
 } from "./_adminUi";
 import { useDimensions, branchPickerOptions, costCenterPickerOptions } from "./_reportFilters";
+import { DocumentEditorSection, DocumentEditorShell } from "../components/DocumentEditorShell";
 import { printVoucher } from "../lib/invoicePrint";
-import { formatUiDate, uiText, useUiLanguage } from "../lib/appSettings";
+import {
+  formatUiDate, setCashBankVoucherLayout, uiText, useCashBankVoucherLayout, useUiLanguage,
+} from "../lib/appSettings";
 import { baseCurrencyCode } from "../lib/currency";
 
 // تحصيل من العملاء — a customer-scoped سند قبض. Reuses the shared
@@ -245,6 +248,7 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
+  const voucherLayout = useCashBankVoucherLayout();
   const { branches, costCenters } = useDimensions();
   const [date, setDate] = useState(initial?.txDate ?? todayStr());
   const [branchId, setBranchId] = useState<number | "">(initial?.branchId ?? "");
@@ -350,12 +354,20 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
   }
 
   return (
-    <div>
-      <div style={{ marginBottom: 12, padding: "10px 14px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRight: "4px solid #16a34a", borderRadius: 8 }}>
-        <h3 style={{ margin: 0, color: "#166534", fontSize: 16 }}>{initial ? text(`تعديل مسودة ${initial.txNo}`, `Edit draft ${initial.txNo}`) : text("سند قبض جديد", "New receipt voucher")}</h3>
-        <div style={{ marginTop: 3, color: "#4b5563", fontSize: 12 }}>{text("يسجل المبلغ في الخزينة أو البنك ويحدّث رصيد العميل", "Records the receipt in cash or bank and updates the customer balance")}</div>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, alignItems: "end" }}>
+    <DocumentEditorShell
+      layout={voucherLayout}
+      onLayoutChange={setCashBankVoucherLayout}
+      label={text("شكل نموذج السند", "Voucher form layout")}
+      helperText={text("اختر أحد النماذج الأربعة؛ سيُحفظ لسندات القبض والصرف.", "Choose one of four layouts; it is shared by receipt and payment vouchers.")}
+      selectorAriaLabel={text("شكل نموذج سند القبض", "Receipt voucher form layout")}
+      className="zvoucher-editor"
+    >
+      <DocumentEditorSection className="zvoucher-section zvoucher-primary-section">
+      <h3 className="zvoucher-title" style={{ color: "#166534", fontSize: 16 }}>
+        {initial ? text(`تعديل مسودة ${initial.txNo}`, `Edit draft ${initial.txNo}`) : text("سند قبض جديد", "New receipt voucher")}
+      </h3>
+      <div style={{ marginTop: 3, marginBottom: 10, color: "#4b5563", fontSize: 12 }}>{text("يسجل المبلغ في الخزينة أو البنك ويحدّث رصيد العميل", "Records the receipt in cash or bank and updates the customer balance")}</div>
+      <div className="zvoucher-primary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, alignItems: "end" }}>
       <Field label={text("العميل", "Customer")}>
         <SearchCombobox
           value={customerId ?? ""}
@@ -370,12 +382,14 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
 
       <Field label={text("التاريخ", "Date")}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
       <Field label={`${text("المبلغ", "Amount")} · ${walletCurrency ?? "SAR"}`}>
-        <input type="number" step="0.01" value={voucherAmount || ""} readOnly={Object.keys(allocations).length > 0}
+        <input className="zvoucher-amount-input" type="number" step="0.01" value={voucherAmount || ""} readOnly={Object.keys(allocations).length > 0}
           onChange={(e) => setAmount(Number(e.target.value) || 0)} style={{ ...input, ...(Object.keys(allocations).length ? { background: "#f8fafc" } : {}) }} />
       </Field>
       </div>
+      </DocumentEditorSection>
       {customerId != null && (
-        <div style={{ marginTop: 8, border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden" }}>
+        <DocumentEditorSection className="zvoucher-section zvoucher-invoices-section">
+        <div style={{ border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden" }}>
           <div style={{ padding: "8px 10px", background: "#f8fafc", fontWeight: 700, fontSize: 13 }}>
             {text("الفواتير الآجلة المفتوحة — اختر فاتورة أو أكثر", "Open credit invoices — select one or more")}
           </div>
@@ -411,8 +425,10 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
             {text("إجمالي السند:", "Voucher total:")} {fmt(selectedTotal)}
           </div>}
         </div>
+        </DocumentEditorSection>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, alignItems: "end", marginTop: 2 }}>
+      <DocumentEditorSection className="zvoucher-section">
+      <div className="zvoucher-pair-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, alignItems: "end" }}>
         <Field label={text("طريقة القبض", "Receipt method")}>
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={() => setWalletKind("cash")} type="button" style={walletKind === "cash" ? { ...btnPrimary, background: "#15803d" } : btnSecondary}>{text("نقدي", "Cash")}</button>
@@ -438,11 +454,12 @@ function CollectForm({ deps, allTx, initial, onCancel, onDone }: {
         </Field>
       </div>
       <Field label={text("البيان", "Description")} style={{ marginTop: 2 }}><textarea value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...input, minHeight: 44, resize: "vertical" }} /></Field>
+      </DocumentEditorSection>
       <ErrorMsg text={err} />
       <Actions>
         <button onClick={onCancel} type="button" style={btnSecondary}>{text("إلغاء", "Cancel")}</button>
         <button onClick={save} disabled={busy} type="button" style={{ ...btnPrimary, background: "#15803d" }}>{busy ? "..." : initial ? text("حفظ المسودة", "Save draft") : text("حفظ السند", "Save voucher")}</button>
       </Actions>
-    </div>
+    </DocumentEditorShell>
   );
 }

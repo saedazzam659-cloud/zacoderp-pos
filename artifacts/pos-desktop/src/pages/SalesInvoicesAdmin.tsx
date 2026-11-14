@@ -967,7 +967,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   }
 
   async function createQuickItem(
-    input: { nameAr: string; code: string; barcode: string; salePrice: number; salePriceTouched?: boolean; vatRate: number; vatRateTouched?: boolean; nature: "stock" | "service"; uomId: number; brandId: number | null; quantity?: number },
+    input: { nameAr: string; code: string; barcode: string; salePrice: number; salePriceTouched?: boolean; vatRate: number; vatRateTouched?: boolean; nature: "stock" | "service"; uomId: number; brandId: number | null; catalogItemId?: number | null; quantity?: number },
     action: "close" | "add-another" = "close",
     context?: QuickCreateSubmitContext,
   ): Promise<QuickCreateSubmitResult> {
@@ -988,10 +988,16 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       if (editing && !editingItem) {
         throw new Error(text("لم يعد الصنف المحدد موجودًا في دليل الأصناف. أغلق النافذة واختره من جديد.", "The selected item is no longer in the catalog. Close this dialog and select it again."));
       }
+      const selectedCatalogItem = input.catalogItemId == null
+        ? null
+        : catalog.find((candidate) => candidate.id === input.catalogItemId) ?? null;
+      if (input.catalogItemId != null && !selectedCatalogItem) {
+        throw new Error(text("لم يعد الصنف المحدد موجودًا في دليل الأصناف. اختره من جديد.", "The selected catalog item is no longer available. Choose it again."));
+      }
       if (editing && !lines.some((line) => line.quickCreateEntryKey === context?.entryKey)) {
         throw new Error(text("تعذر العثور على بند الفاتورة المراد تعديله.", "Could not find the invoice line to update."));
       }
-      const matchingName = catalog.find((candidate) =>
+      const matchingName = selectedCatalogItem ?? catalog.find((candidate) =>
         candidate.id !== editingItem?.id && normalizeQuickCreateItemName(candidate.nameAr) === normalizeQuickCreateItemName(input.nameAr),
       ) ?? null;
 
@@ -1045,7 +1051,8 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         ? requestedBrand && (!reusedExisting || requestedBrand.id === editing.brandId || linkedBrands.some((brand) => brand.brandId === requestedBrand.id))
           ? requestedBrand
           : null
-        : reusedExisting ? linkedBrand : requestedBrand;
+        : input.catalogItemId != null ? requestedBrand
+          : reusedExisting ? linkedBrand : requestedBrand;
       const linkedBrandPrice = chosenBrand
         ? listItemBrands(item.id).find((brand) => brand.brandId === chosenBrand.id)?.salePrice1
         : null;
@@ -2078,6 +2085,9 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           showSavedItems={quickCreate === "item"}
           documentItemCount={selectedLineCount}
           savedInvoiceItems={quickCreate === "item" ? invoiceQuickCreateItems : undefined}
+          catalogItems={quickCreate === "item" ? deps.items : undefined}
+          invoiceTotal={fmt(result.grandTotal)}
+          invoiceCurrency={docSym}
           resetToken={quickCreateResetToken}
           invoiceSaving={busy}
           canSaveInvoice={selectedLineCount > 0 && !isEdit && !sourceBusy}

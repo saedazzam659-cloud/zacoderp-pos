@@ -1853,7 +1853,7 @@ fn seed_default_accounts(conn: &Connection) -> Result<()> {
         ("1100", "الخزن", "asset", Some("1000"), 0),
         ("1101", "الخزينة الرئيسية", "asset", Some("1100"), 1),
         ("1200", "البنوك", "asset", Some("1000"), 0),
-        ("1201", "البنك الرئيسي", "asset", Some("1200"), 1),
+        ("1201", "بنك عام", "asset", Some("1200"), 1),
         ("1300", "المخزون", "asset", Some("1000"), 1),
         ("11091", "وسيط استلام البضاعة", "asset", Some("1000"), 1),
         (
@@ -1996,6 +1996,14 @@ fn seed_default_accounts(conn: &Connection) -> Result<()> {
     if let Some(acc_id) = by_code.get("1101") {
         conn.execute(
             "INSERT INTO cash_boxes_local(name,balance,account_id) VALUES('الخزينة الرئيسية',0,?1)",
+            params![acc_id],
+        )?;
+    }
+    // Seed a default bank backed by its same-named posting account, just like
+    // the default cash box above. This runs only with the first-run chart seed.
+    if let Some(acc_id) = by_code.get("1201") {
+        conn.execute(
+            "INSERT INTO banks_local(name,balance,account_id) VALUES('بنك عام',0,?1)",
             params![acc_id],
         )?;
     }
