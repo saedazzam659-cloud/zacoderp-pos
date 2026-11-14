@@ -59,6 +59,17 @@ export type WindowsModuleKey =
   | "accounting"   // CoA, journal, cost centers, taxes, financial reports
   | "control";     // branches, users, permissions, number series, settings, system
 
+/** Standalone-only entitlements are intentionally separate from cloud modules. */
+export type WindowsLicenseModuleKey = WindowsModuleKey | "zatca";
+
+export const WINDOWS_LICENSE_MODULES: WindowsLicenseModuleKey[] = [
+  ...([
+    "pos", "customers", "inventory", "purchasing",
+    "sales_docs", "cash_banks", "accounting", "control",
+  ] as WindowsModuleKey[]),
+  "zatca",
+];
+
 export type AppProfile = "pos" | "erp";
 
 // Coarse modules shown on the web SuperAdmin toggle grid. Order = display order.
@@ -73,7 +84,7 @@ export const WINDOWS_MODULES: { key: WindowsModuleKey; label: string; group: str
   { key: "control",    label: "التحكم والإعدادات",                group: "النظام" },
 ];
 
-type ViewMeta = { module: WindowsModuleKey; profile: AppProfile };
+type ViewMeta = { module: WindowsLicenseModuleKey; profile: AppProfile };
 
 // EVERY WindowsView MUST appear here (enforced by the Record<> type).
 export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
@@ -100,7 +111,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   dashboard:    { module: "control",   profile: "pos" },
   updates:      { module: "control",   profile: "pos" },
   settings_guide: { module: "control", profile: "pos" },
-  zatca: { module: "control", profile: "pos" },
+  zatca: { module: "zatca", profile: "pos" },
   // POS GL account + payment-method config — needed wherever the register runs.
   pos_accounts: { module: "control", profile: "pos" },
   backup: { module: "control", profile: "pos" },
@@ -181,7 +192,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   posting_control:   { module: "control", profile: "erp" },
 };
 
-export function moduleForView(v: WindowsView): WindowsModuleKey {
+export function moduleForView(v: WindowsView): WindowsLicenseModuleKey {
   return VIEW_MODULE[v]?.module ?? "control";
 }
 export function profileForView(v: WindowsView): AppProfile {

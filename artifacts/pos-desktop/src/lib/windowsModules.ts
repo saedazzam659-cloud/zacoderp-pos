@@ -60,6 +60,11 @@ type GateOpts = {
 
 /** Master visibility gate for a Windows screen. */
 export function isModuleEnabled(view: WindowsView, opts: GateOpts): boolean {
+  // ZATCA is a new, Saudi-only standalone add-on. Unlike old general module
+  // lists, a legacy license must not receive this new entitlement implicitly.
+  if (view === "zatca" && opts.standalone) {
+    return opts.licenseModules?.includes("zatca") === true;
+  }
   // A new standalone license is the complete module authority. This lets a
   // SuperAdmin enable additional ERP modules without requiring local setup.
   if (opts.standalone && opts.licenseModules !== undefined) {

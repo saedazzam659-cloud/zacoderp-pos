@@ -1302,7 +1302,7 @@ export default function PosShell({
               </button>
               {showMoreControls && (
                 <div id="pos-shell-more-controls" role="dialog" aria-label={uiText("المزيد من الأدوات", "More tools", language)} style={S.moreControlsPanel}>
-                  <div onClickCapture={() => setShowMoreControls(false)} style={S.moreControlsShortcuts}>
+                  <div style={S.moreControlsShortcuts}>
                     <LanguageControl compact />
                     <NumberSystemControl compact />
                     <button

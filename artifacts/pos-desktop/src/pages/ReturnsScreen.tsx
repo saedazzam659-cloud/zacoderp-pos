@@ -10,9 +10,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { listAllInvoices, getOfflineInvoice, saveOfflineInvoice, type PendingInvoice, type OfflineInvoicePayload } from "../lib/invoices";
+import { prepareOfflineInvoiceForZatca } from "../lib/zatca/localQueue";
 import { printReceipt, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
-import { isZatcaCountry } from "../lib/zatcaBridge";
 import { useTaxSettings, computeTotals } from "../lib/taxSettings";
 import { useCurrencySymbol } from "../lib/currency";
 import { uiText, useUiLanguage } from "../lib/appSettings";
@@ -180,6 +180,8 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
         refOf: picked.inv.invoiceNo,
         reason: finalReason,
         paymentMethod: picked.payload.paymentMethod,
+        customerName: picked.payload.customerName,
+        vatNumber: picked.payload.vatNumber,
         timestamp: ts,
         subtotal: -Number(totals.sub.toFixed(2)),
         vat: -Number(totals.vat.toFixed(2)),
@@ -200,6 +202,23 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
       const reasonKey = finalReason.slice(0, 32).replace(/\s+/g, "_");
       const key = `ret-${picked.inv.id}-${reasonKey}-${shape}`;
       const saved = await saveOfflineInvoice(payload, qr ?? undefined, undefined, key);
+      let receiptQr: string | undefined;
+      let zatcaNotice = "";
+      try {
+        const fiscal = await prepareOfflineInvoiceForZatca(saved, payload);
+        if (fiscal) {
+          receiptQr = fiscal.qrBase64 ?? undefined;
+          zatcaNotice = fiscal.outcome === null
+            ? " أضيف إلى قائمة جسر زاتكا للإرسال اليدوي."
+            : fiscal.outcome.status === "pending"
+              ? " تم توقيعه محليًا؛ الإرسال إلى زاتكا ينتظر الاتصال."
+              : fiscal.outcome.status === "rejected"
+                ? ` زاتكا رفضت المستند (${fiscal.outcome.zatcaStatus ?? "راجع شاشة زاتكا"}).`
+                : " تم إرساله إلى زاتكا.";
+        }
+      } catch (zatcaError: any) {
+        zatcaNotice = ` تعذر إكمال زاتكا: ${zatcaError?.message ?? zatcaError}`;
+      }
 
       // Restock local inventory for tracked items (no-op for untracked, and
       // for items whose original sale carried itemId=0 — older returns or
@@ -240,7 +259,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
             ],
             body,
             footer: [{ text: text("شكراً لزيارتكم", "Thank you for your visit"), center: true }],
-            qrData: isZatcaCountry() ? qr : undefined,
+            qrData: receiptQr,
             cut: true,
             openDrawer: payload.paymentMethod === "cash",
           });
@@ -253,7 +272,7 @@ export default function ReturnsScreen({ companyName = "ZACOD POS", vatNumber = "
 
       setLastReturn(saved.invoiceNo);
       setPicked(null); setLines([]); setReason(defaultReturnReason);
-      setToast({ kind: "ok", text: `✅ ${text("تم تسجيل المرتجع", "Return saved")} — ${saved.invoiceNo}${printWarn ? " " + printWarn : ""}` });
+      setToast({ kind: "ok", text: `✅ ${text("تم تسجيل المرتجع", "Return saved")} — ${saved.invoiceNo}${zatcaNotice ? "." + zatcaNotice : ""}${printWarn ? " " + printWarn : ""}` });
       await refresh();
     } catch (e: any) {
       setToast({ kind: "err", text: `${text("فشل المرتجع:", "Return failed:")} ${e?.message ?? e}` });

@@ -107,6 +107,14 @@ export type OfflineLicensePayload = {
   companyEmail?: string;
   source?: "admin" | "self_register";
   graceDays?: number;
+  // Optional for compatibility with licenses signed before module entitlements.
+  modules?: string[];
+  // First-run configuration selected by SuperAdmin for the standalone install.
+  appProfile?: "pos" | "erp";
+  netRole?: "single" | "host" | "client";
+  lanHostUrl?: string;
+  lanToken?: string;
+  lanPort?: number;
 };
 
 export type SignedLicenseFile = {

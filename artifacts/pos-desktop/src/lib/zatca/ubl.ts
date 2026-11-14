@@ -53,6 +53,10 @@ export interface ZatcaCustomer {
 export interface ZatcaInvoiceData {
   invoiceNumber: string;
   invoiceType: string;
+  uuid?: string;
+  documentType?: "invoice" | "credit";
+  billingReferenceId?: string | null;
+  instructionNote?: string | null;
   issueDate: string;
   issueTime?: string;
   supplyDate?: string | null;
@@ -106,9 +110,23 @@ function getTaxCategory(category?: string, vatRate?: string): {
 }
 
 export function generateZatcaXml(data: ZatcaInvoiceData): string {
-  const { typeCode, subTypeCode } = getInvoiceTypeCode(data.invoiceType);
+  const isCreditNote = data.documentType === "credit";
+  if (isCreditNote && !data.billingReferenceId?.trim()) {
+    throw new Error("إشعار الإرجاع يحتاج رقم الفاتورة الأصلية");
+  }
+  const { typeCode: invoiceTypeCode, subTypeCode } = getInvoiceTypeCode(data.invoiceType);
+  const typeCode = isCreditNote ? "381" : invoiceTypeCode;
   const issueTime = data.issueTime ?? new Date().toISOString().split("T")[1]?.split(".")[0] ?? "00:00:00";
   const paymentMeansCode = data.paymentMethod ?? "10";
+  const billingReferenceXml = isCreditNote ? `
+  <cac:BillingReference>
+    <cac:InvoiceDocumentReference>
+      <cbc:ID>${xmlEscape(data.billingReferenceId)}</cbc:ID>
+    </cac:InvoiceDocumentReference>
+  </cac:BillingReference>` : "";
+  const instructionNoteXml = isCreditNote
+    ? `<cbc:InstructionNote>${xmlEscape(data.instructionNote ?? "مرتجع مبيعات")}</cbc:InstructionNote>`
+    : "";
 
   // Aggregate tax by category for TaxTotal/TaxSubtotal
   const taxByCategory = new Map<string, { taxable: number; tax: number; rate: number }>();
@@ -239,13 +257,14 @@ export function generateZatcaXml(data: ZatcaInvoiceData): string {
 
   <cbc:ProfileID>reporting:1.0</cbc:ProfileID>
   <cbc:ID>${xmlEscape(data.invoiceNumber)}</cbc:ID>
-  <cbc:UUID>${xmlEscape(data.invoiceNumber)}</cbc:UUID>
+  <cbc:UUID>${xmlEscape(data.uuid ?? data.invoiceNumber)}</cbc:UUID>
   <cbc:IssueDate>${data.issueDate}</cbc:IssueDate>
   <cbc:IssueTime>${issueTime}</cbc:IssueTime>
   <cbc:InvoiceTypeCode name="${subTypeCode}">${typeCode}</cbc:InvoiceTypeCode>
   <cbc:Note languageID="ar">${xmlEscape(data.notes)}</cbc:Note>
   <cbc:DocumentCurrencyCode>${data.currency}</cbc:DocumentCurrencyCode>
   <cbc:TaxCurrencyCode>${data.currency}</cbc:TaxCurrencyCode>
+${billingReferenceXml}
 
   <cac:AdditionalDocumentReference>
     <cbc:ID>ICV</cbc:ID>
@@ -300,6 +319,7 @@ export function generateZatcaXml(data: ZatcaInvoiceData): string {
 
   <cac:PaymentMeans>
     <cbc:PaymentMeansCode>${paymentMeansCode}</cbc:PaymentMeansCode>
+    ${instructionNoteXml}
   </cac:PaymentMeans>
 
   <cac:TaxTotal>

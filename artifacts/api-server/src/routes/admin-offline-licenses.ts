@@ -12,6 +12,57 @@ import { generateLicenseKey, hashFingerprint } from "../lib/posDesktopGuards.js"
 import { signOfflineLicense, getPublicKeyInfo } from "../lib/offlineLicenseSigner.js";
 
 const router = Router();
+const OFFLINE_MODULE_KEYS = [
+  "pos", "customers", "inventory", "purchasing",
+  "sales_docs", "cash_banks", "accounting", "control", "zatca",
+] as const;
+const offlineModuleSchema = z.array(z.enum(OFFLINE_MODULE_KEYS))
+  .min(1)
+  .max(OFFLINE_MODULE_KEYS.length)
+  .refine((modules) => new Set(modules).size === modules.length, "duplicate modules");
+// ZATCA is opt-in; preserve the original defaults for new and approved licenses.
+const defaultOfflineModules = OFFLINE_MODULE_KEYS.filter((key) => key !== "zatca");
+
+function hasInvalidZatcaCountry(modules: readonly string[] | undefined, country: string | null | undefined) {
+  return !!modules?.includes("zatca") && country?.trim().toUpperCase() !== "SA";
+}
+const offlineVerticalSchema = z.enum([
+  "general", "grocery", "pharmacy", "retail", "restaurant",
+  "plumbing", "paints", "auto_parts", "auto_workshop", "mobiles",
+]);
+
+function readSignedModules(signedFileJson: string | null): string[] | undefined {
+  if (!signedFileJson) return undefined;
+  try {
+    const modules = JSON.parse(signedFileJson)?.payload?.modules;
+    if (!Array.isArray(modules) || modules.length === 0) return undefined;
+    if (
+      !modules.every((module) => OFFLINE_MODULE_KEYS.includes(module)) ||
+      new Set(modules).size !== modules.length
+    ) return undefined;
+    return [...modules];
+  } catch {
+    return undefined;
+  }
+}
+
+function readSignedSetup(signedFileJson: string | null): Record<string, unknown> {
+  if (!signedFileJson) return {};
+  try {
+    const payload = JSON.parse(signedFileJson)?.payload;
+    if (!payload || typeof payload !== "object") return {};
+    return {
+      ...(payload.appProfile === "pos" || payload.appProfile === "erp" ? { appProfile: payload.appProfile } : {}),
+      ...(payload.netRole === "single" || payload.netRole === "host" || payload.netRole === "client" ? { netRole: payload.netRole } : {}),
+      ...(typeof payload.lanHostUrl === "string" ? { lanHostUrl: payload.lanHostUrl } : {}),
+      ...(typeof payload.lanToken === "string" ? { lanToken: payload.lanToken } : {}),
+      ...(Number.isInteger(payload.lanPort) ? { lanPort: payload.lanPort } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
 router.use(extractAuth);
 router.use((req, res, next) => {
   if ((req as any).authUser?.role !== "superadmin") {
@@ -23,7 +74,11 @@ router.use((req, res, next) => {
 // ─── GET /api/admin/offline-licenses ─────────────────────────────────
 router.get("/", async (_req, res) => {
   const rows = await db.select().from(offlineLicensesTable).orderBy(desc(offlineLicensesTable.id)).limit(500);
-  res.json(rows);
+  res.json(rows.map((row) => ({
+    ...row,
+    modules: readSignedModules(row.signedFileJson) ?? null,
+    ...readSignedSetup(row.signedFileJson),
+  })));
 });
 
 // ─── GET /api/admin/offline-licenses/public-key ──────────────────────
@@ -35,7 +90,7 @@ router.get("/public-key", (_req, res) => {
 
 const createSchema = z.object({
   customerName: z.string().min(1).max(200),
-  vertical: z.enum(["retail", "pharmacy", "restaurant", "grocery"]).default("retail"),
+  vertical: offlineVerticalSchema.default("retail"),
   plan: z.string().min(1).max(50).default("standalone_pos"),
   maxUsers: z.number().int().min(1).max(100).default(5),
   fingerprint: z.string().min(8).optional(),   // optional pre-bind
@@ -49,6 +104,25 @@ const createSchema = z.object({
   companyPhone: z.string().max(50).optional(),
   companyEmail: z.string().max(120).optional(),
   graceDays: z.number().int().min(1).max(365).optional(),
+  appProfile: z.enum(["pos", "erp"]).default("pos"),
+  netRole: z.enum(["single", "host", "client"]).default("single"),
+  lanHostUrl: z.string().url().max(300).optional(),
+  lanToken: z.string().min(8).max(128).optional(),
+  lanPort: z.number().int().min(1).max(65535).default(7711),
+  modules: offlineModuleSchema.default(defaultOfflineModules),
+}).superRefine((value, ctx) => {
+  if (value.modules.includes("zatca")) {
+    ctx.addIssue({ code: "custom", path: ["modules"], message: "ZATCA can only be enabled by editing an existing license" });
+  }
+  if (hasInvalidZatcaCountry(value.modules, value.country)) {
+    ctx.addIssue({ code: "custom", path: ["modules"], message: "ZATCA entitlement requires Saudi Arabia" });
+  }
+  if (value.netRole === "host" && !value.lanToken) {
+    ctx.addIssue({ code: "custom", path: ["lanToken"], message: "host pairing token required" });
+  }
+  if (value.netRole === "client" && (!value.lanHostUrl || !value.lanToken)) {
+    ctx.addIssue({ code: "custom", path: ["lanHostUrl"], message: "client host address and pairing token required" });
+  }
 });
 
 // ─── POST /api/admin/offline-licenses ────────────────────────────────
@@ -80,6 +154,11 @@ router.post("/", async (req, res) => {
     companyEmail: parsed.data.companyEmail,
     source: "admin",
     graceDays,
+    appProfile: parsed.data.appProfile,
+    netRole: parsed.data.netRole,
+    ...(parsed.data.netRole === "host" ? { lanToken: parsed.data.lanToken, lanPort: parsed.data.lanPort } : {}),
+    ...(parsed.data.netRole === "client" ? { lanHostUrl: parsed.data.lanHostUrl, lanToken: parsed.data.lanToken } : {}),
+    modules: parsed.data.modules,
   });
 
   const [created] = await db.insert(offlineLicensesTable).values({
@@ -115,6 +194,24 @@ router.post("/", async (req, res) => {
 const approveSchema = z.object({
   trialDays: z.number().int().min(1).max(3650).optional(),
   permanent: z.boolean().optional(),
+  vertical: offlineVerticalSchema.optional(),
+  country: z.string().regex(/^[A-Z]{2}$/).optional(),
+  appProfile: z.enum(["pos", "erp"]).optional(),
+  netRole: z.enum(["single", "host", "client"]).optional(),
+  lanHostUrl: z.string().url().max(300).optional(),
+  lanToken: z.string().min(8).max(128).optional(),
+  lanPort: z.number().int().min(1).max(65535).optional(),
+  modules: offlineModuleSchema.default(defaultOfflineModules),
+}).superRefine((value, ctx) => {
+  if (value.modules.includes("zatca")) {
+    ctx.addIssue({ code: "custom", path: ["modules"], message: "ZATCA can only be enabled by editing an existing license" });
+  }
+  if (value.netRole === "host" && !value.lanToken) {
+    ctx.addIssue({ code: "custom", path: ["lanToken"], message: "host pairing token required" });
+  }
+  if (value.netRole === "client" && (!value.lanHostUrl || !value.lanToken)) {
+    ctx.addIssue({ code: "custom", path: ["lanHostUrl"], message: "client host address and pairing token required" });
+  }
 });
 router.post("/:id/approve", async (req, res) => {
   const id = Number(req.params.id);
@@ -129,18 +226,30 @@ router.post("/:id/approve", async (req, res) => {
   const expiresAt: Date | null = parsed.data.permanent
     ? null
     : new Date(Date.now() + (parsed.data.trialDays ?? 7) * 86400000);
+  const vertical = parsed.data.vertical ?? existing.vertical;
+  const country = parsed.data.country ?? existing.country ?? undefined;
+  if (hasInvalidZatcaCountry(parsed.data.modules, country)) {
+    res.status(400).json({ error: "ترخيص زاتكا يتطلب اختيار السعودية" }); return;
+  }
+  const setup = {
+    appProfile: parsed.data.appProfile ?? "pos",
+    netRole: parsed.data.netRole ?? "single",
+    lanHostUrl: parsed.data.lanHostUrl,
+    lanToken: parsed.data.lanToken,
+    lanPort: parsed.data.lanPort ?? 7711,
+  };
 
   const signed = signOfflineLicense({
     licenseKey: existing.licenseKey,
     customerName: existing.customerName,
-    vertical: existing.vertical,
+    vertical,
     plan: existing.plan,
     maxUsers: existing.maxUsers,
     fingerprintHash: existing.fingerprintHash,
     issuedAt: existing.issuedAt.toISOString(),
     expiresAt: expiresAt ? expiresAt.toISOString() : null,
     notes: existing.notes ?? undefined,
-    country: existing.country ?? undefined,
+    country,
     companyTaxNumber: existing.companyTaxNumber ?? undefined,
     companyCrNumber: existing.companyCrNumber ?? undefined,
     companyAddress: existing.companyAddress ?? undefined,
@@ -148,6 +257,11 @@ router.post("/:id/approve", async (req, res) => {
     companyEmail: existing.companyEmail ?? undefined,
     source: (existing.source as "admin" | "self_register") ?? "self_register",
     graceDays: existing.graceDays ?? 7,
+    appProfile: setup.appProfile,
+    netRole: setup.netRole,
+    ...(setup.netRole === "host" ? { lanToken: setup.lanToken, lanPort: setup.lanPort } : {}),
+    ...(setup.netRole === "client" ? { lanHostUrl: setup.lanHostUrl, lanToken: setup.lanToken } : {}),
+    modules: parsed.data.modules,
   });
 
   // Atomic compare-and-set: only the row that is STILL pending is flipped.
@@ -155,7 +269,9 @@ router.post("/:id/approve", async (req, res) => {
   // and is rejected 409, so the trial term can never be set twice.
   const [updated] = await db.update(offlineLicensesTable).set({
     status: "active",
+    vertical,
     expiresAt,
+    country: country ?? null,
     signedFileJson: JSON.stringify(signed),
     publicKeyFingerprint: signed.publicKeyFingerprint,
     updatedAt: new Date(),
@@ -219,7 +335,7 @@ router.get("/:id/file", async (req, res) => {
 // the updated, freshly-signed file.
 const editSchema = z.object({
   customerName: z.string().min(1).max(200).optional(),
-  vertical: z.enum(["retail", "pharmacy", "restaurant", "grocery"]).optional(),
+  vertical: offlineVerticalSchema.optional(),
   plan: z.string().min(1).max(50).optional(),
   maxUsers: z.number().int().min(1).max(100).optional(),
   fingerprint: z.string().min(8).nullable().optional(),
@@ -234,6 +350,19 @@ const editSchema = z.object({
   companyPhone: z.string().max(50).nullable().optional(),
   companyEmail: z.string().max(120).nullable().optional(),
   graceDays: z.number().int().min(1).max(365).optional(),
+  appProfile: z.enum(["pos", "erp"]).optional(),
+  netRole: z.enum(["single", "host", "client"]).optional(),
+  lanHostUrl: z.string().url().max(300).optional(),
+  lanToken: z.string().min(8).max(128).optional(),
+  lanPort: z.number().int().min(1).max(65535).optional(),
+  modules: offlineModuleSchema.optional(),
+}).superRefine((value, ctx) => {
+  if (value.netRole === "host" && !value.lanToken) {
+    ctx.addIssue({ code: "custom", path: ["lanToken"], message: "host pairing token required" });
+  }
+  if (value.netRole === "client" && (!value.lanHostUrl || !value.lanToken)) {
+    ctx.addIssue({ code: "custom", path: ["lanHostUrl"], message: "client host address and pairing token required" });
+  }
 });
 
 // Resolve an optional+nullable patch field against the existing value:
@@ -250,6 +379,7 @@ router.patch("/:id", async (req, res) => {
   if (!existing) { res.status(404).json({ error: "not found" }); return; }
   if (existing.status === "revoked") { res.status(409).json({ error: "cannot edit a revoked license" }); return; }
 
+  const existingSetup = readSignedSetup(existing.signedFileJson);
   const merged = {
     customerName: parsed.data.customerName ?? existing.customerName,
     vertical: parsed.data.vertical ?? existing.vertical,
@@ -271,7 +401,21 @@ router.patch("/:id", async (req, res) => {
     companyPhone: mergeField(parsed.data.companyPhone, existing.companyPhone),
     companyEmail: mergeField(parsed.data.companyEmail, existing.companyEmail),
     graceDays: parsed.data.graceDays ?? existing.graceDays ?? 7,
+    modules: parsed.data.modules ?? readSignedModules(existing.signedFileJson),
+    appProfile: parsed.data.appProfile ?? existingSetup.appProfile as "pos" | "erp" | undefined,
+    netRole: parsed.data.netRole ?? existingSetup.netRole as "single" | "host" | "client" | undefined,
+    lanHostUrl: parsed.data.lanHostUrl ?? existingSetup.lanHostUrl as string | undefined,
+    lanToken: parsed.data.lanToken ?? existingSetup.lanToken as string | undefined,
+    lanPort: parsed.data.lanPort ?? existingSetup.lanPort as number | undefined,
   };
+  if (parsed.data.modules?.includes("zatca") && hasInvalidZatcaCountry(parsed.data.modules, merged.country)) {
+    res.status(400).json({ error: "ترخيص زاتكا يتطلب اختيار السعودية" }); return;
+  }
+  // If an existing Saudi license is moved to another country, the newly
+  // signed file must no longer carry a Saudi-only entitlement.
+  const modules = hasInvalidZatcaCountry(merged.modules, merged.country)
+    ? merged.modules?.filter((module) => module !== "zatca")
+    : merged.modules;
 
   const signed = signOfflineLicense({
     licenseKey: existing.licenseKey,
@@ -291,6 +435,11 @@ router.patch("/:id", async (req, res) => {
     companyEmail: merged.companyEmail ?? undefined,
     source: (existing.source as "admin" | "self_register") ?? "admin",
     graceDays: merged.graceDays,
+    ...(modules ? { modules } : {}),
+    ...(merged.appProfile ? { appProfile: merged.appProfile } : {}),
+    ...(merged.netRole ? { netRole: merged.netRole } : {}),
+    ...(merged.netRole === "host" ? { lanToken: merged.lanToken, lanPort: merged.lanPort ?? 7711 } : {}),
+    ...(merged.netRole === "client" ? { lanHostUrl: merged.lanHostUrl, lanToken: merged.lanToken } : {}),
   });
 
   const [updated] = await db.update(offlineLicensesTable).set({

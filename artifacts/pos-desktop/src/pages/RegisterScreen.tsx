@@ -15,11 +15,11 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { printReceipt, openCashDrawer, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
-import { isZatcaCountry } from "../lib/zatcaBridge";
 import { listItems, findItemUnitByBarcode, seedDemoItems, type LocalItem, type ItemUnit } from "../lib/items";
 import { isClient, getChangeVersion } from "../lib/bridge";
 import { listCustomers, createCustomer, type LocalCustomer } from "../lib/customers";
 import { saveOfflineInvoice, getOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
+import { prepareOfflineInvoiceForZatca } from "../lib/zatca/localQueue";
 import { listPosPaymentMethods, type PosPaymentMethod, type PosPaymentMethodKind } from "../lib/accounting";
 
 // Map a dynamic payment-method kind to the legacy 3-value payload field that
@@ -461,6 +461,23 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
         throw e;
       }
       const invNum = saved.invoiceNo;
+      let receiptQr: string | undefined;
+      let zatcaNotice = "";
+      try {
+        const fiscal = await prepareOfflineInvoiceForZatca(saved, payload);
+        if (fiscal) {
+          receiptQr = fiscal.qrBase64 ?? undefined;
+          zatcaNotice = fiscal.outcome === null
+            ? " أضيفت إلى قائمة جسر زاتكا للإرسال اليدوي."
+            : fiscal.outcome.status === "pending"
+              ? " تم توقيعها محليًا؛ الإرسال إلى زاتكا ينتظر الاتصال."
+              : fiscal.outcome.status === "rejected"
+                ? ` زاتكا رفضت المستند (${fiscal.outcome.zatcaStatus ?? "راجع شاشة زاتكا"}).`
+                : " تم إرسالها إلى زاتكا.";
+        }
+      } catch (zatcaError: any) {
+        zatcaNotice = ` تعذر إكمال زاتكا: ${zatcaError?.message ?? zatcaError}`;
+      }
 
       // Single/host mode: decrement local stock immediately after persist.
       if (!client) {
@@ -506,7 +523,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
           ],
           body,
           footer: [{ text: "شكراً لزيارتكم", center: true }],
-          qrData: isZatcaCountry() ? qr : undefined, cut: true,
+          qrData: receiptQr, cut: true,
           openDrawer: kind === "cash",
         });
         if (kind === "cash") {
@@ -519,7 +536,7 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
       setLastInvoice(invNum);
       setCart([]); setCheckoutKey(null); setActiveParkedId(null);
       setCustomer(null); setPaidStr("");
-      setMsg({ kind: "ok", text: `✅ تم إنهاء البيع — فاتورة ${invNum}` });
+      setMsg({ kind: "ok", text: `✅ تم إنهاء البيع — فاتورة ${invNum}.${zatcaNotice}` });
     } catch (e: any) {
       setMsg({ kind: "err", text: `فشل إنهاء البيع: ${e?.message ?? e}` });
     } finally { setPaying(false); }

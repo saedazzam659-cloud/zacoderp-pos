@@ -33,6 +33,69 @@ type OfflineLicense = {
   companyAddress: string | null; companyPhone: string | null; companyEmail: string | null;
   source: string; graceDays: number; lastSeenAt: string | null; appVersion: string | null;
   clockUnblockAt: string | null;
+  modules: string[] | null;
+  appProfile?: "pos" | "erp";
+  netRole?: "single" | "host" | "client";
+  lanHostUrl?: string;
+  lanToken?: string;
+  lanPort?: number;
+};
+
+const OFFLINE_MODULES = [
+  { key: "pos", label: "نقطة البيع", detail: "البيع والمرتجعات واليومية", group: "العمليات" },
+  { key: "customers", label: "العملاء", detail: "ملفات العملاء والتحصيل", group: "الملفات" },
+  { key: "inventory", label: "المخازن والأصناف", detail: "الأصناف والمخزون والجرد", group: "المخازن" },
+  { key: "purchasing", label: "المشتريات والموردون", detail: "الموردون وأوامر وفواتير الشراء", group: "المشتريات" },
+  { key: "sales_docs", label: "فواتير المبيعات", detail: "الفواتير والعروض والطلبات", group: "المبيعات" },
+  { key: "cash_banks", label: "النقد والبنوك", detail: "الخزائن والبنوك والتحويلات", group: "الخزينة" },
+  { key: "accounting", label: "الحسابات والتقارير", detail: "القيود والحسابات والتقارير المالية", group: "المحاسبة" },
+  { key: "control", label: "التحكم والإعدادات", detail: "المستخدمون والفروع وإعدادات النظام", group: "النظام" },
+  { key: "zatca", label: "زاتكا", detail: "التسجيل والإرسال المباشر للفواتير والمرتجعات", group: "السعودية" },
+] as const;
+const ALL_OFFLINE_MODULES: string[] = OFFLINE_MODULES
+  .filter((module) => module.key !== "zatca")
+  .map((module) => module.key);
+function offlineModulesForCountry(country: string | null | undefined, includeZatca = true) {
+  return OFFLINE_MODULES.filter((module) =>
+    module.key !== "zatca" || (includeZatca && country?.toUpperCase() === "SA"),
+  );
+}
+const COUNTRIES = [
+  ["SA", "السعودية"], ["EG", "مصر"], ["AE", "الإمارات"], ["KW", "الكويت"],
+  ["BH", "البحرين"], ["OM", "عُمان"], ["QA", "قطر"], ["JO", "الأردن"],
+  ["IQ", "العراق"], ["YE", "اليمن"], ["LB", "لبنان"], ["SY", "سوريا"],
+  ["PS", "فلسطين"], ["SD", "السودان"], ["MA", "المغرب"], ["DZ", "الجزائر"],
+  ["TN", "تونس"], ["LY", "ليبيا"], ["TR", "تركيا"], ["US", "الولايات المتحدة"],
+] as const;
+type LicenseSetup = {
+  vertical: string;
+  country: string;
+  appProfile: string;
+  netRole: string;
+  lanHostUrl: string;
+  lanToken: string;
+  lanPort: number;
+};
+function generatePairingToken() {
+  return crypto.randomUUID().replaceAll("-", "").toUpperCase();
+}
+function isSetupComplete(setup: LicenseSetup) {
+  if (!setup.vertical || !setup.country || !setup.appProfile || !setup.netRole) return false;
+  if (setup.netRole === "host") return setup.lanToken.trim().length >= 8 && setup.lanPort > 0 && setup.lanPort <= 65535;
+  if (setup.netRole === "client") return !!setup.lanHostUrl.trim() && setup.lanToken.trim().length >= 8;
+  return true;
+}
+const VERTICAL_LABELS: Record<string, string> = {
+  general: "نظام ERP / عام",
+  grocery: "بقالة / سوبرماركت",
+  pharmacy: "صيدلية",
+  retail: "تجزئة عامة",
+  restaurant: "مطعم",
+  plumbing: "أدوات صحية وسباكة",
+  paints: "دهانات وأصباغ",
+  auto_parts: "قطع غيار سيارات",
+  auto_workshop: "ورشة سيارات",
+  mobiles: "موبايلات وإكسسوارات",
 };
 
 type PublicKeyInfo = { publicKeyB64: string; publicKeyFingerprint: string; source: "env" | "dev-cache" };
@@ -71,10 +134,12 @@ export default function OfflineLicenses() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({
-    customerName: "", vertical: "retail", plan: "standalone_pos",
+    customerName: "", vertical: "retail", country: "SA", appProfile: "pos", netRole: "single",
+    lanHostUrl: "", lanToken: "", lanPort: 7711, plan: "standalone_pos",
     maxUsers: 5, fingerprint: "", expiresAt: "", notes: "",
-    country: "", companyTaxNumber: "", companyCrNumber: "",
+    companyTaxNumber: "", companyCrNumber: "",
     companyAddress: "", companyPhone: "", companyEmail: "", graceDays: 7,
+    modules: [...ALL_OFFLINE_MODULES],
   });
 
   // Search / filter — used to narrow long lists by license key or customer name.
@@ -83,25 +148,36 @@ export default function OfflineLicenses() {
   // Edit dialog state — SuperAdmin uses this mainly to extend / renew the expiry.
   const [editing, setEditing] = useState<OfflineLicense | null>(null);
   const [editForm, setEditForm] = useState({
-    customerName: "", vertical: "retail", maxUsers: 5, expiresAt: "", notes: "",
-    country: "", companyTaxNumber: "", companyCrNumber: "",
+    customerName: "", vertical: "retail", country: "", appProfile: "", netRole: "",
+    lanHostUrl: "", lanToken: "", lanPort: 7711, maxUsers: 5, expiresAt: "", notes: "",
+    companyTaxNumber: "", companyCrNumber: "",
     companyAddress: "", companyPhone: "", companyEmail: "", graceDays: 7,
+    modules: [...ALL_OFFLINE_MODULES] as string[],
+    modulesExplicit: false,
   });
   function openEdit(lic: OfflineLicense) {
     setEditing(lic);
     setEditForm({
       customerName: lic.customerName,
       vertical: lic.vertical,
+      country: lic.country ?? "",
+      appProfile: lic.appProfile ?? "",
+      netRole: lic.netRole ?? "",
+      lanHostUrl: lic.lanHostUrl ?? "",
+      lanToken: lic.lanToken ?? "",
+      lanPort: lic.lanPort ?? 7711,
       maxUsers: lic.maxUsers,
       expiresAt: lic.expiresAt ? new Date(lic.expiresAt).toISOString().slice(0, 10) : "",
       notes: lic.notes ?? "",
-      country: lic.country ?? "",
       companyTaxNumber: lic.companyTaxNumber ?? "",
       companyCrNumber: lic.companyCrNumber ?? "",
       companyAddress: lic.companyAddress ?? "",
       companyPhone: lic.companyPhone ?? "",
       companyEmail: lic.companyEmail ?? "",
       graceDays: lic.graceDays ?? 7,
+      modules: (lic.modules?.length ? [...lic.modules] : [...ALL_OFFLINE_MODULES])
+        .filter((module) => module !== "zatca" || lic.country?.toUpperCase() === "SA"),
+      modulesExplicit: !!lic.modules?.length,
     });
   }
   const edit = useMutation({
@@ -110,17 +186,22 @@ export default function OfflineLicenses() {
       const body: any = {
         customerName: editForm.customerName,
         vertical: editForm.vertical,
+        country: editForm.country || null,
+        appProfile: editForm.appProfile,
+        netRole: editForm.netRole,
+        ...(editForm.netRole === "host" ? { lanToken: editForm.lanToken, lanPort: Number(editForm.lanPort) } : {}),
+        ...(editForm.netRole === "client" ? { lanHostUrl: editForm.lanHostUrl, lanToken: editForm.lanToken } : {}),
         maxUsers: Number(editForm.maxUsers),
         notes: editForm.notes,
         // empty string clears expiry (permanent license)
         expiresAt: editForm.expiresAt ? new Date(editForm.expiresAt).toISOString() : "",
-        country: editForm.country || null,
         companyTaxNumber: editForm.companyTaxNumber || null,
         companyCrNumber: editForm.companyCrNumber || null,
         companyAddress: editForm.companyAddress || null,
         companyPhone: editForm.companyPhone || null,
         companyEmail: editForm.companyEmail || null,
         graceDays: Number(editForm.graceDays) || 7,
+        ...(editForm.modulesExplicit ? { modules: editForm.modules } : {}),
       };
       const r = await fetch(`${API}/api/admin/offline-licenses/${editing.id}`, {
         method: "PATCH", headers, body: JSON.stringify(body),
@@ -155,12 +236,17 @@ export default function OfflineLicenses() {
         maxUsers: Number(form.maxUsers),
         notes: form.notes || undefined,
         country: form.country || undefined,
+        appProfile: form.appProfile,
+        netRole: form.netRole,
+        ...(form.netRole === "host" ? { lanToken: form.lanToken, lanPort: Number(form.lanPort) } : {}),
+        ...(form.netRole === "client" ? { lanHostUrl: form.lanHostUrl, lanToken: form.lanToken } : {}),
         companyTaxNumber: form.companyTaxNumber || undefined,
         companyCrNumber: form.companyCrNumber || undefined,
         companyAddress: form.companyAddress || undefined,
         companyPhone: form.companyPhone || undefined,
         companyEmail: form.companyEmail || undefined,
         graceDays: Number(form.graceDays) || 7,
+        modules: form.modules,
       };
       if (form.fingerprint.trim()) body.fingerprint = form.fingerprint.trim();
       if (form.expiresAt) body.expiresAt = new Date(form.expiresAt).toISOString();
@@ -177,7 +263,7 @@ export default function OfflineLicenses() {
       setShowCreate(false);
       // Auto-download the signed file
       downloadSignedFile(data.signedFile, data.license.licenseKey);
-      setForm({ customerName: "", vertical: "retail", plan: "standalone_pos", maxUsers: 5, fingerprint: "", expiresAt: "", notes: "", country: "", companyTaxNumber: "", companyCrNumber: "", companyAddress: "", companyPhone: "", companyEmail: "", graceDays: 7 });
+      setForm({ customerName: "", vertical: "retail", country: "SA", appProfile: "pos", netRole: "single", lanHostUrl: "", lanToken: "", lanPort: 7711, plan: "standalone_pos", maxUsers: 5, fingerprint: "", expiresAt: "", notes: "", companyTaxNumber: "", companyCrNumber: "", companyAddress: "", companyPhone: "", companyEmail: "", graceDays: 7, modules: [...ALL_OFFLINE_MODULES] });
     },
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
@@ -188,17 +274,31 @@ export default function OfflineLicenses() {
   // permanent, then approves — which signs + issues the license file the device
   // is polling for.
   const [approving, setApproving] = useState<OfflineLicense | null>(null);
-  const [approveForm, setApproveForm] = useState({ trialDays: 7, permanent: false });
+  const [approveForm, setApproveForm] = useState({
+    trialDays: 7, permanent: false, vertical: "", country: "", appProfile: "", netRole: "single",
+    lanHostUrl: "", lanToken: "", lanPort: 7711, modules: [...ALL_OFFLINE_MODULES] as string[],
+  });
   function openApprove(lic: OfflineLicense) {
     setApproving(lic);
-    setApproveForm({ trialDays: 7, permanent: false });
+    setApproveForm({
+      trialDays: 7, permanent: false, vertical: "", country: "", appProfile: "", netRole: "single",
+      lanHostUrl: "", lanToken: "", lanPort: 7711,
+      modules: (lic.modules?.length ? [...lic.modules] : [...ALL_OFFLINE_MODULES])
+        .filter((module) => module !== "zatca" || lic.country?.toUpperCase() === "SA"),
+    });
   }
   const approve = useMutation({
     mutationFn: async () => {
       if (!approving) return;
+      const setup = {
+        vertical: approveForm.vertical, country: approveForm.country,
+        appProfile: approveForm.appProfile, netRole: approveForm.netRole,
+        ...(approveForm.netRole === "host" ? { lanToken: approveForm.lanToken, lanPort: Number(approveForm.lanPort) } : {}),
+        ...(approveForm.netRole === "client" ? { lanHostUrl: approveForm.lanHostUrl, lanToken: approveForm.lanToken } : {}),
+      };
       const body = approveForm.permanent
-        ? { permanent: true }
-        : { trialDays: Number(approveForm.trialDays) || 7 };
+        ? { permanent: true, modules: approveForm.modules, ...setup }
+        : { trialDays: Number(approveForm.trialDays) || 7, modules: approveForm.modules, ...setup };
       const r = await fetch(`${API}/api/admin/offline-licenses/${approving.id}/approve`, {
         method: "POST", headers, body: JSON.stringify(body),
       });
@@ -259,8 +359,8 @@ export default function OfflineLicenses() {
   });
 
   // ONLINE: one click stamps clock_unblock_at; a self_register device clears its
-  // lock on the next online revalidate. Meaningless for admin file licenses
-  // (they never phone home) so the row button only shows for self_register.
+  // clock lock on the next online revalidate. Admin files refresh signed
+  // entitlements online, but use the offline signed code for clock-lock recovery.
   const onlineUnblockMut = useMutation({
     mutationFn: async (id: number) => {
       if (!confirm("فكّ حظر الساعة لهذا الترخيص عبر الإنترنت؟ سيُلغى القفل تلقائياً عند أول تحقّق أونلاين من الجهاز.")) throw new Error("cancelled");
@@ -294,7 +394,7 @@ export default function OfflineLicenses() {
         <div>
           <h1 className="text-xl md:text-2xl font-bold">تراخيص POS Standalone (بدون سحابة)</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            إصدار ملفات ترخيص موقّعة رقمياً (Ed25519) لتشغيل تطبيق POS Desktop في وضع مستقل بدون أي ربط سحابي.
+            إصدار ملفات موقّعة لتشغيل POS Desktop مستقلاً؛ تبقى بيانات التشغيل محلية، ويُستخدم الإنترنت للتفعيل وتجديد الترخيص وتحديث الوحدات فقط.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
@@ -389,17 +489,22 @@ export default function OfflineLicenses() {
                     <KeyRound className="h-4 w-4 text-blue-600 shrink-0" />
                     <code className="font-mono text-sm font-semibold break-all">{lic.licenseKey}</code>
                     <StatusBadge status={lic.status} />
-                    <Badge variant="outline">{lic.vertical}</Badge>
+                    {lic.status === "pending"
+                      ? <Badge variant="outline" className="border-amber-300 text-amber-800">النشاط يحدده المشرف</Badge>
+                      : <Badge variant="outline">{VERTICAL_LABELS[lic.vertical] ?? lic.vertical}</Badge>}
                     {lic.source === "self_register"
                       ? <Badge className="bg-indigo-100 text-indigo-800">سجّل ذاتياً عبر الإنترنت</Badge>
                       : <Badge variant="outline">أصدره المشرف</Badge>}
                     {lic.country && <Badge variant="outline">{lic.country}</Badge>}
+                    {lic.appProfile && <Badge variant="outline">{lic.appProfile === "pos" ? "نقطة بيع فقط" : "ERP كامل"}</Badge>}
+                    {lic.netRole && <Badge variant="outline">{lic.netRole === "single" ? "جهاز مستقل" : lic.netRole === "host" ? "رئيسي" : "فرعي"}</Badge>}
                   </div>
                   <div className="text-sm font-medium">{lic.customerName}</div>
                   <div className="text-xs text-muted-foreground flex gap-3 mt-1 flex-wrap">
                     <span>👥 {lic.maxUsers} مستخدم</span>
                     <span>📅 صدر: {new Date(lic.issuedAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>
                     {lic.expiresAt && <span>⏰ ينتهي: {new Date(lic.expiresAt).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn")}</span>}
+                    <span data-testid={`text-license-module-count-${lic.id}`}>الوحدات المفعّلة: {lic.status === "pending" ? "تُحدَّد عند الموافقة" : lic.modules?.length ? `${lic.modules.length} من ${offlineModulesForCountry(lic.country).length}` : "ترخيص قديم — دون تقييد"}</span>
                     {lic.fingerprintHash && <span title={lic.fingerprintHash}>🔒 مربوط بجهاز</span>}
                     <span>🕒 مهلة عدم الاتصال: {lic.graceDays ?? 7} يوم</span>
                     {lic.lastSeenAt && <span>📡 آخر اتصال: {new Date(lic.lastSeenAt).toLocaleString("ar-SA-u-ca-gregory-nu-latn")}</span>}
@@ -515,7 +620,7 @@ export default function OfflineLicenses() {
 
       {/* Create dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent dir="rtl" className="max-w-lg">
+        <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-5xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>إصدار ترخيص Standalone جديد</DialogTitle>
             <DialogDescription>
@@ -527,28 +632,21 @@ export default function OfflineLicenses() {
               <Label>اسم العميل / الشركة *</Label>
               <Input value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} placeholder="مؤسسة الأمين التجارية" />
             </div>
+            <LicenseSetupFields
+              idPrefix="create"
+              value={form}
+              onChange={(next) => setForm((current) => ({
+                ...current,
+                ...next,
+                ...(next.country && next.country.toUpperCase() !== "SA"
+                  ? { modules: current.modules.filter((module) => module !== "zatca") }
+                  : {}),
+              }))}
+            />
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>المجال</Label>
-                <Select value={form.vertical} onValueChange={(v) => setForm({ ...form, vertical: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="retail">تجزئة عامة</SelectItem>
-                    <SelectItem value="grocery">بقالة / سوبرماركت</SelectItem>
-                    <SelectItem value="pharmacy">صيدلية</SelectItem>
-                    <SelectItem value="restaurant">مطعم</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
               <div>
                 <Label>الحد الأقصى للمستخدمين</Label>
                 <Input type="number" min={1} max={100} value={form.maxUsers} onChange={(e) => setForm({ ...form, maxUsers: Number(e.target.value) })} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>الدولة (رمز ISO)</Label>
-                <Input value={form.country} maxLength={2} onChange={(e) => setForm({ ...form, country: e.target.value.toUpperCase() })} placeholder="SA" />
               </div>
               <div>
                 <Label>مهلة عدم الاتصال (أيام)</Label>
@@ -579,6 +677,13 @@ export default function OfflineLicenses() {
               <Label>عنوان الشركة</Label>
               <Input value={form.companyAddress} onChange={(e) => setForm({ ...form, companyAddress: e.target.value })} placeholder="الرياض، حي العليا" />
             </div>
+            <ModuleEntitlementPicker
+              idPrefix="create"
+              country={form.country}
+              selected={form.modules}
+              includeZatca={false}
+              onChange={(modules) => setForm({ ...form, modules })}
+            />
             <div>
               <Label>تاريخ الانتهاء (اختياري)</Label>
               <DateField value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} />
@@ -598,7 +703,7 @@ export default function OfflineLicenses() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>إلغاء</Button>
-            <Button onClick={() => create.mutate()} disabled={!form.customerName.trim() || create.isPending}>
+            <Button onClick={() => create.mutate()} disabled={!form.customerName.trim() || !isSetupComplete(form) || create.isPending}>
               {create.isPending ? "جارٍ الإنشاء…" : "إنشاء وتنزيل الملف"}
             </Button>
           </DialogFooter>
@@ -610,7 +715,7 @@ export default function OfflineLicenses() {
           maxUsers. Backend re-signs the file so the next download
           delivers the updated, freshly-signed copy to the customer. */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent dir="rtl" className="max-w-lg">
+        <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-5xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>تعديل / تجديد الترخيص</DialogTitle>
             <DialogDescription>
@@ -624,29 +729,22 @@ export default function OfflineLicenses() {
               <Label>اسم العميل</Label>
               <Input value={editForm.customerName} onChange={(e) => setEditForm({ ...editForm, customerName: e.target.value })} />
             </div>
+            <LicenseSetupFields
+              idPrefix="edit"
+              value={editForm}
+              onChange={(next) => setEditForm((current) => ({
+                ...current,
+                ...next,
+                ...(next.country && next.country.toUpperCase() !== "SA"
+                  ? { modules: current.modules.filter((module) => module !== "zatca") }
+                  : {}),
+              }))}
+            />
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>المجال</Label>
-                <Select value={editForm.vertical} onValueChange={(v) => setEditForm({ ...editForm, vertical: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="retail">تجزئة عامة</SelectItem>
-                    <SelectItem value="grocery">بقالة / سوبرماركت</SelectItem>
-                    <SelectItem value="pharmacy">صيدلية</SelectItem>
-                    <SelectItem value="restaurant">مطعم</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
               <div>
                 <Label>الحد الأقصى للمستخدمين</Label>
                 <Input type="number" min={1} max={100} value={editForm.maxUsers}
                   onChange={(e) => setEditForm({ ...editForm, maxUsers: Number(e.target.value) })} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>الدولة (رمز ISO)</Label>
-                <Input value={editForm.country} maxLength={2} onChange={(e) => setEditForm({ ...editForm, country: e.target.value.toUpperCase() })} placeholder="SA" />
               </div>
               <div>
                 <Label>مهلة عدم الاتصال (أيام)</Label>
@@ -677,6 +775,12 @@ export default function OfflineLicenses() {
               <Label>عنوان الشركة</Label>
               <Input value={editForm.companyAddress} onChange={(e) => setEditForm({ ...editForm, companyAddress: e.target.value })} />
             </div>
+            <ModuleEntitlementPicker
+              idPrefix="edit"
+              country={editForm.country}
+              selected={editForm.modules}
+              onChange={(modules) => setEditForm({ ...editForm, modules, modulesExplicit: true })}
+            />
             <div>
               <Label>تاريخ الانتهاء</Label>
               <DateField value={editForm.expiresAt}
@@ -701,7 +805,7 @@ export default function OfflineLicenses() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>إلغاء</Button>
-            <Button onClick={() => edit.mutate()} disabled={!editForm.customerName.trim() || edit.isPending}>
+            <Button onClick={() => edit.mutate()} disabled={!editForm.customerName.trim() || !isSetupComplete(editForm) || edit.isPending}>
               {edit.isPending ? "جارٍ الحفظ…" : "حفظ وإعادة التوقيع"}
             </Button>
           </DialogFooter>
@@ -713,7 +817,7 @@ export default function OfflineLicenses() {
           permanent. On approve the backend signs + stores the file and the
           device picks it up on its next poll. */}
       <Dialog open={!!approving} onOpenChange={(o) => !o && setApproving(null)}>
-        <DialogContent dir="rtl" className="max-w-md">
+        <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-5xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>الموافقة على طلب التسجيل</DialogTitle>
             <DialogDescription>
@@ -723,6 +827,24 @@ export default function OfflineLicenses() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+              <LicenseSetupFields
+                idPrefix="approve"
+                value={approveForm}
+                onChange={(next) => setApproveForm((current) => ({
+                  ...current,
+                  ...next,
+                  ...(next.country && next.country.toUpperCase() !== "SA"
+                    ? { modules: current.modules.filter((module) => module !== "zatca") }
+                    : {}),
+                }))}
+              />
+              <ModuleEntitlementPicker
+                idPrefix="approve"
+                country={approveForm.country}
+                selected={approveForm.modules}
+                includeZatca={false}
+                onChange={(modules) => setApproveForm({ ...approveForm, modules })}
+              />
             <div className="flex items-center gap-2">
               <Checkbox
                 id="approve-permanent"
@@ -747,7 +869,7 @@ export default function OfflineLicenses() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setApproving(null)}>إلغاء</Button>
-            <Button onClick={() => approve.mutate()} disabled={approve.isPending || (!approveForm.permanent && (!approveForm.trialDays || approveForm.trialDays < 1))}>
+            <Button onClick={() => approve.mutate()} disabled={approve.isPending || !isSetupComplete(approveForm) || approveForm.modules.length === 0 || (!approveForm.permanent && (!approveForm.trialDays || approveForm.trialDays < 1))}>
               {approve.isPending ? "جارٍ الموافقة…" : "موافقة وإصدار الترخيص"}
             </Button>
           </DialogFooter>
@@ -766,6 +888,104 @@ function StatCard({ label, value, color }: { label: string; value: number; color
   );
 }
 
+function LicenseSetupFields({ idPrefix, value, onChange }: {
+  idPrefix: string;
+  value: LicenseSetup;
+  onChange: (next: LicenseSetup) => void;
+}) {
+  const update = (key: keyof LicenseSetup, nextValue: string | number) =>
+    onChange({ ...value, [key]: nextValue } as LicenseSetup);
+  return (
+    <section className="space-y-4 rounded-xl border border-sky-200 bg-sky-50/60 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="font-semibold text-slate-900">إعداد نسخة Standalone</h3>
+          <p className="text-xs text-muted-foreground">تُوقّع هذه الاختيارات داخل ملف الترخيص وتُطبّق على الجهاز.</p>
+        </div>
+        <Badge className="bg-slate-800 text-white">مستقل فقط · بدون سحابة</Badge>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-vertical`}>النشاط التجاري *</Label>
+          <Select value={value.vertical || undefined} onValueChange={(v) => update("vertical", v)}>
+            <SelectTrigger id={`${idPrefix}-vertical`}><SelectValue placeholder="اختر النشاط" /></SelectTrigger>
+            <SelectContent>
+              {Object.entries(VERTICAL_LABELS).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-country`}>الدولة *</Label>
+          <Select value={value.country || undefined} onValueChange={(v) => update("country", v)}>
+            <SelectTrigger id={`${idPrefix}-country`}><SelectValue placeholder="اختر الدولة" /></SelectTrigger>
+            <SelectContent>
+              {COUNTRIES.map(([code, name]) => <SelectItem key={code} value={code}>{name} ({code})</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-profile`}>ملف التشغيل *</Label>
+          <Select value={value.appProfile || undefined} onValueChange={(v) => update("appProfile", v)}>
+            <SelectTrigger id={`${idPrefix}-profile`}><SelectValue placeholder="اختر الملف" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="pos">نقطة بيع فقط</SelectItem>
+              <SelectItem value="erp">النظام الكامل (ERP)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`${idPrefix}-role`}>دور الجهاز على الشبكة *</Label>
+          <Select value={value.netRole || undefined} onValueChange={(v) => {
+          onChange({
+            ...value,
+            netRole: v,
+            lanToken: v === "host" && !value.lanToken ? generatePairingToken() : value.lanToken,
+          });
+        }}>
+          <SelectTrigger id={`${idPrefix}-role`}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="single">مستقل — جهاز واحد</SelectItem>
+            <SelectItem value="host">رئيسي — يشارك قاعدة البيانات</SelectItem>
+            <SelectItem value="client">فرعي — يتصل بالجهاز الرئيسي</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {value.netRole === "host" && (
+        <div className="grid gap-3 rounded-lg border bg-white p-3 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-token`}>رمز إقران الأجهزة الفرعية *</Label>
+            <div className="flex gap-2">
+              <Input id={`${idPrefix}-token`} value={value.lanToken} dir="ltr" readOnly className="font-mono" />
+              <Button type="button" variant="outline" onClick={() => update("lanToken", generatePairingToken())}>إنشاء رمز</Button>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-port`}>منفذ الشبكة</Label>
+            <Input id={`${idPrefix}-port`} type="number" min={1} max={65535} value={value.lanPort}
+              onChange={(e) => update("lanPort", Number(e.target.value))} />
+          </div>
+          <p className="md:col-span-2 text-xs text-muted-foreground">يُدخل رمز الإقران وعنوان الجهاز الرئيسي في إعداد ترخيص كل جهاز فرعي.</p>
+        </div>
+      )}
+      {value.netRole === "client" && (
+        <div className="grid gap-3 rounded-lg border bg-white p-3 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-host-url`}>عنوان الجهاز الرئيسي *</Label>
+            <Input id={`${idPrefix}-host-url`} value={value.lanHostUrl} dir="ltr"
+              onChange={(e) => update("lanHostUrl", e.target.value)} placeholder="http://192.168.1.10:7711" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`${idPrefix}-client-token`}>رمز الإقران *</Label>
+            <Input id={`${idPrefix}-client-token`} value={value.lanToken} dir="ltr"
+              onChange={(e) => update("lanToken", e.target.value)} placeholder="رمز الجهاز الرئيسي" />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
     pending: { label: "بانتظار الموافقة", cls: "bg-orange-100 text-orange-800" },
@@ -775,4 +995,75 @@ function StatusBadge({ status }: { status: string }) {
   };
   const v = map[status] ?? { label: status, cls: "bg-slate-100 text-slate-700" };
   return <span className={`text-xs px-2 py-0.5 rounded ${v.cls}`}>{v.label}</span>;
+}
+
+function ModuleEntitlementPicker({
+  idPrefix,
+  country,
+  selected,
+  onChange,
+  includeZatca = true,
+}: {
+  idPrefix: string;
+  country: string;
+  selected: string[];
+  onChange: (modules: string[]) => void;
+  includeZatca?: boolean;
+}) {
+  const availableModules = offlineModulesForCountry(country, includeZatca);
+  return (
+    <section className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-bold text-slate-900">الوحدات المفعّلة لهذا الترخيص</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            أزل العلامة لإخفاء الوحدة عن الشركة. ستُطبّق التغييرات على جهاز Windows عند اتصاله بالإنترنت.
+          </p>
+        </div>
+        <Badge variant="secondary" className="shrink-0">
+          <span data-testid={`text-module-enabled-count-${idPrefix}`}>{selected.length} / {availableModules.length}</span>
+        </Badge>
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {availableModules.map((module) => {
+          const checked = selected.includes(module.key);
+          const id = `offline-module-${idPrefix}-${module.key}`;
+          return (
+            <label
+              key={module.key}
+              htmlFor={id}
+              className={`flex min-h-[78px] cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                checked
+                  ? "border-blue-300 bg-blue-50/70 hover:bg-blue-50"
+                  : "border-slate-200 bg-white hover:border-slate-300"
+              }`}
+            >
+              <Checkbox
+                id={id}
+                data-testid={`checkbox-module-${idPrefix}-${module.key}`}
+                className="mt-0.5"
+                checked={checked}
+                onCheckedChange={(value) => {
+                  if (value === true && !checked) onChange([...selected, module.key]);
+                  else if (value !== true && checked && selected.length > 1) {
+                    onChange(selected.filter((key) => key !== module.key));
+                  }
+                }}
+              />
+              <span className="min-w-0">
+                <span className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-900">{module.label}</span>
+                  <span className="rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] text-slate-500">{module.group}</span>
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-slate-600">{module.detail}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-[11px] text-muted-foreground">
+        يجب تفعيل وحدة واحدة على الأقل. التراخيص القديمة التي لا تحتوي على قائمة وحدات تبقى متاحة دون تغيير.
+      </p>
+    </section>
+  );
 }

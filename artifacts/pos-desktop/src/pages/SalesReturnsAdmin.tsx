@@ -32,6 +32,10 @@ import {
 import { takeSalesReturnPrefill, type SalesReturnPrefill } from "../lib/returnPrefill";
 import { setDocumentEditorLayout, uiText, useDocumentEditorLayout, useUiLanguage } from "../lib/appSettings";
 import { DocumentEditorSection, DocumentEditorShell } from "../components/DocumentEditorShell";
+import {
+  buildSalesReturnZatcaInput, queueOrSubmitZatcaDocument,
+  useLocalZatcaEntitlement,
+} from "../lib/zatca/localQueue";
 
 type FLine = SalesLine & DiscFields;
 
@@ -306,6 +310,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
+  const zatca = useLocalZatcaEntitlement();
   const documentLayout = useDocumentEditorLayout();
   const customerOptions = useMemo(() => [
     { value: 0, label: text("— بدون عميل —", "— No customer —") },
@@ -356,6 +361,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
   const [err, setErr] = useState<string | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [savedReturnId, setSavedReturnId] = useState<number | null>(null);
   const { taxes, taxId, setTaxId, taxOptions, selectedRate } = useInvoiceTaxes("sales_return");
 
   useEffect(() => {
@@ -479,6 +485,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
       const problems = collectDocIssues([
         { label: text("طريقة الدفع", "Payment method"), ok: !!paymentMethod },
         { label: text("العميل", "Customer"), ok: paymentMethod !== "credit" || !!customerId },
+        ...(zatca ? [{ label: text("فاتورة المبيعات الأصلية لزاتكا", "Original sales invoice for ZATCA"), ok: !!initial?.invoiceId }] : []),
         { label: text("العملة", "Currency"), ok: !!currency },
         ...(branches.length ? [{ label: text("الفرع", "Branch"), ok: branchId !== "" }] : []),
         { label: text("المستودع", "Warehouse"), ok: !!warehouseId },
@@ -501,7 +508,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
           uomId: l.uomId, uomName: l.uomName, conversionFactor: l.conversionFactor,
         };
       });
-      const id = await createSalesReturn({
+      const id = savedReturnId ?? await createSalesReturn({
         customerId: customerId || null, invoiceId: initial?.invoiceId ?? null, returnDate: date, paymentMethod,
         cashBoxId: paymentMethod === "cash" ? cashBoxId : null,
         bankId:    paymentMethod === "bank" ? bankId : null,
@@ -510,10 +517,23 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
         costCenterId: costCenterId === "" ? null : costCenterId,
         notes: notes || null, lines: payloadLines,
       });
+      setSavedReturnId(id);
       saveDocDiscount("sales_return", id, {
         grossSubtotal: r.grossSubtotal * effRate, lineDiscountTotal: r.lineDiscountTotal * effRate, headerDiscountValue: r.headerDiscountValue * effRate,
         currencyCode: currency, exchangeRate: effRate,
       });
+      if (zatca) {
+        const zatcaInput = await buildSalesReturnZatcaInput(id);
+        const outcome = await queueOrSubmitZatcaDocument(zatcaInput, "sales_return", id);
+        if (outcome?.status === "pending") {
+          setErr(text("تم حفظ المرتجع وتوقيعه محليًا، لكن الإرسال ينتظر اتصال زاتكا. أعد المحاولة من شاشة زاتكا.", "Return saved and signed locally, but ZATCA is offline. Retry from the ZATCA screen."));
+          return;
+        }
+        if (outcome?.status === "rejected") {
+          setErr(text(`تم حفظ المرتجع لكن رفضته زاتكا: ${outcome.result?.raw || outcome.zatcaStatus || "راجع شاشة زاتكا"}`, `Return saved but rejected by ZATCA: ${outcome.result?.raw || outcome.zatcaStatus || "See the ZATCA screen."}`));
+          return;
+        }
+      }
       onDone();
     } catch (e: any) { setErr(errText(e, text("فشل", "Could not save sales return."))); }
     finally { setBusy(false); }

@@ -30,7 +30,7 @@ const LS_COUNTRY = "pos_desktop_country";
  */
 export function isZatcaCountry(): boolean {
   if (typeof window === "undefined") return false;
-  return (localStorage.getItem(LS_COUNTRY) || "SA").toUpperCase() === "SA";
+  return (localStorage.getItem(LS_COUNTRY) || "").trim().toUpperCase() === "SA";
 }
 
 export interface BridgeInput {

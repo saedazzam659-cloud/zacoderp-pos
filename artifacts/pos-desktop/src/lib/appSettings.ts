@@ -32,6 +32,7 @@ const LS_UI_LANGUAGE = "pos_desktop_ui_language";
 const LS_SALES_INVOICE_LAYOUT = "pos_desktop_sales_invoice_layout";
 const LS_DOCUMENT_EDITOR_LAYOUT = "pos_desktop_document_editor_layout";
 const LS_JOURNAL_ENTRY_LAYOUT = "pos_desktop_journal_entry_layout";
+const LS_ZATCA_FORM_LAYOUT = "pos_desktop_zatca_form_layout";
 const LS_CASH_BANK_VOUCHER_LAYOUT = "pos_desktop_cash_bank_voucher_layout";
 const LS_ITEM_FORM_LAYOUT = "pos_desktop_item_form_layout";
 
@@ -373,6 +374,15 @@ export function useJournalEntryLayout(): DocumentEditorLayout {
     };
   }, []);
   return layout;
+}
+
+/** ZATCA has its own Windows-only form preference; new installs use ERP density. */
+export function getZatcaFormLayout(): DocumentEditorLayout {
+  return getScopedEditorLayout(LS_ZATCA_FORM_LAYOUT, "erp");
+}
+
+export function setZatcaFormLayout(layout: DocumentEditorLayout): void {
+  setScopedEditorLayout(LS_ZATCA_FORM_LAYOUT, layout);
 }
 
 function getScopedEditorLayout(key: string, fallback: DocumentEditorLayout): DocumentEditorLayout {

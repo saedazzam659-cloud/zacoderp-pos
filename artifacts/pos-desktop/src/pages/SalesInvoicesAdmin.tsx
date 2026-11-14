@@ -44,7 +44,10 @@ import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
   clearDocDiscount, type DiscType, type DiscFields,
 } from "../lib/discount";
-import { isZatcaCountry, bridgeSalesInvoiceToZatca } from "../lib/zatcaBridge";
+import {
+  buildSalesInvoiceZatcaInput, queueOrSubmitZatcaDocument,
+  useLocalZatcaEntitlement,
+} from "../lib/zatca/localQueue";
 import { setSalesReturnPrefill } from "../lib/returnPrefill";
 import { type WindowsView } from "../lib/moduleRegistry";
 
@@ -276,7 +279,7 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
   // emits on these channels, so reload deps without a manual app refresh.
   useDataRefresh(["items", "customers"], reloadDeps);
 
-  const zatca = isZatcaCountry();
+  const zatca = useLocalZatcaEntitlement();
   const columns = useMemo<GridColumn<SalesInvoice>[]>(() => {
     const base: GridColumn<SalesInvoice>[] = [
       { key: "invoiceNo", label: text("رقم الفاتورة", "Invoice number"), value: (p) => p.invoiceNo },
@@ -420,7 +423,7 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
                     <Td>{p.customerName ?? text("نقدي/بدون عميل", "Cash / no customer")}</Td>
                     <Td><PayBadge invoice={p} /></Td>
                     <Td><StatusBadge status={p.status} /></Td>
-                    {isZatcaCountry() && <Td><ZatcaBadge status={p.zatcaStatus} /></Td>}
+                    {zatca && <Td><ZatcaBadge status={p.zatcaStatus} /></Td>}
                     <Td num>{fmt(p.subtotal)}</Td>
                     <Td num>{fmt(p.vatTotal)}</Td>
                     <Td num style={{ fontWeight: 600 }}>{fmt(p.grandTotal)}</Td>
@@ -541,7 +544,7 @@ function SalesDetail({ p }: { p: SalesInvoice }) {
           <tr style={{ background: "#fff" }}><Td colSpan={5 as any}>{text("ضريبة القيمة المضافة", "VAT")}</Td><Td num>{fmt(p.vatTotal)}</Td></tr>
           <tr style={{ background: "#f1f5f9", fontWeight: 800, fontSize: 16 }}><Td colSpan={5 as any}>{text("الإجمالي النهائي", "Grand total")}</Td><Td num>{fmt(p.grandTotal)}</Td></tr>
           <tr style={{ background: "#fff", color: "#64748b" }}><Td colSpan={5 as any}>{text("تكلفة البضاعة المباعة", "Cost of goods sold")}</Td><Td num>{fmt(p.cogsTotal)}</Td></tr>
-          {isZatcaCountry() && p.zatcaQrBase64 && (
+          {p.zatcaQrBase64 && (
             <tr style={{ background: "#fff" }}>
               <Td colSpan={5 as any}>ZATCA</Td>
               <Td>
@@ -593,6 +596,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
+  const zatca = useLocalZatcaEntitlement();
   const customerOptions = useMemo(() => [
     { value: 0, label: text("— بدون عميل —", "— No customer —") },
     ...deps.customers.map((customer) => ({ value: customer.id, label: customer.nameAr })),
@@ -1235,19 +1239,27 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       // invoice into the existing offline_invoices → cloud-sync submission path.
       // Best-effort: the invoice is already saved, so a bridge failure is shown
       // as a non-fatal warning and can be retried by clicking حفظ again.
-      if (isZatcaCountry()) {
+      if (zatca) {
         try {
-          // Totals + lines are read back from the persisted invoice inside the
-          // bridge, so the QR/payload match exactly what was stored (no drift).
-          await bridgeSalesInvoiceToZatca({
-            invoiceId: id,
-            paymentMethod: savedMethod,
-            customerName: selectedCustomer?.nameAr ?? null,
-            customerVat: selectedCustomer?.vatNumber ?? null,
-          });
+          const zatcaInput = await buildSalesInvoiceZatcaInput(id);
+          const outcome = await queueOrSubmitZatcaDocument(zatcaInput, "sales_invoice", id);
+          if (outcome?.status === "pending") {
+            setErr(text(
+              "تم حفظ الفاتورة وتوقيعها محليًا، لكن الإرسال ينتظر اتصال زاتكا. يمكنك إعادة المحاولة من شاشة زاتكا.",
+              "Invoice saved and signed locally, but ZATCA is offline. Retry from the ZATCA screen.",
+            ));
+            return;
+          }
+          if (outcome?.status === "rejected") {
+            setErr(text(
+              `تم حفظ الفاتورة لكن رفضتها زاتكا: ${outcome.result?.raw || outcome.zatcaStatus || "راجع شاشة زاتكا"}`,
+              `Invoice saved but rejected by ZATCA: ${outcome.result?.raw || outcome.zatcaStatus || "See the ZATCA screen."}`,
+            ));
+            return;
+          }
         } catch (e: any) {
           const detail = errText(e, text("خطأ غير معروف", "Unknown error"));
-          setErr(text(`تم حفظ الفاتورة لكن تعذّر ربطها بزاتكا. اضغط «حفظ» مرة أخرى لإعادة المحاولة. (${detail})`, `Invoice saved, but the ZATCA link failed. Select “Save” again to retry. (${detail})`));
+          setErr(text(`تم حفظ الفاتورة، لكن لم تكتمل إضافتها إلى قائمة زاتكا: ${detail}`, `Invoice saved, but could not be queued for ZATCA: ${detail}`));
           return;
         }
       }
@@ -1391,7 +1403,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         <Field label={text("مركز التكلفة", "Cost center")}>
           <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} {...navCombo} options={costCenterPickerOptions(costCenters)} style={input} />
         </Field>
-        {isZatcaCountry() && (
+        {zatca && (
         <Field label={text("نوع الفاتورة (زاتكا)", "Invoice type (ZATCA)")}>
           <SearchCombobox
             value={invoiceType}

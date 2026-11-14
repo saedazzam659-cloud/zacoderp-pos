@@ -4840,11 +4840,11 @@ pub struct SalesInvoice {
     #[serde(default)]
     pub buyer_address: Option<String>,
     pub lines: Vec<SalesLine>,
-    /// Cached ZATCA TLV QR (base64). Loaded by `sales_invoice_get`; left None
+    /// Cached ZATCA QR (base64). Loaded by `sales_invoice_get`; left None
     /// in the list query to avoid shipping multi-hundred-byte blobs per row.
     pub zatca_qr_base64: Option<String>,
-    /// Sync status of the linked offline_invoices row (pending|synced|...),
-    /// or None when this invoice was never bridged (e.g. non-SA).
+    /// Status from the local signed ZATCA chain or legacy offline-invoice sync,
+    /// or None when this invoice has not been linked to ZATCA.
     pub zatca_status: Option<String>,
 }
 
@@ -5014,7 +5014,7 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
                 s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
                 s.sales_rep_id,sp.name_ar,s.commission_pct,s.invoice_type,s.buyer_name,s.buyer_vat,s.buyer_address,
-                oi.sync_status,s.branch_id,s.cost_center_id,s.status,
+                COALESCE(zi.status,oi.sync_status),s.branch_id,s.cost_center_id,s.status,
                 COALESCE(s.cash_amount,CASE WHEN s.payment_method='cash' THEN s.grand_total ELSE 0 END),
                 COALESCE(s.bank_amount,CASE WHEN s.payment_method='bank' THEN s.grand_total ELSE 0 END),
                 COALESCE(s.credit_amount,CASE WHEN s.payment_method='credit' THEN s.grand_total ELSE 0 END)
@@ -5022,6 +5022,7 @@ pub fn sales_invoices_list(limit: Option<i64>) -> Result<Vec<SalesInvoice>, Stri
          LEFT JOIN customers_local c ON c.id=s.customer_id
          LEFT JOIN salespersons_local sp ON sp.id=s.sales_rep_id
          LEFT JOIN offline_invoices oi ON oi.local_uuid=s.zatca_offline_uuid
+         LEFT JOIN zatca_invoices zi ON zi.local_uuid=s.zatca_offline_uuid
          ORDER BY s.id DESC LIMIT ?1"
     ).map_err(|e| e.to_string())?;
     let rows = stmt
@@ -5112,7 +5113,7 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
         "SELECT s.id,s.invoice_no,s.customer_id,c.name_ar,s.invoice_date,s.subtotal,s.vat_total,s.grand_total,
                 s.cogs_total,s.payment_method,s.cash_box_id,s.bank_id,s.je_id,s.notes,
                 s.sales_rep_id,sp.name_ar,s.commission_pct,s.invoice_type,s.buyer_name,s.buyer_vat,s.buyer_address,
-                s.zatca_qr_base64,oi.sync_status,s.branch_id,s.cost_center_id,s.status,
+                s.zatca_qr_base64,COALESCE(zi.status,oi.sync_status),s.branch_id,s.cost_center_id,s.status,
                 COALESCE(s.cash_amount,CASE WHEN s.payment_method='cash' THEN s.grand_total ELSE 0 END),
                 COALESCE(s.bank_amount,CASE WHEN s.payment_method='bank' THEN s.grand_total ELSE 0 END),
                 COALESCE(s.credit_amount,CASE WHEN s.payment_method='credit' THEN s.grand_total ELSE 0 END)
@@ -5120,6 +5121,7 @@ pub fn sales_invoice_get(id: i64) -> Result<SalesInvoice, String> {
          LEFT JOIN customers_local c ON c.id=s.customer_id
          LEFT JOIN salespersons_local sp ON sp.id=s.sales_rep_id
          LEFT JOIN offline_invoices oi ON oi.local_uuid=s.zatca_offline_uuid
+         LEFT JOIN zatca_invoices zi ON zi.local_uuid=s.zatca_offline_uuid
          WHERE s.id=?1",
         params![id], |r| Ok(SalesInvoice {
             id: r.get(0)?, invoice_no: r.get(1)?, customer_id: r.get(2)?, customer_name: r.get(3)?,

@@ -10,7 +10,7 @@
 // only — production MSI builds always have Tauri.
 
 import * as ed from "@noble/ed25519";
-import { WINDOWS_MODULES, type WindowsModuleKey } from "./moduleRegistry";
+import { WINDOWS_LICENSE_MODULES, type WindowsLicenseModuleKey } from "./moduleRegistry";
 
 // ─── invoke loader (lazy, same pattern as tauri-shim) ────────────────
 let _invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
@@ -54,7 +54,7 @@ export type OfflineLicensePayload = {
   source?: "admin" | "self_register";
   graceDays?: number;
   // Missing means a legacy license; retain its existing profile-based behavior.
-  modules?: WindowsModuleKey[];
+  modules?: WindowsLicenseModuleKey[];
   appProfile?: "pos" | "erp";
   netRole?: NetRole;
   lanHostUrl?: string;
@@ -250,13 +250,16 @@ export async function verifyLicenseFile(file: SignedLicenseFile, nowMs: number =
     return { ok: false, error: "العرض غير مطابق للمحتوى الموقّع — الملف معدّل" };
   }
   if (payload.modules !== undefined) {
-    const moduleKeys = new Set(WINDOWS_MODULES.map((module) => module.key));
+    const moduleKeys = new Set(WINDOWS_LICENSE_MODULES);
     if (
       !Array.isArray(payload.modules) ||
       payload.modules.length === 0 ||
       payload.modules.some((module) => !moduleKeys.has(module))
     ) {
       return { ok: false, error: "قائمة وحدات الترخيص غير صالحة" };
+    }
+    if (payload.modules.includes("zatca") && payload.country?.toUpperCase() !== "SA") {
+      return { ok: false, error: "ترخيص زاتكا يتطلب اختيار السعودية" };
     }
   }
   // `nowMs` is the clock-guard's effectiveNow = max(systemNow, high-water-mark)

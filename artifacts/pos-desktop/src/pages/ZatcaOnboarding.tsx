@@ -11,7 +11,11 @@ import {
   Page, Card, Field, ErrorMsg, input, btnPrimary, btnSecondary,
   Table, Th, Td, Empty,
 } from "./_adminUi";
-import { getCompanyProfile } from "../lib/appSettings";
+import {
+  getCompanyProfile, getZatcaFormLayout, setZatcaFormLayout,
+  type DocumentEditorLayout,
+} from "../lib/appSettings";
+import { DocumentEditorShell } from "../components/DocumentEditorShell";
 import { getFingerprint } from "../lib/tauri-shim";
 import {
   generateOnboardingCsr, exchangeComplianceCsid, exchangeProductionCsid,
@@ -25,6 +29,11 @@ import {
   loadActiveCredentials, submitSigned,
   type BuildInvoiceInput,
 } from "../lib/zatca/submit";
+import {
+  getZatcaSubmissionMode, listQueuedZatcaDocuments,
+  setZatcaSubmissionMode, submitQueuedZatcaDocument,
+  type QueuedZatcaDocument, type ZatcaSubmissionMode,
+} from "../lib/zatca/localQueue";
 
 const STATUS_LABEL: Record<string, string> = {
   none: "لم يبدأ",
@@ -129,6 +138,9 @@ export default function ZatcaOnboarding() {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [queued, setQueued] = useState<QueuedZatcaDocument[]>([]);
+  const [submissionMode, setSubmissionMode] = useState<ZatcaSubmissionMode>(() => getZatcaSubmissionMode());
+  const [layout, setLayout] = useState<DocumentEditorLayout>(() => getZatcaFormLayout());
 
   // CSR form
   const [env, setEnv] = useState<ZatcaEnvironment>("sandbox");
@@ -143,14 +155,16 @@ export default function ZatcaOnboarding() {
 
   const refresh = useCallback(async () => {
     try {
-      const [o, inv, h] = await Promise.all([
+      const [o, inv, h, q] = await Promise.all([
         zatcaGetOnboarding(),
         zatcaListInvoices(),
         zatcaChainHead(),
+        listQueuedZatcaDocuments(),
       ]);
       setOnb(o);
       setInvoices(inv);
       setHead(h);
+      setQueued(q);
       if (o.environment) setEnv(o.environment);
       if (o.orgJson) {
         try {
@@ -174,6 +188,11 @@ export default function ZatcaOnboarding() {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    const refreshQueue = () => { void listQueuedZatcaDocuments().then(setQueued).catch(() => undefined); };
+    window.addEventListener("pos-desktop-zatca-queue-changed", refreshQueue);
+    return () => window.removeEventListener("pos-desktop-zatca-queue-changed", refreshQueue);
+  }, []);
 
   async function run(label: string, fn: () => Promise<void>) {
     setBusy(label); setErr(null); setMsg(null);
@@ -185,6 +204,25 @@ export default function ZatcaOnboarding() {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function sendQueued(uuid: string) {
+    await run(`queue-${uuid}`, async () => {
+      const result = await submitQueuedZatcaDocument(uuid, { retryExisting: true });
+      setMsg(result.status === "submitted"
+        ? `تم إرسال المستند إلى زاتكا (${result.zatcaStatus ?? "تم الاستلام"}).`
+        : result.status === "pending"
+          ? "تم توقيع المستند وحفظه محليًا؛ الإرسال ينتظر اتصال زاتكا."
+          : `رفضت زاتكا المستند (${result.zatcaStatus ?? "يرجى مراجعة التفاصيل"}).`);
+    });
+  }
+
+  async function changeSubmissionMode(mode: ZatcaSubmissionMode) {
+    setSubmissionMode(mode);
+    await setZatcaSubmissionMode(mode);
+    setMsg(mode === "automatic"
+      ? "سيتم إرسال المستندات الجديدة تلقائيًا بعد حفظها وترحيلها؛ العناصر الموجودة في القائمة لن تُرسل تلقائيًا."
+      : "سيتم تجهيز المستندات الجديدة للإرسال اليدوي من هذه الشاشة.");
   }
 
   // Auto-fill org name + VAT from the company profile, default the branch, and
@@ -215,14 +253,49 @@ export default function ZatcaOnboarding() {
   const hasCsr = status === "csr" || status === "compliance" || status === "production";
   const hasCompliance = status === "compliance" || status === "production";
   const hasProduction = status === "production";
+  const panelStyle = {
+    borderRadius: "var(--zdoc-radius)",
+    border: "1px solid var(--zdoc-border)",
+    background: "var(--zdoc-panel)",
+  };
 
   return (
     <div style={{ padding: 16 }}>
-      <Page title="تسجيل زاتكا (مستقل)" subtitle="إصدار الشهادات والتوقيع والإرسال المباشر إلى هيئة الزكاة والضريبة والجمارك — بدون سحابة">
+      <DocumentEditorShell
+        className="zatca-form-shell"
+        layout={layout}
+        onLayoutChange={(next) => { setLayout(next); setZatcaFormLayout(next); }}
+        label="نموذج شاشة زاتكا"
+        helperText="اختيار مستقل عن نماذج باقي الفواتير"
+        selectorAriaLabel="نموذج شاشة زاتكا"
+      >
+      <style>{`
+        .zatca-form-shell .zatca-org-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        .zatca-form-shell[data-layout="quick"] .zatca-org-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+        .zatca-form-shell[data-layout="modern"] .zatca-org-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 18px !important; }
+        .zatca-form-shell[data-layout="erp"] .zatca-org-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 8px !important; }
+        .zatca-form-shell .zatca-panel { border-radius: var(--zdoc-radius) !important; border-color: var(--zdoc-border) !important; background: var(--zdoc-panel) !important; }
+        .zatca-form-shell[data-layout="quick"] .zatca-panel { padding: 10px !important; }
+        .zatca-form-shell[data-layout="modern"] .zatca-panel { box-shadow: 0 8px 22px #0f172a0d; }
+        .zatca-form-shell[data-layout="erp"] .zatca-panel { padding: 10px !important; }
+        @media (max-width: 900px) {
+          .zatca-form-shell .zatca-org-grid,
+          .zatca-form-shell[data-layout="quick"] .zatca-org-grid,
+          .zatca-form-shell[data-layout="modern"] .zatca-org-grid,
+          .zatca-form-shell[data-layout="erp"] .zatca-org-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        }
+        @media (max-width: 560px) {
+          .zatca-form-shell .zatca-org-grid,
+          .zatca-form-shell[data-layout="quick"] .zatca-org-grid,
+          .zatca-form-shell[data-layout="modern"] .zatca-org-grid,
+          .zatca-form-shell[data-layout="erp"] .zatca-org-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+      <Page title="زاتكا — مستقل" subtitle="إصدار الشهادات والتوقيع والإرسال المباشر إلى هيئة الزكاة والضريبة والجمارك — بدون سحابة">
         <ErrorMsg text={err} />
         {msg && <div style={{ color: "#166534", marginBottom: 12 }}>{msg}</div>}
 
-        <Card style={{ marginBottom: 16 }}>
+        <Card style={{ ...panelStyle, marginBottom: 16 }}>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
             <div><b>الحالة:</b> {STATUS_LABEL[status] ?? status}</div>
             <div><b>البيئة:</b> {onb?.environment === "production" ? "الإنتاج" : "الاختبار (Sandbox)"}</div>
@@ -231,15 +304,64 @@ export default function ZatcaOnboarding() {
           </div>
         </Card>
 
+        <Card style={{ ...panelStyle, marginBottom: 16, padding: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <b>طريقة إرسال المستندات</b>
+              <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>
+                الوضع التلقائي يرسل المستندات الجديدة بعد ترحيلها؛ اليدوي يتركها في قائمة الجسر.
+              </div>
+            </div>
+            <select
+              style={{ ...input, width: 220 }}
+              value={submissionMode}
+              onChange={(event) => void changeSubmissionMode(event.target.value as ZatcaSubmissionMode)}
+              aria-label="طريقة إرسال المستندات إلى زاتكا"
+            >
+              <option value="manual">يدوي عبر جسر زاتكا</option>
+              <option value="automatic">تلقائي بعد الترحيل</option>
+            </select>
+          </div>
+        </Card>
+
+        <Card style={{ ...panelStyle, marginBottom: 16, padding: 12 }}>
+          <h3 style={{ marginTop: 0 }}>جسر زاتكا — مستندات بانتظار الإرسال</h3>
+          {queued.length === 0 ? (
+            <Empty text="لا توجد مستندات بانتظار الإرسال اليدوي." />
+          ) : (
+            <Table>
+              <thead><tr><Th>رقم المستند</Th><Th>النوع</Th><Th>تاريخ الإضافة</Th><Th>الإجراء</Th></tr></thead>
+              <tbody>
+                {queued.map((row) => (
+                  <tr key={row.input.uuid}>
+                    <Td>{row.input.invoiceNumber}</Td>
+                    <Td>{row.input.documentType === "credit" ? "إشعار دائن / مرتجع" : row.input.flow === "standard" ? "فاتورة ضريبية" : "فاتورة مبسطة"}</Td>
+                    <Td>{new Date(row.queuedAt).toLocaleString("ar-SA")}</Td>
+                    <Td>
+                      <button
+                        style={btnPrimary}
+                        disabled={!!busy}
+                        onClick={() => void sendQueued(row.input.uuid)}
+                      >
+                        {busy === `queue-${row.input.uuid}` ? "جارٍ الإرسال…" : "توقيع وإرسال"}
+                      </button>
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </Card>
+
         {/* Step 1 — CSR */}
-        <Card style={{ marginBottom: 16 }}>
+        <Card style={{ ...panelStyle, marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
             <h3 style={{ margin: 0 }}>1) إنشاء المفتاح وطلب الشهادة (CSR)</h3>
             <button style={btnSecondary} disabled={!!busy} onClick={() => void autoFill()}>
               ⚡ ملء تلقائي
             </button>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="zatca-org-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Field label="اسم المنشأة">
               <input style={input} value={orgName} onChange={(e) => setOrgName(e.target.value)} />
             </Field>
@@ -253,7 +375,7 @@ export default function ZatcaOnboarding() {
               <input style={input} value={serial} onChange={(e) => setSerial(e.target.value)} placeholder="1-Zacod|2-POS|3-..." />
             </Field>
             <Field label="العنوان المسجّل (المبنى والشارع والحي والمدينة)">
-              <input style={input} value={regAddress} onChange={(e) => setRegAddress(e.target.value)} placeholder="مثال: الرياض 1234 العليا" />
+              <input style={input} value={regAddress} onChange={(e) => setRegAddress(e.target.value)} placeholder="مثال: شارع الملك فهد، حي العليا، مدينة الرياض، مبنى 1234، الرمز البريدي 12222" />
             </Field>
             <Field label="النشاط التجاري">
               <input style={input} value={bizCategory} onChange={(e) => setBizCategory(e.target.value)} placeholder="مثال: تجزئة" />
@@ -295,7 +417,7 @@ export default function ZatcaOnboarding() {
         </Card>
 
         {/* Step 2 — compliance CSID via OTP */}
-        <Card style={{ marginBottom: 16, opacity: hasCsr ? 1 : 0.5 }}>
+        <Card style={{ ...panelStyle, marginBottom: 16, opacity: hasCsr ? 1 : 0.5 }}>
           <h3 style={{ marginTop: 0 }}>2) شهادة الامتثال (OTP)</h3>
           <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
             <Field label="رمز التحقق (OTP) من بوابة فاتورة" style={{ maxWidth: 260 }}>
@@ -316,7 +438,7 @@ export default function ZatcaOnboarding() {
         </Card>
 
         {/* Step 3 — compliance checks */}
-        <Card style={{ marginBottom: 16, opacity: hasCompliance ? 1 : 0.5 }}>
+        <Card style={{ ...panelStyle, marginBottom: 16, opacity: hasCompliance ? 1 : 0.5 }}>
           <h3 style={{ marginTop: 0 }}>3) فحوصات الامتثال</h3>
           <p style={{ color: "#475569", marginTop: 0 }}>
             إرسال فاتورة عينة موقّعة إلى مسار الامتثال للتحقق قبل إصدار شهادة الإنتاج.
@@ -334,7 +456,7 @@ export default function ZatcaOnboarding() {
         </Card>
 
         {/* Step 4 — production CSID */}
-        <Card style={{ marginBottom: 16, opacity: hasCompliance ? 1 : 0.5 }}>
+        <Card style={{ ...panelStyle, marginBottom: 16, opacity: hasCompliance ? 1 : 0.5 }}>
           <h3 style={{ marginTop: 0 }}>4) شهادة الإنتاج</h3>
           <button
             style={btnPrimary}
@@ -349,7 +471,7 @@ export default function ZatcaOnboarding() {
         </Card>
 
         {/* Local chain + statuses */}
-        <Card>
+        <Card style={panelStyle}>
           <h3 style={{ marginTop: 0 }}>سجل الفواتير المرسلة إلى زاتكا</h3>
           {invoices.length === 0 ? (
             <Empty text="لا توجد فواتير في سلسلة زاتكا بعد." />
@@ -370,7 +492,7 @@ export default function ZatcaOnboarding() {
                   <tr key={iv.localUuid}>
                     <Td num>{iv.icv}</Td>
                     <Td>{iv.invoiceNo ?? "—"}</Td>
-                    <Td>{iv.invoiceType === "standard" ? "ضريبية" : "مبسطة"}</Td>
+                    <Td>{iv.invoiceType?.startsWith("credit_") ? "إشعار دائن / مرتجع" : iv.invoiceType === "standard" ? "ضريبية" : "مبسطة"}</Td>
                     <Td>{INV_STATUS_LABEL[iv.status] ?? iv.status}</Td>
                     <Td>{iv.zatcaStatus ?? "—"}</Td>
                     <Td>
@@ -389,7 +511,8 @@ export default function ZatcaOnboarding() {
                               invoiceHash: full.invoiceHash,
                               signedXml: full.signedXml,
                               qrBase64: full.qrBase64 ?? "",
-                              flow: full.invoiceType === "standard" ? "standard" : "simplified",
+                              flow: full.invoiceType?.endsWith("standard") ? "standard" : "simplified",
+                              documentType: full.invoiceType?.startsWith("credit_") ? "credit" : "invoice",
                               invoiceNumber: full.invoiceNo ?? "",
                             });
                             setMsg("تمت إعادة محاولة الإرسال.");
@@ -406,6 +529,7 @@ export default function ZatcaOnboarding() {
           )}
         </Card>
       </Page>
+      </DocumentEditorShell>
     </div>
   );
 }

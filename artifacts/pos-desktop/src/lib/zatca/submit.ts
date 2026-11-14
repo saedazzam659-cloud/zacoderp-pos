@@ -125,12 +125,13 @@ export interface BuildInvoiceInput {
   uuid: string;
   invoiceNumber: string;
   flow: "simplified" | "standard";
+  documentType?: "invoice" | "credit";
   issueDate: string; // YYYY-MM-DD
   issueTime?: string; // HH:MM:SS
   currency?: string;
   data: Omit<
     ZatcaInvoiceData,
-    "invoiceCounterValue" | "previousInvoiceHash" | "qrCode" | "invoiceType"
+    "invoiceCounterValue" | "previousInvoiceHash" | "qrCode" | "invoiceType" | "uuid"
   >;
   /** Phase-2 QR tags 1-5 (seller-displayed values). */
   qr: { sellerName: string; vatNumber: string; invoiceTotal: string; vatTotal: string };
@@ -144,6 +145,7 @@ export interface SignedInvoice {
   signedXml: string;
   qrBase64: string;
   flow: "simplified" | "standard";
+  documentType: "invoice" | "credit";
   invoiceNumber: string;
 }
 
@@ -167,7 +169,9 @@ export async function buildAndSignInvoice(
   //    transforms, so it is injected post-signature).
   const ublXml = generateZatcaXml({
     ...input.data,
+    uuid: input.uuid,
     invoiceType: input.flow,
+    documentType: input.documentType ?? "invoice",
     invoiceCounterValue: icv,
     previousInvoiceHash: pih,
     qrCode: "",
@@ -211,7 +215,7 @@ export async function buildAndSignInvoice(
     pih,
     invoiceHash,
     invoiceNo: input.invoiceNumber,
-    invoiceType: input.flow,
+    invoiceType: input.documentType === "credit" ? `credit_${input.flow}` : input.flow,
     signedXml,
     qrBase64,
     status: "pending",
@@ -225,6 +229,7 @@ export async function buildAndSignInvoice(
     signedXml,
     qrBase64,
     flow: input.flow,
+    documentType: input.documentType ?? "invoice",
     invoiceNumber: input.invoiceNumber,
   };
 }

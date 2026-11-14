@@ -8,7 +8,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { printReceipt, openCashDrawer, type ReceiptLine } from "../lib/peripherals";
 import { generateZatcaQr } from "../lib/zatca";
-import { isZatcaCountry } from "../lib/zatcaBridge";
 import { listItems, findItemUnitByBarcode, seedDemoItems, daysUntilExpiry, findItemByPlu, type LocalItem, type ItemUnit } from "../lib/items";
 import { parseEmbeddedWeightBarcode, readWeightOnce, getScaleConfig } from "../lib/scale";
 import { getVertical, verifyAdminCredentials, type Vertical } from "../lib/standalone";
@@ -27,6 +26,7 @@ function appendOverrideLog(entry: OverrideLog) {
 }
 import { listCustomers, createCustomer, type LocalCustomer } from "../lib/customers";
 import { saveOfflineInvoice, getOfflineInvoice, type OfflineInvoicePayload } from "../lib/invoices";
+import { prepareOfflineInvoiceForZatca } from "../lib/zatca/localQueue";
 import { listPosPaymentMethods, type PosPaymentMethod, type PosPaymentMethodKind } from "../lib/accounting";
 
 // Map a dynamic payment-method kind to the legacy 3-value payload field that
@@ -568,6 +568,23 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
         throw e;
       }
       const invNum = saved.invoiceNo;
+      let receiptQr: string | undefined;
+      let zatcaNotice = "";
+      try {
+        const fiscal = await prepareOfflineInvoiceForZatca(saved, payload);
+        if (fiscal) {
+          receiptQr = fiscal.qrBase64 ?? undefined;
+          zatcaNotice = fiscal.outcome === null
+            ? " أضيفت إلى قائمة جسر زاتكا للإرسال اليدوي."
+            : fiscal.outcome.status === "pending"
+              ? " تم توقيعها محليًا؛ الإرسال إلى زاتكا ينتظر الاتصال."
+              : fiscal.outcome.status === "rejected"
+                ? ` زاتكا رفضت المستند (${fiscal.outcome.zatcaStatus ?? "راجع شاشة زاتكا"}).`
+                : " تم إرسالها إلى زاتكا.";
+        }
+      } catch (zatcaError: any) {
+        zatcaNotice = ` تعذر إكمال زاتكا: ${zatcaError?.message ?? zatcaError}`;
+      }
 
       // Single/host mode: decrement local stock IMMEDIATELY after the invoice
       // persists, BEFORE printing/drawer/parked cleanup. A printer fault must
@@ -627,7 +644,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           ],
           body,
           footer: [{ text: "شكراً لزيارتكم", center: true }],
-          qrData: isZatcaCountry() ? qr : undefined, cut: true,
+          qrData: receiptQr, cut: true,
           openDrawer: kind === "cash",
         });
         if (kind === "cash") {
@@ -646,7 +663,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       // (client) or will be (single/host), and the invoice persisted — so the
       // sale is always fully consistent. Oversells aborted earlier with no
       // invoice committed.
-      setMsg({ kind: "ok", text: `✅ ${text("تم إنهاء البيع — فاتورة", "Sale completed — invoice")} ${invNum}` });
+      setMsg({ kind: "ok", text: `✅ ${text("تم إنهاء البيع — فاتورة", "Sale completed — invoice")} ${invNum}.${zatcaNotice}` });
     } catch (e: any) {
       setMsg({ kind: "err", text: `${text("فشل إنهاء البيع:", "Could not complete sale:")} ${e?.message ?? e}` });
     } finally { setPaying(false); }
