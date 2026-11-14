@@ -41,22 +41,36 @@ const VAT_DESC_PREFIX = "ضريبة القيمة المضافة";
 const GENERATED_TAX_PREFIXES = ["ضريبة المدخلات", "ضريبة المخرجات", "ضريبة صفرية", VAT_DESC_PREFIX];
 const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 const journalEntryTemplateStyles = `
-  .zje-form{height:auto!important;min-height:0!important;overflow:visible!important;display:block!important;--je-accent:#2563eb;--je-panel:#f7faff;--je-border:#cbd8e8;--je-grid:#edf3fb;--je-radius:9px;--je-density:10px;}
-  .zje-form .zje-layout-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:8px 0 10px;padding:9px 11px;border:1px solid var(--je-border);border-radius:var(--je-radius);background:var(--je-panel);}
+  .zje-form{height:100%;min-height:0;overflow:hidden;display:flex;flex-direction:column;--je-accent:#2563eb;--je-panel:#f7faff;--je-border:#cbd8e8;--je-grid:#edf3fb;--je-radius:9px;--je-density:8px;}
+  .zje-form .zje-form-heading,.zje-form .zje-layout-row,.zje-form .zje-section,.zje-form .zje-tax-toolbar,.zje-form .zje-form-footer{flex:0 0 auto;}
+  .zje-form .zje-form-heading{min-height:32px;margin-bottom:4px;}
+  .zje-form .zje-layout-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:4px 0 5px;padding:5px 8px;border:1px solid var(--je-border);border-radius:var(--je-radius);background:var(--je-panel);}
   .zje-form .zje-layout-label{display:flex;flex-direction:column;gap:2px;color:#334155;font-size:12px;font-weight:700;}
   .zje-form .zje-layout-label small{color:#64748b;font-size:10px;font-weight:500;}
   .zje-form .zje-layout-select{min-width:210px;max-width:340px;height:34px;border:1px solid var(--je-border);border-radius:var(--je-radius);background:#fff;color:#0f172a;padding:4px 9px;font:inherit;font-size:12px;}
-  .zje-form .zje-section{margin:9px 0;padding:var(--je-density);border:1px solid var(--je-border);border-radius:var(--je-radius);background:var(--je-panel);}
+  .zje-form .zje-section{margin:4px 0;padding:var(--je-density);border:1px solid var(--je-border);border-radius:var(--je-radius);background:var(--je-panel);}
+  .zje-form .zje-header-grid .zfield{min-height:32px!important;padding-block:5px!important;}
+  .zje-form .zje-section .zfield{margin-bottom:4px;}
   .zje-form .zje-header-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0 10px;align-items:start;}
   .zje-form .zje-dimension-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
-  .zje-form .zje-tax-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:9px 0;padding:8px 10px;border:1px solid var(--je-border);border-radius:var(--je-radius);background:var(--je-panel);}
-  .zje-form .zje-lines-wrap{overflow-x:auto;border:1px solid var(--je-border);border-radius:var(--je-radius);background:#fff;}
+  .zje-form .zje-tax-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:4px 0;padding:5px 7px;border:1px solid var(--je-border);border-radius:var(--je-radius);background:var(--je-panel);}
+  .zje-form .zje-tax-toolbar .zfield{min-height:30px!important;padding-block:4px!important;}
+  .zje-form .zje-lines-wrap{flex:1 1 auto;min-height:120px;overflow:auto;border:1px solid var(--je-border);border-radius:var(--je-radius);background:#fff;overscroll-behavior:contain;scrollbar-gutter:stable;}
+  .zje-form .zje-lines-wrap thead th{position:sticky;top:0;z-index:3;}
+  .zje-form .zje-lines-wrap tfoot{position:sticky;bottom:0;z-index:2;background:var(--je-grid);font-weight:700;box-shadow:0 -1px 0 var(--je-border);}
+  .zje-form .zje-lines-wrap tbody td{padding:4px!important;}
+  .zje-form .zje-lines-wrap .zfield{height:30px!important;min-height:30px!important;padding:3px 6px!important;font-size:12px!important;margin-bottom:0!important;}
+  .zje-form .zje-form-footer{display:flex;flex-direction:column;gap:4px;padding-top:5px;background:#fff;}
+  .zje-form .zje-form-footer>div:first-child{margin-top:0!important;gap:6px!important;}
+  .zje-form .zje-form-footer [role="alert"]{margin-top:0;}
+  .zje-form .zje-form-footer>div:last-child{margin-top:0;}
+  .zje-form .zje-form-footer button{min-height:34px;padding:6px 12px;}
   .zje-form .zje-lines-wrap table{min-width:850px;}
   .zje-form table.z-admin-table thead th{background:var(--je-grid)!important;color:#334155!important;}
   .zje-form .zje-action-cell{position:relative;overflow:visible!important;text-align:center;white-space:nowrap;}
   .zje-form .zje-tax-popover{position:fixed;z-index:1000;width:278px;max-width:min(278px,80vw);max-height:320px;overflow:auto;padding:10px;border:1px solid var(--je-border);border-radius:10px;background:#fff;color:#1e293b;box-shadow:0 12px 32px #0f172a30;text-align:start;white-space:normal;}
   .zje-form .zje-tax-popover button{width:100%;margin-top:5px;text-align:start;white-space:normal;}
-  .zje-form .zje-total-summary{display:flex;align-items:center;justify-content:flex-end;gap:18px;flex-wrap:wrap;margin-top:8px;padding:8px 10px;border-radius:var(--je-radius);background:color-mix(in srgb,var(--je-accent) 8%,white);font-size:13px;font-weight:700;}
+  .zje-form .zje-total-summary{display:flex;align-items:center;justify-content:flex-end;gap:18px;flex-wrap:wrap;margin-top:4px;padding:5px 8px;border-radius:var(--je-radius);background:color-mix(in srgb,var(--je-accent) 8%,white);font-size:12px;font-weight:700;}
   .zje-form[data-layout="classic"]{--je-accent:#2563eb;--je-panel:#fff;--je-border:#d8dee8;--je-grid:#f1f5f9;--je-radius:4px;--je-density:8px;}
   .zje-form[data-layout="quick"]{--je-accent:#087f69;--je-panel:#f5faf6;--je-border:#d2e4d9;--je-grid:#e8f3eb;--je-radius:6px;--je-density:7px;}
   .zje-form[data-layout="modern"]{--je-accent:#c2410c;--je-panel:#fffaf7;--je-border:#f0d5c5;--je-grid:#fff0e7;--je-radius:12px;--je-density:12px;}
@@ -65,7 +79,8 @@ const journalEntryTemplateStyles = `
   .zje-form[data-layout="erp"] table.z-admin-table thead th{color:#fff!important;}
   @media(max-width:1000px){.zje-form .zje-header-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
   @media(max-width:620px){.zje-form .zje-header-grid,.zje-form .zje-dimension-grid{grid-template-columns:1fr}.zje-form .zje-layout-select{width:100%;max-width:none}}
-  @media(max-height:680px){.zje-form .zje-layout-row,.zje-form .zje-section{margin-block:5px;padding:7px;}.zje-form .zje-tax-toolbar{margin-block:5px;padding:6px;}}
+  @media(max-height:800px){.zje-form .zje-layout-label small{display:none}.zje-form .zje-layout-row,.zje-form .zje-section{margin-block:3px;padding:5px}.zje-form .zje-tax-toolbar{margin-block:3px;padding:4px 6px}.zje-form .zje-header-grid{gap:0 8px}.zje-form .zje-form-footer{padding-top:3px}}
+  @media(max-height:680px){.zje-form .zje-header-grid .zfield{min-height:28px!important}.zje-form .zje-lines-wrap{min-height:90px}.zje-form .zje-form-footer button{min-height:30px;padding:4px 9px}}
 `;
 
 // ── Month grouping (audit-grid visual polish, mirrors the web list) ──────
@@ -397,10 +412,12 @@ export default function JournalEntries() {
           {uiText("＋ قيد يدوي", "＋ Manual entry", language)}
         </button>
       }
+      hideHeader={!!form}
+      fillHeight={!!form}
     >
       {form && (
-        <Card style={{ marginBottom: 12 }}>
-          <div style={{ padding: 16 }}>
+        <Card style={{ marginBottom: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ padding: 8, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <JeForm
               key={formKey}
               accounts={accounts}
@@ -1192,7 +1209,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
   return (
     <div className="zdoc-form zje-form" data-layout={journalLayout}>
       <style>{journalEntryTemplateStyles}</style>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+      <div className="zje-form-heading" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
         <h3 style={{ margin: 0 }}>{title}</h3>
         {badgeText && (
           <span style={{
@@ -1398,16 +1415,17 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
                 </tr>
               );
             })}
-            <tr style={{ background: "var(--je-grid)", fontWeight: 700 }}>
-              <Td colSpan={3 as any}>الإجمالي</Td>
-              <Td num>{fmt(totalDr)}</Td>
-              <Td num>{fmt(totalCr)}</Td>
-              <Td></Td><Td></Td>
-            </tr>
           </tbody>
+          <tfoot><tr style={{ background: "var(--je-grid)", fontWeight: 700 }}>
+            <Td colSpan={3 as any}>الإجمالي</Td>
+            <Td num>{fmt(totalDr)}</Td>
+            <Td num>{fmt(totalCr)}</Td>
+            <Td></Td><Td></Td>
+          </tr></tfoot>
         </Table>
       </div>
 
+      <div className="zje-form-footer">
       <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button onClick={addLine} type="button" disabled={readOnly} style={btnSecondary}>+ سطر</button>
         <button onClick={autoBalance} type="button"
@@ -1431,6 +1449,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
           </>
         )}
       </Actions>
+      </div>
     </div>
   );
 }

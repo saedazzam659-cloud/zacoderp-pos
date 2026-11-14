@@ -106,6 +106,48 @@ const documentEditorShellStyles = `
     color: #26354a;
     box-sizing: border-box;
   }
+  .zdoc-editor-shell.zdoc-viewport-fit {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .zdoc-editor-shell.zdoc-viewport-fit .zdoc-editor-shell__layout-row {
+    flex: 0 0 auto;
+    margin: 3px 0 5px;
+    padding: 5px 8px;
+  }
+  .zdoc-editor-shell.zdoc-viewport-fit .zdoc-editor-shell__content {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .zdoc-editor-shell.zdoc-viewport-fit .zdoc-editor-shell__content > .zdoc-editor-section {
+    flex: 0 0 auto;
+    margin: 3px 0;
+    padding: 5px 7px;
+  }
+  .zdoc-editor-shell.zdoc-viewport-fit .zdoc-editor-shell__content > .zlines-panel {
+    display: flex !important;
+    flex: 1 1 auto !important;
+    flex-direction: column;
+    min-height: 90px !important;
+    overflow: hidden !important;
+  }
+  .zdoc-editor-shell.zdoc-viewport-fit .zlines-panel > .zlines-wrap {
+    display: block;
+    flex: 1 1 auto;
+    min-height: 48px;
+    max-height: none !important;
+    overflow: auto !important;
+    overscroll-behavior: contain;
+  }
+  .zdoc-editor-shell.zdoc-viewport-fit .zdoc-editor-shell__content > [style*="flex-shrink"] {
+    flex: 0 0 auto;
+  }
   .zdoc-editor-shell *,
   .zdoc-editor-shell *::before,
   .zdoc-editor-shell *::after { box-sizing: border-box; }
@@ -272,6 +314,10 @@ const documentEditorShellStyles = `
       width: 100%;
       max-width: none;
     }
+  }
+  @media (max-height: 800px) {
+    .zdoc-editor-shell.zdoc-viewport-fit .zdoc-editor-shell__label small { display: none; }
+    .zdoc-editor-shell.zdoc-viewport-fit .zdoc-editor-section { margin-block: 2px; padding: 4px 6px; }
   }
   @media (max-width: 700px) {
     .zdoc-editor-shell__layout-row { gap: 8px; }

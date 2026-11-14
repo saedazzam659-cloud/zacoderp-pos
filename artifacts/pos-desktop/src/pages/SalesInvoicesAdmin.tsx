@@ -52,25 +52,25 @@ type FLine = SalesLine & DiscFields & { unitKey?: string; brandId?: number | nul
 type SalesPaymentChoice = PaymentMethod | "mixed";
 
 const salesInvoiceTemplateStyles = `
-  .zsales-invoice-single-page{height:auto!important;min-height:0!important;overflow:visible!important;display:block!important;--si-accent:#2563eb;--si-panel:#f7faff;--si-border:#cbd8e8;--si-grid:#edf3fb;--si-radius:8px;--si-density:8px;}
+  .zsales-invoice-single-page{height:100%;min-height:0;overflow:hidden;display:flex;flex-direction:column;--si-accent:#2563eb;--si-panel:#f7faff;--si-border:#cbd8e8;--si-grid:#edf3fb;--si-radius:8px;--si-density:8px;}
   .zsales-invoice-single-page[data-layout="quick"]{--si-accent:#087f69;--si-panel:#f5faf6;--si-border:#d5e4d9;--si-grid:#e9f3ec;--si-radius:5px;--si-density:6px;}
   .zsales-invoice-single-page[data-layout="modern"]{--si-accent:#c2410c;--si-panel:#fff;--si-border:#d8dee8;--si-grid:#f0f1f2;--si-radius:3px;--si-density:9px;}
   .zsales-invoice-single-page[data-layout="erp"]{--si-accent:#294477;--si-panel:#f1f4f8;--si-border:#b9c5d6;--si-grid:#294477;--si-radius:3px;--si-density:4px;}
   .zsales-invoice-single-page>div:first-of-type{border-color:var(--si-border)!important;border-right-color:var(--si-accent)!important;border-radius:var(--si-radius)!important;background:var(--si-panel)!important;}
   .zsales-invoice-single-page>div:first-of-type strong{color:var(--si-accent)!important;}
-  .zsales-invoice-single-page .zsales-layout-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 10px;padding:8px 10px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:var(--si-panel);}
+  .zsales-invoice-single-page .zsales-layout-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:0 0 auto;margin:4px 0;padding:5px 8px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:var(--si-panel);}
   .zsales-invoice-single-page .zsales-layout-label{display:flex;flex-direction:column;gap:2px;color:#334155;font-size:12px;font-weight:700;}
   .zsales-invoice-single-page .zsales-layout-label small{color:#64748b;font-size:10px;font-weight:500;}
   .zsales-invoice-single-page .zsales-layout-select{min-width:210px;max-width:340px;height:34px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:#fff;color:#0f172a;padding:4px 9px;font:inherit;font-size:12px;}
-  .zsales-invoice-single-page .zsales-source-loader{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(220px,1.2fr) auto;align-items:end;gap:10px;margin:8px 0 10px;padding:10px;border:1px solid var(--si-border);border-inline-start:4px solid var(--si-accent);border-radius:var(--si-radius);background:var(--si-panel);}
+  .zsales-invoice-single-page .zsales-source-loader{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(220px,1.2fr) auto;align-items:end;gap:7px;flex:0 0 auto;margin:4px 0;padding:6px 8px;border:1px solid var(--si-border);border-inline-start:4px solid var(--si-accent);border-radius:var(--si-radius);background:var(--si-panel);}
   .zsales-invoice-single-page .zsales-source-loader-title{grid-column:1/-1;margin:0;color:#334155;font-size:12px;font-weight:800;}
   .zsales-invoice-single-page .zsales-source-loader-status{grid-column:1/-1;margin:0;font-size:12px;line-height:1.5;}
-  .zsales-invoice-single-page .zsales-section{margin:10px 0;padding:10px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:var(--si-panel);}
-  .zsales-invoice-single-page .zsales-section-heading{display:flex;align-items:center;justify-content:space-between;gap:9px;margin:0 0 8px;color:#0f172a;}
+  .zsales-invoice-single-page .zsales-section{flex:0 0 auto;min-width:0;margin:4px 0;padding:6px 8px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:var(--si-panel);}
+  .zsales-invoice-single-page .zsales-section-heading{display:flex;align-items:center;justify-content:space-between;gap:9px;margin:0 0 4px;color:#0f172a;}
   .zsales-invoice-single-page .zsales-items-heading-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
   .zsales-invoice-single-page .zsales-items-heading-actions button{min-height:32px;white-space:nowrap;}
   .zsales-invoice-single-page .zsales-section-heading>span,.zsales-invoice-single-page .zsales-items-heading-actions>span{padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--si-accent) 12%,white);color:var(--si-accent);font-size:11px;font-weight:700;}
-  .zsales-invoice-single-page .zsales-action-bar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 8px;padding:7px 8px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:rgba(255,255,255,.97);box-shadow:0 5px 16px #0f172a20;backdrop-filter:blur(8px);}
+  .zsales-invoice-single-page .zsales-action-bar{position:relative;z-index:40;display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto;margin:4px 0 0;padding:5px 7px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:rgba(255,255,255,.98);box-shadow:0 -3px 12px #0f172a12;}
   .zsales-invoice-single-page .zsales-action-buttons{display:flex;align-items:center;gap:6px;flex:1 1 420px;min-width:0;flex-wrap:wrap;}
   .zsales-invoice-single-page .zsales-action-buttons button{min-height:32px;}
   .zsales-invoice-single-page .zsales-payment-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;}
@@ -81,32 +81,37 @@ const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page .zsales-payment-methods button{min-height:40px;padding:7px 12px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:#fff;color:#334155;font:inherit;font-size:12px;font-weight:700;white-space:nowrap;cursor:pointer;transition:background .15s,border-color .15s,color .15s,box-shadow .15s;}
   .zsales-invoice-single-page .zsales-payment-methods button:hover{border-color:var(--si-accent);background:color-mix(in srgb,var(--si-accent) 5%,white);}
   .zsales-invoice-single-page .zsales-payment-methods button[aria-pressed="true"]{border-color:var(--si-accent);background:var(--si-accent);color:#fff;box-shadow:0 2px 6px color-mix(in srgb,var(--si-accent) 28%,transparent);}
-  .zsales-invoice-single-page .zsales-payment-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:start;}
+  .zsales-invoice-single-page .zsales-payment-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-items:start;}
   .zsales-invoice-single-page .zsales-payment-fields[data-count="1"]{grid-template-columns:minmax(0,1fr);}
-  .zsales-invoice-single-page .zsales-payment-card{display:grid;gap:9px;align-content:start;padding:10px;border:1px solid var(--si-border);border-top:3px solid var(--si-accent);border-radius:var(--si-radius);background:#fff;min-width:0;}
+  .zsales-invoice-single-page .zsales-payment-card{display:grid;gap:5px;align-content:start;padding:6px;border:1px solid var(--si-border);border-top:3px solid var(--si-accent);border-radius:var(--si-radius);background:#fff;min-width:0;}
   .zsales-invoice-single-page .zsales-payment-card-title{font-size:12px;font-weight:800;color:var(--si-accent);}
   .zsales-invoice-single-page .zsales-action-total{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:var(--si-radius);background:color-mix(in srgb,var(--si-accent) 10%,white);color:#0f172a;font-size:11px;white-space:nowrap;}
   .zsales-invoice-single-page .zsales-action-feedback{flex:1 1 100%;max-height:92px;overflow:auto;}
   .zsales-invoice-single-page .zsales-items-section{background:#fff;}
-  .zsales-invoice-single-page .zsales-items-section .zlines-wrap{max-height:min(42vh,320px)!important;overflow-x:auto!important;overflow-y:auto!important;border-color:var(--si-border);overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:auto;}
+  .zsales-invoice-single-page .zsales-items-section{display:flex;flex:1 1 auto;flex-direction:column;min-height:100px;overflow:hidden;background:#fff;}
+  .zsales-invoice-single-page .zsales-items-section .zlines-wrap{flex:1 1 auto;min-height:50px;max-height:none!important;overflow-x:auto!important;overflow-y:auto!important;border-color:var(--si-border);overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:auto;}
   .zsales-invoice-single-page .zlines-wrap thead th{position:sticky;top:0;z-index:3;background:var(--si-grid)!important;color:var(--si-grid-text,#1e293b)!important;}
   .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap thead th{--si-grid-text:#fff;}
   .zsales-invoice-single-page .zlines-wrap tbody td{padding:var(--si-density) 5px!important;}
   .zsales-invoice-single-page .zfield:focus{border-color:var(--si-accent)!important;box-shadow:0 0 0 2px color-mix(in srgb,var(--si-accent) 20%,transparent)!important;}
   .zsales-invoice-single-page .zsales-totals-grid{border-color:var(--si-border);}
-  .zsales-invoice-single-page .zsales-form-footer{margin-top:12px;padding:10px 0 4px;border-top:2px solid var(--si-border);background:linear-gradient(180deg,var(--si-panel),transparent);}
+  .zsales-invoice-single-page .zsales-form-footer{margin-top:6px;padding:6px 0 2px;border-top:2px solid var(--si-border);background:linear-gradient(180deg,var(--si-panel),transparent);}
+  .zsales-invoice-single-page .zsales-header-section .zfield,.zsales-invoice-single-page .zsales-payment-section .zfield{min-height:31px!important;padding-block:4px!important;}
+  .zsales-invoice-single-page .zsales-payment-section{flex:0 1 auto;min-height:0;overflow:visible;}
+  .zsales-invoice-single-page .zsales-payment-section textarea{min-height:32px!important;height:32px;}
   .zsales-invoice-single-page[data-layout="quick"] .zsales-section{padding:8px;border-radius:5px;}
   .zsales-invoice-single-page[data-layout="quick"] .zsales-section-heading{font-size:14px;}
   .zsales-invoice-single-page[data-layout="modern"] .zsales-section{box-shadow:0 1px 4px #0f172a0c;}
   .zsales-invoice-single-page[data-layout="modern"] .zlines-wrap tbody tr:nth-child(odd) td{background:#fbfcfd;}
-  .zsales-invoice-single-page[data-layout="erp"] .zsales-section{padding:7px;margin:7px 0;}
+  .zsales-invoice-single-page[data-layout="erp"] .zsales-section{padding:5px;margin:3px 0;}
   .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap thead th{padding:6px 4px!important;font-size:10px!important;}
   .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap .zfield{height:28px!important;padding:3px 4px!important;font-size:11px!important;}
   @media(max-width:1100px){.zsales-invoice-single-page .zsales-header-fields{grid-template-columns:repeat(3,minmax(0,1fr))!important}.zsales-invoice-single-page .zsales-payment-fields[data-count="3"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
   @media(max-width:700px){.zsales-invoice-single-page .zsales-header-fields{grid-template-columns:repeat(2,minmax(0,1fr))!important}.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:minmax(0,1fr)}}
   @media(max-width:900px){.zsales-invoice-single-page .zsales-layout-row{align-items:stretch;flex-direction:column}.zsales-invoice-single-page .zsales-layout-select{max-width:none;width:100%}.zsales-invoice-single-page .zsales-source-loader{grid-template-columns:1fr 1fr}}
   @media(max-width:700px){.zsales-invoice-single-page .zsales-action-buttons{flex-basis:100%}.zsales-invoice-single-page .zsales-payment-methods{width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}.zsales-invoice-single-page .zsales-action-total{margin-inline-start:auto}.zsales-invoice-single-page .zsales-source-loader{grid-template-columns:1fr}}
-  @media(max-height:680px){.zsales-invoice-single-page .zsales-layout-row{margin:4px 0 6px;padding:4px 8px}.zsales-invoice-single-page .zsales-layout-label small{display:none}.zsales-invoice-single-page .zsales-section{margin:6px 0;padding:7px}.zsales-invoice-single-page .zsales-action-bar{margin:4px 0 6px;padding:5px 7px}.zsales-invoice-single-page .zsales-section-heading{margin-bottom:5px}}
+  @media(max-height:800px){.zsales-invoice-single-page .zsales-layout-label small{display:none}.zsales-invoice-single-page .zsales-section{margin:3px 0;padding:5px}.zsales-invoice-single-page .zsales-source-loader-status{display:none}.zsales-invoice-single-page .zsales-section-heading{margin-bottom:3px}}
+  @media(max-height:680px){.zsales-invoice-single-page .zsales-layout-row{margin:2px 0;padding:3px 7px}.zsales-invoice-single-page .zsales-action-bar{margin:2px 0 0;padding:3px 5px}.zsales-invoice-single-page .zsales-payment-methods button{min-height:30px;padding:4px 7px}}
 `;
 
 export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
@@ -348,9 +353,8 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
       {formOpen && deps && (
         <Card style={{ marginBottom: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{
-            padding: 0, flex: 1, minHeight: 0,
-            overflowX: "hidden", overflowY: "auto",
-            overscrollBehavior: "contain", scrollbarGutter: "stable",
+            padding: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column",
+            overflow: "hidden",
           }}>
             <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc} invoiceCount={rows.length}
               onRefreshDeps={reloadDeps}
@@ -1236,7 +1240,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       ref={formRef}
       className={`zdoc-form zsales-invoice-single-page zsales-layout-${salesInvoiceLayout}`}
       data-layout={salesInvoiceLayout}
-      style={docFormShell}
+      style={{ ...docFormShell, height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
     >
       <style>{documentFormStyles + salesInvoiceTemplateStyles}</style>
       <DocumentFormHeader
@@ -1289,60 +1293,6 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           )}
         </div>
       )}
-
-      <div className="zsales-action-bar" role="group" aria-label={text("إجراءات الفاتورة السريعة", "Quick invoice actions")}>
-        <div className="zsales-action-buttons">
-          <button
-            onClick={addLine}
-            type="button"
-            data-testid="button-add-sales-invoice-line"
-            title={text("إضافة صنف إلى الفاتورة", "Add an item line")}
-            aria-label={text("إضافة صنف إلى الفاتورة", "Add an item line")}
-            style={{ ...btnSecondary, padding: "6px 8px", color: "#087f69", borderColor: "#9bd6c9", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
-          >+ {text("إضافة صنف", "Add item")}</button>
-          <button
-            onClick={() => setItemPickerOpen(true)}
-            type="button"
-            data-testid="button-select-sales-invoice-items"
-            title={text("اختيار عدة أصناف موجودة", "Select multiple existing items")}
-            aria-label={text("اختيار أصناف", "Select items")}
-            style={{ ...btnSecondary, padding: "6px 8px", color: "#315e56", borderColor: "#b8d4cb", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
-          >{text("اختيار أصناف", "Select items")}</button>
-          <button
-            onClick={() => { setQuickCreateError(null); setQuickCreate("item"); }}
-            type="button"
-            data-testid="button-create-sales-invoice-item"
-            title={text("إنشاء صنف جديد وإضافته للفاتورة", "Create a new item for this invoice")}
-            aria-label={text("إنشاء صنف جديد", "Create a new item")}
-            style={{ ...btnSecondary, padding: "6px 8px", color: "#4338ca", borderColor: "#c7d2fe", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
-          >✨ {text("صنف جديد", "New item")}</button>
-          <button
-            onClick={onCancel}
-            type="button"
-            data-testid="button-cancel-sales-invoice"
-            style={{ ...btnSecondary, padding: "6px 9px", whiteSpace: "nowrap" }}
-          >{text("إلغاء", "Cancel")}</button>
-          <button
-            onClick={save}
-            disabled={busy || sourceBusy}
-            type="button"
-            data-fnav="1"
-            data-fnav-last="1"
-            data-testid="button-save-sales-invoice"
-            style={{ ...btnPrimary, padding: "6px 12px", whiteSpace: "nowrap" }}
-          >{busy ? "..." : (isEdit ? text("حفظ التعديل", "Save changes") : text("حفظ وترحيل", "Save and post"))}</button>
-        </div>
-        <div className="zsales-action-total" data-testid="sales-invoice-total" aria-live="polite">
-          <span>{text("الإجمالي", "Total")}</span>
-          <strong>{docSym} {fmt(result.grandTotal)}</strong>
-        </div>
-        {(issues.length > 0 || err) && (
-          <div className="zsales-action-feedback" aria-live="polite">
-            <ValidationPanel issues={issues} />
-            <ErrorMsg text={err} />
-          </div>
-        )}
-      </div>
 
       <section className="zsales-section zsales-header-section">
       <div className="zsales-header-fields" style={{ display: "grid", gridTemplateColumns: `repeat(${headerColumns}, minmax(0, 1fr))`, gap: "0 var(--si-density)", alignItems: "start" }}>
@@ -1698,6 +1648,60 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
       </section>
+
+      <div className="zsales-action-bar" role="group" aria-label={text("إجراءات الفاتورة السريعة", "Quick invoice actions")}>
+        <div className="zsales-action-buttons">
+          <button
+            onClick={addLine}
+            type="button"
+            data-testid="button-add-sales-invoice-line"
+            title={text("إضافة صنف إلى الفاتورة", "Add an item line")}
+            aria-label={text("إضافة صنف إلى الفاتورة", "Add an item line")}
+            style={{ ...btnSecondary, padding: "6px 8px", color: "#087f69", borderColor: "#9bd6c9", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+          >+ {text("إضافة صنف", "Add item")}</button>
+          <button
+            onClick={() => setItemPickerOpen(true)}
+            type="button"
+            data-testid="button-select-sales-invoice-items"
+            title={text("اختيار عدة أصناف موجودة", "Select multiple existing items")}
+            aria-label={text("اختيار أصناف", "Select items")}
+            style={{ ...btnSecondary, padding: "6px 8px", color: "#315e56", borderColor: "#b8d4cb", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+          >{text("اختيار أصناف", "Select items")}</button>
+          <button
+            onClick={() => { setQuickCreateError(null); setQuickCreate("item"); }}
+            type="button"
+            data-testid="button-create-sales-invoice-item"
+            title={text("إنشاء صنف جديد وإضافته للفاتورة", "Create a new item for this invoice")}
+            aria-label={text("إنشاء صنف جديد", "Create a new item")}
+            style={{ ...btnSecondary, padding: "6px 8px", color: "#4338ca", borderColor: "#c7d2fe", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
+          >✨ {text("صنف جديد", "New item")}</button>
+          <button
+            onClick={onCancel}
+            type="button"
+            data-testid="button-cancel-sales-invoice"
+            style={{ ...btnSecondary, padding: "6px 9px", whiteSpace: "nowrap" }}
+          >{text("إلغاء", "Cancel")}</button>
+          <button
+            onClick={save}
+            disabled={busy || sourceBusy}
+            type="button"
+            data-fnav="1"
+            data-fnav-last="1"
+            data-testid="button-save-sales-invoice"
+            style={{ ...btnPrimary, padding: "6px 12px", whiteSpace: "nowrap" }}
+          >{busy ? "..." : (isEdit ? text("حفظ التعديل", "Save changes") : text("حفظ وترحيل", "Save and post"))}</button>
+        </div>
+        <div className="zsales-action-total" data-testid="sales-invoice-total" aria-live="polite">
+          <span>{text("الإجمالي", "Total")}</span>
+          <strong>{docSym} {fmt(result.grandTotal)}</strong>
+        </div>
+        {(issues.length > 0 || err) && (
+          <div className="zsales-action-feedback" aria-live="polite">
+            <ValidationPanel issues={issues} />
+            <ErrorMsg text={err} />
+          </div>
+        )}
+      </div>
 
       {itemPickerOpen && (
         <DocumentItemPicker items={deps.items} onCancel={() => setItemPickerOpen(false)} onAdd={appendCatalogItems} />

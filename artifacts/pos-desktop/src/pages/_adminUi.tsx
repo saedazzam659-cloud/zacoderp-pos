@@ -17,10 +17,10 @@ export function Page({ title, subtitle, right, children, hideHeader = false, fil
   return (
     <div dir={language === "en" ? "ltr" : "rtl"} style={{
       padding: 0, width: "100%", maxWidth: "none", minWidth: 0, boxSizing: "border-box",
-      ...(fillHeight ? { height: "100%", minHeight: 0, display: "flex", flexDirection: "column" } : {}),
+      ...(fillHeight ? { height: "100%", minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" } : {}),
     }}>
       {!hideHeader && (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16, minWidth: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 9, minWidth: 0 }}>
           <div>
             <h2 style={{ margin: 0 }}>{title}</h2>
             {subtitle && <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>{subtitle}</div>}
@@ -46,8 +46,9 @@ export function Table({ children, style }: { children: ReactNode; style?: CSSPro
         table.z-admin-table tbody td { border-top: 0 !important; border-bottom: 1px solid #e7ebf0; border-inline-start: 1px solid #edf0f3; }
         table.z-admin-table tbody tr:nth-child(even) { background: #f8fafc; }
         table.z-admin-table tbody tr:hover > td { background-color: #eef4f8; }
+        table.z-admin-table thead th, table.z-admin-table tbody td { padding: 7px 10px !important; }
         @media (max-width: 900px) {
-          table.z-admin-table thead th, table.z-admin-table tbody td { padding: 7px 9px !important; font-size: 12px !important; }
+          table.z-admin-table thead th, table.z-admin-table tbody td { padding: 6px 8px !important; font-size: 12px !important; }
         }
       `}</style>
       <table className="z-admin-table" style={{ width: "100%", borderCollapse: "collapse", ...style }}>{children}</table>
@@ -55,11 +56,11 @@ export function Table({ children, style }: { children: ReactNode; style?: CSSPro
   );
 }
 export function Th({ children, style, colSpan, rowSpan }: { children?: ReactNode; style?: CSSProperties; colSpan?: number; rowSpan?: number }) {
-  return <th colSpan={colSpan} rowSpan={rowSpan} style={{ textAlign: "right", padding: "10px 14px", fontSize: 12, color: "#64748b", fontWeight: 600, background: "#f8fafc", ...style }}>{children}</th>;
+  return <th colSpan={colSpan} rowSpan={rowSpan} style={{ textAlign: "right", padding: "7px 10px", fontSize: 12, color: "#64748b", fontWeight: 600, background: "#f8fafc", ...style }}>{children}</th>;
 }
 export function Td({ children, mono, num, style, colSpan, rowSpan }: { children?: ReactNode; mono?: boolean; num?: boolean; style?: CSSProperties; colSpan?: number; rowSpan?: number }) {
   return <td colSpan={colSpan} rowSpan={rowSpan} style={{
-    padding: "10px 14px", fontSize: 14, borderTop: "1px solid #f1f5f9",
+     padding: "7px 10px", fontSize: 13, borderTop: "1px solid #f1f5f9",
     fontFamily: mono ? "ui-monospace, monospace" : undefined,
     textAlign: num ? "left" : undefined,
     fontVariantNumeric: num ? "tabular-nums" : undefined,
@@ -104,13 +105,13 @@ export function Modal({ title, children, onCancel, wide }: { title: string; chil
 }
 
 export function Field({ label, children, style }: { label: string; children: ReactNode; style?: CSSProperties }) {
-  return <label style={{ display: "block", marginBottom: 10, ...style }}>
-    <div style={{ marginBottom: 4, fontSize: 13, fontWeight: 600 }}>{label}</div>
+  return <label style={{ display: "block", marginBottom: 7, ...style }}>
+    <div style={{ marginBottom: 3, fontSize: 12, fontWeight: 600 }}>{label}</div>
     {children}
   </label>;
 }
 export function Row({ children }: { children: ReactNode }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{children}</div>;
+  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>{children}</div>;
 }
 
 // ── Document form tabs (SAP-style) ─────────────────────────────────────────
@@ -205,7 +206,9 @@ export function tabPanel(active: string, key: string): CSSProperties {
 // ── Document-form layout (natural page flow, web parity) ───────────────────
 // Back-office forms use the page wrapper for outer vertical scrolling. Item
 // grids have their own capped vertical scroll so long documents stay usable.
-export const docFormShell: CSSProperties = { display: "block" };
+export const docFormShell: CSSProperties = {
+  display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden",
+};
 export const invoiceEditorShell: CSSProperties = {
   ...docFormShell, display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden",
 };
@@ -285,16 +288,16 @@ export function ValidationPanel({ issues }: { issues: string[] }) {
   );
 }
 export function Actions({ children }: { children: ReactNode }) {
-  return <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>{children}</div>;
+  return <div style={{ display: "flex", gap: 7, justifyContent: "flex-end", marginTop: 8, flexWrap: "wrap" }}>{children}</div>;
 }
 export function Empty({ text }: { text: string }) {
   return <div style={{ padding: 48, textAlign: "center", color: "#94a3b8", fontSize: 14 }}>{text}</div>;
 }
 
-export const input: CSSProperties = { width: "100%", padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 14, boxSizing: "border-box", fontFamily: "inherit" };
-export const btnPrimary: CSSProperties = { padding: "8px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: 600 };
-export const btnSecondary: CSSProperties = { padding: "8px 16px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 14 };
-export const btnDanger: CSSProperties = { padding: "6px 12px", background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 13 };
+export const input: CSSProperties = { width: "100%", minHeight: 34, padding: "6px 9px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
+export const btnPrimary: CSSProperties = { minHeight: 34, padding: "7px 13px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600 };
+export const btnSecondary: CSSProperties = { minHeight: 34, padding: "7px 13px", background: "#f1f5f9", color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 13 };
+export const btnDanger: CSSProperties = { minHeight: 32, padding: "6px 11px", background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontSize: 12 };
 export const btnLink: CSSProperties = { background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontFamily: "inherit", fontSize: 13, padding: 0 };
 
 // ─── Row-action chips ────────────────────────────────────────────────

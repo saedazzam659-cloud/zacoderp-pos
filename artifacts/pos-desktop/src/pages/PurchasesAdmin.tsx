@@ -251,6 +251,8 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
     <Page
       title="فواتير الشراء"
       subtitle={`${rows.length} فاتورة — يتم ترحيل قيد المحاسبة تلقائياً عند الحفظ`}
+      hideHeader={!!form}
+      fillHeight={!!form}
       right={
         <button onClick={() => setForm(blankSeed())} disabled={!deps || creating}
           style={{ ...btnPrimary, opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}>
@@ -259,8 +261,8 @@ export default function PurchasesAdmin({ onNavigate }: { onNavigate?: (v: Window
       }
     >
       {creating && deps && form && (
-        <Card style={{ marginBottom: 12 }}>
-          <div style={{ padding: 16 }}>
+        <Card style={{ marginBottom: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ padding: 8, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <CreateForm deps={deps} seed={form} documentCount={rows.length} onCancel={() => setForm(null)} onDone={() => { setForm(null); void refresh(); }} />
           </div>
         </Card>
@@ -582,6 +584,7 @@ function CreateForm({ deps, seed, documentCount, onCancel, onDone }: {
         hint={`${documentCount} فاتورة — يتم ترحيل القيد تلقائيًا عند الحفظ`}
       />
       <DocumentEditorShell
+        className="zdoc-viewport-fit"
         layout={documentLayout}
         onLayoutChange={setDocumentEditorLayout}
         label="تصميم المستند"

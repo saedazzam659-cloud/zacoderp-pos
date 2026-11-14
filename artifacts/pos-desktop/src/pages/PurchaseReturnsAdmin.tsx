@@ -77,6 +77,8 @@ export default function PurchaseReturnsAdmin() {
     <Page
       title="مرتجع الشراء"
       subtitle={`${rows.length} مرتجع`}
+      hideHeader={creating}
+      fillHeight={creating}
       right={
         <button onClick={() => setCreating(true)} disabled={!deps || creating}
           style={{ ...btnPrimary, opacity: (!deps || creating) ? 0.5 : 1, cursor: (!deps || creating) ? "not-allowed" : "pointer" }}>
@@ -85,8 +87,8 @@ export default function PurchaseReturnsAdmin() {
       }
     >
       {creating && deps && (
-        <Card style={{ marginBottom: 12 }}>
-          <div style={{ padding: 16 }}>
+        <Card style={{ marginBottom: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ padding: 8, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <CreateForm deps={deps} initial={prefill} documentCount={rows.length} onCancel={closeForm} onDone={() => { closeForm(); void refresh(); }} />
           </div>
         </Card>
@@ -308,6 +310,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: { deps: 
         hint={text(`${documentCount} مرتجع`, `${documentCount} returns`)}
       />
       <DocumentEditorShell
+        className="zdoc-viewport-fit"
         layout={documentLayout}
         onLayoutChange={setDocumentEditorLayout}
         label={text("تصميم المستند", "Document layout")}
@@ -352,7 +355,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: { deps: 
       </div>
       </DocumentEditorSection>
 
-      <DocumentEditorSection>
+      <DocumentEditorSection className="zlines-panel">
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
         <strong style={{ fontSize: 15 }}>بنود الأصناف</strong>
         <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>

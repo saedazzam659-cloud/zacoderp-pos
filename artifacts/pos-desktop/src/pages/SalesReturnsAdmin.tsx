@@ -142,10 +142,12 @@ export default function SalesReturnsAdmin() {
   }
 
   return (
-    <div dir={language === "en" ? "ltr" : "rtl"}>
+    <div dir={language === "en" ? "ltr" : "rtl"} style={creating ? { height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } : undefined}>
     <Page
       title={text("مرتجع المبيعات", "Sales returns")}
       subtitle={text(`${rows.length} مرتجع — يتم عكس قيد المبيعات وإرجاع المخزون تلقائياً`, `${rows.length} returns — the sales entry is reversed and stock is restored automatically`)}
+      hideHeader={creating}
+      fillHeight={creating}
       right={
         <button onClick={() => void openCreate()} disabled={depsLoading || creating}
           style={{ ...btnPrimary, opacity: (depsLoading || creating) ? 0.5 : 1, cursor: (depsLoading || creating) ? "not-allowed" : "pointer" }}>
@@ -155,8 +157,8 @@ export default function SalesReturnsAdmin() {
     >
       <ErrorMsg text={err} />
       {creating && deps && (
-        <Card style={{ marginBottom: 12 }}>
-          <div style={{ padding: 16 }}>
+        <Card style={{ marginBottom: 0, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ padding: 8, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <CreateForm deps={deps} initial={prefill} documentCount={rows.length} onCancel={closeForm} onDone={() => { closeForm(); void refresh(); }} />
           </div>
         </Card>
@@ -527,6 +529,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
         hint={text(`${documentCount} مرتجع — يتم عكس قيد المبيعات وإرجاع المخزون تلقائيًا`, `${documentCount} returns — the sales entry and stock are reversed automatically`)}
       />
       <DocumentEditorShell
+        className="zdoc-viewport-fit"
         layout={documentLayout}
         onLayoutChange={setDocumentEditorLayout}
         label={text("تصميم المستند", "Document layout")}
@@ -565,7 +568,7 @@ function CreateForm({ deps, initial, documentCount, onCancel, onDone }: {
       </div>
       </DocumentEditorSection>
 
-      <DocumentEditorSection>
+      <DocumentEditorSection className="zlines-panel">
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 4, marginBottom: 8, color: "#0f172a" }}>
         <strong style={{ fontSize: 15 }}>{text("بنود الأصناف", "Return items")}</strong>
         <span style={{ padding: "2px 8px", borderRadius: 999, background: "#e8f6f2", color: "#087f69", fontSize: 11, fontWeight: 700 }}>
