@@ -108,6 +108,9 @@ const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page .zsales-payment-card:has(>label:nth-of-type(2)){grid-template-columns:repeat(2,minmax(0,1fr));}
   .zsales-invoice-single-page .zsales-payment-card>label{min-width:0;margin:0!important;}
   .zsales-invoice-single-page .zsales-payment-card-title{grid-column:1/-1;font-size:12px;font-weight:800;color:var(--si-accent);}
+  .zsales-invoice-single-page .zsales-invoice-quick-controls{display:grid;gap:8px;}
+  .zsales-invoice-single-page .zsales-invoice-quick-controls .zsales-section{margin:0;padding:9px;}
+  .zsales-invoice-single-page .zsales-invoice-quick-controls .zsales-header-section>label{min-width:0;margin:0!important;}
   .zsales-invoice-single-page .zsales-action-total{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:var(--si-radius);background:color-mix(in srgb,var(--si-accent) 10%,white);color:#0f172a;font-size:11px;white-space:nowrap;}
   .zsales-invoice-single-page .zsales-action-feedback{flex:1 1 100%;max-height:92px;overflow:auto;}
   .zsales-invoice-single-page .zsales-items-section{background:#fff;}
@@ -378,7 +381,8 @@ export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
             <CreateForm key={editDoc?.id ?? "new"} deps={deps} initial={editDoc} invoiceCount={rows.length}
               onRefreshDeps={reloadDeps}
               onCancel={() => { setCreating(false); setEditDoc(null); }}
-              onDone={() => { setCreating(false); setEditDoc(null); void refresh(); }} />
+              onDone={() => { setCreating(false); setEditDoc(null); void refresh(); }}
+              onSavedKeepOpen={() => { void refresh(); }} />
           </div>
         </Card>
       )}
@@ -603,12 +607,12 @@ function invoiceToPrintDoc(p: SalesInvoice): PrintDoc {
   };
 }
 
-function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDone }: {
+function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDone, onSavedKeepOpen }: {
   deps: { customers: LocalCustomer[]; cashBoxes: CashBox[]; banks: Bank[]; items: LocalItem[]; warehouses: Warehouse[]; salespersons: Salesperson[] };
   initial?: SalesInvoice | null;
   invoiceCount: number;
   onRefreshDeps: () => Promise<void>;
-  onCancel: () => void; onDone: () => void;
+  onCancel: () => void; onDone: () => void; onSavedKeepOpen?: () => void;
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
@@ -705,8 +709,11 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   const [issues, setIssues] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [quickCreate, setQuickCreate] = useState<"customer" | "item" | null>(null);
+  const [quickCustomerDialogOpen, setQuickCustomerDialogOpen] = useState(false);
   const [quickCreateBusy, setQuickCreateBusy] = useState(false);
   const [quickCreateError, setQuickCreateError] = useState<string | null>(null);
+  const [quickCreateResetToken, setQuickCreateResetToken] = useState(0);
+  const quickCreateLineKeyCounter = useRef(0);
   const [sourceKind, setSourceKind] = useState<"quotation" | "sales_order">("quotation");
   const [sourceDocNo, setSourceDocNo] = useState("");
   const [sourceBusy, setSourceBusy] = useState(false);
@@ -776,6 +783,24 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
   const selectedLineCount = lines.filter((line) => Number(line.itemId) > 0).length;
+  const invoiceQuickCreateItems = useMemo<QuickCreateSavedItem[]>(() => lines.flatMap((line, index) => {
+    if (!line.itemId) return [];
+    const item = deps.items.find((candidate) => candidate.id === line.itemId);
+    return [{
+      entryKey: line.quickCreateEntryKey ?? `invoice-line-${index}-${line.itemId}-${line.brandId ?? "none"}`,
+      itemId: line.itemId,
+      nameAr: line.itemName ?? item?.nameAr ?? text("صنف", "Item"),
+      quantity: Number(line.qty) || 0,
+      salePrice: Number(line.unitPrice) || 0,
+      vatRate: Number(line.vatRate) || 0,
+      code: item?.code ?? "",
+      barcode: item?.barcode ?? "",
+      nature: item?.nature ?? "stock",
+      uomId: line.uomId ?? item?.uomId ?? defUom?.id ?? uoms[0]?.id ?? 0,
+      brandId: line.brandId ?? null,
+      createdInSession: line.quickCreateCreatedInSession ?? false,
+    }];
+  }), [lines, deps.items, defUom, uoms, language]);
   const selectedBranch = branchId === "" ? null : Number(branchId);
   const invoiceCashBoxes = deps.cashBoxes.filter((box) =>
     (box.isActive !== false || box.id === cashBoxId) &&
@@ -874,6 +899,20 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     });
   }
 
+  function openQuickCreateItem() {
+    setQuickCreateError(null);
+    setErr(null); setIssues([]);
+    setLines((current) => current.map((line) => {
+      if (!line.itemId || line.quickCreateEntryKey) return line;
+      return {
+        ...line,
+        quickCreateEntryKey: `invoice-line-${++quickCreateLineKeyCounter.current}-${line.itemId}-${line.brandId ?? "none"}`,
+        quickCreateCreatedInSession: line.quickCreateCreatedInSession ?? false,
+      };
+    }));
+    setQuickCreate("item");
+  }
+
   function appendCatalogItems(items: LocalItem[]) {
     setLines((current) => [...current, ...items.map((item) => {
       const uom = item.uomId != null ? uoms.find((unit) => unit.id === item.uomId) : defUom;
@@ -895,7 +934,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     if (item && customer) setHistoryTarget({ item, customer });
   }
 
-  async function createQuickCustomer(input: { nameAr: string; phone: string; vatNumber: string }) {
+  async function createQuickCustomer(input: { nameAr: string; phone: string; vatNumber: string }, fromItemDialog = false) {
     if (!input.nameAr.trim()) { setQuickCreateError(text("اكتب اسم العميل بالعربية", "Enter the customer's Arabic name.")); return false; }
     if (input.vatNumber && !/^3\d{13}3$/.test(input.vatNumber.trim())) {
       setQuickCreateError(text("الرقم الضريبي يجب أن يكون 15 رقمًا ويبدأ وينتهي بـ3", "The tax number must be 15 digits and start and end with 3."));
@@ -917,7 +956,8 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       setBuyerVat(customer.vatNumber ?? "");
       setBuyerAddress([customer.street, customer.district, customer.city].filter(Boolean).join("، "));
       if (customer.vatNumber) setInvoiceType("standard");
-      setQuickCreate(null);
+      if (fromItemDialog) setQuickCustomerDialogOpen(false);
+      else setQuickCreate(null);
       emitData("customers");
       return true;
     } catch (e: any) {
@@ -1001,7 +1041,11 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       const linkedBrand = requestedBrand && linkedBrands.some((brand) => brand.brandId === requestedBrand.id)
         ? requestedBrand
         : linkedBrands.length ? listBrands().find((brand) => brand.id === linkedBrands[0].brandId) ?? null : null;
-      const chosenBrand = reusedExisting ? linkedBrand : requestedBrand;
+      const chosenBrand = editing
+        ? requestedBrand && (!reusedExisting || requestedBrand.id === editing.brandId || linkedBrands.some((brand) => brand.brandId === requestedBrand.id))
+          ? requestedBrand
+          : null
+        : reusedExisting ? linkedBrand : requestedBrand;
       const linkedBrandPrice = chosenBrand
         ? listItemBrands(item.id).find((brand) => brand.brandId === chosenBrand.id)?.salePrice1
         : null;
@@ -1221,6 +1265,123 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     setPaymentChoice(next);
   }
 
+  function renderPaymentSection() {
+    return (
+      <>
+        <section className="zsales-section zsales-payment-section">
+          <div className="zsales-payment-header">
+            <div className="zsales-payment-intro">
+              <strong>{text("طريقة الدفع", "Payment method")}</strong>
+              <small>{text("اختر طريقة واحدة، أو «مختلط» لتقسيم المبلغ؛ المتبقي يُوزّع تلقائيًا على الآجل.", "Choose one method or “Mixed” to split payment; the remaining balance is assigned to credit automatically.")}</small>
+            </div>
+            <div className="zsales-payment-methods" role="group" aria-label={text("اختيار طريقة الدفع", "Choose payment method")} data-testid="sales-invoice-payment-methods">
+              {paymentOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  data-testid={`button-sales-invoice-payment-${option.value}`}
+                  aria-label={text(`طريقة الدفع: ${option.label}`, `Payment method: ${option.label}`)}
+                  aria-pressed={paymentChoice === option.value}
+                  onClick={() => changePaymentChoice(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="zsales-payment-fields" data-count={paymentChoice === "mixed" ? 3 : 1}>
+            {(paymentChoice === "mixed" || paymentChoice === "cash") && (
+              <div className="zsales-payment-card">
+                <div className="zsales-payment-card-title">{text("الدفع النقدي", "Cash payment")}</div>
+                <Field label={`${text("المبلغ النقدي", "Cash amount")} · ${docSym}`}>
+                  <input type="number" min="0" max={result.grandTotal} step="0.01"
+                    data-testid="input-sales-invoice-cash-amount"
+                    value={cashAmountText} onChange={(e) => updatePaymentAmount("cash", e.target.value)}
+                    style={input} {...navInput} />
+                </Field>
+                {cashAmount > 0.005 && (
+                  <Field label={text("الخزينة", "Cashbox")}>
+                    <SearchCombobox
+                      value={cashBoxId ?? ""}
+                      onChange={(v) => setCashBoxId(Number(v) || null)}
+                      {...navCombo}
+                      style={input}
+                      options={invoiceCashBoxes.map((c) => ({ value: c.id, label: `${language === "en" ? c.nameEn || c.name : c.name} · ${c.currencyCode}` }))}
+                    />
+                  </Field>
+                )}
+              </div>
+            )}
+            {(paymentChoice === "mixed" || paymentChoice === "bank") && (
+              <div className="zsales-payment-card">
+                <div className="zsales-payment-card-title">{text("الدفع البنكي", "Bank payment")}</div>
+                <Field label={`${text("المبلغ البنكي", "Bank amount")} · ${docSym}`}>
+                  <input type="number" min="0" max={result.grandTotal} step="0.01"
+                    data-testid="input-sales-invoice-bank-amount"
+                    value={bankAmountText} onChange={(e) => updatePaymentAmount("bank", e.target.value)}
+                    style={input} {...navInput} />
+                </Field>
+                {bankAmount > 0.005 && (
+                  <Field label={text("البنك", "Bank")}>
+                    <SearchCombobox
+                      value={bankId ?? ""}
+                      onChange={(v) => setBankId(Number(v) || null)}
+                      {...navCombo}
+                      style={input}
+                      options={invoiceBanks.map((b) => ({ value: b.id, label: `${language === "en" ? b.nameEn || b.name : b.name} · ${b.currencyCode}` }))}
+                    />
+                  </Field>
+                )}
+              </div>
+            )}
+            {(paymentChoice === "mixed" || paymentChoice === "credit") && (
+              <div className="zsales-payment-card">
+                <div className="zsales-payment-card-title">{text("الدفع الآجل", "Credit payment")}</div>
+                <Field label={`${text("المبلغ الآجل", "Credit amount")} · ${docSym}`}>
+                  <input type="number" min="0" max={result.grandTotal} step="0.01"
+                    data-testid="input-sales-invoice-credit-amount"
+                    readOnly={paymentChoice === "mixed"}
+                    title={paymentChoice === "mixed" ? text("يُحسب المتبقي تلقائيًا بعد النقد والبنك", "Automatically calculated from cash and bank amounts") : undefined}
+                    value={creditAmountText} onChange={(e) => updatePaymentAmount("credit", e.target.value)}
+                    style={paymentChoice === "mixed" ? { ...input, background: "#f1f5f9", cursor: "default" } : input} {...navInput} />
+                </Field>
+              </div>
+            )}
+          </div>
+          <div
+            data-testid="sales-invoice-payment-balance"
+            aria-live="polite"
+            style={{
+              display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap",
+              marginTop: 8, padding: "7px 10px", borderRadius: 7,
+              border: `1px solid ${Math.abs(paymentDifference) <= 0.01 ? "#bbf7d0" : "#fde68a"}`,
+              background: Math.abs(paymentDifference) <= 0.01 ? "#f0fdf4" : "#fffbeb",
+              color: Math.abs(paymentDifference) <= 0.01 ? "#166534" : "#92400e",
+              fontSize: 12, fontWeight: 700,
+            }}
+          >
+            <span>{text("إجمالي مبالغ الدفع", "Payment amount total")}: {docSym} {fmt(enteredPaymentTotal)}</span>
+            <span>
+              {Math.abs(paymentDifference) <= 0.01
+                ? text("الإجمالي موزع بالكامل", "Invoice total fully allocated")
+                : paymentDifference > 0
+                  ? `${text("متبقي للتوزيع", "Remaining to allocate")}: ${docSym} ${fmt(paymentDifference)}`
+                  : `${text("زيادة عن الإجمالي", "Over invoice total")}: ${docSym} ${fmt(Math.abs(paymentDifference))}`}
+            </span>
+          </div>
+        </section>
+        {selectedCustomer && creditAmount > 0.005 && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
+          <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
+            {text("الرصيد الحالي:", "Current balance:")} <b>{fmt(selectedCustomer.balance ?? 0)}</b>
+            {(selectedCustomer.creditLimit ?? 0) > 0 && <> · {text("حد الائتمان:", "Credit limit:")} <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
+            {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · {text("مدة الاستحقاق:", "Payment terms:")} <b>{selectedCustomer.paymentTermsDays} {text("يوم", "days")}</b></>}
+            {selectedCustomer.enforceCreditLimit && <> · <b>{text("المنع مُفعّل", "Credit limit enforced")}</b></>}
+          </div>
+        )}
+      </>
+    );
+  }
+
   async function loadSourceDocument() {
     const requestedNo = sourceDocNo.trim().replace(/\s+/g, "").toLocaleUpperCase();
     if (!requestedNo) {
@@ -1329,7 +1490,38 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     }
   }
 
-  async function save() {
+  function resetForNextInvoice() {
+    setCustomerId(0);
+    setDate(todayStr());
+    setPaymentChoice("cash");
+    setCashAmountText(""); setBankAmountText(""); setCreditAmountText("");
+    setCashBoxId(deps.cashBoxes[0]?.id ?? null);
+    setBankId(deps.banks[0]?.id ?? null);
+    setWarehouseId((deps.warehouses.find((warehouse) => warehouse.is_default) ?? deps.warehouses[0])?.id ?? 0);
+    setBranchId(branches.length === 1 ? branches[0].id : "");
+    setCostCenterId("");
+    setSalesRepId("");
+    setInvoiceType("simplified");
+    setBuyerName(""); setBuyerVat(""); setBuyerAddress(""); setNotes("");
+    setLines([]);
+    setExpandedLineIndices(new Set());
+    setHeaderDisc(0);
+    setHeaderDiscType("percent");
+    setCurrency(baseCurrencyCode());
+    setExchangeRate(1);
+    setTaxId(taxes.find((tax) => tax.isDefault)?.id ?? "");
+    setSourceKind("quotation");
+    setSourceDocNo("");
+    setSourceFeedback(null);
+    setSavedId(null);
+    setErr(null); setIssues([]);
+    setQuickCreateError(null);
+    setQuickCustomerDialogOpen(false);
+    setQuickCreateResetToken((token) => token + 1);
+    onSavedKeepOpen?.();
+  }
+
+  async function save({ keepOpenForNext = false }: { keepOpenForNext?: boolean } = {}) {
     setBusy(true); setErr(null); setIssues([]);
     try {
       const problems = collectDocIssues([
@@ -1462,7 +1654,8 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         setErr(text(`تم حفظ الفاتورة لكن تعذرت الطباعة: ${detail}`, `Invoice saved, but printing failed: ${detail}`));
         return;
       }
-      onDone();
+      if (keepOpenForNext && !isEdit) resetForNextInvoice();
+      else onDone();
     } catch (e: any) { setErr(errText(e, text("فشل", "Could not save invoice."))); }
     finally { setBusy(false); }
   }
@@ -1525,7 +1718,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
             style={{ ...btnSecondary, padding: "6px 8px", color: "#315e56", borderColor: "#b8d4cb", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}
           >{text("اختيار أصناف", "Select items")}</button>
           <button
-            onClick={() => { setQuickCreateError(null); setQuickCreate("item"); }}
+            onClick={openQuickCreateItem}
             type="button"
             data-testid="button-create-sales-invoice-item"
             title={text("إنشاء صنف جديد وإضافته للفاتورة", "Create a new item for this invoice")}
@@ -1539,7 +1732,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
             style={{ ...btnSecondary, padding: "6px 9px", whiteSpace: "nowrap" }}
           >{text("إلغاء", "Cancel")}</button>
           <button
-            onClick={save}
+            onClick={() => void save()}
             disabled={busy || sourceBusy}
             type="button"
             data-fnav="1"
@@ -1857,115 +2050,8 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       </div>
       </section>
 
-      <section className="zsales-section zsales-payment-section">
-      <div className="zsales-payment-header">
-        <div className="zsales-payment-intro">
-          <strong>{text("طريقة الدفع", "Payment method")}</strong>
-          <small>{text("اختر طريقة واحدة، أو «مختلط» لتقسيم المبلغ؛ المتبقي يُوزّع تلقائيًا على الآجل.", "Choose one method or “Mixed” to split payment; the remaining balance is assigned to credit automatically.")}</small>
-        </div>
-        <div className="zsales-payment-methods" role="group" aria-label={text("اختيار طريقة الدفع", "Choose payment method")} data-testid="sales-invoice-payment-methods">
-          {paymentOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              data-testid={`button-sales-invoice-payment-${option.value}`}
-              aria-label={text(`طريقة الدفع: ${option.label}`, `Payment method: ${option.label}`)}
-              aria-pressed={paymentChoice === option.value}
-              onClick={() => changePaymentChoice(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="zsales-payment-fields" data-count={paymentChoice === "mixed" ? 3 : 1}>
-        {(paymentChoice === "mixed" || paymentChoice === "cash") && (
-          <div className="zsales-payment-card">
-            <div className="zsales-payment-card-title">{text("الدفع النقدي", "Cash payment")}</div>
-            <Field label={`${text("المبلغ النقدي", "Cash amount")} · ${docSym}`}>
-              <input type="number" min="0" max={result.grandTotal} step="0.01"
-                data-testid="input-sales-invoice-cash-amount"
-                value={cashAmountText} onChange={(e) => updatePaymentAmount("cash", e.target.value)}
-                style={input} {...navInput} />
-            </Field>
-            {cashAmount > 0.005 && (
-              <Field label={text("الخزينة", "Cashbox")}>
-                <SearchCombobox
-                  value={cashBoxId ?? ""}
-                  onChange={(v) => setCashBoxId(Number(v) || null)}
-                  {...navCombo}
-                  style={input}
-                  options={invoiceCashBoxes.map((c) => ({ value: c.id, label: `${language === "en" ? c.nameEn || c.name : c.name} · ${c.currencyCode}` }))}
-                />
-              </Field>
-            )}
-          </div>
-        )}
-        {(paymentChoice === "mixed" || paymentChoice === "bank") && (
-          <div className="zsales-payment-card">
-            <div className="zsales-payment-card-title">{text("الدفع البنكي", "Bank payment")}</div>
-            <Field label={`${text("المبلغ البنكي", "Bank amount")} · ${docSym}`}>
-              <input type="number" min="0" max={result.grandTotal} step="0.01"
-                data-testid="input-sales-invoice-bank-amount"
-                value={bankAmountText} onChange={(e) => updatePaymentAmount("bank", e.target.value)}
-                style={input} {...navInput} />
-            </Field>
-            {bankAmount > 0.005 && (
-              <Field label={text("البنك", "Bank")}>
-                <SearchCombobox
-                  value={bankId ?? ""}
-                  onChange={(v) => setBankId(Number(v) || null)}
-                  {...navCombo}
-                  style={input}
-                  options={invoiceBanks.map((b) => ({ value: b.id, label: `${language === "en" ? b.nameEn || b.name : b.name} · ${b.currencyCode}` }))}
-                />
-              </Field>
-            )}
-          </div>
-        )}
-        {(paymentChoice === "mixed" || paymentChoice === "credit") && (
-          <div className="zsales-payment-card">
-            <div className="zsales-payment-card-title">{text("الدفع الآجل", "Credit payment")}</div>
-            <Field label={`${text("المبلغ الآجل", "Credit amount")} · ${docSym}`}>
-              <input type="number" min="0" max={result.grandTotal} step="0.01"
-                data-testid="input-sales-invoice-credit-amount"
-                readOnly={paymentChoice === "mixed"}
-                title={paymentChoice === "mixed" ? text("يُحسب المتبقي تلقائيًا بعد النقد والبنك", "Automatically calculated from cash and bank amounts") : undefined}
-                value={creditAmountText} onChange={(e) => updatePaymentAmount("credit", e.target.value)}
-                style={paymentChoice === "mixed" ? { ...input, background: "#f1f5f9", cursor: "default" } : input} {...navInput} />
-            </Field>
-          </div>
-        )}
-      </div>
-      <div
-        data-testid="sales-invoice-payment-balance"
-        aria-live="polite"
-        style={{
-          display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap",
-          marginTop: 8, padding: "7px 10px", borderRadius: 7,
-          border: `1px solid ${Math.abs(paymentDifference) <= 0.01 ? "#bbf7d0" : "#fde68a"}`,
-          background: Math.abs(paymentDifference) <= 0.01 ? "#f0fdf4" : "#fffbeb",
-          color: Math.abs(paymentDifference) <= 0.01 ? "#166534" : "#92400e",
-          fontSize: 12, fontWeight: 700,
-        }}
-      >
-        <span>{text("إجمالي مبالغ الدفع", "Payment amount total")}: {docSym} {fmt(enteredPaymentTotal)}</span>
-        <span>
-          {Math.abs(paymentDifference) <= 0.01
-            ? text("الإجمالي موزع بالكامل", "Invoice total fully allocated")
-            : paymentDifference > 0
-              ? `${text("متبقي للتوزيع", "Remaining to allocate")}: ${docSym} ${fmt(paymentDifference)}`
-              : `${text("زيادة عن الإجمالي", "Over invoice total")}: ${docSym} ${fmt(Math.abs(paymentDifference))}`}
-        </span>
-      </div>
-      {selectedCustomer && creditAmount > 0.005 && (selectedCustomer.enforceCreditLimit || (selectedCustomer.creditLimit ?? 0) > 0) && (
-        <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
-          {text("الرصيد الحالي:", "Current balance:")} <b>{fmt(selectedCustomer.balance ?? 0)}</b>
-          {(selectedCustomer.creditLimit ?? 0) > 0 && <> · {text("حد الائتمان:", "Credit limit:")} <b>{fmt(selectedCustomer.creditLimit ?? 0)}</b></>}
-          {(selectedCustomer.paymentTermsDays ?? 0) > 0 && <> · {text("مدة الاستحقاق:", "Payment terms:")} <b>{selectedCustomer.paymentTermsDays} {text("يوم", "days")}</b></>}
-          {selectedCustomer.enforceCreditLimit && <> · <b>{text("المنع مُفعّل", "Credit limit enforced")}</b></>}
-        </div>
-      )}
+      {quickCreate !== "item" && renderPaymentSection()}
+      <section className="zsales-section zsales-notes-section">
       <Field label={text("ملاحظات", "Notes")} style={{ marginTop: 12 }}>
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...input, minHeight: 50 }} />
       </Field>
@@ -1987,15 +2073,57 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           documentLabel={{ ar: "الفاتورة", en: "invoice" }}
           initialVatRate={selectedRate ?? 0}
           includeQuantity={quickCreate === "item"}
-          busy={quickCreateBusy}
-          error={quickCreateError}
+          busy={quickCreateBusy || busy}
+          error={quickCreateError ?? (quickCreate === "item" ? err ?? (issues.length ? issues.join(" · ") : null) : null)}
           showSavedItems={quickCreate === "item"}
           documentItemCount={selectedLineCount}
-          onCancel={() => { if (!quickCreateBusy) setQuickCreate(null); }}
+          savedInvoiceItems={quickCreate === "item" ? invoiceQuickCreateItems : undefined}
+          resetToken={quickCreateResetToken}
+          invoiceSaving={busy}
+          canSaveInvoice={selectedLineCount > 0 && !isEdit && !sourceBusy}
+          onSaveInvoice={!isEdit ? () => save({ keepOpenForNext: true }) : undefined}
+          invoiceControls={quickCreate === "item" ? (
+            <div className="zsales-invoice-quick-controls">
+              <section className="zsales-section zsales-header-section" data-testid="quick-create-customer-selection">
+                <Field label={text("العميل", "Customer")}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <div data-testid="quick-create-customer-selector" style={{ flex: 1, minWidth: 0 }}>
+                      <SearchCombobox
+                        value={customerId}
+                        onChange={(value) => setCustomerId(Number(value))}
+                        style={{ ...input, flex: 1, minWidth: 0 }}
+                        options={customerOptions}
+                      />
+                    </div>
+                    <button type="button" data-testid="button-quick-create-add-customer"
+                      onClick={() => { setQuickCreateError(null); setQuickCustomerDialogOpen(true); }}
+                      title={text("إضافة عميل جديد", "Add a new customer")}
+                      aria-label={text("إضافة عميل جديد", "Add a new customer")}
+                      style={{ ...quickAddButton("#2563eb"), flex: "0 0 35px" }}>＋</button>
+                  </div>
+                </Field>
+              </section>
+              {renderPaymentSection()}
+            </div>
+          ) : undefined}
+          onCancel={() => { if (!quickCreateBusy && !busy) { setQuickCreate(null); setQuickCustomerDialogOpen(false); } }}
           onSubmit={(payload, action, context) => {
             if (payload.kind === "customer") return createQuickCustomer(payload);
             return createQuickItem(payload, action, context);
           }}
+          uoms={uoms}
+        />
+      )}
+      {quickCustomerDialogOpen && quickCreate === "item" && (
+        <QuickCreateDialog
+          key="quick-customer-from-item"
+          kind="customer"
+          documentLabel={{ ar: "الفاتورة", en: "invoice" }}
+          initialVatRate={selectedRate ?? 0}
+          busy={quickCreateBusy || busy}
+          error={quickCreateError}
+          onCancel={() => { if (!quickCreateBusy && !busy) setQuickCustomerDialogOpen(false); }}
+          onSubmit={(payload) => payload.kind === "customer" ? createQuickCustomer(payload, true) : false}
           uoms={uoms}
         />
       )}

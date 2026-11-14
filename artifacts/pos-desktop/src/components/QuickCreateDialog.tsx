@@ -1,8 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getDefaultUom, type Uom } from "../lib/uom";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 import { btnPrimary, btnSecondary, input } from "../pages/_adminUi";
-import { listBrands } from "../lib/brands";
+import { listBrands, listItemBrands } from "../lib/brands";
 
 export type QuickCreatePayload =
   | { kind: "customer"; nameAr: string; phone: string; vatNumber: string }
@@ -23,6 +23,8 @@ export interface QuickCreateSavedItem {
   createdInSession: boolean;
 }
 
+const EMPTY_QUICK_CREATE_ITEMS: QuickCreateSavedItem[] = [];
+
 export interface QuickCreateSubmitContext {
   entryKey: string;
   editingEntry: QuickCreateSavedItem | null;
@@ -33,7 +35,7 @@ export type QuickCreateSubmitResult =
   | void
   | { ok: true; savedItem: QuickCreateSavedItem; notice?: string };
 
-export default function QuickCreateDialog({ kind, documentLabel, initialVatRate, includeQuantity = false, busy, error, onCancel, onSubmit, uoms, showSavedItems = false, documentItemCount = 0 }: {
+export default function QuickCreateDialog({ kind, documentLabel, initialVatRate, includeQuantity = false, busy, error, onCancel, onSubmit, uoms, showSavedItems = false, documentItemCount = 0, savedInvoiceItems = EMPTY_QUICK_CREATE_ITEMS, invoiceControls, onSaveInvoice, invoiceSaving = false, canSaveInvoice = false, resetToken = 0 }: {
   kind: "customer" | "item";
   documentLabel: { ar: string; en: string };
   initialVatRate: number;
@@ -45,6 +47,12 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
   uoms: Uom[];
   showSavedItems?: boolean;
   documentItemCount?: number;
+  savedInvoiceItems?: QuickCreateSavedItem[];
+  invoiceControls?: ReactNode;
+  onSaveInvoice?: () => void | Promise<void>;
+  invoiceSaving?: boolean;
+  canSaveInvoice?: boolean;
+  resetToken?: number;
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
@@ -61,18 +69,30 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
   const [nature, setNature] = useState<"stock" | "service">("stock");
   const [uomId, setUomId] = useState(() => getDefaultUom()?.id ?? uoms[0]?.id ?? 0);
   const [brandId, setBrandId] = useState<number | null>(null);
-  const [savedItems, setSavedItems] = useState<QuickCreateSavedItem[]>([]);
+  const [savedItems, setSavedItems] = useState<QuickCreateSavedItem[]>(savedInvoiceItems);
   const [editingEntryKey, setEditingEntryKey] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const nextEntryNumber = useRef(0);
+  const previousResetToken = useRef(resetToken);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const isCustomer = kind === "customer";
   const accent = isCustomer ? "#2563eb" : "#7c3aed";
   const fieldStyle = { ...input, borderRadius: 9, padding: "9px 11px", background: "#fff" };
-  const brands = isCustomer ? [] : listBrands().filter((brand) => brand.status === "active");
   const editingEntry = savedItems.find((item) => item.entryKey === editingEntryKey) ?? null;
   const catalogLocked = !!editingEntry && !editingEntry.createdInSession;
+  const brands = isCustomer ? [] : listBrands().filter((brand) =>
+    brand.status === "active" && (
+      !catalogLocked
+      || brand.id === editingEntry?.brandId
+      || listItemBrands(editingEntry!.itemId).some((link) => link.brandId === brand.id && link.status === "active")
+    ),
+  );
   const historyEnabled = !isCustomer && showSavedItems;
+  const hasUnappliedItem = !isCustomer && (
+    !!nameAr.trim() || !!code.trim() || !!barcode.trim() || salePriceTouched || vatRateTouched
+    || quantity !== 1 || nature !== "stock" || brandId != null
+    || uomId !== (getDefaultUom()?.id ?? uoms[0]?.id ?? 0)
+  );
   const totalSavedQuantity = savedItems.reduce((sum, item) => sum + item.quantity, 0);
   const totalSavedValue = savedItems.reduce((sum, item) => sum + item.quantity * item.salePrice, 0);
   const formatNumber = (value: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 }).format(value);
@@ -87,6 +107,18 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
     setEditingEntryKey(null);
     requestAnimationFrame(() => nameInputRef.current?.focus());
   }
+
+  useEffect(() => {
+    setSavedItems(savedInvoiceItems);
+  }, [savedInvoiceItems]);
+
+  useEffect(() => {
+    if (previousResetToken.current === resetToken) return;
+    previousResetToken.current = resetToken;
+    resetItemForm();
+    setSaveNotice(null);
+    setSavedItems(savedInvoiceItems);
+  }, [resetToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openSavedItem(item: QuickCreateSavedItem) {
     if (editingEntryKey === item.entryKey) return;
@@ -135,6 +167,7 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
       <section role="dialog" aria-modal="true" aria-labelledby="quick-create-title"
         dir={language === "en" ? "ltr" : "rtl"}
         style={{ width: isCustomer ? "min(100%, 560px)" : "min(1180px, calc(100vw - 24px))", maxHeight: "min(94dvh, 900px)", display: "flex", flexDirection: "column", borderRadius: 18, overflow: "hidden", background: "#fff", boxShadow: "0 24px 80px #02061755", border: "1px solid #ffffffaa" }}>
+        {historyEnabled && <style>{`@media(max-width:900px){.quick-create-primary-grid,.quick-create-detail-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}}@media(max-width:560px){.quick-create-primary-grid,.quick-create-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}`}</style>}
         <div style={{ padding: "18px 20px", color: "#fff", background: `linear-gradient(120deg, ${accent}, ${isCustomer ? "#06b6d4" : "#a855f7"})` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div aria-hidden="true" style={{ width: 42, height: 42, borderRadius: 13, display: "grid", placeItems: "center", fontSize: 20, fontWeight: 800, background: "#ffffff25", border: "1px solid #ffffff45" }}>
@@ -152,14 +185,14 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
               style={{ marginInlineStart: "auto", width: 30, height: 30, border: 0, borderRadius: 9, color: "#fff", background: "#ffffff25", cursor: "pointer", fontSize: 19 }}>×</button>
           </div>
         </div>
-        <div style={{ padding: 20, display: "grid", gap: 12, overflowY: "auto", minHeight: 0 }}>
+        <fieldset disabled={busy} style={{ padding: 20, display: "grid", gap: 12, overflowY: "auto", minHeight: 0, minWidth: 0, margin: 0, border: 0 }}>
           {historyEnabled && (
             <section aria-label={text("الأصناف المضافة سريعًا", "Quick-added items")} data-testid="quick-create-saved-items-summary"
               style={{ display: "grid", gap: 8, padding: "10px 12px", border: "1px solid #ddd6fe", borderInlineStart: "4px solid #7c3aed", borderRadius: 12, background: "linear-gradient(120deg,#faf5ff,#fff)", minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", fontSize: 12 }}>
-                <strong style={{ color: "#5b21b6" }}>{text("الأصناف المضافة", "Added items")}</strong>
+                <strong style={{ color: "#5b21b6" }}>{text("بنود الفاتورة الحالية", "Current invoice lines")}</strong>
                 <span style={{ padding: "3px 8px", borderRadius: 999, background: "#ede9fe", color: "#5b21b6", fontWeight: 800 }}>
-                  {savedItems.length} {text("صنف سريع", "quick items")}
+                  {savedItems.length} {text("بند", "lines")}
                 </span>
                 <span data-testid="quick-create-invoice-item-count" style={{ color: "#475569" }}>{text("إجمالي أصناف الفاتورة", "Invoice item lines")}: <b>{documentItemCount}</b></span>
                 <span style={{ color: "#475569" }}>{text("الكمية", "Quantity")}: <b>{formatNumber(totalSavedQuantity)}</b></span>
@@ -215,9 +248,9 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
             </div>
           ) : (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+              <div className={historyEnabled ? "quick-create-primary-grid" : undefined} style={{ display: "grid", gridTemplateColumns: historyEnabled ? "repeat(5, minmax(0, 1fr))" : "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
                 {includeQuantity && (
-                  <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
+              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
                     {text("الكمية المضافة للمستند", "Quantity to add")}
                     <input type="number" min="0.001" step="0.001" value={quantity}
                       onChange={(e) => setQuantity(Number(e.target.value) || 0)} style={fieldStyle} />
@@ -240,37 +273,48 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
                   <input value={barcode} disabled={catalogLocked} onChange={(e) => setBarcode(e.target.value)} dir="ltr" style={{ ...fieldStyle, opacity: catalogLocked ? 0.75 : 1 }} />
                 </label>
               </div>
-              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                {text("وحدة القياس *", "Unit of measure *")}
-                <select value={uomId || ""} disabled={catalogLocked} onChange={(e) => setUomId(Number(e.target.value) || 0)} style={{ ...fieldStyle, opacity: catalogLocked ? 0.75 : 1 }}>
-                  <option value="">{text("اختر وحدة القياس", "Choose a unit")}</option>
-                  {uoms.map((unit) => <option key={unit.id} value={unit.id}>
-                    {language === "en" ? unit.nameEn || unit.nameAr : unit.nameAr}{unit.shortCode ? ` (${unit.shortCode})` : ""}
-                  </option>)}
-                </select>
-              </label>
-              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                {text("نوع الصنف", "Item type")}
-                <select value={nature} disabled={catalogLocked} onChange={(e) => setNature(e.target.value as "stock" | "service")} style={{ ...fieldStyle, opacity: catalogLocked ? 0.75 : 1 }}>
-                  <option value="stock">{text("صنف مخزني", "Stock item")}</option>
-                  <option value="service">{text("خدمة", "Service")}</option>
-                </select>
-              </label>
-              <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                {text("العلامة التجارية (اختياري)", "Brand (optional)")}
-                <select value={brandId ?? ""} disabled={catalogLocked} onChange={(e) => setBrandId(e.target.value ? Number(e.target.value) : null)} style={{ ...fieldStyle, opacity: catalogLocked ? 0.75 : 1 }}>
-                  <option value="">{text("بدون علامة تجارية", "No brand")}</option>
-                  {brands.map((brand) => <option key={brand.id} value={brand.id}>{language === "en" ? brand.nameEn || brand.nameAr : brand.nameAr}</option>)}
-                </select>
-                <span style={{ fontWeight: 400, color: "#718096" }}>{text("يُحفظ الربط على هذا الجهاز فقط.", "This link is stored on this device only.")}</span>
-              </label>
+              <div className={historyEnabled ? "quick-create-detail-grid" : undefined} style={{ display: "grid", gridTemplateColumns: historyEnabled ? "repeat(5, minmax(0, 1fr))" : "minmax(0, 1fr)", gap: 10, alignItems: "start" }}>
+                <label style={{ display: "grid", gap: 5, minWidth: 0, fontSize: 12, color: "#475569", fontWeight: 700 }}>
+                  {text("وحدة القياس *", "Unit of measure *")}
+                  <select value={uomId || ""} disabled={catalogLocked} onChange={(e) => setUomId(Number(e.target.value) || 0)} style={{ ...fieldStyle, minWidth: 0, opacity: catalogLocked ? 0.75 : 1 }}>
+                    <option value="">{text("اختر وحدة القياس", "Choose a unit")}</option>
+                    {uoms.map((unit) => <option key={unit.id} value={unit.id}>
+                      {language === "en" ? unit.nameEn || unit.nameAr : unit.nameAr}{unit.shortCode ? ` (${unit.shortCode})` : ""}
+                    </option>)}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 5, minWidth: 0, fontSize: 12, color: "#475569", fontWeight: 700 }}>
+                  {text("نوع الصنف", "Item type")}
+                  <select value={nature} disabled={catalogLocked} onChange={(e) => setNature(e.target.value as "stock" | "service")} style={{ ...fieldStyle, minWidth: 0, opacity: catalogLocked ? 0.75 : 1 }}>
+                    <option value="stock">{text("صنف مخزني", "Stock item")}</option>
+                    <option value="service">{text("خدمة", "Service")}</option>
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 5, minWidth: 0, fontSize: 12, color: "#475569", fontWeight: 700 }}>
+                  {text("العلامة التجارية (اختياري)", "Brand (optional)")}
+                  <select value={brandId ?? ""} disabled={catalogLocked} onChange={(e) => setBrandId(e.target.value ? Number(e.target.value) : null)} style={{ ...fieldStyle, minWidth: 0, opacity: catalogLocked ? 0.75 : 1 }}>
+                    <option value="">{text("بدون علامة تجارية", "No brand")}</option>
+                    {brands.map((brand) => <option key={brand.id} value={brand.id}>{language === "en" ? brand.nameEn || brand.nameAr : brand.nameAr}</option>)}
+                  </select>
+                  <span style={{ fontWeight: 400, color: "#718096" }}>{text("يُحفظ الربط على هذا الجهاز فقط.", "This link is stored on this device only.")}</span>
+                </label>
+              </div>
             </>
           )}
+          {!isCustomer && invoiceControls}
+          {onSaveInvoice && hasUnappliedItem && <div role="status" style={{ padding: "8px 10px", borderRadius: 9, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", fontSize: 12 }}>
+            {text("احفظ الصنف الحالي في الفاتورة أو امسح بياناته قبل حفظ الفاتورة.", "Save the current item to the invoice or clear its form before saving the invoice.")}
+          </div>}
           {saveNotice && <div role="status" aria-live="polite" style={{ padding: "9px 11px", borderRadius: 9, color: "#166534", background: "#f0fdf4", border: "1px solid #bbf7d0", fontSize: 13 }}>{saveNotice}</div>}
           {error && <div role="alert" style={{ padding: "9px 11px", borderRadius: 9, color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", fontSize: 13 }}>{error}</div>}
-        </div>
+        </fieldset>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4, padding: "12px 20px", borderTop: "1px solid #e7edf1", background: "#fbfcfd", flexWrap: "wrap" }}>
             <button type="button" onClick={onCancel} disabled={busy} style={{ ...btnSecondary, borderRadius: 9, padding: "9px 14px" }}>{text("إلغاء", "Cancel")}</button>
+            {!isCustomer && onSaveInvoice && <button type="button" onClick={() => void onSaveInvoice()} disabled={busy || invoiceSaving || !canSaveInvoice || hasUnappliedItem}
+              data-testid="button-quick-create-save-invoice"
+              style={{ ...btnPrimary, borderRadius: 9, padding: "9px 16px", background: "#0f8a61", opacity: busy || invoiceSaving || !canSaveInvoice || hasUnappliedItem ? 0.58 : 1 }}>
+              {invoiceSaving ? text("جارٍ حفظ الفاتورة…", "Saving invoice…") : text("حفظ الفاتورة", "Save invoice")}
+            </button>}
             {!isCustomer && <button type="button" onClick={() => void submit("add-another")} disabled={busy || !nameAr.trim() || !uomId}
               style={{ ...btnSecondary, borderRadius: 9, padding: "9px 16px", color: accent, borderColor: `${accent}55`, opacity: busy || !nameAr.trim() || !uomId ? 0.6 : 1 }}>
               {busy ? text("جارٍ الحفظ…", "Saving…") : editingEntry ? text("حفظ التعديل وإضافة آخر", "Save changes and add another") : text("حفظ وإضافة آخر", "Save and add another")}
