@@ -58,13 +58,15 @@ const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page[data-layout="erp"]{--si-accent:#294477;--si-panel:#f1f4f8;--si-border:#b9c5d6;--si-grid:#294477;--si-radius:3px;--si-density:4px;}
   .zsales-invoice-single-page>div:first-of-type{border-color:var(--si-border)!important;border-right-color:var(--si-accent)!important;border-radius:var(--si-radius)!important;background:var(--si-panel)!important;}
   .zsales-invoice-single-page>div:first-of-type strong{color:var(--si-accent)!important;}
-  .zsales-invoice-single-page .zsales-layout-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 10px;padding:8px 10px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:var(--si-panel);}
-  .zsales-invoice-single-page .zsales-layout-label{display:flex;flex-direction:column;gap:2px;color:#334155;font-size:12px;font-weight:700;}
-  .zsales-invoice-single-page .zsales-layout-label small{color:#64748b;font-size:10px;font-weight:500;}
-  .zsales-invoice-single-page .zsales-layout-select{min-width:210px;max-width:340px;height:34px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:#fff;color:#0f172a;padding:4px 9px;font:inherit;font-size:12px;}
-  .zsales-invoice-single-page .zsales-source-loader{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(220px,1.2fr) auto;align-items:end;gap:10px;margin:8px 0 10px;padding:10px;border:1px solid var(--si-border);border-inline-start:4px solid var(--si-accent);border-radius:var(--si-radius);background:var(--si-panel);}
-  .zsales-invoice-single-page .zsales-source-loader-title{grid-column:1/-1;margin:0;color:#334155;font-size:12px;font-weight:800;}
+  .zsales-invoice-single-page .zsales-header-template{display:inline-flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;}
+  .zsales-invoice-single-page .zsales-header-template label{color:#334155;font-size:11px;font-weight:700;}
+  .zsales-invoice-single-page .zsales-layout-select{width:150px;max-width:180px;height:30px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:#fff;color:#0f172a;padding:3px 8px;font:inherit;font-size:12px;}
+  .zsales-invoice-single-page .zsales-source-loader{display:grid;grid-template-columns:minmax(160px,.75fr) repeat(3,minmax(0,1fr));align-items:end;gap:6px;margin:6px 0;padding:6px 8px;border:1px solid var(--si-border);border-inline-start:4px solid var(--si-accent);border-radius:var(--si-radius);background:var(--si-panel);}
+  .zsales-invoice-single-page .zsales-source-loader-title{align-self:center;margin:0;color:#334155;font-size:11px;font-weight:800;}
   .zsales-invoice-single-page .zsales-source-loader-status{grid-column:1/-1;margin:0;font-size:12px;line-height:1.5;}
+  .zsales-invoice-single-page .zsales-source-loader>label{min-width:0;margin:0!important;}
+  .zsales-invoice-single-page .zsales-source-loader>label>div:first-child{margin-bottom:2px!important;font-size:10px!important;}
+  .zsales-invoice-single-page .zsales-source-loader input,.zsales-invoice-single-page .zsales-source-loader select,.zsales-invoice-single-page .zsales-source-loader button{height:30px!important;min-height:30px!important;box-sizing:border-box;}
   .zsales-invoice-single-page .zsales-section{margin:10px 0;padding:10px;border:1px solid var(--si-border);border-radius:var(--si-radius);background:var(--si-panel);}
   .zsales-invoice-single-page .zsales-section-heading{display:flex;align-items:center;justify-content:space-between;gap:9px;margin:0 0 8px;color:#0f172a;}
   .zsales-invoice-single-page .zsales-items-heading-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
@@ -83,8 +85,10 @@ const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page .zsales-payment-methods button[aria-pressed="true"]{border-color:var(--si-accent);background:var(--si-accent);color:#fff;box-shadow:0 2px 6px color-mix(in srgb,var(--si-accent) 28%,transparent);}
   .zsales-invoice-single-page .zsales-payment-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:start;}
   .zsales-invoice-single-page .zsales-payment-fields[data-count="1"]{grid-template-columns:minmax(0,1fr);}
-  .zsales-invoice-single-page .zsales-payment-card{display:grid;gap:9px;align-content:start;padding:10px;border:1px solid var(--si-border);border-top:3px solid var(--si-accent);border-radius:var(--si-radius);background:#fff;min-width:0;}
-  .zsales-invoice-single-page .zsales-payment-card-title{font-size:12px;font-weight:800;color:var(--si-accent);}
+  .zsales-invoice-single-page .zsales-payment-card{display:grid;grid-template-columns:minmax(0,1fr);gap:9px;align-content:start;padding:10px;border:1px solid var(--si-border);border-top:3px solid var(--si-accent);border-radius:var(--si-radius);background:#fff;min-width:0;}
+  .zsales-invoice-single-page .zsales-payment-card:has(>label:nth-of-type(2)){grid-template-columns:repeat(2,minmax(0,1fr));}
+  .zsales-invoice-single-page .zsales-payment-card>label{min-width:0;margin:0!important;}
+  .zsales-invoice-single-page .zsales-payment-card-title{grid-column:1/-1;font-size:12px;font-weight:800;color:var(--si-accent);}
   .zsales-invoice-single-page .zsales-action-total{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:var(--si-radius);background:color-mix(in srgb,var(--si-accent) 10%,white);color:#0f172a;font-size:11px;white-space:nowrap;}
   .zsales-invoice-single-page .zsales-action-feedback{flex:1 1 100%;max-height:92px;overflow:auto;}
   .zsales-invoice-single-page .zsales-items-section{background:#fff;}
@@ -103,10 +107,10 @@ const salesInvoiceTemplateStyles = `
   .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap thead th{padding:6px 4px!important;font-size:10px!important;}
   .zsales-invoice-single-page[data-layout="erp"] .zlines-wrap .zfield{height:28px!important;padding:3px 4px!important;font-size:11px!important;}
   @media(max-width:1100px){.zsales-invoice-single-page .zsales-header-fields{grid-template-columns:repeat(3,minmax(0,1fr))!important}.zsales-invoice-single-page .zsales-payment-fields[data-count="3"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
-  @media(max-width:700px){.zsales-invoice-single-page .zsales-header-fields{grid-template-columns:repeat(2,minmax(0,1fr))!important}.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:minmax(0,1fr)}}
-  @media(max-width:900px){.zsales-invoice-single-page .zsales-layout-row{align-items:stretch;flex-direction:column}.zsales-invoice-single-page .zsales-layout-select{max-width:none;width:100%}.zsales-invoice-single-page .zsales-source-loader{grid-template-columns:1fr 1fr}}
-  @media(max-width:700px){.zsales-invoice-single-page .zsales-action-buttons{flex-basis:100%}.zsales-invoice-single-page .zsales-payment-methods{width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}.zsales-invoice-single-page .zsales-action-total{margin-inline-start:auto}.zsales-invoice-single-page .zsales-source-loader{grid-template-columns:1fr}}
-  @media(max-height:680px){.zsales-invoice-single-page .zsales-layout-row{margin:4px 0 6px;padding:4px 8px}.zsales-invoice-single-page .zsales-layout-label small{display:none}.zsales-invoice-single-page .zsales-section{margin:6px 0;padding:7px}.zsales-invoice-single-page .zsales-action-bar{margin:4px 0 6px;padding:5px 7px}.zsales-invoice-single-page .zsales-section-heading{margin-bottom:5px}}
+  @media(max-width:700px){.zsales-invoice-single-page .zsales-header-fields{grid-template-columns:repeat(2,minmax(0,1fr))!important}.zsales-invoice-single-page .zsales-payment-fields{grid-template-columns:minmax(0,1fr)}.zsales-invoice-single-page .zsales-payment-card:has(>label:nth-of-type(2)){grid-template-columns:minmax(0,1fr)}}
+  @media(max-width:900px){.zsales-invoice-single-page .zsales-header-template{width:100%;justify-content:flex-start}.zsales-invoice-single-page .zsales-layout-select{flex:0 1 220px}}
+  @media(max-width:700px){.zsales-invoice-single-page .zsales-action-buttons{flex-basis:100%}.zsales-invoice-single-page .zsales-payment-methods{width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}.zsales-invoice-single-page .zsales-action-total{margin-inline-start:auto}.zsales-invoice-single-page .zsales-source-loader{grid-template-columns:repeat(2,minmax(0,1fr))}.zsales-invoice-single-page .zsales-source-loader-title{grid-column:1/-1}}
+  @media(max-height:680px){.zsales-invoice-single-page .zsales-section{margin:6px 0;padding:7px}.zsales-invoice-single-page .zsales-action-bar{margin:4px 0 6px;padding:5px 7px}.zsales-invoice-single-page .zsales-section-heading{margin-bottom:5px}}
 `;
 
 export default function SalesInvoicesAdmin({ onNavigate, onFormOpenChange }: {
@@ -1242,53 +1246,25 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       <DocumentFormHeader
         title={isEdit ? `${text("تعديل الفاتورة", "Edit invoice")} ${initial?.invoiceNo ?? ""}` : text("فاتورة مبيعات جديدة", "New sales invoice")}
         hint={text(`${invoiceCount} فاتورة — يتم ترحيل القيد تلقائيًا عند الحفظ`, `${invoiceCount} invoices — entries post automatically when saved`)}
-      />
-      <div className="zsales-layout-row">
-        <label className="zsales-layout-label" htmlFor="sales-invoice-layout">
-          {text("نموذج شاشة الفاتورة", "Invoice screen template")}
-          <small>{text("يُحفظ اختيارك كافتراضي على هذا الجهاز", "Your choice is saved as the default on this device")}</small>
-        </label>
-        <select
-          id="sales-invoice-layout"
-          data-testid="input-sales-invoice-layout"
-          className="zsales-layout-select"
-          value={salesInvoiceLayout}
-          onChange={(event) => setSalesInvoiceLayout(event.target.value as SalesInvoiceLayout)}
-          aria-label={text("اختيار نموذج شاشة فاتورة المبيعات", "Choose sales invoice screen template")}
-        >
-          <option value="classic">{text("تقليدي", "Classic")}</option>
-          <option value="quick">{text("إدخال سريع", "Quick entry")}</option>
-          <option value="modern">{text("شبكة حديثة", "Modern grid")}</option>
-          <option value="erp">{text("ERP مكثف", "Dense ERP")}</option>
-        </select>
-      </div>
-
-      {!isEdit && (
-        <div className="zsales-source-loader" role="group" aria-label={text("تحميل عرض سعر أو أمر بيع", "Load a quotation or sales order")}>
-          <p className="zsales-source-loader-title">{text("تحميل مستند سابق إلى الفاتورة", "Load a source document into this invoice")}</p>
-          <Field label={text("نوع المستند", "Document type")}>
-            <select value={sourceKind} onChange={(event) => setSourceKind(event.target.value as "quotation" | "sales_order")} disabled={sourceBusy} style={input}>
-              <option value="quotation">{text("عرض سعر", "Quotation")}</option>
-              <option value="sales_order">{text("أمر بيع", "Sales order")}</option>
+        trailing={
+          <div className="zsales-header-template">
+            <label htmlFor="sales-invoice-layout">{text("النموذج", "Template")}</label>
+            <select
+              id="sales-invoice-layout"
+              data-testid="input-sales-invoice-layout"
+              className="zsales-layout-select"
+              value={salesInvoiceLayout}
+              onChange={(event) => setSalesInvoiceLayout(event.target.value as SalesInvoiceLayout)}
+              aria-label={text("اختيار نموذج شاشة فاتورة المبيعات", "Choose sales invoice screen template")}
+            >
+              <option value="classic">{text("تقليدي", "Classic")}</option>
+              <option value="quick">{text("إدخال سريع", "Quick entry")}</option>
+              <option value="modern">{text("شبكة حديثة", "Modern grid")}</option>
+              <option value="erp">{text("ERP مكثف", "Dense ERP")}</option>
             </select>
-          </Field>
-          <Field label={text("رقم المستند", "Document number")}>
-            <input value={sourceDocNo} onChange={(event) => setSourceDocNo(event.target.value)} disabled={sourceBusy}
-              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void loadSourceDocument(); } }}
-              dir="ltr" placeholder={text("أدخل رقم المستند", "Enter document number")} style={input} />
-          </Field>
-          <button type="button" onClick={() => void loadSourceDocument()} disabled={sourceBusy || !sourceDocNo.trim()}
-            style={{ ...btnSecondary, minHeight: 36, padding: "7px 15px", color: "#fff", background: "var(--si-accent)", borderColor: "var(--si-accent)", fontWeight: 800, whiteSpace: "nowrap", opacity: sourceBusy || !sourceDocNo.trim() ? 0.6 : 1 }}>
-            {sourceBusy ? text("جارٍ التحميل…", "Loading…") : text("تحميل إلى الفاتورة", "Load into invoice")}
-          </button>
-          {sourceFeedback && (
-            <div className="zsales-source-loader-status" role={sourceFeedback.kind === "error" ? "alert" : "status"}
-              style={{ color: sourceFeedback.kind === "error" ? "#991b1b" : "#166534", background: sourceFeedback.kind === "error" ? "#fef2f2" : "#f0fdf4", border: `1px solid ${sourceFeedback.kind === "error" ? "#fecaca" : "#bbf7d0"}`, borderRadius: 7, padding: "7px 9px" }}>
-              {sourceFeedback.text}
-            </div>
-          )}
-        </div>
-      )}
+          </div>
+        }
+      />
 
       <div className="zsales-action-bar" role="group" aria-label={text("إجراءات الفاتورة السريعة", "Quick invoice actions")}>
         <div className="zsales-action-buttons">
@@ -1427,6 +1403,33 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         )}
       </div>
       </section>
+
+      {!isEdit && (
+        <div className="zsales-source-loader" role="group" aria-label={text("تحميل عرض سعر أو أمر بيع", "Load a quotation or sales order")}>
+          <p className="zsales-source-loader-title">{text("تحميل مستند سابق إلى الفاتورة", "Load a source document into this invoice")}</p>
+          <Field label={text("نوع المستند", "Document type")}>
+            <select value={sourceKind} onChange={(event) => setSourceKind(event.target.value as "quotation" | "sales_order")} disabled={sourceBusy} style={input}>
+              <option value="quotation">{text("عرض سعر", "Quotation")}</option>
+              <option value="sales_order">{text("أمر بيع", "Sales order")}</option>
+            </select>
+          </Field>
+          <Field label={text("رقم المستند", "Document number")}>
+            <input value={sourceDocNo} onChange={(event) => setSourceDocNo(event.target.value)} disabled={sourceBusy}
+              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void loadSourceDocument(); } }}
+              dir="ltr" placeholder={text("أدخل رقم المستند", "Enter document number")} style={input} />
+          </Field>
+          <button type="button" onClick={() => void loadSourceDocument()} disabled={sourceBusy || !sourceDocNo.trim()}
+            style={{ ...btnSecondary, minHeight: 30, padding: "5px 10px", color: "#fff", background: "var(--si-accent)", borderColor: "var(--si-accent)", fontWeight: 800, whiteSpace: "nowrap", opacity: sourceBusy || !sourceDocNo.trim() ? 0.6 : 1 }}>
+            {sourceBusy ? text("جارٍ التحميل…", "Loading…") : text("تحميل إلى الفاتورة", "Load into invoice")}
+          </button>
+          {sourceFeedback && (
+            <div className="zsales-source-loader-status" role={sourceFeedback.kind === "error" ? "alert" : "status"}
+              style={{ color: sourceFeedback.kind === "error" ? "#991b1b" : "#166534", background: sourceFeedback.kind === "error" ? "#fef2f2" : "#f0fdf4", border: `1px solid ${sourceFeedback.kind === "error" ? "#fecaca" : "#bbf7d0"}`, borderRadius: 7, padding: "7px 9px" }}>
+              {sourceFeedback.text}
+            </div>
+          )}
+        </div>
+      )}
 
       <section className="zsales-section zsales-items-section zsales-invoice-lines">
       <div className="zsales-section-heading">

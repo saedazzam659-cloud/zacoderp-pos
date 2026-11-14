@@ -148,23 +148,26 @@ export function FormTabs<K extends string>({ tabs, active, onChange, accentColor
   );
 }
 
-export function DocumentFormHeader({ title, hint, actionLabel, actionTitle, onAction }: {
+export function DocumentFormHeader({ title, hint, actionLabel, actionTitle, onAction, trailing }: {
   title: string;
   hint?: string;
   actionLabel?: string;
   actionTitle?: string;
   onAction?: () => void;
+  trailing?: ReactNode;
 }) {
   return (
     <div style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, minWidth: 0,
+      ...(trailing ? { flexWrap: "wrap" as const } : {}),
       padding: "6px 10px", marginBottom: 2, border: "1px solid #bfdbfe", borderRight: "4px solid #2563eb",
       borderRadius: 9, background: "linear-gradient(100deg,#eff6ff 0%,#f8fbff 100%)", flexShrink: 0,
     }}>
-      <div style={{ minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flex: 1 }}>
+      <div style={{ minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flex: trailing ? "1 1 360px" : 1 }}>
         <strong style={{ fontSize: 15, color: "#1e3a8a", whiteSpace: "nowrap" }}>{title}</strong>
         {hint && <span style={{ fontSize: 11, color: "#475569", textAlign: "end" }}>{hint}</span>}
       </div>
+      {trailing && <div style={{ flex: "0 1 auto", minWidth: 0 }}>{trailing}</div>}
       {actionLabel && onAction && (
         <button type="button" onClick={onAction} title={actionTitle}
           style={{ flex: "0 0 auto", padding: "5px 9px", border: "1px solid #93c5fd", borderRadius: 7, color: "#1d4ed8", background: "#fff", font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
