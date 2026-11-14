@@ -11,7 +11,7 @@
 // step that caused "تم السحب: 5 عميل، 184 صنف" to show on the dashboard
 // while the sales screen kept reporting "لا توجد أصناف".
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createApi, type SyncStatus } from "../lib/api";
 import { useCurrencySymbol, getCountryIso, setCountryIso, countryByIso, ARAB_COUNTRIES } from "../lib/currency";
@@ -385,6 +385,8 @@ export default function PosShell({
   const [heartbeatErr, setHeartbeatErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showPeripherals, setShowPeripherals] = useState(false);
+  const [showMoreControls, setShowMoreControls] = useState(false);
+  const moreControlsButtonRef = useRef<HTMLButtonElement | null>(null);
   // ── Tabbed workspace ──────────────────────────────────────────────
   // Multiple screens stay mounted at once (keep-alive) so each preserves its
   // own state; the user switches between them via the tab bar. `activeTab` is
@@ -432,6 +434,16 @@ export default function PosShell({
     () => VIEW_TO_GROUP[view] ?? null,
   );
   const [openGroupPosition, setOpenGroupPosition] = useState({ top: 0, left: 0 });
+  useEffect(() => {
+    if (!showMoreControls) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setShowMoreControls(false);
+      moreControlsButtonRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showMoreControls]);
   // NOTE: the sidebar accordion is now controlled SOLELY by explicit clicks on
   // group headers. We intentionally do NOT auto-open the active view's group on
   // every `view` change — switching tabs (clicking a tab chip) used to re-open
@@ -1155,18 +1167,14 @@ export default function PosShell({
           <div
             style={{
               ...S.topnavItems,
-              ...(language === "en" ? {
-                flexWrap: "nowrap" as const,
-                overflowX: "auto" as const,
-                overflowY: "hidden" as const,
-                minWidth: 0,
-                scrollbarWidth: "thin" as const,
-              } : {}),
             }}
-            onScroll={() => { if (openGroup) setOpenGroup(null); }}
+            onScroll={() => {
+              if (openGroup) setOpenGroup(null);
+              if (showMoreControls) setShowMoreControls(false);
+            }}
             onWheel={(event) => {
-              if (language === "en" && event.currentTarget.scrollWidth > event.currentTarget.clientWidth && event.deltaY !== 0) {
-                event.currentTarget.scrollLeft += event.deltaY;
+              if (event.currentTarget.scrollWidth > event.currentTarget.clientWidth && event.deltaY !== 0) {
+                event.currentTarget.scrollLeft += language === "en" ? event.deltaY : -event.deltaY;
               }
             }}
           >
@@ -1175,7 +1183,7 @@ export default function PosShell({
                 const active = view === it.id;
                 const label = navLabel(it.id, it.label, language);
                 return (
-                  <button key={it.id} onClick={() => { setView(it.id); setOpenGroup(null); }}
+                  <button key={it.id} onClick={() => { setView(it.id); setOpenGroup(null); setShowMoreControls(false); }}
                     style={active ? S.topLeafActive : S.topLeaf} title={label}>
                     <span style={{ fontSize: 13 }}>{it.icon}</span>
                     <span>{label}</span>
@@ -1208,9 +1216,16 @@ export default function PosShell({
                     const hasActive = children.some((c) => c.id === view);
                     const badgeTotal = children.reduce((sum, c) => sum + (c.badge ?? 0), 0);
                     const dropdownPanel = (
-                      <div style={language === "en"
-                        ? { ...S.dropdownPanel, position: "fixed", top: openGroupPosition.top, left: openGroupPosition.left }
-                        : S.dropdownPanel}>
+                      <div dir={language === "en" ? "ltr" : "rtl"} style={{
+                        ...S.dropdownPanel,
+                        position: "fixed",
+                        top: openGroupPosition.top,
+                        left: openGroupPosition.left,
+                        insetInlineStart: "auto",
+                        insetInlineEnd: "auto",
+                        width: 280,
+                        maxWidth: "calc(100vw - 16px)",
+                      }}>
                         {children.map((it) => {
                           const sub = g.subHeaders?.[it.id];
                           const active = view === it.id;
@@ -1236,9 +1251,15 @@ export default function PosShell({
                     return (
                       <div key={g.key} style={{ position: "relative" }}>
                         <button onClick={(event) => {
+                          setShowMoreControls(false);
                           if (isOpen) { setOpenGroup(null); return; }
                           const rect = event.currentTarget.getBoundingClientRect();
-                          setOpenGroupPosition({ top: rect.bottom + 6, left: rect.left });
+                          const panelWidth = Math.min(280, window.innerWidth - 16);
+                          const requestedLeft = language === "en" ? rect.left : rect.right - panelWidth;
+                          setOpenGroupPosition({
+                            top: rect.bottom + 6,
+                            left: Math.max(8, Math.min(requestedLeft, window.innerWidth - panelWidth - 8)),
+                          });
                           setOpenGroup(g.key);
                         }}
                           style={(isOpen || hasActive) ? S.topGroupActive : S.topGroup}
@@ -1248,7 +1269,7 @@ export default function PosShell({
                           {!isOpen && badgeTotal > 0 && <span style={S.topBadge}>{badgeTotal}</span>}
                           <span style={{ fontSize: 9, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▾</span>
                         </button>
-                        {isOpen && (language === "en" ? createPortal(dropdownPanel, document.body) : dropdownPanel)}
+                        {isOpen && createPortal(dropdownPanel, document.body)}
                       </div>
                     );
                   })}
@@ -1260,58 +1281,86 @@ export default function PosShell({
           </div>
           {/* Right-side controls (moved here from the old white top bar) */}
           <div style={S.topnavControls}>
-            <NumberSystemControl compact />
-            <LanguageControl compact />
-            <button
-              onClick={() => setShowPeripherals(true)}
-              style={S.periphBtn}
-              title={uiText("الأجهزة الطرفية", "Peripherals", language)}
-            >🖨️</button>
-            {cashierContext && !standalone && (
-              <div style={S.cashierChip} title={uiText(
-                `جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`,
-                `Session #${cashierContext.posSessionId} — open since ${new Date(cashierContext.openedAt).toLocaleString("en-GB")}`,
-                language,
-              )}>
-                <span style={S.cashierIcon}>👤</span>
-                <div style={S.cashierInfo}>
-                  <div style={S.cashierName}>{cashierContext.nameAr || cashierContext.username}</div>
-                  <div style={S.cashierMeta}>
-                    {cashierContext.branchName ?? "—"}
-                    {cashierContext.posTerminalName ? ` · ${cashierContext.posTerminalName}` : ""}
-                  </div>
-                </div>
-              </div>
-            )}
-            {standalone && standaloneSession && (
-              <div style={S.cashierChip} title={uiText(
-                `مستخدم محلي — دخل في ${new Date(standaloneSession.signedInAt).toLocaleString("ar-SA")}`,
-                `Local user — signed in at ${new Date(standaloneSession.signedInAt).toLocaleString("en-GB")}`,
-                language,
-              )}>
-                <span style={S.cashierIcon}>👤</span>
-                <div style={S.cashierInfo}>
-                  <div style={S.cashierName}>{standaloneSession.displayName || standaloneSession.username}</div>
-                  <div style={S.cashierMeta}>
-                    {uiText(standaloneSession.role === "admin" ? "مسؤول" : "كاشير", standaloneSession.role === "admin" ? "Administrator" : "Cashier", language)} · {uiText("مستقل", "Standalone", language)}
-                  </div>
-                </div>
-              </div>
-            )}
             {!standalone && <SyncIndicator status={status} heartbeatErr={heartbeatErr} />}
             {!standalone && <div style={S.deviceChip}>{uiText("جهاز", "Device", language)} #{deviceId || "—"}</div>}
-            {standalone && <div style={S.deviceChip} title={standaloneLicense?.licenseKey}>🔐 {uiText("ترخيص مستقل", "Standalone license", language)}</div>}
-            {onLogoutCashier && (
-              <button onClick={doLogoutCashier} disabled={loggingOut} style={S.logoutBtn}
-                      title={standalone
-                        ? uiText("تسجيل خروج المستخدم", "Sign out user", language)
-                        : uiText("تسجيل خروج الكاشير وإغلاق الوردية", "Sign out cashier and close shift", language)}>
-                {loggingOut ? "..." : `🚪 ${uiText("خروج", "Sign out", language)}`}
+            <div style={S.moreControlsWrap}>
+              <button
+                ref={moreControlsButtonRef}
+                type="button"
+                aria-haspopup="dialog"
+                aria-expanded={showMoreControls}
+                aria-controls="pos-shell-more-controls"
+                onClick={() => {
+                  setOpenGroup(null);
+                  setShowMoreControls((open) => !open);
+                }}
+                style={showMoreControls ? S.moreControlsButtonActive : S.moreControlsButton}
+                title={uiText("إعدادات وأدوات إضافية", "More settings and tools", language)}
+              >
+                <span aria-hidden="true">⋯</span>
+                <span>{uiText("المزيد", "More", language)}</span>
+                <span aria-hidden="true">▾</span>
               </button>
-            )}
+              {showMoreControls && (
+                <div id="pos-shell-more-controls" role="dialog" aria-label={uiText("المزيد من الأدوات", "More tools", language)} style={S.moreControlsPanel}>
+                  <div onClickCapture={() => setShowMoreControls(false)} style={S.moreControlsShortcuts}>
+                    <LanguageControl compact />
+                    <NumberSystemControl compact />
+                    <button
+                      type="button"
+                      onClick={() => { setShowMoreControls(false); setShowPeripherals(true); }}
+                      style={S.periphBtn}
+                      title={uiText("الأجهزة الطرفية", "Peripherals", language)}
+                    >🖨️</button>
+                  </div>
+                  {cashierContext && !standalone && (
+                    <div style={S.cashierChip} title={uiText(
+                      `جلسة #${cashierContext.posSessionId} — مفتوحة منذ ${new Date(cashierContext.openedAt).toLocaleString("ar-SA")}`,
+                      `Session #${cashierContext.posSessionId} — open since ${new Date(cashierContext.openedAt).toLocaleString("en-GB")}`,
+                      language,
+                    )}>
+                      <span style={S.cashierIcon}>👤</span>
+                      <div style={S.cashierInfo}>
+                        <div style={S.cashierName}>{cashierContext.nameAr || cashierContext.username}</div>
+                        <div style={S.cashierMeta}>
+                          {cashierContext.branchName ?? "—"}
+                          {cashierContext.posTerminalName ? ` · ${cashierContext.posTerminalName}` : ""}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {standalone && standaloneSession && (
+                    <div style={S.cashierChip} title={uiText(
+                      `مستخدم محلي — دخل في ${new Date(standaloneSession.signedInAt).toLocaleString("ar-SA")}`,
+                      `Local user — signed in at ${new Date(standaloneSession.signedInAt).toLocaleString("en-GB")}`,
+                      language,
+                    )}>
+                      <span style={S.cashierIcon}>👤</span>
+                      <div style={S.cashierInfo}>
+                        <div style={S.cashierName}>{standaloneSession.displayName || standaloneSession.username}</div>
+                        <div style={S.cashierMeta}>
+                          {uiText(standaloneSession.role === "admin" ? "مسؤول" : "كاشير", standaloneSession.role === "admin" ? "Administrator" : "Cashier", language)} · {uiText("مستقل", "Standalone", language)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {standalone && <div style={S.deviceChip} title={standaloneLicense?.licenseKey}>🔐 {uiText("ترخيص مستقل", "Standalone license", language)}</div>}
+                  {onLogoutCashier && (
+                    <button onClick={doLogoutCashier} disabled={loggingOut} style={{ ...S.logoutBtn, width: "100%" }}
+                            title={standalone
+                              ? uiText("تسجيل خروج المستخدم", "Sign out user", language)
+                              : uiText("تسجيل خروج الكاشير وإغلاق الوردية", "Sign out cashier and close shift", language)}>
+                      {loggingOut ? "..." : `🚪 ${uiText("خروج", "Sign out", language)}`}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </nav>
-        {openGroup && <div style={S.dropdownOverlay} onClick={() => setOpenGroup(null)} />}
+        {(openGroup || showMoreControls) && (
+          <div style={S.dropdownOverlay} onClick={() => { setOpenGroup(null); setShowMoreControls(false); }} />
+        )}
 
         {/* Subscription-expiry warning — its OWN slim full-width row directly
             below the nav so it never squeezes the menu bar (the menus keep
@@ -2179,9 +2228,14 @@ const S = {
   topnavBrand: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0, paddingInlineStart: 4 } as const,
   topnavBrandIcon: { width: 30, height: 30, borderRadius: 8, background: "linear-gradient(135deg, #22d3ee 0%, #2563eb 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 15, boxShadow: "0 2px 8px rgba(34,211,238,.3)" } as const,
   topnavBrandText: { fontSize: 13, fontWeight: 700, color: "#f8fafc", whiteSpace: "nowrap" as const } as const,
-  topnavItems: { display: "flex", alignItems: "center", flexWrap: "wrap" as const, gap: 3, rowGap: 5, flex: 1, overflow: "visible" as const } as const,
+  topnavItems: { display: "flex", alignItems: "center", flexWrap: "nowrap" as const, gap: 3, flex: 1, minWidth: 0, overflowX: "auto" as const, overflowY: "hidden" as const, scrollbarWidth: "thin" as const } as const,
   topnavDivider: { width: 1, height: 20, background: "#334155", margin: "0 3px", flexShrink: 0 } as const,
   topnavControls: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0, paddingInlineStart: 6 } as const,
+  moreControlsWrap: { position: "relative" as const, flexShrink: 0 } as const,
+  moreControlsButton: { display: "flex", alignItems: "center", gap: 5, height: 32, padding: "0 10px", border: "1px solid #475569", borderRadius: 8, background: "#1e293b", color: "#f8fafc", cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" as const } as const,
+  moreControlsButtonActive: { display: "flex", alignItems: "center", gap: 5, height: 32, padding: "0 10px", border: "1px solid #60a5fa", borderRadius: 8, background: "#334155", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" as const } as const,
+  moreControlsPanel: { position: "absolute" as const, top: "calc(100% + 6px)", insetInlineEnd: 0, zIndex: 70, minWidth: 250, maxWidth: "min(320px, calc(100vw - 16px))", maxHeight: "min(70vh, 560px)", overflowY: "auto" as const, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.22)", padding: 10, display: "flex", flexDirection: "column" as const, gap: 9 } as const,
+  moreControlsShortcuts: { display: "flex", alignItems: "center", gap: 7, paddingBottom: 8, borderBottom: "1px solid #e2e8f0" } as const,
   topLeaf: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "transparent", color: "#cbd5e1", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontFamily: "inherit", height: 30, flexShrink: 0, transition: "all .12s" } as const,
   topLeafActive: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "linear-gradient(180deg, rgba(37,99,235,.35) 0%, rgba(37,99,235,.15) 100%)", color: "#fff", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", height: 30, flexShrink: 0, boxShadow: "inset 0 -2px 0 #3b82f6" } as const,
   topGroup: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "transparent", color: "#e2e8f0", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", height: 30, flexShrink: 0, transition: "all .12s" } as const,

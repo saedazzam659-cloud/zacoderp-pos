@@ -11,6 +11,7 @@ import {
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Actions, Empty,
   input, btnPrimary, btnSecondary, btnDanger, btnLink, fmt, todayStr, SearchCombobox,
+  moveToAdjacentGridCell,
   useRowSelect, SelectTh, SelectCell, ActionBar, ActionBtn, errText,
   ExportButtons, GridFilterRow, SortableTh, gridToExportCols, useGridFilter,
   type GridColumn,
@@ -765,6 +766,23 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
     inputClassName: "zfield",
     onEnterNavigate: (element: HTMLElement | null) => advanceFrom(element),
   };
+  const navGridInputProps = {
+    ...navInputProps,
+    "data-farrow": "1",
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+      if ((event.key === "ArrowLeft" || event.key === "ArrowRight")
+        && moveToAdjacentGridCell(event.currentTarget, event.key)) {
+        event.preventDefault();
+        return;
+      }
+      navInputProps.onKeyDown(event);
+    },
+  };
+  const navGridComboProps = {
+    ...navComboProps,
+    arrowNavAttr: "1",
+    onArrowNavigate: moveToAdjacentGridCell,
+  };
 
   // Prev/next navigation across the current filtered MANUAL entries (edit mode).
   const navList = navIds ?? [];
@@ -1365,14 +1383,14 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
               return (
                 <tr key={i}>
                   <Td>
-                    <SearchCombobox value={l.accountId} onChange={(v) => setLine(i, { accountId: Number(v) })} style={input} options={accountOptions} {...(!readOnly && !isTaxLine ? navComboProps : {})} />
+                    <SearchCombobox value={l.accountId} onChange={(v) => setLine(i, { accountId: Number(v) })} style={input} options={accountOptions} {...(!readOnly && !isTaxLine ? navGridComboProps : {})} />
                   </Td>
-                  <Td><input value={l.description ?? ""} onChange={(e) => setLine(i, { description: e.target.value || null })} style={input} {...(!readOnly && !isTaxLine ? navInputProps : {})} /></Td>
+                  <Td><input value={l.description ?? ""} onChange={(e) => setLine(i, { description: e.target.value || null })} style={input} {...(!readOnly && !isTaxLine ? navGridInputProps : {})} /></Td>
                   <Td>
-                    <SearchCombobox value={l.costCenterId ?? ""} onChange={(v) => setLine(i, { costCenterId: v === "" ? null : Number(v) })} style={input} options={ccOptions} {...(!readOnly && !isTaxLine ? navComboProps : {})} />
+                    <SearchCombobox value={l.costCenterId ?? ""} onChange={(v) => setLine(i, { costCenterId: v === "" ? null : Number(v) })} style={input} options={ccOptions} {...(!readOnly && !isTaxLine ? navGridComboProps : {})} />
                   </Td>
-                  <Td><input type="number" step="0.01" value={l.debit || (isZeroRated && (l.description ?? "").includes("مشتريات") ? "0.00" : "")} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { debit: Number(e.target.value) || 0, credit: 0 })} style={input} {...(!readOnly && !isTaxLine ? navInputProps : {})} /></Td>
-                  <Td><input type="number" step="0.01" value={l.credit || (isZeroRated && (l.description ?? "").includes("مبيعات") ? "0.00" : "")} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { credit: Number(e.target.value) || 0, debit: 0 })} style={input} {...(!readOnly && !isTaxLine ? navInputProps : {})} /></Td>
+                  <Td><input type="number" step="0.01" value={l.debit || (isZeroRated && (l.description ?? "").includes("مشتريات") ? "0.00" : "")} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { debit: Number(e.target.value) || 0, credit: 0 })} style={input} {...(!readOnly && !isTaxLine ? navGridInputProps : {})} /></Td>
+                  <Td><input type="number" step="0.01" value={l.credit || (isZeroRated && (l.description ?? "").includes("مبيعات") ? "0.00" : "")} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { credit: Number(e.target.value) || 0, debit: 0 })} style={input} {...(!readOnly && !isTaxLine ? navGridInputProps : {})} /></Td>
                   <Td style={{ position: "relative", overflow: "visible", textAlign: "center", whiteSpace: "nowrap" }}>
                     {isTaxLine ? (
                       <span title={uiText("سطر ضريبة", "Tax line", language)} style={{ color: "#64748b", fontSize: 11, fontWeight: 700 }}>

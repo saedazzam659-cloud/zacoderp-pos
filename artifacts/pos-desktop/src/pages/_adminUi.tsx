@@ -435,6 +435,37 @@ export type ComboOption = {
   disabled?: boolean;
 };
 
+export type GridArrowKey = "ArrowLeft" | "ArrowRight";
+
+/** Move horizontally between editable cells in the same table row. */
+export function moveToAdjacentGridCell(fromEl: HTMLElement | null, key: GridArrowKey): boolean {
+  const row = fromEl?.closest("tr");
+  if (!fromEl || !row) return false;
+  const current = fromEl.getBoundingClientRect();
+  const currentX = current.left + current.width / 2;
+  const candidates = Array.from(row.querySelectorAll<HTMLElement>("[data-farrow]"))
+    .filter((candidate) => {
+      if (candidate === fromEl || candidate.getClientRects().length === 0) return false;
+      if (candidate.getAttribute("aria-disabled") === "true") return false;
+      if ("disabled" in candidate && Boolean((candidate as HTMLInputElement).disabled)) return false;
+      const rect = candidate.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      return key === "ArrowRight" ? centerX > currentX : centerX < currentX;
+    })
+    .sort((a, b) => {
+      const distance = (el: HTMLElement) => {
+        const rect = el.getBoundingClientRect();
+        return Math.abs((rect.left + rect.width / 2) - currentX);
+      };
+      return distance(a) - distance(b);
+    });
+  for (const candidate of candidates) {
+    candidate.focus();
+    if (document.activeElement === candidate) return true;
+  }
+  return false;
+}
+
 type ComboProps = {
   value: string | number | null | undefined;
   onChange: (v: string | number) => void;
@@ -452,11 +483,15 @@ type ComboProps = {
    *  closed with a value already chosen, to skip ahead). Receives the inner
    *  input element so the parent can move focus to the next field. */
   onEnterNavigate?: (fromEl: HTMLElement | null) => void;
+  /** Moves between adjacent editable cells when a horizontal arrow is pressed. */
+  onArrowNavigate?: (fromEl: HTMLElement | null, key: GridArrowKey) => boolean;
+  /** Marks the input as a cell in a horizontal arrow-navigation row. */
+  arrowNavAttr?: string;
 };
 
 export function SearchCombobox({
   value, onChange, options, placeholder = "— اختر —", style, disabled, autoFocus,
-  navAttr, inputClassName, onEnterNavigate,
+  navAttr, inputClassName, onEnterNavigate, onArrowNavigate, arrowNavAttr,
 }: ComboProps) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -541,6 +576,9 @@ export function SearchCombobox({
   function onKey(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown") { e.preventDefault(); if (!open) { setOpen(true); return; } setHi((h) => Math.min(visibleOptions.length - 1, h + 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(0, h - 1)); }
+    else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && onArrowNavigate) {
+      if (onArrowNavigate(inputRef.current, e.key)) e.preventDefault();
+    }
     else if (e.key === "Enter") {
       e.preventDefault();
       if (!open) {
@@ -576,6 +614,7 @@ export function SearchCombobox({
         type="text"
         className={inputClassName}
         {...(navAttr ? { "data-fnav": navAttr } : {})}
+        {...(arrowNavAttr ? { "data-farrow": arrowNavAttr } : {})}
         disabled={disabled}
         autoFocus={autoFocus}
         value={open ? q : (selected ? selected.label : "")}
@@ -669,10 +708,12 @@ function DiscTypeToggle({ value, onChange, disabled }: {
  *  readout of the converted equivalent. When you type a percent it shows the
  *  resulting value (from `gross` = qty×unit); when you type a value it shows
  *  the equivalent percent. */
-export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmount, onType, navAttr, inputClassName, onEnterNavigate }: {
+export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmount, onType, navAttr, inputClassName, onEnterNavigate, onArrowNavigate, arrowNavAttr }: {
   amount: number; type: DiscType; gross?: number; sym?: string;
   onAmount: (v: number) => void; onType: (t: DiscType) => void;
   navAttr?: string; inputClassName?: string; onEnterNavigate?: (fromEl: HTMLElement | null) => void;
+  onArrowNavigate?: (fromEl: HTMLElement | null, key: GridArrowKey) => boolean;
+  arrowNavAttr?: string;
 }) {
   const sym = symOverride ?? currencySymbol();
   const g = Number(gross) || 0;
@@ -700,7 +741,17 @@ export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmou
           onChange={(e) => onAmount(Number(e.target.value) || 0)}
           className={inputClassName}
           {...(navAttr ? { "data-fnav": navAttr } : {})}
-          onKeyDown={onEnterNavigate ? (e) => { if (e.key === "Enter") { e.preventDefault(); onEnterNavigate(e.currentTarget); } } : undefined}
+          {...(arrowNavAttr ? { "data-farrow": arrowNavAttr } : {})}
+          onKeyDown={(e) => {
+            if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && onArrowNavigate && onArrowNavigate(e.currentTarget, e.key)) {
+              e.preventDefault();
+              return;
+            }
+            if (e.key === "Enter" && onEnterNavigate && !e.ctrlKey && !e.metaKey && !e.altKey) {
+              e.preventDefault();
+              onEnterNavigate(e.currentTarget);
+            }
+          }}
           style={{ ...input, padding: "8px 8px" }}
         />
         <DiscTypeToggle value={type} onChange={onType} />
@@ -717,11 +768,13 @@ export function LineDiscountCell({ amount, type, gross, sym: symOverride, onAmou
 /** Attractive totals panel; hosts the header (whole-invoice) discount control.
  *  When `rate` ≠ 1 (foreign-currency document) it also shows the grand total
  *  converted to the base currency. */
-export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride, rate, onHeaderDisc, onHeaderType, layout = "stacked" }: {
+export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride, rate, onHeaderDisc, onHeaderType, layout = "stacked", navAttr, inputClassName, onEnterNavigate }: {
   result: DiscountResult;
   headerDisc: number; headerType: DiscType; sym?: string; rate?: number;
   onHeaderDisc: (v: number) => void; onHeaderType: (t: DiscType) => void;
   layout?: "stacked" | "compact";
+  navAttr?: string; inputClassName?: string;
+  onEnterNavigate?: (fromEl: HTMLElement | null) => void;
 }) {
   const sym = symOverride ?? currencySymbol();
   const m = (n: number) => `${fmt(n)} ${sym}`;
@@ -753,6 +806,13 @@ export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride
             <input
               type="number" step="0.01" min={0} value={headerDisc || ""} placeholder="0"
               onChange={(e) => onHeaderDisc(Number(e.target.value) || 0)}
+              className={inputClassName}
+              {...(navAttr ? { "data-fnav": navAttr } : {})}
+              onKeyDown={onEnterNavigate ? (e) => {
+                if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey) return;
+                e.preventDefault();
+                onEnterNavigate(e.currentTarget);
+              } : undefined}
               style={{ ...input, width: 74, height: 30, padding: "4px 6px", fontSize: 12 }}
             />
             <DiscTypeToggle value={headerType} onChange={onHeaderType} />
@@ -794,6 +854,13 @@ export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride
           <input
             type="number" step="0.01" min={0} value={headerDisc || ""} placeholder="0"
             onChange={(e) => onHeaderDisc(Number(e.target.value) || 0)}
+            className={inputClassName}
+            {...(navAttr ? { "data-fnav": navAttr } : {})}
+            onKeyDown={onEnterNavigate ? (e) => {
+              if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey) return;
+              e.preventDefault();
+              onEnterNavigate(e.currentTarget);
+            } : undefined}
             style={{ ...input, width: 96, padding: "6px 8px" }}
           />
           <DiscTypeToggle value={headerType} onChange={onHeaderType} />
@@ -832,9 +899,11 @@ export function InvoiceTotals({ result, headerDisc, headerType, sym: symOverride
  *  The exchange-rate input is locked to 1 while the base currency is selected;
  *  for a foreign currency the user enters the rate that converts one unit of
  *  the document currency into the base currency. */
-export function CurrencyExchangeFields({ currency, exchangeRate, onCurrency, onRate }: {
+export function CurrencyExchangeFields({ currency, exchangeRate, onCurrency, onRate, navAttr, inputClassName, onEnterNavigate }: {
   currency: string; exchangeRate: number;
   onCurrency: (code: string) => void; onRate: (v: number) => void;
+  navAttr?: string; inputClassName?: string;
+  onEnterNavigate?: (fromEl: HTMLElement | null) => void;
 }) {
   const base = baseCurrencyCode();
   const isBase = currency === base;
@@ -845,6 +914,9 @@ export function CurrencyExchangeFields({ currency, exchangeRate, onCurrency, onR
           value={currency}
           onChange={(v) => onCurrency(String(v))}
           style={input}
+          navAttr={navAttr}
+          inputClassName={inputClassName}
+          onEnterNavigate={onEnterNavigate}
           options={CURRENCIES.map((c) => ({
             value: c.code,
             label: `${c.nameAr ? c.nameAr + " " : ""}(${c.code})${c.code === base ? " — أساسية" : ""}`,
@@ -858,6 +930,13 @@ export function CurrencyExchangeFields({ currency, exchangeRate, onCurrency, onR
           disabled={isBase}
           placeholder="1"
           onChange={(e) => onRate(Number(e.target.value) || 0)}
+          className={inputClassName}
+          {...(navAttr ? { "data-fnav": navAttr } : {})}
+          onKeyDown={onEnterNavigate ? (e) => {
+            if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey) return;
+            e.preventDefault();
+            onEnterNavigate(e.currentTarget);
+          } : undefined}
           style={{ ...input, background: isBase ? "#f1f5f9" : "#fff", color: isBase ? "#64748b" : undefined }}
         />
       </Field>

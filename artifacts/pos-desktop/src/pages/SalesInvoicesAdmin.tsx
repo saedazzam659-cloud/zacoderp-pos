@@ -28,7 +28,7 @@ import {
 import {
   Page, Card, Table, Th, Td, Field, ErrorMsg, Empty, Pagination, pageSlice,
   input, btnPrimary, btnSecondary, btnLink, fmt, todayStr, SearchCombobox,
-  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, DocumentFormHeader,
+  LineDiscountCell, InvoiceTotals, CurrencyExchangeFields, DocumentFormHeader, moveToAdjacentGridCell,
   documentFormStyles, docFormShell, EmptyItemsRow,
   linesScroll, docFormPinned,
   useGridFilter, GridToolbar, SortableTh, GridFilterRow, type GridColumn,
@@ -727,11 +727,32 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     }
   }
   const onEnterAdv = (e: React.KeyboardEvent<HTMLElement>) => {
-    if (e.key === "Enter") { e.preventDefault(); advanceFrom(e.currentTarget); }
+    if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      advanceFrom(e.currentTarget);
+    }
   };
   // Spread onto native inputs / comboboxes to enrol them in the Enter chain.
   const navInput = { className: "zfield", "data-fnav": "1", onKeyDown: onEnterAdv } as const;
   const navCombo = { navAttr: "1", inputClassName: "zfield", onEnterNavigate: (el: HTMLElement | null) => advanceFrom(el) } as const;
+  const navGridInput = {
+    className: "zfield",
+    "data-fnav": "1",
+    "data-farrow": "1",
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+      if ((event.key === "ArrowLeft" || event.key === "ArrowRight")
+        && moveToAdjacentGridCell(event.currentTarget, event.key)) {
+        event.preventDefault();
+        return;
+      }
+      onEnterAdv(event);
+    },
+  } as const;
+  const navGridCombo = {
+    ...navCombo,
+    arrowNavAttr: "1",
+    onArrowNavigate: moveToAdjacentGridCell,
+  } as const;
 
   const selectedCustomer = deps.customers.find((c) => c.id === customerId) ?? null;
   const selectedLineCount = lines.filter((line) => Number(line.itemId) > 0).length;
@@ -1384,7 +1405,15 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           />
         </Field>
         )}
-        <CurrencyExchangeFields currency={currency} exchangeRate={exchangeRate} onCurrency={setCurrency} onRate={setExchangeRate} />
+        <CurrencyExchangeFields
+          currency={currency}
+          exchangeRate={exchangeRate}
+          onCurrency={setCurrency}
+          onRate={setExchangeRate}
+          navAttr="1"
+          inputClassName="zfield"
+          onEnterNavigate={(el) => advanceFrom(el)}
+        />
         {invoiceType === "standard" && (
           <div style={{ gridColumn: "1 / -1", marginBottom: 10, padding: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{text("بيانات المشتري (للفاتورة الضريبية)", "Buyer details (for tax invoices)")}</div>
@@ -1408,14 +1437,20 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         <div className="zsales-source-loader" role="group" aria-label={text("تحميل عرض سعر أو أمر بيع", "Load a quotation or sales order")}>
           <p className="zsales-source-loader-title">{text("تحميل مستند سابق إلى الفاتورة", "Load a source document into this invoice")}</p>
           <Field label={text("نوع المستند", "Document type")}>
-            <select value={sourceKind} onChange={(event) => setSourceKind(event.target.value as "quotation" | "sales_order")} disabled={sourceBusy} style={input}>
+            <select value={sourceKind} onChange={(event) => setSourceKind(event.target.value as "quotation" | "sales_order")} disabled={sourceBusy} style={input} {...navInput}>
               <option value="quotation">{text("عرض سعر", "Quotation")}</option>
               <option value="sales_order">{text("أمر بيع", "Sales order")}</option>
             </select>
           </Field>
           <Field label={text("رقم المستند", "Document number")}>
             <input value={sourceDocNo} onChange={(event) => setSourceDocNo(event.target.value)} disabled={sourceBusy}
-              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void loadSourceDocument(); } }}
+              className="zfield" data-fnav="1"
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.altKey) return;
+                event.preventDefault();
+                if (sourceDocNo.trim()) void loadSourceDocument();
+                else advanceFrom(event.currentTarget);
+              }}
               dir="ltr" placeholder={text("أدخل رقم المستند", "Enter document number")} style={input} />
           </Field>
           <button type="button" onClick={() => void loadSourceDocument()} disabled={sourceBusy || !sourceDocNo.trim()}
@@ -1485,7 +1520,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                         <SearchCombobox
                           value={l.itemId}
                           onChange={(v) => setLine(i, { itemId: Number(v) })}
-                          {...navCombo}
+                          {...navGridCombo}
                           style={{ ...input, minWidth: 0 }}
                           options={itemOptions}
                         />
@@ -1511,18 +1546,18 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                         <SearchCombobox
                           value={l.unitKey ?? "base"}
                           onChange={(v) => setLine(i, { unitKey: String(v) })}
-                          {...navCombo}
+                          {...navGridCombo}
                           style={input}
                           options={unitOpts}
                         />
                       );
                     })()}
                   </Td>
-                  <Td><input type="number" step="0.001" value={blankIfZero(l.qty, hideZeros)} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
-                  {showFreeQuantityColumn && <Td><input type="number" step="0.001" value={blankIfZero(l.freeQty ?? 0, hideZeros)} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>}
-                  <Td><input type="number" step="0.01" value={blankIfZero(l.unitPrice, hideZeros)} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navInput} /></Td>
-                  <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} navAttr="1" inputClassName="zfield" onEnterNavigate={(el) => advanceFrom(el)} /></Td>
-                  <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navInput} /></Td>
+                  <Td><input type="number" step="0.001" value={blankIfZero(l.qty, hideZeros)} onChange={(e) => setLine(i, { qty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navGridInput} /></Td>
+                  {showFreeQuantityColumn && <Td><input type="number" step="0.001" value={blankIfZero(l.freeQty ?? 0, hideZeros)} onChange={(e) => setLine(i, { freeQty: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navGridInput} /></Td>}
+                  <Td><input type="number" step="0.01" value={blankIfZero(l.unitPrice, hideZeros)} onChange={(e) => setLine(i, { unitPrice: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center", fontWeight: 600 }} {...navGridInput} /></Td>
+                  <Td><LineDiscountCell amount={l.disc ?? 0} type={l.discType ?? "percent"} gross={(Number(l.qty) || 0) * (Number(l.unitPrice) || 0)} sym={docSym} onAmount={(v) => setLine(i, { disc: v })} onType={(t) => setLine(i, { discType: t })} navAttr="1" arrowNavAttr="1" inputClassName="zfield" onEnterNavigate={(el) => advanceFrom(el)} onArrowNavigate={moveToAdjacentGridCell} /></Td>
+                  <Td><input type="number" step="0.01" value={l.vatRate} onChange={(e) => setLine(i, { vatRate: Number(e.target.value) || 0 })} style={{ ...input, textAlign: "center" }} {...navGridInput} /></Td>
                   <Td num style={{ fontWeight: 700, color: "#0f172a" }}>{docSym} {fmt(l.lineTotal)}</Td>
                   <Td>
                     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 3 }}>
@@ -1563,6 +1598,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                             <SearchCombobox
                               value={l.brandId ?? ""}
                               onChange={(v) => setLine(i, { brandId: v === "" ? null : Number(v) })}
+                              {...navGridCombo}
                               style={input}
                               options={[
                                 { value: "", label: text("بدون علامة تجارية", "No brand") },
@@ -1573,7 +1609,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                         )}
                         <div style={{ gridColumn: itemHasBrands(l.itemId) ? undefined : "1 / -1" }}>
                           <label className="zline-detail-label">{text("ملاحظة السطر", "Line note")}</label>
-                          <input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} {...navInput} />
+                          <input value={l.note ?? ""} onChange={(e) => setLine(i, { note: e.target.value })} style={input} {...navGridInput} />
                         </div>
                       </div>
                     </Td>
@@ -1586,7 +1622,19 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       </Table>
       </div>
       <div style={docFormPinned}>
-      <InvoiceTotals layout="compact" result={result} headerDisc={headerDisc} headerType={headerDiscType} sym={docSym} rate={effRate} onHeaderDisc={setHeaderDisc} onHeaderType={setHeaderDiscType} />
+      <InvoiceTotals
+        layout="compact"
+        result={result}
+        headerDisc={headerDisc}
+        headerType={headerDiscType}
+        sym={docSym}
+        rate={effRate}
+        onHeaderDisc={setHeaderDisc}
+        onHeaderType={setHeaderDiscType}
+        navAttr="1"
+        inputClassName="zfield"
+        onEnterNavigate={(el) => advanceFrom(el)}
+      />
       </div>
       </section>
 
