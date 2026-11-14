@@ -24,6 +24,7 @@ import { getDefaultUom, listUom, type Uom } from "../lib/uom";
 import { listWarehouses, type Warehouse } from "../lib/inventory";
 import { listSalespersons, type Salesperson } from "../lib/salespersons";
 import { printSalesDoc, type PrintDoc } from "../lib/invoicePrint";
+import { getSalesInvoiceAutoPrintEnabled, getSalesInvoiceAutoPrintFormat } from "../lib/invoicePrintPreferences";
 import { openWhatsApp, buildDocWhatsAppText } from "../lib/whatsapp";
 import {
   getCompanyProfile, useHideZeros, useShowFreeQuantityColumn, blankIfZero, uiText, useUiLanguage,
@@ -1344,6 +1345,13 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         await updateSalesInvoice(initial.id, payload);
         saveDocDiscount("sales_invoice", initial.id, discOverlay);
         saveInvoiceLineBrands(initial.id, brandSnapshot);
+        try {
+          await autoPrintSavedInvoice(initial.id);
+        } catch (e: any) {
+          const detail = errText(e, text("خطأ غير معروف", "Unknown error"));
+          setErr(text(`تم حفظ الفاتورة لكن تعذرت الطباعة: ${detail}`, `Invoice saved, but printing failed: ${detail}`));
+          return;
+        }
         onDone();
         return;
       }
@@ -1386,9 +1394,24 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           return;
         }
       }
+      try {
+        await autoPrintSavedInvoice(id);
+      } catch (e: any) {
+        const detail = errText(e, text("خطأ غير معروف", "Unknown error"));
+        setErr(text(`تم حفظ الفاتورة لكن تعذرت الطباعة: ${detail}`, `Invoice saved, but printing failed: ${detail}`));
+        return;
+      }
       onDone();
     } catch (e: any) { setErr(errText(e, text("فشل", "Could not save invoice."))); }
     finally { setBusy(false); }
+  }
+
+  async function autoPrintSavedInvoice(id: number) {
+    if (!getSalesInvoiceAutoPrintEnabled()) return;
+    // Read the persisted invoice so totals, line order, and any ZATCA QR match
+    // the saved document rather than the unsaved form state.
+    const savedInvoice = await getSalesInvoice(id);
+    await printSalesDoc(getSalesInvoiceAutoPrintFormat(), invoiceToPrintDoc(savedInvoice));
   }
 
   return (

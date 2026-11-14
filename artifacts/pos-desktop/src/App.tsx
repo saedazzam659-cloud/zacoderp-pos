@@ -57,6 +57,7 @@ import { initBridge, refreshBridge } from "./lib/bridge";
 import { clockGuardCheck, clockGuardClearOnline } from "./lib/clockGuard";
 import ClockTamperLocked from "./pages/ClockTamperLocked";
 import { observeNumberSystem } from "./lib/numberDisplay";
+import { installNumberInputDefaultReplacement } from "./lib/numberInputDefaultReplacement";
 
 type BootState =
   | { phase: "checking" }
@@ -103,6 +104,7 @@ export default function App() {
 
   useEffect(() => { void boot(); }, []);
   useEffect(() => observeNumberSystem(document), []);
+  useEffect(() => installNumberInputDefaultReplacement(document), []);
   useEffect(() => {
     document.documentElement.lang = language;
     document.documentElement.dir = language === "en" ? "ltr" : "rtl";

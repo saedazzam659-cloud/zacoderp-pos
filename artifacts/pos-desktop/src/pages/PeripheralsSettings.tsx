@@ -20,6 +20,10 @@ import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { TAURI_MODE } from "../lib/tauri-shim";
 import { SearchCombobox } from "./_adminUi";
 import { uiText, useUiLanguage } from "../lib/appSettings";
+import {
+  getSalesInvoiceAutoPrintEnabled, setSalesInvoiceAutoPrintEnabled,
+  getSalesInvoiceAutoPrintFormat, setSalesInvoiceAutoPrintFormat,
+} from "../lib/invoicePrintPreferences";
 
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 const LS_SERIAL = "pos_desktop_peripherals_serial_port";
@@ -35,6 +39,8 @@ export default function PeripheralsSettings({ onClose }: Props) {
   const [printer, setPrinter] = useState<string>(() => localStorage.getItem(LS_PRINTER) ?? "");
   const [serial, setSerial] = useState<string>(() => localStorage.getItem(LS_SERIAL) ?? "");
   const [baud, setBaud] = useState<number>(() => Number(localStorage.getItem(LS_BAUD) ?? 9600));
+  const [autoPrintSalesInvoices, setAutoPrintSalesInvoices] = useState(getSalesInvoiceAutoPrintEnabled);
+  const [autoPrintFormat, setAutoPrintFormat] = useState(getSalesInvoiceAutoPrintFormat);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [lastScan, setLastScan] = useState<string>("");
@@ -72,6 +78,14 @@ export default function PeripheralsSettings({ onClose }: Props) {
   function persistPrinter(v: string) { setPrinter(v); localStorage.setItem(LS_PRINTER, v); }
   function persistSerial(v: string) { setSerial(v); localStorage.setItem(LS_SERIAL, v); }
   function persistBaud(v: number) { setBaud(v); localStorage.setItem(LS_BAUD, String(v)); }
+  function persistAutoPrintSalesInvoices(v: boolean) {
+    setAutoPrintSalesInvoices(v);
+    setSalesInvoiceAutoPrintEnabled(v);
+  }
+  function persistAutoPrintFormat(v: "a4" | "thermal") {
+    setAutoPrintFormat(v);
+    setSalesInvoiceAutoPrintFormat(v);
+  }
 
   async function doTestPrint() {
     if (!printer) { setMsg({ kind: "err", text: text("اختر طابعة أولاً", "Select a printer first.") }); return; }
@@ -144,6 +158,46 @@ export default function PeripheralsSettings({ onClose }: Props) {
               })),
             ]}
           />
+        </section>
+
+        <section style={S.section} data-testid="peripherals-auto-print-sales-invoices">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <label htmlFor="auto-print-sales-invoices" style={S.label}>
+                {text("الطباعة التلقائية لفواتير المبيعات", "Auto-print sales invoices")}
+              </label>
+              <small style={{ display: "block", color: "#64748b", lineHeight: 1.6 }}>
+                {text("يفتح نموذج الطباعة تلقائيًا بعد نجاح حفظ الفاتورة.", "Automatically opens the print layout after an invoice saves successfully.")}
+              </small>
+            </div>
+            <input
+              id="auto-print-sales-invoices"
+              type="checkbox"
+              checked={autoPrintSalesInvoices}
+              onChange={(e) => persistAutoPrintSalesInvoices(e.target.checked)}
+              aria-label={text("تفعيل الطباعة التلقائية لفواتير المبيعات", "Enable automatic sales-invoice printing")}
+              style={{ width: 20, height: 20, flex: "0 0 auto", accentColor: "#2563eb" }}
+            />
+          </div>
+          {autoPrintSalesInvoices && (
+            <div style={{ marginTop: 12 }}>
+              <label htmlFor="auto-print-sales-invoice-format" style={S.label}>
+                {text("نموذج الطباعة", "Print layout")}
+              </label>
+              <select
+                id="auto-print-sales-invoice-format"
+                value={autoPrintFormat}
+                onChange={(e) => persistAutoPrintFormat(e.target.value === "thermal" ? "thermal" : "a4")}
+                style={S.input}
+              >
+                <option value="a4">{text("A4", "A4")}</option>
+                <option value="thermal">{text("حراري (80 مم)", "Thermal (80 mm)")}</option>
+              </select>
+              <small style={{ display: "block", color: "#64748b", marginTop: 5, lineHeight: 1.6 }}>
+                {text("ستُفتح نافذة الطباعة المعتادة؛ اختيار الطابعة يتم من Windows.", "The usual print dialog opens; choose the printer in Windows.")}
+              </small>
+            </div>
+          )}
         </section>
 
         <section style={S.section}>
