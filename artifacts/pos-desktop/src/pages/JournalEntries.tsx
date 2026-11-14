@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useDataRefresh } from "../lib/dataBus";
 import { applyNumberSystemToDocument } from "../lib/numberDisplay";
 import {
@@ -733,6 +733,38 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
   const sourceLocked = isEdit && !!init && !isManual(init);
   const postedNotice = isEdit && !!init && init.status === "posted" && !sourceLocked;
   const readOnly = sourceLocked;
+  const formRef = useRef<HTMLDivElement | null>(null);
+
+  function advanceFrom(element: HTMLElement | null) {
+    const root = formRef.current;
+    if (!root || !element) return;
+    const fields = Array.from(root.querySelectorAll<HTMLElement>("[data-fnav]"));
+    const currentIndex = fields.indexOf(element);
+    if (currentIndex < 0) return;
+    for (let index = currentIndex + 1; index < fields.length; index += 1) {
+      const next = fields[index];
+      const disabled = "disabled" in next && Boolean((next as HTMLInputElement).disabled);
+      if (disabled || next.getAttribute("aria-disabled") === "true" || next.getClientRects().length === 0) continue;
+      next.focus();
+      if (document.activeElement !== next) continue;
+      if (next instanceof HTMLInputElement && ["text", "search", "number"].includes(next.type)) next.select();
+      return;
+    }
+  }
+
+  const navInputProps = {
+    "data-fnav": "1",
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+      if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.altKey) return;
+      event.preventDefault();
+      advanceFrom(event.currentTarget);
+    },
+  };
+  const navComboProps = {
+    navAttr: "1",
+    inputClassName: "zfield",
+    onEnterNavigate: (element: HTMLElement | null) => advanceFrom(element),
+  };
 
   // Prev/next navigation across the current filtered MANUAL entries (edit mode).
   const navList = navIds ?? [];
@@ -820,10 +852,9 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
   }, [isEdit]);
 
   const leafAccounts = useMemo(() => accounts.filter((a) => a.isLeaf), [accounts]);
-  const accountOptions = useMemo(() => [
-    { value: 0, label: "— اختر —" },
-    ...leafAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` })),
-  ], [leafAccounts]);
+  const accountOptions = useMemo(() =>
+    leafAccounts.map((a) => ({ value: a.id, label: `${a.code} — ${a.nameAr}` })),
+  [leafAccounts]);
   const ccOptions = useMemo(() => costCenterPickerOptions(costCenters), [costCenters]);
 
   const totalDr = lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
@@ -1190,7 +1221,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
   const badgeText = isEdit ? (init?.entryNo ?? "") : (docNumber || suggestedNo);
 
   return (
-    <div className="zdoc-form zje-form" data-layout={journalLayout}>
+    <div ref={formRef} className="zdoc-form zje-form" data-layout={journalLayout}>
       <style>{journalEntryTemplateStyles}</style>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
         <h3 style={{ margin: 0 }}>{title}</h3>
@@ -1252,9 +1283,9 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
       )}
 
       <div className="zje-section zje-header-grid">
-        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} /></Field>
+        <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} {...(!readOnly ? navInputProps : {})} /></Field>
         <Field label="نوع القيد">
-          <select value={entryType} onChange={(e) => setEntryType(e.target.value as JeEntryType)} style={input}>
+          <select value={entryType} onChange={(e) => setEntryType(e.target.value as JeEntryType)} style={input} {...(!readOnly ? navInputProps : {})}>
             {ENTRY_TYPES.map((t) => <option key={t.value} value={t.value}>{uiText(t.labelAr, t.labelEn, language)}</option>)}
           </select>
         </Field>
@@ -1262,17 +1293,19 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
           <input value={docNumber} disabled={isEdit}
             onChange={(e) => setDocNumber(e.target.value)}
             placeholder={isEdit ? "" : suggestedNo}
-            style={{ ...input, ...(isEdit ? { background: "#f1f5f9", color: "#64748b" } : {}) }} />
+            style={{ ...input, ...(isEdit ? { background: "#f1f5f9", color: "#64748b" } : {}) }}
+            {...(!readOnly ? navInputProps : {})} />
         </Field>
         <Field label={uiText("المرجع", "Reference", language)}>
           <input value={reference} onChange={(e) => setReference(e.target.value)} style={input}
             data-testid="input-journal-entry-reference"
-            placeholder={uiText("رقم المستند أو مرجعه", "Document number or reference", language)} />
+            placeholder={uiText("رقم المستند أو مرجعه", "Document number or reference", language)}
+            {...(!readOnly ? navInputProps : {})} />
         </Field>
       </div>
 
       <div className="zje-section">
-        <Field label="البيان العام"><input value={desc} onChange={(e) => onHeaderDescChange(e.target.value)} style={input} /></Field>
+        <Field label="البيان العام"><input value={desc} onChange={(e) => onHeaderDescChange(e.target.value)} style={input} {...(!readOnly ? navInputProps : {})} /></Field>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 13, color: "#475569" }}>
           <input type="checkbox" checked={autoCopyDesc} onChange={(e) => setAutoCopyDesc(e.target.checked)} />
           نسخ البيان العام تلقائياً لكل سطر
@@ -1282,10 +1315,10 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
 
       <div className="zje-section zje-header-grid zje-dimension-grid">
         <Field label="الفرع">
-          <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} />
+          <SearchCombobox value={branchId} onChange={(v) => setBranchId(v === "" ? "" : Number(v))} options={branchPickerOptions(branches)} style={input} {...(!readOnly ? navComboProps : {})} />
         </Field>
         <Field label="مركز التكلفة (افتراضي للسطور)">
-          <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={ccOptions} style={input} />
+          <SearchCombobox value={costCenterId} onChange={(v) => setCostCenterId(v === "" ? "" : Number(v))} options={ccOptions} style={input} {...(!readOnly ? navComboProps : {})} />
         </Field>
       </div>
 
@@ -1296,6 +1329,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
             onChange={(v) => setSelectedTaxId(v === "" ? "" : Number(v))}
             disabled={taxesLoading || readOnly}
             style={{ ...input, width: 290 }}
+            {...(!readOnly ? navComboProps : {})}
             options={[
               { value: "", label: uiText(`معدل الإعدادات (${fmt(getTaxRate())}%)`, `Settings rate (${fmt(getTaxRate())}%)`, language) },
               ...taxes.map((tax) => ({
@@ -1307,7 +1341,7 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
         <span style={{ color: "#64748b", fontSize: 12 }}>
           {selectedTax ? `${selectedTax.nameAr} · ${ratePctLabel}` : `${uiText("معدل الإعدادات", "Settings rate", language)} · ${ratePctLabel}`}
         </span>
-        <select value={vatMode} onChange={(e) => changeVatMode(e.target.value as "exclusive" | "inclusive")} disabled={readOnly || taxesLoading} style={{ ...input, width: 260 }}>
+        <select value={vatMode} onChange={(e) => changeVatMode(e.target.value as "exclusive" | "inclusive")} disabled={readOnly || taxesLoading} style={{ ...input, width: 260 }} {...(!readOnly ? navInputProps : {})}>
           <option value="exclusive">{uiText("غير شامل — تُضاف الضريبة للمبلغ", "Exclusive — add tax to amount", language)}</option>
           <option value="inclusive">{uiText("شامل — المبلغ يتضمن الضريبة", "Inclusive — amount includes tax", language)}</option>
         </select>
@@ -1331,14 +1365,14 @@ function JeForm({ accounts, state, navIds, onNavigate, onCancel, onDone }: {
               return (
                 <tr key={i}>
                   <Td>
-                    <SearchCombobox value={l.accountId} onChange={(v) => setLine(i, { accountId: Number(v) })} style={input} options={accountOptions} />
+                    <SearchCombobox value={l.accountId} onChange={(v) => setLine(i, { accountId: Number(v) })} style={input} options={accountOptions} {...(!readOnly && !isTaxLine ? navComboProps : {})} />
                   </Td>
-                  <Td><input value={l.description ?? ""} onChange={(e) => setLine(i, { description: e.target.value || null })} style={input} /></Td>
+                  <Td><input value={l.description ?? ""} onChange={(e) => setLine(i, { description: e.target.value || null })} style={input} {...(!readOnly && !isTaxLine ? navInputProps : {})} /></Td>
                   <Td>
-                    <SearchCombobox value={l.costCenterId ?? ""} onChange={(v) => setLine(i, { costCenterId: v === "" ? null : Number(v) })} style={input} options={ccOptions} />
+                    <SearchCombobox value={l.costCenterId ?? ""} onChange={(v) => setLine(i, { costCenterId: v === "" ? null : Number(v) })} style={input} options={ccOptions} {...(!readOnly && !isTaxLine ? navComboProps : {})} />
                   </Td>
-                  <Td><input type="number" step="0.01" value={l.debit || (isZeroRated && (l.description ?? "").includes("مشتريات") ? "0.00" : "")} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { debit: Number(e.target.value) || 0, credit: 0 })} style={input} /></Td>
-                  <Td><input type="number" step="0.01" value={l.credit || (isZeroRated && (l.description ?? "").includes("مبيعات") ? "0.00" : "")} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { credit: Number(e.target.value) || 0, debit: 0 })} style={input} /></Td>
+                  <Td><input type="number" step="0.01" value={l.debit || (isZeroRated && (l.description ?? "").includes("مشتريات") ? "0.00" : "")} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { debit: Number(e.target.value) || 0, credit: 0 })} style={input} {...(!readOnly && !isTaxLine ? navInputProps : {})} /></Td>
+                  <Td><input type="number" step="0.01" value={l.credit || (isZeroRated && (l.description ?? "").includes("مبيعات") ? "0.00" : "")} disabled={readOnly} onFocus={() => setActiveLine(i)} onChange={(e) => setLine(i, { credit: Number(e.target.value) || 0, debit: 0 })} style={input} {...(!readOnly && !isTaxLine ? navInputProps : {})} /></Td>
                   <Td style={{ position: "relative", overflow: "visible", textAlign: "center", whiteSpace: "nowrap" }}>
                     {isTaxLine ? (
                       <span title={uiText("سطر ضريبة", "Tax line", language)} style={{ color: "#64748b", fontSize: 11, fontWeight: 700 }}>
