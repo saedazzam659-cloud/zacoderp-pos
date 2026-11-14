@@ -1221,9 +1221,8 @@ export default function PosShell({
                         position: "fixed",
                         top: openGroupPosition.top,
                         left: openGroupPosition.left,
-                        insetInlineStart: "auto",
-                        insetInlineEnd: "auto",
                         width: 280,
+                        boxSizing: "border-box",
                         maxWidth: "calc(100vw - 16px)",
                       }}>
                         {children.map((it) => {
@@ -2241,7 +2240,7 @@ const S = {
   topGroup: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "transparent", color: "#e2e8f0", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "inherit", height: 30, flexShrink: 0, transition: "all .12s" } as const,
   topGroupActive: { display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" as const, padding: "5px 8px", border: "none", background: "rgba(148,163,184,.18)", color: "#fff", borderRadius: 7, cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", height: 30, flexShrink: 0 } as const,
   topBadge: { padding: "1px 7px", background: "#dc2626", color: "#fff", borderRadius: 999, fontSize: 10, fontWeight: 700 } as const,
-  dropdownPanel: { position: "absolute" as const, top: "calc(100% + 6px)", insetInlineStart: 0, zIndex: 60, minWidth: 230, maxHeight: 420, overflowY: "auto" as const, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.18)", padding: 6, display: "flex", flexDirection: "column" as const, gap: 2 } as const,
+  dropdownPanel: { position: "absolute" as const, top: "calc(100% + 6px)", zIndex: 60, minWidth: 230, maxHeight: 420, overflowY: "auto" as const, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,.18)", padding: 6, display: "flex", flexDirection: "column" as const, gap: 2 } as const,
   dropdownItem: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: "none", background: "transparent", color: "#334155", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: "inherit", textAlign: "right" as const, width: "100%", transition: "background .1s" } as const,
   dropdownItemActive: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: "none", background: "#eff6ff", color: "#1d4ed8", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", textAlign: "right" as const, width: "100%" } as const,
   dropdownSub: { padding: "8px 12px 4px", fontSize: 11, fontWeight: 700, color: "#94a3b8" } as const,
