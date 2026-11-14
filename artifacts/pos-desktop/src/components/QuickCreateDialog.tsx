@@ -182,6 +182,11 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
                       title={text("اضغط للعودة إلى الصنف وتعديله", "Select to edit this saved item")}
                       style={{ flex: "0 0 auto", minWidth: 150, maxWidth: 250, display: "grid", gap: 3, textAlign: "start", padding: "7px 10px", borderRadius: 9, border: `1px solid ${editingEntryKey === item.entryKey ? "#7c3aed" : "#e2e8f0"}`, background: editingEntryKey === item.entryKey ? "#f3e8ff" : "#fff", color: "#1e293b", cursor: "pointer", boxShadow: editingEntryKey === item.entryKey ? "0 0 0 2px #7c3aed22" : "0 1px 3px #0f172a0a" }}>
                       <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>{item.nameAr}</strong>
+                      {item.brandId != null && (
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#7c3aed", fontSize: 10, fontWeight: 700 }}>
+                          🏷 {brands.find((brand) => brand.id === item.brandId)?.[language === "en" ? "nameEn" : "nameAr"] || brands.find((brand) => brand.id === item.brandId)?.nameAr || `#${item.brandId}`}
+                        </span>
+                      )}
                       <span style={{ color: "#64748b", fontSize: 11, whiteSpace: "nowrap" }}>{formatNumber(item.quantity)} × {formatNumber(item.salePrice)}</span>
                     </button>
                   ))}

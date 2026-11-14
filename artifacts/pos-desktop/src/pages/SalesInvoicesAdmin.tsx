@@ -55,8 +55,15 @@ import {
 } from "../lib/zatca/localQueue";
 import { setSalesReturnPrefill } from "../lib/returnPrefill";
 import { type WindowsView } from "../lib/moduleRegistry";
+import { findDuplicateSalesInvoiceLineIndex } from "../lib/salesInvoiceLineIdentity";
 
-type FLine = SalesLine & DiscFields & { unitKey?: string; brandId?: number | null; brandName?: string | null; quickCreateEntryKey?: string };
+type FLine = SalesLine & DiscFields & {
+  unitKey?: string;
+  brandId?: number | null;
+  brandName?: string | null;
+  quickCreateEntryKey?: string;
+  quickCreateCreatedInSession?: boolean;
+};
 type SalesPaymentChoice = PaymentMethod | "mixed";
 
 function normalizeQuickCreateItemName(value: string): string {
@@ -988,7 +995,6 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       }
 
       const resolvedUom = uoms.find((unit) => unit.id === item.uomId) ?? uom;
-      const linePrice = reusedExisting && !input.salePriceTouched ? item.salePrice : (createdInSession ? item.salePrice : input.salePrice);
       const lineVatRate = selectedRate ?? (reusedExisting && !input.vatRateTouched ? item.vatRate : input.vatRate);
       const requestedBrand = input.brandId == null ? null : listBrands().find((brand) => brand.id === input.brandId) ?? null;
       const linkedBrands = reusedExisting ? listItemBrands(item.id).filter((brand) => brand.status === "active") : [];
@@ -996,12 +1002,67 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         ? requestedBrand
         : linkedBrands.length ? listBrands().find((brand) => brand.id === linkedBrands[0].brandId) ?? null : null;
       const chosenBrand = reusedExisting ? linkedBrand : requestedBrand;
+      const linkedBrandPrice = chosenBrand
+        ? listItemBrands(item.id).find((brand) => brand.brandId === chosenBrand.id)?.salePrice1
+        : null;
+      const linePrice = input.salePriceTouched
+        ? input.salePrice
+        : typeof linkedBrandPrice === "number" && linkedBrandPrice > 0
+          ? linkedBrandPrice
+          : item.salePrice;
+
+      const editingLineIndex = editing
+        ? lines.findIndex((line) => line.quickCreateEntryKey === context?.entryKey)
+        : -1;
+      const duplicateLineIndex = findDuplicateSalesInvoiceLineIndex(
+        lines,
+        item.id,
+        chosenBrand?.id ?? null,
+        editingLineIndex,
+      );
+      if (duplicateLineIndex >= 0) {
+        if (lines[duplicateLineIndex].brandId != null) {
+          setExpandedLineIndices((current) => new Set(current).add(duplicateLineIndex));
+        }
+        const duplicateLine = editingLineIndex >= 0 ? lines[editingLineIndex] : lines[duplicateLineIndex];
+        const duplicateEntryKey = editingLineIndex >= 0
+          ? context?.entryKey ?? editing?.entryKey ?? `quick-item-${item.id}`
+          : duplicateLine.quickCreateEntryKey ?? context?.entryKey ?? `quick-item-${item.id}-${chosenBrand?.id ?? "none"}`;
+
+        if (editingLineIndex < 0 && !duplicateLine.quickCreateEntryKey && context) {
+          setLines((current) => current.map((line, index) => index === duplicateLineIndex
+            ? { ...line, quickCreateEntryKey: duplicateEntryKey, quickCreateCreatedInSession: false }
+            : line));
+        }
+
+        const existingCatalogItem = catalog.find((candidate) => candidate.id === duplicateLine.itemId) ?? item;
+        const savedItem: QuickCreateSavedItem = {
+          entryKey: duplicateEntryKey,
+          itemId: duplicateLine.itemId,
+          nameAr: duplicateLine.itemName ?? existingCatalogItem.nameAr,
+          quantity: duplicateLine.qty,
+          salePrice: duplicateLine.unitPrice,
+          vatRate: duplicateLine.vatRate,
+          code: existingCatalogItem.code ?? "",
+          barcode: existingCatalogItem.barcode ?? "",
+          nature: existingCatalogItem.nature ?? input.nature,
+          uomId: duplicateLine.uomId ?? resolvedUom.id,
+          brandId: duplicateLine.brandId ?? null,
+          createdInSession: duplicateLine.quickCreateCreatedInSession ?? (editingLineIndex >= 0 ? editing?.createdInSession ?? false : false),
+        };
+        const notice = text(
+          `الصنف «${savedItem.nameAr}» موجود بالفعل في الفاتورة بنفس العلامة التجارية؛ لم تتغير الكمية ولم نكرر البند. اضغط بطاقته بالأعلى لتعديله.`,
+          `“${savedItem.nameAr}” is already on this invoice with the same brand. Quantity was left unchanged; select its card above to edit it.`,
+        );
+        return { ok: true, savedItem, notice };
+      }
+
       if (!reusedExisting) {
         setItemBrands(item.id, chosenBrand ? [{ brandId: chosenBrand.id, salePrice1: item.salePrice, status: "active" }] : []);
       }
 
       try { await onRefreshDeps(); } catch { /* the new local item still gets its document line */ }
-      const targetLineIndex = editing ? lines.findIndex((line) => line.quickCreateEntryKey === context?.entryKey) : lines.length;
+      const targetLineIndex = editingLineIndex >= 0 ? editingLineIndex : lines.length;
       if (chosenBrand) setExpandedLineIndices((current) => new Set(current).add(targetLineIndex));
       setLines((current) => {
         const next: FLine = {
@@ -1009,7 +1070,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
           itemId: item.id, itemName: item.nameAr, qty: input.quantity ?? 1, unitPrice: linePrice,
           vatRate: lineVatRate, uomId: resolvedUom.id, uomName: resolvedUom.nameAr,
           conversionFactor: resolvedUom.baseQty, brandId: chosenBrand?.id ?? null, brandName: chosenBrand?.nameAr ?? null,
-          ...(context ? { quickCreateEntryKey: context.entryKey } : {}),
+          ...(context ? { quickCreateEntryKey: context.entryKey, quickCreateCreatedInSession: createdInSession } : {}),
         };
         const { net } = lineNet(next.qty, next.unitPrice, next.disc, next.discType);
         next.lineTotal = net + net * next.vatRate / 100;
