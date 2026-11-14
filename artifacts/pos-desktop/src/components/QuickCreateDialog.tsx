@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { getDefaultUom, type Uom } from "../lib/uom";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 import { btnPrimary, btnSecondary, input } from "../pages/_adminUi";
@@ -93,6 +93,7 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
   const nextEntryNumber = useRef(0);
   const previousResetToken = useRef(resetToken);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
   const isCustomer = kind === "customer";
   const accent = isCustomer ? "#2563eb" : "#7c3aed";
   const fieldStyle = { ...input, borderRadius: 9, padding: "9px 11px", background: "#fff" };
@@ -136,6 +137,93 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
   const totalSavedQuantity = savedItems.reduce((sum, item) => sum + item.quantity, 0);
   const totalSavedValue = savedItems.reduce((sum, item) => sum + item.quantity * item.salePrice, 0);
   const formatNumber = (value: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 }).format(value);
+
+  function isQuickCreateFocusable(node: HTMLElement): boolean {
+    if (node.getClientRects().length === 0 || node.getAttribute("aria-disabled") === "true") return false;
+    if ("disabled" in node && Boolean((node as HTMLInputElement).disabled)) return false;
+    if ("readOnly" in node && Boolean((node as HTMLInputElement).readOnly)) return false;
+    return true;
+  }
+
+  function quickCreateNavFields(includeArrowButtons = false): HTMLElement[] {
+    const root = dialogRef.current;
+    if (!root) return [];
+    const selector = includeArrowButtons ? '[data-fnav="1"], [data-qc-arrow="1"]' : '[data-fnav="1"]';
+    return Array.from(root.querySelectorAll<HTMLElement>(selector)).filter(isQuickCreateFocusable);
+  }
+
+  function advanceQuickCreateField(from: HTMLElement | null): void {
+    if (!from) return;
+    const fields = quickCreateNavFields();
+    const index = fields.indexOf(from);
+    if (index < 0) return;
+    for (let next = index + 1; next < fields.length; next += 1) {
+      const field = fields[next];
+      field.focus();
+      if (document.activeElement !== field) continue;
+      (field as HTMLInputElement).select?.();
+      return;
+    }
+  }
+
+  function canMoveFromTextBoundary(field: HTMLElement, key: "ArrowLeft" | "ArrowRight"): boolean {
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) return true;
+    if (field instanceof HTMLInputElement && !["text", "search", "email", "url", "tel", "password"].includes(field.type)) return true;
+    try {
+      const start = field.selectionStart;
+      const end = field.selectionEnd;
+      if (start == null || end == null || start !== end) return false;
+      const rtl = getComputedStyle(field).direction === "rtl";
+      const atStart = start === 0;
+      const atEnd = end === field.value.length;
+      return key === "ArrowLeft" ? (rtl ? atEnd : atStart) : (rtl ? atStart : atEnd);
+    } catch {
+      return true;
+    }
+  }
+
+  function moveQuickCreateFieldHorizontally(from: HTMLElement, key: "ArrowLeft" | "ArrowRight"): boolean {
+    const currentRect = from.getBoundingClientRect();
+    const currentX = currentRect.left + currentRect.width / 2;
+    const currentY = currentRect.top + currentRect.height / 2;
+    const candidates = quickCreateNavFields(true)
+      .filter((field) => field !== from)
+      .map((field) => {
+        const rect = field.getBoundingClientRect();
+        return { field, rect, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      })
+      .filter(({ x, y, rect }) => {
+        const sameRowTolerance = Math.max(18, (currentRect.height + rect.height) / 2 + 5);
+        return Math.abs(y - currentY) <= sameRowTolerance
+          && (key === "ArrowRight" ? x > currentX : x < currentX);
+      })
+      .sort((a, b) => Math.abs(a.x - currentX) - Math.abs(b.x - currentX));
+
+    for (const { field } of candidates) {
+      field.focus();
+      if (document.activeElement === field) return true;
+    }
+    return false;
+  }
+
+  function onQuickCreateKeyDown(event: ReactKeyboardEvent<HTMLFieldSetElement>): void {
+    if (!historyEnabled || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const field = target?.closest<HTMLElement>('[data-fnav="1"], [data-qc-arrow="1"]') ?? null;
+    if (!field) return;
+
+    if (event.key === "Enter" && field.matches('[data-fnav="1"]')) {
+      event.preventDefault();
+      advanceQuickCreateField(field);
+      return;
+    }
+
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight")
+      && canMoveFromTextBoundary(field, event.key)
+      && moveQuickCreateFieldHorizontally(field, event.key)) {
+      event.preventDefault();
+    }
+  }
 
   function resetItemForm() {
     setNameAr(""); setCode(""); setBarcode(""); setSalePrice(0);
@@ -229,14 +317,16 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
   return (
     <div className={historyEnabled ? "quick-create-invoice-overlay" : undefined} role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}
       style={{ position: "fixed", inset: 0, zIndex: 10000, display: "grid", placeItems: "center", padding: 12, background: "#0f172a75", backdropFilter: "blur(3px)" }}>
-      <section className={historyEnabled ? "quick-create-invoice-dialog" : undefined} role="dialog" aria-modal="true" aria-labelledby="quick-create-title"
+      <section ref={dialogRef} className={historyEnabled ? "quick-create-invoice-dialog" : undefined} data-quick-create-dialog={historyEnabled ? "1" : undefined} role="dialog" aria-modal="true" aria-labelledby="quick-create-title"
         dir={language === "en" ? "ltr" : "rtl"}
-        style={{ width: isCustomer ? "min(100%, 560px)" : "min(1180px, calc(100vw - 24px))", maxHeight: "min(94dvh, 900px)", display: "flex", flexDirection: "column", borderRadius: 18, overflow: "hidden", background: "#fff", boxShadow: "0 24px 80px #02061755", border: "1px solid #ffffffaa" }}>
+        style={{ width: isCustomer ? "min(100%, 560px)" : "min(1180px, calc(100vw - 24px))", height: historyEnabled ? "min(94dvh, 900px)" : undefined, maxHeight: "min(94dvh, 900px)", display: "flex", flexDirection: "column", borderRadius: 18, overflow: "hidden", background: "#fff", boxShadow: "0 24px 80px #02061755", border: "1px solid #ffffffaa" }}>
         {historyEnabled && <style>{`
           @media(max-width:900px){.quick-create-primary-grid,.quick-create-detail-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
           @media(max-width:560px){.quick-create-primary-grid,.quick-create-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
           .quick-create-invoice-dialog .quick-create-invoice-header{padding:11px 16px!important}
-          .quick-create-invoice-dialog .quick-create-invoice-body{padding:10px 14px!important;gap:7px!important}
+          .quick-create-invoice-dialog .quick-create-invoice-body{padding:10px 14px!important;gap:7px!important;scrollbar-width:thin;scrollbar-gutter:stable;overscroll-behavior:contain}
+          .quick-create-invoice-dialog .quick-create-invoice-body::-webkit-scrollbar{width:9px}
+          .quick-create-invoice-dialog .quick-create-invoice-body::-webkit-scrollbar-thumb{border-radius:999px;background:#94a3b8;border:2px solid #f8fafc}
           .quick-create-invoice-dialog .quick-create-invoice-summary{gap:5px!important;padding:6px 9px!important}
           .quick-create-invoice-dialog .quick-create-invoice-summary-items{gap:5px!important}
           .quick-create-invoice-dialog .zsales-invoice-quick-controls{gap:6px!important}
@@ -273,7 +363,7 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
               style={{ marginInlineStart: "auto", width: 30, height: 30, border: 0, borderRadius: 9, color: "#fff", background: "#ffffff25", cursor: "pointer", fontSize: 19 }}>×</button>
           </div>
         </div>
-        <fieldset disabled={busy} className={historyEnabled ? "quick-create-invoice-body" : undefined} style={{ padding: 20, display: "grid", gap: 12, overflowY: "auto", minHeight: 0, minWidth: 0, margin: 0, border: 0 }}>
+        <fieldset disabled={busy} onKeyDown={onQuickCreateKeyDown} className={historyEnabled ? "quick-create-invoice-body" : undefined} style={{ padding: 20, display: "grid", gap: 12, overflowY: "auto", overscrollBehavior: "contain", scrollbarWidth: "thin", flex: historyEnabled ? "1 1 0%" : undefined, minHeight: 0, minWidth: 0, margin: 0, border: 0 }}>
           {historyEnabled && (
             <section className="quick-create-invoice-summary" aria-label={text("الأصناف المضافة سريعًا", "Quick-added items")} data-testid="quick-create-saved-items-summary"
               style={{ display: "grid", gap: 8, padding: "10px 12px", border: "1px solid #ddd6fe", borderInlineStart: "4px solid #7c3aed", borderRadius: 12, background: "linear-gradient(120deg,#faf5ff,#fff)", minWidth: 0 }}>
@@ -284,7 +374,7 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
                 </span>
                 <span data-testid="quick-create-invoice-item-count" style={{ color: "#475569" }}>{text("إجمالي أصناف الفاتورة", "Invoice item lines")}: <b>{documentItemCount}</b></span>
                 <span style={{ color: "#475569" }}>{text("الكمية", "Quantity")}: <b>{formatNumber(totalSavedQuantity)}</b></span>
-                <span data-testid="quick-create-saved-item-value" style={{ marginInlineStart: "auto", color: "#334155" }}>{text("قيمة الأصناف قبل الضريبة", "Item value before tax")}: <b>{formatNumber(totalSavedValue)}</b></span>
+                <span data-testid="quick-create-saved-item-value" style={{ marginInlineStart: "auto", color: "#334155" }}>{text("قيمة الأصناف قبل الضريبة", "Item value before tax")}: <b style={{ fontSize: 18, lineHeight: 1.1, fontWeight: 900, color: "#0f172a", whiteSpace: "nowrap" }}>{formatNumber(totalSavedValue)}</b></span>
                 <button type="button" data-testid="button-quick-create-new-item" onClick={() => {
                   if (nameAr.trim() && !window.confirm(text("سيتم مسح بيانات الصنف الحالية وبدء صنف جديد. هل تريد المتابعة؟", "Clear the current item form and start a new item?"))) return;
                   resetItemForm();
@@ -320,7 +410,7 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
               {editingEntry ? text("تعديل الصنف المضاف *", "Edit saved item *") : text("الاسم بالعربية *", "Arabic name *")}
             </label>
             <div style={{ position: "relative", minWidth: 0 }}>
-              <input id={nameInputId} ref={nameInputRef} autoFocus value={nameAr} disabled={catalogLocked}
+              <input id={nameInputId} ref={nameInputRef} autoFocus value={nameAr} disabled={catalogLocked} data-fnav={historyEnabled ? "1" : undefined}
                 role={historyEnabled ? "combobox" : undefined}
                 aria-autocomplete={historyEnabled ? "list" : undefined}
                 aria-expanded={historyEnabled ? showCatalogSuggestions : undefined}
@@ -354,8 +444,13 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
                   }
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    if (showCatalogSuggestions && catalogSuggestionIndex >= 0) chooseCatalogItem(catalogSuggestions[catalogSuggestionIndex]);
-                    else submit();
+                    if (showCatalogSuggestions && catalogSuggestionIndex >= 0) {
+                      chooseCatalogItem(catalogSuggestions[catalogSuggestionIndex]);
+                      const current = e.currentTarget;
+                      requestAnimationFrame(() => advanceQuickCreateField(current));
+                    } else {
+                      advanceQuickCreateField(e.currentTarget);
+                    }
                   }
                 }}
                 placeholder={isCustomer ? text("مثال: أحمد محمد", "Example: Ahmed Mohamed") : text("مثال: مياه معدنية", "Example: Mineral water")}
@@ -406,31 +501,31 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
                 {includeQuantity && (
               <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
                     {text("الكمية المضافة للمستند", "Quantity to add")}
-                    <input type="number" min="0.001" step="0.001" value={quantity}
+                    <input type="number" min="0.001" step="0.001" value={quantity} data-fnav={historyEnabled ? "1" : undefined}
                       onChange={(e) => setQuantity(Number(e.target.value) || 0)} style={fieldStyle} />
                   </label>
                 )}
                 <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
                   {text("سعر البيع", "Sale price")}
-                  <input type="number" min="0" step="0.01" value={salePrice} onChange={(e) => { setSalePrice(Number(e.target.value) || 0); setSalePriceTouched(true); }} style={fieldStyle} />
+                  <input type="number" min="0" step="0.01" value={salePrice} data-fnav={historyEnabled ? "1" : undefined} onChange={(e) => { setSalePrice(Number(e.target.value) || 0); setSalePriceTouched(true); }} style={fieldStyle} />
                 </label>
                 <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
                   {text("الضريبة %", "Tax %")}
-                  <input type="number" min="0" max="100" step="0.01" value={vatRate} onChange={(e) => { setVatRate(Number(e.target.value) || 0); setVatRateTouched(true); }} style={fieldStyle} />
+                  <input type="number" min="0" max="100" step="0.01" value={vatRate} data-fnav={historyEnabled ? "1" : undefined} onChange={(e) => { setVatRate(Number(e.target.value) || 0); setVatRateTouched(true); }} style={fieldStyle} />
                 </label>
                 <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
                   {text("الكود (اختياري)", "Code (optional)")}
-                  <input value={code} disabled={catalogLocked} onChange={(e) => setCode(e.target.value)} dir="ltr" style={{ ...fieldStyle, opacity: catalogLocked ? 0.75 : 1 }} />
+                  <input value={code} disabled={catalogLocked} data-fnav={historyEnabled ? "1" : undefined} onChange={(e) => setCode(e.target.value)} dir="ltr" style={{ ...fieldStyle, opacity: catalogLocked ? 0.75 : 1 }} />
                 </label>
                 <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569", fontWeight: 700 }}>
                   {text("الباركود (اختياري)", "Barcode (optional)")}
-                  <input value={barcode} disabled={catalogLocked} onChange={(e) => setBarcode(e.target.value)} dir="ltr" style={{ ...fieldStyle, opacity: catalogLocked ? 0.75 : 1 }} />
+                  <input value={barcode} disabled={catalogLocked} data-fnav={historyEnabled ? "1" : undefined} onChange={(e) => setBarcode(e.target.value)} dir="ltr" style={{ ...fieldStyle, opacity: catalogLocked ? 0.75 : 1 }} />
                 </label>
               </div>
               <div className={historyEnabled ? "quick-create-detail-grid" : undefined} style={{ display: "grid", gridTemplateColumns: historyEnabled ? "repeat(5, minmax(0, 1fr))" : "minmax(0, 1fr)", gap: 10, alignItems: "start" }}>
                 <label style={{ display: "grid", gap: 5, minWidth: 0, fontSize: 12, color: "#475569", fontWeight: 700 }}>
                   {text("وحدة القياس *", "Unit of measure *")}
-                  <select value={uomId || ""} disabled={catalogLocked} onChange={(e) => setUomId(Number(e.target.value) || 0)} style={{ ...fieldStyle, minWidth: 0, opacity: catalogLocked ? 0.75 : 1 }}>
+                  <select value={uomId || ""} disabled={catalogLocked} data-fnav={historyEnabled ? "1" : undefined} onChange={(e) => setUomId(Number(e.target.value) || 0)} style={{ ...fieldStyle, minWidth: 0, opacity: catalogLocked ? 0.75 : 1 }}>
                     <option value="">{text("اختر وحدة القياس", "Choose a unit")}</option>
                     {uoms.map((unit) => <option key={unit.id} value={unit.id}>
                       {language === "en" ? unit.nameEn || unit.nameAr : unit.nameAr}{unit.shortCode ? ` (${unit.shortCode})` : ""}
@@ -439,14 +534,14 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
                 </label>
                 <label style={{ display: "grid", gap: 5, minWidth: 0, fontSize: 12, color: "#475569", fontWeight: 700 }}>
                   {text("نوع الصنف", "Item type")}
-                  <select value={nature} disabled={catalogLocked} onChange={(e) => setNature(e.target.value as "stock" | "service")} style={{ ...fieldStyle, minWidth: 0, opacity: catalogLocked ? 0.75 : 1 }}>
+                  <select value={nature} disabled={catalogLocked} data-fnav={historyEnabled ? "1" : undefined} onChange={(e) => setNature(e.target.value as "stock" | "service")} style={{ ...fieldStyle, minWidth: 0, opacity: catalogLocked ? 0.75 : 1 }}>
                     <option value="stock">{text("صنف مخزني", "Stock item")}</option>
                     <option value="service">{text("خدمة", "Service")}</option>
                   </select>
                 </label>
                 <label style={{ display: "grid", gap: 5, minWidth: 0, fontSize: 12, color: "#475569", fontWeight: 700 }}>
                   {text("العلامة التجارية (اختياري)", "Brand (optional)")}
-                  <select value={brandId ?? ""} disabled={catalogLocked} onChange={(e) => setBrandId(e.target.value ? Number(e.target.value) : null)} style={{ ...fieldStyle, minWidth: 0, opacity: catalogLocked ? 0.75 : 1 }}>
+                  <select value={brandId ?? ""} disabled={catalogLocked} data-fnav={historyEnabled ? "1" : undefined} onChange={(e) => setBrandId(e.target.value ? Number(e.target.value) : null)} style={{ ...fieldStyle, minWidth: 0, opacity: catalogLocked ? 0.75 : 1 }}>
                     <option value="">{text("بدون علامة تجارية", "No brand")}</option>
                     {brands.map((brand) => <option key={brand.id} value={brand.id}>{language === "en" ? brand.nameEn || brand.nameAr : brand.nameAr}</option>)}
                   </select>
@@ -462,14 +557,15 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
           {saveNotice && <div role="status" aria-live="polite" style={{ padding: "9px 11px", borderRadius: 9, color: "#166534", background: "#f0fdf4", border: "1px solid #bbf7d0", fontSize: 13 }}>{saveNotice}</div>}
           {error && <div role="alert" style={{ padding: "9px 11px", borderRadius: 9, color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", fontSize: 13 }}>{error}</div>}
         </fieldset>
-        <div style={{ display: "flex", justifyContent: historyEnabled ? "space-between" : "flex-end", alignItems: "center", gap: 8, marginTop: 4, padding: "12px 20px", borderTop: "1px solid #e7edf1", background: "#fbfcfd", flexWrap: "wrap" }}>
-            {historyEnabled && (
-              <div data-testid="quick-create-invoice-grand-total" aria-label={text("إجمالي الفاتورة", "Invoice total")}
-                style={{ display: "grid", gap: 2, padding: "6px 12px", border: "1px solid #a7f3d0", borderRadius: 10, background: "linear-gradient(120deg,#ecfdf5,#f0fdfa)", color: "#065f46", minWidth: 170 }}>
-                <span style={{ fontSize: 11, fontWeight: 700 }}>{text("إجمالي الفاتورة", "Invoice total")}</span>
-                <strong style={{ fontSize: 20, lineHeight: 1.2 }}>{invoiceCurrency} {invoiceTotal ?? "0.00"}</strong>
-              </div>
-            )}
+        <div style={{ display: "flex", justifyContent: historyEnabled ? "space-between" : "flex-end", alignItems: "center", gap: 10, marginTop: 4, padding: "12px 20px", borderTop: "1px solid #e7edf1", background: "#fbfcfd", flexWrap: "wrap", flexShrink: 0 }}>
+          {historyEnabled && (
+            <div data-testid="quick-create-invoice-grand-total" aria-label={text("إجمالي الفاتورة", "Invoice total")}
+              style={{ display: "grid", gap: 2, padding: "6px 12px", border: "1px solid #a7f3d0", borderRadius: 10, background: "linear-gradient(120deg,#ecfdf5,#f0fdfa)", color: "#065f46", minWidth: 170, flex: "0 0 auto" }}>
+              <span style={{ fontSize: 11, fontWeight: 700 }}>{text("إجمالي الفاتورة", "Invoice total")}</span>
+              <strong style={{ fontSize: 20, lineHeight: 1.2 }}>{invoiceCurrency} {invoiceTotal ?? "0.00"}</strong>
+            </div>
+          )}
+          <div data-testid="quick-create-invoice-actions" style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8, flexWrap: "wrap", minWidth: 0, flex: historyEnabled ? "1 1 auto" : undefined }}>
             <button type="button" onClick={onCancel} disabled={busy} style={{ ...btnSecondary, borderRadius: 9, padding: "9px 14px" }}>{text("إلغاء", "Cancel")}</button>
             {!isCustomer && onSaveInvoice && <button type="button" onClick={() => void onSaveInvoice()} disabled={busy || invoiceSaving || !canSaveInvoice || hasUnappliedItem}
               data-testid="button-quick-create-save-invoice"
@@ -484,6 +580,7 @@ export default function QuickCreateDialog({ kind, documentLabel, initialVatRate,
               style={{ ...btnPrimary, borderRadius: 9, padding: "9px 16px", background: accent, opacity: busy || !nameAr.trim() || (!isCustomer && !uomId) ? 0.6 : 1 }}>
               {busy ? text("جارٍ الحفظ…", "Saving…") : isCustomer ? text("حفظ وإضافة للفاتورة", "Save and add customer") : editingEntry ? text("حفظ التعديل وإغلاق", "Save changes and close") : text("حفظ وإغلاق", "Save and close")}
             </button>
+          </div>
         </div>
       </section>
     </div>

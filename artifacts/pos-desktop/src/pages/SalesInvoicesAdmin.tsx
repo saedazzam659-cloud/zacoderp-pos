@@ -731,7 +731,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
   // next one in document order (and selects its text for quick overwrite).
   const formRef = useRef<HTMLDivElement | null>(null);
   function advanceFrom(el: HTMLElement | null) {
-    const root = formRef.current;
+    const root = el?.closest<HTMLElement>('[data-quick-create-dialog="1"]') ?? formRef.current;
     if (!root || !el) return;
     const nodes = Array.from(root.querySelectorAll<HTMLElement>("[data-fnav]"));
     // Keep the submit action last in the keyboard sequence even though its
@@ -747,8 +747,9 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     for (let j = i + 1; j < orderedNodes.length; j++) {
       const nxt = orderedNodes[j];
       const disabled = (nxt as HTMLInputElement).disabled === true || nxt.getAttribute("aria-disabled") === "true";
+      const readOnly = (nxt as HTMLInputElement).readOnly === true;
       const hidden = nxt.offsetParent === null;
-      if (disabled || hidden) continue;
+      if (disabled || readOnly || hidden) continue;
       nxt.focus();
       if (document.activeElement === nxt) { (nxt as HTMLInputElement).select?.(); return; }
     }
@@ -1287,6 +1288,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                   key={option.value}
                   type="button"
                   data-testid={`button-sales-invoice-payment-${option.value}`}
+                  data-qc-arrow={quickCreate === "item" ? "1" : undefined}
                   aria-label={text(`طريقة الدفع: ${option.label}`, `Payment method: ${option.label}`)}
                   aria-pressed={paymentChoice === option.value}
                   onClick={() => changePaymentChoice(option.value)}
@@ -2101,6 +2103,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
                       <SearchCombobox
                         value={customerId}
                         onChange={(value) => setCustomerId(Number(value))}
+                        {...navCombo}
                         style={{ ...input, flex: 1, minWidth: 0 }}
                         options={customerOptions}
                       />
