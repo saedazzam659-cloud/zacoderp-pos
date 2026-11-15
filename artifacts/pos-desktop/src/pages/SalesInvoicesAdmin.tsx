@@ -16,7 +16,10 @@ import QuickCreateDialog, {
   type QuickCreateSubmitContext,
   type QuickCreateSubmitResult,
 } from "../components/QuickCreateDialog";
-import { DocumentItemPicker, ItemCodeHistoryButton, ItemHistoryDialog, NoCustomerHistoryDialog } from "../components/DocumentItemDialogs";
+import {
+  DocumentItemPicker, ItemCodeHistoryButton, ItemHistoryDialog, NoCustomerHistoryDialog,
+  type DocumentItemPickerSelection,
+} from "../components/DocumentItemDialogs";
 import {
   listItemBrands, itemHasBrands, saveInvoiceLineBrands, getInvoiceLineBrands, dropInvoiceLineBrands, listBrands, setItemBrands,
 } from "../lib/brands";
@@ -914,11 +917,15 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
     setQuickCreate("item");
   }
 
-  function appendCatalogItems(items: LocalItem[]) {
-    setLines((current) => [...current, ...items.map((item) => {
+  function appendCatalogItems(items: LocalItem[], selections?: DocumentItemPickerSelection[]) {
+    setLines((current) => [...current, ...items.map((item, index) => {
+      const selected = selections?.[index];
       const uom = item.uomId != null ? uoms.find((unit) => unit.id === item.uomId) : defUom;
       const line: FLine = {
-        ...blankLine(), itemId: item.id, itemName: item.nameAr, unitPrice: item.salePrice ?? 0,
+        ...blankLine(), itemId: item.id, itemName: item.nameAr,
+        qty: selected?.quantity ?? 1,
+        unitPrice: selected?.brandId != null && selected.salePrice > 0 ? selected.salePrice : item.salePrice ?? 0,
+        brandId: selected?.brandId ?? null, brandName: selected?.brandName ?? null,
         vatRate: selectedRate ?? item.vatRate ?? 0,
         uomId: uom?.id ?? null, uomName: uom?.nameAr ?? null, conversionFactor: uom?.baseQty ?? 1,
       };
@@ -2067,7 +2074,8 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       </section>
 
       {itemPickerOpen && (
-        <DocumentItemPicker items={deps.items} onCancel={() => setItemPickerOpen(false)} onAdd={appendCatalogItems} />
+        <DocumentItemPicker items={deps.items} showBrandFilters showQuantities
+          onCancel={() => setItemPickerOpen(false)} onAdd={appendCatalogItems} />
       )}
       {historyTarget && (
         <ItemHistoryDialog itemId={historyTarget.item.id} itemName={historyTarget.item.nameAr}
