@@ -2074,7 +2074,7 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
       </section>
 
       {itemPickerOpen && (
-        <DocumentItemPicker items={deps.items} showBrandFilters showQuantities
+        <DocumentItemPicker items={deps.items} showBrandFilters showQuantities clickRowToSelect
           onCancel={() => setItemPickerOpen(false)} onAdd={appendCatalogItems} />
       )}
       {historyTarget && (

@@ -67,12 +67,13 @@ function parsePickerQuantity(raw: string): number | null {
   return Number.isFinite(quantity) && quantity > 0 ? quantity : null;
 }
 
-export function DocumentItemPicker({ items, onCancel, onAdd, showBrandFilters = false, showQuantities = false }: {
+export function DocumentItemPicker({ items, onCancel, onAdd, showBrandFilters = false, showQuantities = false, clickRowToSelect = false }: {
   items: LocalItem[];
   onCancel: () => void;
   onAdd: (items: LocalItem[], selections?: DocumentItemPickerSelection[]) => void;
   showBrandFilters?: boolean;
   showQuantities?: boolean;
+  clickRowToSelect?: boolean;
 }) {
   const language = useUiLanguage();
   const text = (ar: string, en: string) => uiText(ar, en, language);
@@ -189,11 +190,24 @@ export function DocumentItemPicker({ items, onCancel, onAdd, showBrandFilters = 
         </div>
         <div style={{ overflowY: "auto", minHeight: 140, padding: "0 16px 12px" }}>
           {visibleEntries.length ? visibleEntries.map((entry) => (
-            <div key={entry.key} style={{
+            <div key={entry.key}
+              role={clickRowToSelect ? "group" : undefined}
+              aria-label={clickRowToSelect ? text(`اختيار ${entry.item.nameAr}${entry.brandName ? ` - ${entry.brandName}` : ""}`, `Select ${entry.item.nameAr}${entry.brandName ? ` - ${entry.brandName}` : ""}`) : undefined}
+              onClick={clickRowToSelect ? (event) => {
+                const target = event.target as HTMLElement;
+                if (target.closest("input, label, button, select, textarea, a")) return;
+                setSelected((old) => {
+                  const next = new Set(old);
+                  if (next.has(entry.key)) next.delete(entry.key); else next.add(entry.key);
+                  return next;
+                });
+              } : undefined}
+              style={{
               display: "grid", gridTemplateColumns: "minmax(0,1fr) 88px 92px 24px",
               alignItems: "center", gap: 10, minHeight: 60, padding: "8px",
               borderBottom: "1px solid #edf1f3",
               background: selected.has(entry.key) ? "#f0faf6" : "#fff",
+              cursor: clickRowToSelect ? "pointer" : "default",
             }}>
               <span style={{ minWidth: 0 }}>
                 <strong style={{ display: "block", color: "#233044", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.item.nameAr}</strong>
