@@ -234,7 +234,7 @@ const NAV_GROUPS: NavGroupDef[] = [
     icon: "🏬",
     label: "المخازن",
     members: [
-      "items", "item_groups", "brands", "uom", "units", "warehouses", "warehouse_groups", "stock_transfers",
+      "items", "item_groups", "brands", "bulk_price_update", "uom", "units", "warehouses", "warehouse_groups", "stock_transfers",
       "stocktakes", "stock_adjustments", "stock_movements", "low_stock",
       "stock_import", "item_import", "item_card", "stock_valuation", "warehouse_stock", "slow_moving", "free_quantities", "item_sales_valuation",
       "inventory_dashboard", "smart_alerts", "goods_deliveries",
@@ -287,6 +287,7 @@ const NAV_LABELS_EN: Record<string, string> = {
   suppliers: "Suppliers", supplier_groups: "Supplier groups", items: "Items",
   item_groups: "Item groups", brands: "Brands", stock_import: "Import opening stock",
   item_import: "Import items", low_stock: "Low stock", uom: "Units of measure",
+  bulk_price_update: "Brand price & discount updates",
   purchase_orders: "Purchase orders", goods_receipts: "Goods receipts", purchases: "Purchase invoices",
   purchase_returns: "Purchase returns", letters_of_credit: "Letters of credit",
   supplier_settlement: "Supplier settlements", supplier_payment: "Payment vouchers",
