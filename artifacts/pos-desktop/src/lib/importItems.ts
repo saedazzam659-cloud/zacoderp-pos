@@ -16,6 +16,7 @@
 
 import { createItem, updateItem, type LocalItem, type CreateItemInput } from "./items";
 import { listItemBrandLinks, setItemBrands, type ItemBrandLink } from "./brands";
+import { getDefaultUom, listUom } from "./uom";
 
 // ─── Field model ────────────────────────────────────────────────────────
 
@@ -28,7 +29,8 @@ export type ImportField =
   | "salePrice"
   | "vatRate"
   | "cost"
-  | "partNumber";
+  | "partNumber"
+  | "uom";
 
 export const IMPORT_FIELDS: { key: ImportField; label: string; numeric: boolean }[] = [
   { key: "nameAr", label: "اسم الصنف", numeric: false },
@@ -38,6 +40,7 @@ export const IMPORT_FIELDS: { key: ImportField; label: string; numeric: boolean 
   { key: "cost", label: "التكلفة / سعر الشراء", numeric: true },
   { key: "vatRate", label: "نسبة الضريبة %", numeric: true },
   { key: "partNumber", label: "رقم القطعة / الموديل", numeric: false },
+  { key: "uom", label: "وحدة القياس", numeric: false },
   { key: "nameEn", label: "الاسم بالإنجليزية", numeric: false },
 ];
 
@@ -54,6 +57,7 @@ export interface ParsedRow {
   cost: number | null;
   vatRate: number | null;
   partNumber: string;
+  uomName: string;
   rowIndex: number;
 }
 
@@ -123,6 +127,7 @@ const FIELD_KEYWORDS: Record<ImportField, string[]> = {
   cost: ["تكلفة", "التكلفة", "سعر الشراء", "الشراء", "cost", "purchase", "buy"],
   vatRate: ["ضريبة", "الضريبة", "القيمة المضافة", "vat", "tax"],
   partNumber: ["رقم القطعة", "القطعة", "موديل", "الموديل", "part", "part no", "partnumber", "model"],
+  uom: ["وحدة القياس", "الوحدة", "وحدة", "unit of measure", "uom", "unit"],
   nameEn: ["english", "الانجليزي", "الإنجليزي", "بالانجليزية", "name en", "english name", "en"],
 };
 
@@ -135,7 +140,7 @@ export function guessMapping(header: string[]): ColMapping {
   const norm = header.map((h) => normName(h).toLowerCase());
   const used = new Set<number>();
   const map: ColMapping = {};
-  const order: ImportField[] = ["nameAr", "barcode", "code", "salePrice", "cost", "vatRate", "partNumber", "nameEn"];
+  const order: ImportField[] = ["nameAr", "barcode", "code", "salePrice", "uom", "cost", "vatRate", "partNumber", "nameEn"];
   for (const field of order) {
     const kws = FIELD_KEYWORDS[field];
     let best = -1;
@@ -176,6 +181,7 @@ export function parseRows(grid: string[][], mapping: ColMapping, hasHeader: bool
       cost: parseNum(cellAt(row, mapping.cost)),
       vatRate: parseNum(cellAt(row, mapping.vatRate)),
       partNumber: cellAt(row, mapping.partNumber),
+      uomName: cellAt(row, mapping.uom),
       rowIndex: r,
     });
   }
@@ -290,6 +296,21 @@ export interface ApplyOpts {
   onProgress?: (done: number, total: number) => void;
 }
 
+function normalizeUomName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "").replace(/[ـًٌٍَُِّْ]/g, "");
+}
+
+/** Resolve imported unit names against the local unit catalog. */
+export function resolveImportUomId(name: string): number | null {
+  const units = listUom();
+  if (!name.trim()) return getDefaultUom()?.id ?? units[0]?.id ?? null;
+  const key = normalizeUomName(name);
+  return units.find((unit) =>
+    [unit.nameAr, unit.nameEn ?? "", unit.shortCode ?? ""]
+      .some((label) => normalizeUomName(label) === key),
+  )?.id ?? null;
+}
+
 /**
  * Execute a plan. New rows are created, price_update rows are patched
  * (price only — other item fields are preserved by updateItem's merge), and
@@ -320,6 +341,7 @@ export async function applyPlan(plans: RowPlan[], opts: ApplyOpts = {}): Promise
         barcode: p.row.barcode || null,
         salePrice: p.row.salePrice ?? 0,
         vatRate: p.row.vatRate ?? 0,
+        uomId: resolveImportUomId(p.row.uomName),
       };
       try {
         const created = await createItem(input);

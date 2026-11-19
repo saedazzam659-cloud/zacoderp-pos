@@ -14,10 +14,20 @@ import { listBrands, createBrand, type Brand } from "../lib/brands";
 import { emitData, useDataRefresh } from "../lib/dataBus";
 import {
   IMPORT_FIELDS, guessMapping, parseRows, buildPlan, applyPlan,
+  resolveImportUomId,
   type ColMapping, type ImportField, type ParsedRow, type RowPlan, type PlanSummary, type ApplyResult,
 } from "../lib/importItems";
 import { currencySymbol } from "../lib/currency";
 import { imageToGridOffline } from "../lib/imageOcr";
+import {
+  extractPdfCatalogPage,
+  extractPdfCatalogFromGrid,
+  hasUnparsedCatalogCodes,
+  gridHasBellaCity,
+  pdfCatalogItemsToGrid,
+  type PdfCatalogItem,
+  type PdfCatalogTextRun,
+} from "../lib/pdfCatalogImport";
 import { createApi } from "../lib/api";
 import { loadDeviceToken } from "../lib/tauri-shim";
 import { IS_TAURI } from "../lib/localStore";
@@ -41,68 +51,105 @@ async function excelToGrid(buf: ArrayBuffer): Promise<string[][]> {
   return aoa.map((row) => (Array.isArray(row) ? row.map((c) => (c == null ? "" : String(c).trim())) : []));
 }
 
-/**
- * Extract a table from a TEXT-based PDF. PDFs have no table structure, so we
- * cluster text runs into rows by their y position and into columns by their x
- * position (gap-based clustering). Scanned/image PDFs yield no text runs → we
- * surface a clear "لا يوجد نص" error (no OCR by design).
- */
-async function pdfToGrid(buf: ArrayBuffer): Promise<string[][]> {
-  // pdf.js TRANSFERS (detaches) the ArrayBuffer we hand it to its worker. Pass a
-  // private COPY (.slice()) so the caller's `buf` survives for the image
-  // fallback — otherwise the fallback throws "detached ArrayBuffer".
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf).slice() }).promise;
-  interface Run { x: number; y: number; str: string; page: number; }
-  const runs: Run[] = [];
-  for (let p = 1; p <= doc.numPages; p++) {
-    const page = await doc.getPage(p);
-    const tc = await page.getTextContent();
-    for (const item of tc.items as Array<{ str: string; transform: number[] }>) {
-      const str = (item.str ?? "").trim();
-      if (!str) continue;
-      const tr = item.transform;
-      runs.push({ x: tr[4], y: tr[5], str, page: p });
-    }
-  }
-  await doc.destroy();
-  if (!runs.length) throw new Error("لا يوجد نص قابل للقراءة في هذا الملف (قد يكون ملفًا ممسوحًا/صورة). استخدم ملف Excel أو اللصق اليدوي.");
+interface PdfReadResult {
+  grid: string[][];
+  brandDetected: boolean;
+  parsedCatalogRows: number;
+  pagesWithUnparsedCodes: number;
+  pages: number;
+}
 
-  // Column clusters from all x-starts (gap-based).
-  const xs = [...new Set(runs.map((r) => Math.round(r.x)))].sort((a, b) => a - b);
+/** Convert one page's positioned text to a compact generic grid. */
+function pageRunsToGrid(runs: PdfCatalogTextRun[]): string[][] {
+  if (!runs.length) return [];
+  const xs = [...new Set(runs.map((run) => Math.round(run.x)))].sort((a, b) => a - b);
   const colStarts: number[] = [];
-  const GAP = 18;
   for (const x of xs) {
-    if (!colStarts.length || x - colStarts[colStarts.length - 1] > GAP) colStarts.push(x);
+    if (!colStarts.length || x - colStarts[colStarts.length - 1] > 18) colStarts.push(x);
   }
-  const colOf = (x: number): number => {
-    let best = 0, bestD = Infinity;
+  const colOf = (x: number) => {
+    let best = 0, bestDistance = Infinity;
     for (let i = 0; i < colStarts.length; i++) {
-      const d = Math.abs(x - colStarts[i]);
-      if (d < bestD) { bestD = d; best = i; }
+      const distance = Math.abs(x - colStarts[i]);
+      if (distance < bestDistance) { bestDistance = distance; best = i; }
     }
     return best;
   };
-
-  // Rows: group by (page, y) with a small tolerance, top-to-bottom.
-  runs.sort((a, b) => (a.page - b.page) || (b.y - a.y) || (a.x - b.x));
+  const sorted = [...runs].sort((a, b) => (b.y - a.y) || (a.x - b.x));
   const grid: string[][] = [];
-  let curY = Infinity, curPage = -1, cells: string[] = [];
-  const YTOL = 4;
+  let currentY = Infinity;
+  let cells: string[] = [];
   const flush = () => {
-    if (cells.some((c) => c && c.trim())) grid.push(cells.map((c) => (c ?? "").trim()));
+    if (cells.some((cell) => cell.trim())) grid.push(cells.map((cell) => cell.trim()));
     cells = [];
   };
-  for (const r of runs) {
-    if (r.page !== curPage || Math.abs(r.y - curY) > YTOL) {
+  for (const run of sorted) {
+    if (Math.abs(run.y - currentY) > 4) {
       flush();
-      curPage = r.page; curY = r.y;
+      currentY = run.y;
       cells = new Array(colStarts.length).fill("");
     }
-    const c = colOf(r.x);
-    cells[c] = cells[c] ? `${cells[c]} ${r.str}` : r.str;
+    const column = colOf(run.x);
+    cells[column] = cells[column] ? `${cells[column]} ${run.str}` : run.str;
   }
   flush();
   return grid;
+}
+
+/**
+ * Parse one page at a time. The application retains only import rows and the
+ * compact fallback grid, not thousands of positioned text-run objects. PDF.js
+ * receives a single byte view, avoiding the previous full-file .slice() copy.
+ */
+async function pdfToGrid(file: File, onPage: (done: number, total: number) => void): Promise<PdfReadResult> {
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await pdfjsLib.getDocument({ data }).promise;
+  const genericGrid: string[][] = [];
+  const catalogItems: PdfCatalogItem[] = [];
+  let previousTitle: string | undefined;
+  let brandDetected = false;
+  let pagesWithUnparsedCodes = 0;
+  let textRunCount = 0;
+  let catalogFormatFound = false;
+  const pageCount = doc.numPages;
+  try {
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
+      const page = await doc.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const runs: PdfCatalogTextRun[] = [];
+      for (const item of content.items as Array<{ str?: string; transform: number[]; width?: number }>) {
+        const str = (item.str ?? "").trim();
+        if (!str) continue;
+        runs.push({ str, x: item.transform[4], y: item.transform[5], width: item.width });
+      }
+      textRunCount += runs.length;
+      const pageResult = extractPdfCatalogPage(runs, previousTitle);
+      previousTitle = pageResult.productTitle ?? previousTitle;
+      brandDetected ||= pageResult.detectedBrand;
+      if (pageResult.items.length && !catalogFormatFound) {
+        catalogFormatFound = true;
+        genericGrid.length = 0;
+      }
+      for (const item of pageResult.items) catalogItems.push(item);
+      if (hasUnparsedCatalogCodes(runs.map((run) => run.str), pageResult.items)) pagesWithUnparsedCodes++;
+      if (!catalogFormatFound) {
+        for (const row of pageRunsToGrid(runs)) genericGrid.push(row);
+      }
+      await page.cleanup();
+      onPage(pageNumber, pageCount);
+    }
+  } finally {
+    await doc.destroy();
+  }
+
+  if (!textRunCount) throw new Error("لا يوجد نص قابل للقراءة في هذا الملف (قد يكون ممسوحًا كصورة).");
+  return {
+    grid: catalogItems.length ? pdfCatalogItemsToGrid(catalogItems) : genericGrid,
+    brandDetected,
+    parsedCatalogRows: catalogItems.length,
+    pagesWithUnparsedCodes,
+    pages: pageCount,
+  };
 }
 
 function pasteToGrid(text: string): string[][] {
@@ -126,30 +173,32 @@ async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(bin);
 }
 
-// Render a scanned / image-only PDF to page PNG blobs so it can go through the
-// same hybrid OCR path as a plain image. Capped to a few pages for price lists.
-async function renderPdfToImages(buf: ArrayBuffer, maxPages = 5): Promise<Blob[]> {
-  // Copy the bytes (pdf.js detaches whatever buffer it receives).
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf).slice() }).promise;
-  const out: Blob[] = [];
+// OCR scanned PDFs sequentially; never keep rendered page images in an array.
+async function scanPdfPages(
+  file: File,
+  onPage: (page: number, total: number, blob: Blob) => Promise<void>,
+): Promise<void> {
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await pdfjsLib.getDocument({ data }).promise;
   try {
-    const n = Math.min(doc.numPages, maxPages);
-    for (let p = 1; p <= n; p++) {
-      const page = await doc.getPage(p);
+    for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber++) {
+      const page = await doc.getPage(pageNumber);
       const viewport = page.getViewport({ scale: 2 });
       const canvas = document.createElement("canvas");
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);
       const ctx = canvas.getContext("2d");
-      if (!ctx) continue;
+      if (!ctx) throw new Error(`تعذّر تجهيز الصفحة ${pageNumber} للتعرّف الضوئي.`);
       await page.render({ canvas, canvasContext: ctx, viewport } as any).promise;
-      const blob = await new Promise<Blob | null>((res) => canvas.toBlob((b) => res(b), "image/png"));
-      if (blob) out.push(blob);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((value) => resolve(value), "image/png"));
+      canvas.width = 0;
+      canvas.height = 0;
+      if (blob) await onPage(pageNumber, doc.numPages, blob);
+      await page.cleanup();
     }
   } finally {
     await doc.destroy();
   }
-  return out;
 }
 
 // ─── component ──────────────────────────────────────────────────────────
@@ -173,11 +222,14 @@ export default function ItemImport() {
   const [brandMode, setBrandMode] = useState<"none" | "existing" | "new">("none");
   const [brandId, setBrandId] = useState<number | "">("");
   const [newBrandName, setNewBrandName] = useState("");
+  const [brandAutoSelected, setBrandAutoSelected] = useState(false);
 
   const [pasteText, setPasteText] = useState("");
   const [sourceKind, setSourceKind] = useState<SourceKind>("excel");
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progressLabel, setProgressLabel] = useState("");
+  const [pdfWarning, setPdfWarning] = useState<string | null>(null);
   const [ocrNote, setOcrNote] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -199,10 +251,28 @@ export default function ItemImport() {
     setStep("map");
   }
 
+  function preselectBellaCityBrand() {
+    const localBrands = listBrands();
+    setBrands(localBrands);
+    const existingBrand = localBrands.find((brand) =>
+      [brand.nameAr, brand.nameEn ?? ""].some((name) => name.trim().toLowerCase() === "bella city"),
+    );
+    setBrandAutoSelected(true);
+    if (existingBrand) {
+      setBrandMode("existing");
+      setBrandId(existingBrand.id);
+      setNewBrandName("");
+    } else {
+      setBrandMode("new");
+      setBrandId("");
+      setNewBrandName("BELLA CITY");
+    }
+  }
+
   // Hybrid OCR: prefer the cloud (Gemini vision, higher accuracy) when online
   // with a device token; otherwise fall back to fully-offline tesseract.js.
   // Standalone mode has no device token → always offline. See imageOcr.ts.
-  async function ocrBlobHybrid(blob: Blob): Promise<string[][]> {
+  async function ocrBlobHybrid(blob: Blob, pageProgress?: { page: number; total: number }): Promise<string[][]> {
     const dt = IS_TAURI ? await loadDeviceToken() : null;
     const canCloud = typeof navigator !== "undefined" && navigator.onLine && !!dt;
     if (canCloud) {
@@ -217,12 +287,22 @@ export default function ItemImport() {
         }
         throw new Error(res.error || "cloud ocr empty");
       } catch {
-        const g = await imageToGridOffline(blob, (pct) => setProgress({ done: pct, total: 100 }));
+        const g = await imageToGridOffline(blob, (pct) => {
+          setProgress(pageProgress ? { done: pageProgress.page, total: pageProgress.total } : { done: pct, total: 100 });
+          setProgressLabel(pageProgress
+            ? `جارٍ التعرّف الضوئي على الصفحة ${pageProgress.page} من ${pageProgress.total} (${pct}٪)`
+            : `جارٍ قراءة الصورة… ${pct}٪`);
+        });
         setOcrNote("تعذّرت القراءة السحابية — تمت القراءة دون اتصال.");
         return g;
       }
     }
-    const g = await imageToGridOffline(blob, (pct) => setProgress({ done: pct, total: 100 }));
+    const g = await imageToGridOffline(blob, (pct) => {
+      setProgress(pageProgress ? { done: pageProgress.page, total: pageProgress.total } : { done: pct, total: 100 });
+      setProgressLabel(pageProgress
+        ? `جارٍ التعرّف الضوئي على الصفحة ${pageProgress.page} من ${pageProgress.total} (${pct}٪)`
+        : `جارٍ قراءة الصورة… ${pct}٪`);
+    });
     setOcrNote("تمت القراءة دون اتصال (وضع محلي).");
     return g;
   }
@@ -230,29 +310,70 @@ export default function ItemImport() {
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setBusy(true); setErr(null); setOcrNote(null);
+    setBusy(true); setErr(null); setOcrNote(null); setPdfWarning(null); setProgress(null); setProgressLabel("");
     try {
       if (sourceKind === "image") {
         afterParse(await ocrBlobHybrid(file));
+      } else if (sourceKind === "pdf") {
+        setProgressLabel("جارٍ فتح ملف PDF وتجهيزه للقراءة");
+        setBrandAutoSelected(false);
+        setBrandMode("none");
+        setBrandId("");
+        setNewBrandName("");
+        let pdfResult: PdfReadResult;
+        try {
+          pdfResult = await pdfToGrid(file, (done, total) => {
+            setProgress({ done, total });
+            setProgressLabel(`جارٍ قراءة صفحات PDF: ${done} من ${total}`);
+          });
+        } catch (pdfError) {
+          const scannedPages: string[][] = [];
+          const scannedCatalogItems: PdfCatalogItem[] = [];
+          let scannedCatalogFormatFound = false;
+          let scannedPagesWithUnparsedCodes = 0;
+          let scannedBrandDetected = false;
+          await scanPdfPages(file, async (page, total, blob) => {
+            setProgress({ done: page, total });
+            setProgressLabel(`جارٍ تجهيز الصفحة ${page} من ${total} للتعرّف الضوئي`);
+            const pageGrid = await ocrBlobHybrid(blob, { page, total });
+            const pageResult = extractPdfCatalogFromGrid(pageGrid);
+            scannedBrandDetected ||= gridHasBellaCity(pageGrid);
+            if (hasUnparsedCatalogCodes(pageGrid.flat(), pageResult.items)) scannedPagesWithUnparsedCodes++;
+            if (pageResult.items.length && !scannedCatalogFormatFound) {
+              scannedCatalogFormatFound = true;
+              scannedPages.length = 0;
+            }
+            for (const item of pageResult.items) scannedCatalogItems.push(item);
+            if (!pageResult.items.length) {
+              if (!scannedCatalogFormatFound) for (const row of pageGrid) scannedPages.push(row);
+            }
+            setProgress({ done: page, total });
+            setProgressLabel(`اكتملت قراءة الصفحة ${page} من ${total}`);
+          });
+          if (!scannedPages.length && !scannedCatalogItems.length) throw pdfError;
+          pdfResult = {
+            grid: scannedCatalogItems.length ? pdfCatalogItemsToGrid(scannedCatalogItems) : scannedPages,
+            brandDetected: scannedBrandDetected,
+            parsedCatalogRows: scannedCatalogItems.length,
+            pagesWithUnparsedCodes: scannedPagesWithUnparsedCodes,
+            pages: 0,
+          };
+          setOcrNote("تمت قراءة صفحات PDF الممسوحة بالتعرّف الضوئي.");
+        }
+        if (pdfResult.brandDetected) preselectBellaCityBrand();
+        afterParse(pdfResult.grid);
+        if (pdfResult.parsedCatalogRows) {
+          setOcrNote(`تم استخراج ${pdfResult.parsedCatalogRows} صفًا من جدول الأصناف. راجع المعاينة قبل الحفظ.`);
+        }
+        if (pdfResult.pagesWithUnparsedCodes) {
+          setPdfWarning(`تعذّر ربط بعض الصفحات التي تحتوي على أكواد تلقائيًا (${pdfResult.pagesWithUnparsedCodes} صفحة). راجع الأعمدة والمعاينة قبل الاستيراد.`);
+        }
+        if (!pdfResult.parsedCatalogRows && (brandAutoSelected || pdfResult.brandDetected)) {
+          setOcrNote((current) => current || "تم تحديد BELLA CITY كعلامة تجارية لهذه الدفعة.");
+        }
       } else {
         const buf = await file.arrayBuffer();
-        if (sourceKind === "pdf") {
-          let g: string[][];
-          try {
-            g = await pdfToGrid(buf);
-          } catch (pdfErr) {
-            // Scanned / image-only PDF → render pages to images and OCR them.
-            const imgs = await renderPdfToImages(buf);
-            if (!imgs.length) throw pdfErr;
-            const merged: string[][] = [];
-            for (const img of imgs) merged.push(...(await ocrBlobHybrid(img)));
-            if (!merged.length) throw pdfErr;
-            g = merged;
-          }
-          afterParse(g);
-        } else {
-          afterParse(await excelToGrid(buf));
-        }
+        afterParse(await excelToGrid(buf));
       }
     } catch (ex) {
       // Surface the REAL cause instead of swallowing non-Error throws behind a
@@ -263,6 +384,7 @@ export default function ItemImport() {
     } finally {
       setBusy(false);
       setProgress(null);
+      setProgressLabel("");
       if (fileRef.current) fileRef.current.value = "";
     }
   }
@@ -281,28 +403,52 @@ export default function ItemImport() {
     if (!parsedRows.length) return null;
     return buildPlan(parsedRows, existing, { updatePrices });
   }, [parsedRows, existing, updatePrices]);
+  const selectedBrand = brandMode === "existing" ? brands.find((brand) => brand.id === Number(brandId)) : null;
+  const isBellaCitySelected = brandAutoSelected && (
+    brandMode === "new"
+      ? newBrandName.trim().toLowerCase() === "bella city"
+      : brandMode === "existing"
+        ? [selectedBrand?.nameAr ?? "", selectedBrand?.nameEn ?? ""].some((name) => name.trim().toLowerCase() === "bella city")
+        : false
+  );
 
   function resetAll() {
     setStep("source"); setGrid([]); setMapping({}); setPasteText("");
     setResult(null); setProgress(null); setErr(null);
     setBrandMode("none"); setBrandId(""); setNewBrandName("");
+    setBrandAutoSelected(false); setPdfWarning(null); setProgressLabel("");
   }
 
   async function runImport() {
     if (!summary) return;
     setBusy(true); setErr(null); setProgress({ done: 0, total: summary.plans.length });
+    setProgressLabel("جارٍ التحقق من البيانات قبل الحفظ");
     try {
+      const missingUnit = summary.plans.find((plan) =>
+        plan.kind === "new" && resolveImportUomId(plan.row.uomName) == null,
+      );
+      if (missingUnit) {
+        const label = missingUnit.row.uomName || "الوحدة الافتراضية";
+        throw new Error(`وحدة القياس «${label}» غير موجودة في إعدادات الوحدات. أضفها أولًا ثم أعد الاستيراد.`);
+      }
+
       let useBrandId: number | null = null;
       if (brandMode === "existing" && brandId !== "") useBrandId = Number(brandId);
       if (brandMode === "new") {
         const name = newBrandName.trim();
         if (!name) throw new Error("اكتب اسم العلامة التجارية الجديدة.");
-        const b = createBrand({ nameAr: name });
-        useBrandId = b.id;
+        const duplicate = listBrands().find((brand) =>
+          [brand.nameAr, brand.nameEn ?? ""].some((label) => label.trim().toLowerCase() === name.toLowerCase()),
+        );
+        useBrandId = duplicate?.id ?? createBrand({ nameAr: name }).id;
       }
+      setProgressLabel("جارٍ حفظ الأصناف وربط العلامة التجارية");
       const res = await applyPlan(summary.plans, {
         brandId: useBrandId,
-        onProgress: (done, total) => setProgress({ done, total }),
+        onProgress: (done, total) => {
+          setProgress({ done, total });
+          setProgressLabel(`جارٍ حفظ الأصناف: ${done} من ${total}`);
+        },
       });
       setResult(res);
       setStep("done");
@@ -313,6 +459,7 @@ export default function ItemImport() {
     } finally {
       setBusy(false);
       setProgress(null);
+      setProgressLabel("");
     }
   }
 
@@ -340,12 +487,18 @@ export default function ItemImport() {
 
       {err && <div style={S.err}>{err}</div>}
       {ocrNote && !err && <div style={S.hint}>{ocrNote}</div>}
+      {pdfWarning && <div style={S.warn} role="status" data-testid="warning-pdf-pages">{pdfWarning}</div>}
 
       {step === "source" && (
         <div style={S.card}>
           <div style={S.tabs}>
             {(["excel", "pdf", "image", "paste"] as SourceKind[]).map((k) => (
-              <button key={k} style={{ ...S.tab, ...(sourceKind === k ? S.tabActive : {}) }} onClick={() => { setSourceKind(k); setErr(null); setOcrNote(null); }}>
+              <button key={k} style={{ ...S.tab, ...(sourceKind === k ? S.tabActive : {}) }} onClick={() => {
+                setSourceKind(k); setErr(null); setOcrNote(null); setPdfWarning(null);
+                if (k !== "pdf" && brandAutoSelected) {
+                  setBrandAutoSelected(false); setBrandMode("none"); setBrandId(""); setNewBrandName("");
+                }
+              }}>
                 {SOURCE_LABELS[k]}
               </button>
             ))}
@@ -367,10 +520,14 @@ export default function ItemImport() {
                 onChange={onFile}
                 disabled={busy}
                 style={S.file}
+                data-testid="input-item-import-file"
               />
               {busy && (
-                <div style={S.hint}>
-                  {progress ? `جارٍ قراءة الصورة… ${progress.done}%` : "جارٍ القراءة…"}
+                <div style={S.hint} role="status" data-testid="status-item-import-progress">
+                  {progressLabel || "جارٍ القراءة…"}
+                  {progress && progress.total > 1 && (
+                    <progress max={progress.total} value={progress.done} style={{ display: "block", width: "100%", marginTop: 8 }} />
+                  )}
                 </div>
               )}
             </div>
@@ -478,6 +635,11 @@ export default function ItemImport() {
           {/* brand tagging */}
           <div style={S.brandBox}>
             <div style={S.brandTitle}>🏷️ ربط القائمة بعلامة تجارية</div>
+            {isBellaCitySelected && (
+              <div style={S.hint} data-testid="text-import-brand">
+                تم تحديد العلامة التجارية BELLA CITY تلقائيًا لملف PDF. يمكنك تغييرها قبل الحفظ.
+              </div>
+            )}
             <div style={S.brandModes}>
               {([["none", "بدون علامة"], ["existing", "علامة موجودة"], ["new", "علامة جديدة"]] as const).map(([m, lbl]) => (
                 <label key={m} style={S.radio}>
@@ -509,6 +671,7 @@ export default function ItemImport() {
                   <th style={S.th}>الاسم</th>
                   <th style={S.th}>الكود</th>
                   <th style={S.th}>الباركود</th>
+                  <th style={S.th}>وحدة القياس</th>
                   <th style={S.th}>السعر الحالي</th>
                   <th style={S.th}>السعر الجديد</th>
                 </tr>
@@ -583,6 +746,7 @@ function PlanRow({ p, sym }: { p: RowPlan; sym: string }) {
       <td style={S.td}>{p.row.nameAr || <span style={S.muted}>—</span>}</td>
       <td style={S.tdMono}>{p.row.code || "—"}</td>
       <td style={S.tdMono}>{p.row.barcode || "—"}</td>
+      <td style={S.td} data-testid={`text-import-uom-${p.row.rowIndex}`}>{p.row.uomName || "—"}</td>
       <td style={S.tdNum}>{p.oldPrice != null ? `${p.oldPrice.toFixed(2)} ${sym}` : "—"}</td>
       <td style={S.tdNum}>{p.newPrice != null ? `${p.newPrice.toFixed(2)} ${sym}` : "—"}</td>
     </tr>
