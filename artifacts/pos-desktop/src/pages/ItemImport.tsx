@@ -29,7 +29,7 @@ import {
   type PdfCatalogTextRun,
 } from "../lib/pdfCatalogImport";
 import {
-  describePdfReadError,
+  describeFileReadError,
   NoPdfTextLayerError,
   openLocalPdf,
 } from "../lib/localPdfFile";
@@ -405,7 +405,7 @@ export default function ItemImport() {
       }
     } catch (ex) {
       fileReadFailed = true;
-      const detail = describePdfReadError(ex);
+      const detail = describeFileReadError(ex);
       setErr(`تعذّرت قراءة «${file.name}» (${formatFileSize(file.size)}): ${detail}`);
       console.error("[ItemImport] file read failed:", ex);
     } finally {

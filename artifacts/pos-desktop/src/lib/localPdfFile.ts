@@ -18,6 +18,7 @@ export class LocalPdfFileRangeTransport extends pdfjsLib.PDFDataRangeTransport {
   private failureReasonValue: unknown = null;
   private receivedRanges: Array<[number, number]> = [];
   private loadedByteCount = 0;
+  private largestRangeByteCount = 0;
 
   constructor(
     file: Blob,
@@ -38,11 +39,16 @@ export class LocalPdfFileRangeTransport extends pdfjsLib.PDFDataRangeTransport {
     return this.loadedByteCount;
   }
 
+  get largestRangeRequested(): number {
+    return this.largestRangeByteCount;
+  }
+
   requestDataRange(begin: number, end: number): void {
     if (this.aborted) return;
 
     const start = Math.min(this.file.size, Math.max(0, Math.floor(begin)));
     const finish = Math.min(this.file.size, Math.max(start, Math.floor(end)));
+    this.largestRangeByteCount = Math.max(this.largestRangeByteCount, finish - start);
     void this.file.slice(start, finish).arrayBuffer().then((buffer) => {
       if (this.aborted) return;
 
@@ -109,7 +115,7 @@ export async function openLocalPdf(
   }
 }
 
-export function describePdfReadError(error: unknown): string {
+export function describeFileReadError(error: unknown): string {
   if (error instanceof Error) return error.message || error.name || "خطأ غير معروف";
   if (typeof error === "string" && error.trim()) return error;
 

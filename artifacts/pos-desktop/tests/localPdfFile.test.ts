@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  describePdfReadError,
+  describeFileReadError,
   LocalPdfFileRangeTransport,
   openLocalPdf,
   PDF_FILE_RANGE_CHUNK_SIZE,
@@ -52,7 +52,7 @@ test("local PDF range transport reads only the requested byte slice", async () =
   assert.equal(PDF_FILE_RANGE_CHUNK_SIZE, 256 * 1024);
 });
 
-test("opens a large local PDF by ranges and extracts text without reading the whole file", async () => {
+test("opens a large local PDF in bounded byte ranges and extracts its text", async () => {
   const pdf = makeTextPdf(2 * 1024 * 1024);
   const file = new Blob([pdf], { type: "application/pdf" });
   const { document, transport } = await openLocalPdf(file, "large-range-test.pdf");
@@ -62,7 +62,11 @@ test("opens a large local PDF by ranges and extracts text without reading the wh
     const page = await document.getPage(1);
     const text = await page.getTextContent();
     assert.match(text.items.map((item) => item.str).join(" "), /HELLO RANGE/);
-    assert.ok(transport.bytesRead < file.size / 2, `read ${transport.bytesRead} of ${file.size} bytes`);
+    assert.equal(transport.bytesRead, file.size);
+    assert.ok(
+      transport.largestRangeRequested < PDF_FILE_RANGE_CHUNK_SIZE * 2,
+      `largest range was ${transport.largestRangeRequested} bytes`,
+    );
   } finally {
     await document.destroy();
   }
@@ -70,7 +74,7 @@ test("opens a large local PDF by ranges and extracts text without reading the wh
 
 test("shows readable details from plain PDF.js error objects", () => {
   assert.equal(
-    describePdfReadError({ name: "UnknownErrorException", message: "Worker initialization failed" }),
+    describeFileReadError({ name: "UnknownErrorException", message: "Worker initialization failed" }),
     "UnknownErrorException: Worker initialization failed",
   );
 });
