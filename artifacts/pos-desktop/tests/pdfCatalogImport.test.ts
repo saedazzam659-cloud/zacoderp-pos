@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractPdfCatalogFromGrid, extractPdfCatalogPage, gridHasBellaCity, hasUnparsedCatalogCodes, pdfCatalogItemsToGrid } from "../src/lib/pdfCatalogImport.ts";
+import { detectPdfCatalogBrand, extractPdfCatalogFromGrid, extractPdfCatalogPage, gridDetectPdfCatalogBrand, gridHasBellaCity, hasUnparsedCatalogCodes, pdfCatalogItemsToGrid } from "../src/lib/pdfCatalogImport.ts";
 
 const run = (str: string, x: number, y: number, width = str.length * 5) => ({ str, x, y, width });
 
@@ -16,7 +16,7 @@ test("extracts both side-by-side price tables and repeats each product title wit
     run("200020020", 590, 680, 50), run("20", 540, 680, 15), run("30.95", 473, 680, 30),
   ]);
 
-  assert.equal(result.detectedBrand, true);
+  assert.equal(result.detectedBrand, "BELLA CITY");
   assert.equal(result.items.length, 2);
   assert.deepEqual(result.items, [
     { nameAr: "متر مواسير PN 16 - مقاس 32", code: "200016032", salePrice: "75.70", size: "32", unit: "متر" },
@@ -65,6 +65,37 @@ test("normalizes OCR grids with two adjacent tables", () => {
   ]);
 });
 
+test("extracts a catalogue table without item codes and auto-creates distinct names", () => {
+  const result = extractPdfCatalogPage([
+    run("First", 40, 900, 30), run("FT", 74, 900, 16), run("Town", 96, 900, 35),
+    run("مواسير ضغط 20 بار", 420, 760, 150),
+    run("العبوة", 255, 700, 36), run("السعر", 330, 700, 30), run("المقاس", 420, 700, 35),
+    run("100", 265, 680, 20), run("34.40", 330, 680, 30), run("مم 20", 420, 680, 40),
+  ]);
+
+  assert.equal(result.detectedBrand, "First Town");
+  assert.deepEqual(result.items, [
+    { nameAr: "مواسير ضغط 20 بار - مقاس 20 مم", code: "", salePrice: "34.40", size: "20 مم", unit: "متر" },
+  ]);
+  assert.deepEqual(pdfCatalogItemsToGrid(result.items), [
+    ["اسم الصنف", "الكود", "سعر البيع", "وحدة القياس"],
+    ["مواسير ضغط 20 بار - مقاس 20 مم", "", "34.40", "متر"],
+  ]);
+});
+
+test("extracts code-less tables from OCR grids and recognizes First Town branding", () => {
+  const result = extractPdfCatalogFromGrid([
+    ["First", "FT", "Town"],
+    ["مواسير ضغط 20 بار", "", ""],
+    ["العبوة", "السعر", "المقاس"],
+    ["100", "34.40", "مم 20"],
+  ]);
+  assert.equal(result.detectedBrand, "First Town");
+  assert.deepEqual(result.items.map((item) => [item.nameAr, item.code, item.salePrice, item.unit]), [
+    ["مواسير ضغط 20 بار - مقاس 20 مم", "", "34.40", "متر"],
+  ]);
+});
+
 test("flags code-like rows that could not be extracted", () => {
   assert.equal(hasUnparsedCatalogCodes(["200016032", "BELLA CITY"], []), true);
   assert.equal(
@@ -75,4 +106,6 @@ test("flags code-like rows that could not be extracted", () => {
 
 test("detects the brand when OCR splits the words into separate cells", () => {
   assert.equal(gridHasBellaCity([["BELLA", "CITY"]]), true);
+  assert.equal(gridDetectPdfCatalogBrand([["First", "FT", "Town"]]), "First Town");
+  assert.equal(detectPdfCatalogBrand("FIRST TOWN"), "First Town");
 });

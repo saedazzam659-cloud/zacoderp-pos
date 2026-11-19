@@ -23,7 +23,7 @@ import {
   extractPdfCatalogPage,
   extractPdfCatalogFromGrid,
   hasUnparsedCatalogCodes,
-  gridHasBellaCity,
+  gridDetectPdfCatalogBrand,
   pdfCatalogItemsToGrid,
   type PdfCatalogItem,
   type PdfCatalogTextRun,
@@ -53,7 +53,7 @@ async function excelToGrid(buf: ArrayBuffer): Promise<string[][]> {
 
 interface PdfReadResult {
   grid: string[][];
-  brandDetected: boolean;
+  brandDetected: string | null;
   parsedCatalogRows: number;
   pagesWithUnparsedCodes: number;
   pages: number;
@@ -107,7 +107,7 @@ async function pdfToGrid(file: File, onPage: (done: number, total: number) => vo
   const genericGrid: string[][] = [];
   const catalogItems: PdfCatalogItem[] = [];
   let previousTitle: string | undefined;
-  let brandDetected = false;
+  let brandDetected: string | null = null;
   let pagesWithUnparsedCodes = 0;
   let textRunCount = 0;
   let catalogFormatFound = false;
@@ -125,7 +125,7 @@ async function pdfToGrid(file: File, onPage: (done: number, total: number) => vo
       textRunCount += runs.length;
       const pageResult = extractPdfCatalogPage(runs, previousTitle);
       previousTitle = pageResult.productTitle ?? previousTitle;
-      brandDetected ||= pageResult.detectedBrand;
+      brandDetected ??= pageResult.detectedBrand;
       if (pageResult.items.length && !catalogFormatFound) {
         catalogFormatFound = true;
         genericGrid.length = 0;
@@ -223,6 +223,7 @@ export default function ItemImport() {
   const [brandId, setBrandId] = useState<number | "">("");
   const [newBrandName, setNewBrandName] = useState("");
   const [brandAutoSelected, setBrandAutoSelected] = useState(false);
+  const [autoDetectedBrandName, setAutoDetectedBrandName] = useState<string | null>(null);
 
   const [pasteText, setPasteText] = useState("");
   const [sourceKind, setSourceKind] = useState<SourceKind>("excel");
@@ -251,13 +252,17 @@ export default function ItemImport() {
     setStep("map");
   }
 
-  function preselectBellaCityBrand() {
+  function preselectPdfBrand(brandName: string) {
     const localBrands = listBrands();
     setBrands(localBrands);
+    const targetName = brandName.trim().toLowerCase().replace(/\s+/g, " ");
     const existingBrand = localBrands.find((brand) =>
-      [brand.nameAr, brand.nameEn ?? ""].some((name) => name.trim().toLowerCase() === "bella city"),
+      [brand.nameAr, brand.nameEn ?? ""].some((name) =>
+        name.trim().toLowerCase().replace(/\s+/g, " ") === targetName,
+      ),
     );
     setBrandAutoSelected(true);
+    setAutoDetectedBrandName(brandName);
     if (existingBrand) {
       setBrandMode("existing");
       setBrandId(existingBrand.id);
@@ -265,7 +270,7 @@ export default function ItemImport() {
     } else {
       setBrandMode("new");
       setBrandId("");
-      setNewBrandName("BELLA CITY");
+      setNewBrandName(brandName);
     }
   }
 
@@ -317,6 +322,7 @@ export default function ItemImport() {
       } else if (sourceKind === "pdf") {
         setProgressLabel("جارٍ فتح ملف PDF وتجهيزه للقراءة");
         setBrandAutoSelected(false);
+        setAutoDetectedBrandName(null);
         setBrandMode("none");
         setBrandId("");
         setNewBrandName("");
@@ -331,13 +337,13 @@ export default function ItemImport() {
           const scannedCatalogItems: PdfCatalogItem[] = [];
           let scannedCatalogFormatFound = false;
           let scannedPagesWithUnparsedCodes = 0;
-          let scannedBrandDetected = false;
+          let scannedBrandDetected: string | null = null;
           await scanPdfPages(file, async (page, total, blob) => {
             setProgress({ done: page, total });
             setProgressLabel(`جارٍ تجهيز الصفحة ${page} من ${total} للتعرّف الضوئي`);
             const pageGrid = await ocrBlobHybrid(blob, { page, total });
             const pageResult = extractPdfCatalogFromGrid(pageGrid);
-            scannedBrandDetected ||= gridHasBellaCity(pageGrid);
+            scannedBrandDetected ??= pageResult.detectedBrand ?? gridDetectPdfCatalogBrand(pageGrid);
             if (hasUnparsedCatalogCodes(pageGrid.flat(), pageResult.items)) scannedPagesWithUnparsedCodes++;
             if (pageResult.items.length && !scannedCatalogFormatFound) {
               scannedCatalogFormatFound = true;
@@ -360,7 +366,7 @@ export default function ItemImport() {
           };
           setOcrNote("تمت قراءة صفحات PDF الممسوحة بالتعرّف الضوئي.");
         }
-        if (pdfResult.brandDetected) preselectBellaCityBrand();
+        if (pdfResult.brandDetected) preselectPdfBrand(pdfResult.brandDetected);
         afterParse(pdfResult.grid);
         if (pdfResult.parsedCatalogRows) {
           setOcrNote(`تم استخراج ${pdfResult.parsedCatalogRows} صفًا من جدول الأصناف. راجع المعاينة قبل الحفظ.`);
@@ -368,8 +374,8 @@ export default function ItemImport() {
         if (pdfResult.pagesWithUnparsedCodes) {
           setPdfWarning(`تعذّر ربط بعض الصفحات التي تحتوي على أكواد تلقائيًا (${pdfResult.pagesWithUnparsedCodes} صفحة). راجع الأعمدة والمعاينة قبل الاستيراد.`);
         }
-        if (!pdfResult.parsedCatalogRows && (brandAutoSelected || pdfResult.brandDetected)) {
-          setOcrNote((current) => current || "تم تحديد BELLA CITY كعلامة تجارية لهذه الدفعة.");
+        if (!pdfResult.parsedCatalogRows && pdfResult.brandDetected) {
+          setOcrNote((current) => current || `تم تحديد ${pdfResult.brandDetected ?? "العلامة"} كعلامة تجارية لهذه الدفعة.`);
         }
       } else {
         const buf = await file.arrayBuffer();
@@ -404,11 +410,13 @@ export default function ItemImport() {
     return buildPlan(parsedRows, existing, { updatePrices });
   }, [parsedRows, existing, updatePrices]);
   const selectedBrand = brandMode === "existing" ? brands.find((brand) => brand.id === Number(brandId)) : null;
-  const isBellaCitySelected = brandAutoSelected && (
+  const isAutoDetectedBrandSelected = brandAutoSelected && !!autoDetectedBrandName && (
     brandMode === "new"
-      ? newBrandName.trim().toLowerCase() === "bella city"
+      ? newBrandName.trim().toLowerCase().replace(/\s+/g, " ") === autoDetectedBrandName.trim().toLowerCase().replace(/\s+/g, " ")
       : brandMode === "existing"
-        ? [selectedBrand?.nameAr ?? "", selectedBrand?.nameEn ?? ""].some((name) => name.trim().toLowerCase() === "bella city")
+        ? [selectedBrand?.nameAr ?? "", selectedBrand?.nameEn ?? ""].some((name) =>
+          name.trim().toLowerCase().replace(/\s+/g, " ") === autoDetectedBrandName.trim().toLowerCase().replace(/\s+/g, " "),
+        )
         : false
   );
 
@@ -416,7 +424,7 @@ export default function ItemImport() {
     setStep("source"); setGrid([]); setMapping({}); setPasteText("");
     setResult(null); setProgress(null); setErr(null);
     setBrandMode("none"); setBrandId(""); setNewBrandName("");
-    setBrandAutoSelected(false); setPdfWarning(null); setProgressLabel("");
+    setBrandAutoSelected(false); setAutoDetectedBrandName(null); setPdfWarning(null); setProgressLabel("");
   }
 
   async function runImport() {
@@ -496,7 +504,7 @@ export default function ItemImport() {
               <button key={k} style={{ ...S.tab, ...(sourceKind === k ? S.tabActive : {}) }} onClick={() => {
                 setSourceKind(k); setErr(null); setOcrNote(null); setPdfWarning(null);
                 if (k !== "pdf" && brandAutoSelected) {
-                  setBrandAutoSelected(false); setBrandMode("none"); setBrandId(""); setNewBrandName("");
+                  setBrandAutoSelected(false); setAutoDetectedBrandName(null); setBrandMode("none"); setBrandId(""); setNewBrandName("");
                 }
               }}>
                 {SOURCE_LABELS[k]}
@@ -635,9 +643,9 @@ export default function ItemImport() {
           {/* brand tagging */}
           <div style={S.brandBox}>
             <div style={S.brandTitle}>🏷️ ربط القائمة بعلامة تجارية</div>
-            {isBellaCitySelected && (
+            {isAutoDetectedBrandSelected && autoDetectedBrandName && (
               <div style={S.hint} data-testid="text-import-brand">
-                تم تحديد العلامة التجارية BELLA CITY تلقائيًا لملف PDF. يمكنك تغييرها قبل الحفظ.
+                تم تحديد العلامة التجارية {autoDetectedBrandName} تلقائيًا من ملف PDF. يمكنك تغييرها قبل الحفظ.
               </div>
             )}
             <div style={S.brandModes}>
@@ -744,7 +752,7 @@ function PlanRow({ p, sym }: { p: RowPlan; sym: string }) {
     <tr>
       <td style={S.td}><span style={{ ...S.badge, ...badge.style }}>{badge.label}</span>{p.matchedBy ? <span style={S.matchedBy}> ({MATCH_LABEL[p.matchedBy]})</span> : null}</td>
       <td style={S.td}>{p.row.nameAr || <span style={S.muted}>—</span>}</td>
-      <td style={S.tdMono}>{p.row.code || "—"}</td>
+      <td style={S.tdMono}>{p.row.code || (p.kind === "new" ? "تلقائي عند الحفظ" : "—")}</td>
       <td style={S.tdMono}>{p.row.barcode || "—"}</td>
       <td style={S.td} data-testid={`text-import-uom-${p.row.rowIndex}`}>{p.row.uomName || "—"}</td>
       <td style={S.tdNum}>{p.oldPrice != null ? `${p.oldPrice.toFixed(2)} ${sym}` : "—"}</td>

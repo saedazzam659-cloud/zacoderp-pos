@@ -1,5 +1,5 @@
 /**
- * Reads the repeated catalogue layout used by the BELLA CITY pipe price list.
+ * Reads repeated pipe-catalogue layouts from text-based PDFs and OCR grids.
  * PDF.js exposes positioned text runs rather than a table, so this module
  * detects each table's code/size/price columns and joins its product heading
  * to every row. It processes one page at a time; callers can discard the runs
@@ -27,7 +27,7 @@ interface TextLine {
 
 interface TableColumns {
   lineIndex: number;
-  codeX: number;
+  codeX: number | null;
   sizeX: number;
   priceX: number;
   centerX: number;
@@ -36,7 +36,7 @@ interface TableColumns {
 export interface PdfCatalogPageResult {
   items: PdfCatalogItem[];
   productTitle?: string;
-  detectedBrand: boolean;
+  detectedBrand: string | null;
 }
 
 const LINE_Y_TOLERANCE = 3.5;
@@ -54,6 +54,14 @@ function normalizeLabel(value: string): string {
     .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
     .replace(/\s+/g, "")
     .toLowerCase();
+}
+
+/** Detect the known brand names shown in the supplied catalog examples. */
+export function detectPdfCatalogBrand(value: string): string | null {
+  const text = value.normalize("NFKC");
+  if (/bella\s*city/i.test(text)) return "BELLA CITY";
+  if (/first\s*(?:ft\s*)?town/i.test(text)) return "First Town";
+  return null;
 }
 
 function headerKind(value: string): "code" | "size" | "price" | null {
@@ -120,6 +128,39 @@ function findTables(line: TextLine, lineIndex: number): TableColumns[] {
     });
   }
 
+  // Some catalogues have no item-code column. Pair the remaining size and
+  // price headers so those rows can still be imported with an auto-generated
+  // local item code.
+  const remainingSizes = headers
+    .map((header, index) => ({ ...header, index }))
+    .filter((header) => header.kind === "size" && !usedSizes.has(header.index));
+  const remainingPrices = headers
+    .map((header, index) => ({ ...header, index }))
+    .filter((header) => header.kind === "price" && !usedPrices.has(header.index));
+  for (const size of remainingSizes) {
+    let bestIndex = -1;
+    let bestDistance = Infinity;
+    remainingPrices.forEach((price, index) => {
+      if (usedPrices.has(price.index)) return;
+      const distance = Math.abs(price.x - size.x);
+      if (distance < bestDistance) {
+        bestIndex = index;
+        bestDistance = distance;
+      }
+    });
+    const price = remainingPrices[bestIndex];
+    if (!price || bestDistance > HEADER_COLUMN_DISTANCE) continue;
+    usedPrices.add(price.index);
+    usedSizes.add(size.index);
+    tables.push({
+      lineIndex,
+      codeX: null,
+      sizeX: size.x,
+      priceX: price.x,
+      centerX: (size.x + price.x) / 2,
+    });
+  }
+
   return tables;
 }
 
@@ -132,7 +173,7 @@ function isProductTitle(line: TextLine): boolean {
   const text = line.runs.map((run) => run.str).join(" ").trim();
   const normalized = normalizeLabel(text);
   if (!text || text.length > 100 || isHeaderLine(line)) return false;
-  if (/bella\s*city/i.test(text) || normalized.includes("theegyptianitalian")) return false;
+  if (detectPdfCatalogBrand(text) || normalized.includes("theegyptianitalian")) return false;
   if (/\d{6,}/.test(text)) return false;
   return /[\p{L}]/u.test(text);
 }
@@ -162,7 +203,7 @@ function titleForTable(lines: TextLine[], table: TableColumns, previousTitle?: s
 }
 
 function isNumericCell(value: string): boolean {
-  return /^[\s\d٠-٩۰-۹.,٫٬-]+$/.test(value.trim()) && /\d/.test(value);
+  return /\d/.test(value) && !isItemCode(value);
 }
 
 function isItemCode(value: string): boolean {
@@ -199,6 +240,15 @@ function buildName(title: string, size: string, code: string): string {
   return `${title.trim()}${suffix}`;
 }
 
+function normalizeSizeText(value: string): string {
+  const text = value.trim().replace(/\s+/g, " ");
+  const numberFirst = text.match(/^([\d٠-٩۰-۹.,٫٬-]+)\s+(.+)$/);
+  if (numberFirst) return `${numberFirst[1]} ${numberFirst[2]}`.trim();
+  const unitFirst = text.match(/^([^\d]+?)\s+([\d٠-٩۰-۹.,٫٬-]+)$/);
+  if (unitFirst) return `${unitFirst[2]} ${unitFirst[1]}`.trim();
+  return text;
+}
+
 /**
  * Convert one PDF page's positioned runs to catalogue rows. Repeated tables
  * side-by-side are separated by their header column positions. `previousTitle`
@@ -210,7 +260,7 @@ export function extractPdfCatalogPage(
   previousTitle?: string,
 ): PdfCatalogPageResult {
   const lines = makeLines(runs);
-  const detectedBrand = /bella\s*city/i.test(runs.map((run) => run.str).join(" "));
+  const detectedBrand = detectPdfCatalogBrand(runs.map((run) => run.str).join(" "));
   const tables = lines.flatMap((line, index) => findTables(line, index));
   const items: PdfCatalogItem[] = [];
   let productTitle = previousTitle;
@@ -233,12 +283,12 @@ export function extractPdfCatalogPage(
       const line = lines[lineIndex];
       const codeRuns = line.runs
         .map((run, index) => ({ run, index }))
-        .filter(({ run }) => isItemCode(run.str))
+        .filter(({ run }) => table.codeX != null && isItemCode(run.str))
         .filter(({ run }) => {
           const eligibleTables = tables.filter((candidate) => candidate.lineIndex <= lineIndex);
           const closestTable = eligibleTables.reduce((best, candidate) => {
-            const distance = Math.abs(runCenter(run) - candidate.codeX);
-            const bestDistance = Math.abs(runCenter(run) - best.codeX);
+            const distance = candidate.codeX == null ? Infinity : Math.abs(runCenter(run) - candidate.codeX);
+            const bestDistance = best.codeX == null ? Infinity : Math.abs(runCenter(run) - best.codeX);
             return distance < bestDistance || (distance === bestDistance && candidate.lineIndex > best.lineIndex)
               ? candidate
               : best;
@@ -246,14 +296,18 @@ export function extractPdfCatalogPage(
           return closestTable === table;
         });
 
-      for (const { run: codeRun, index: codeIndex } of codeRuns) {
-        const code = codeRun.str.replace(/\s+/g, "").trim();
-        const excluded = new Set([codeIndex]);
+      const rowsToParse = table.codeX == null
+        ? line.runs.some((run) => isItemCode(run.str)) ? [] : [{ run: null, index: -1 }]
+        : codeRuns;
+      for (const { run: codeRun, index: codeIndex } of rowsToParse) {
+        const code = codeRun?.str.replace(/\s+/g, "").trim() ?? "";
+        const excluded = new Set(codeIndex >= 0 ? [codeIndex] : []);
         const price = nearestRun(line.runs, table.priceX, isNumericCell, excluded);
         if (!price) continue;
         excluded.add(price.index);
         const size = nearestRun(line.runs, table.sizeX, isNumericCell, excluded);
-        const rawSize = size?.run.str.trim() ?? "";
+        if (!size) continue;
+        const rawSize = normalizeSizeText(size.run.str);
         const rowTitle = title ?? previousTitle;
         if (!rowTitle) continue;
         items.push({
@@ -286,7 +340,7 @@ export function pdfCatalogItemsToGrid(items: PdfCatalogItem[]): string[][] {
 
 /** Best-effort normalization for OCR grids from scanned PDF pages. */
 export function extractPdfCatalogFromGrid(grid: string[][]): PdfCatalogPageResult {
-  const tables: Array<TableColumns & { sizeColumn: number; priceColumn: number; codeColumn: number }> = [];
+  const tables: Array<TableColumns & { sizeColumn: number; priceColumn: number; codeColumn: number | null }> = [];
   const items: PdfCatalogItem[] = [];
   let productTitle: string | undefined;
 
@@ -300,7 +354,7 @@ export function extractPdfCatalogFromGrid(grid: string[][]): PdfCatalogPageResul
     const usedPrices = new Set<number>();
     const usedSizes = new Set<number>();
 
-    const newTables = codeHeaders.flatMap((code) => {
+    const newTables: Array<TableColumns & { sizeColumn: number; priceColumn: number; codeColumn: number | null }> = codeHeaders.flatMap((code) => {
       const closest = (kind: "price" | "size", used: Set<number>) => {
         const choices = headers.filter((header) => header.kind === kind && !used.has(header.index));
         choices.sort((a, b) => Math.abs(a.index - code.index) - Math.abs(b.index - code.index));
@@ -323,6 +377,25 @@ export function extractPdfCatalogFromGrid(grid: string[][]): PdfCatalogPageResul
         priceColumn,
       }];
     });
+    const remainingSizes = headers.filter((header) => header.kind === "size" && !usedSizes.has(header.index));
+    const remainingPrices = headers.filter((header) => header.kind === "price" && !usedPrices.has(header.index));
+    for (const size of remainingSizes) {
+      remainingPrices.sort((a, b) => Math.abs(a.index - size.index) - Math.abs(b.index - size.index));
+      const price = remainingPrices.shift();
+      if (!price) continue;
+      usedSizes.add(size.index);
+      usedPrices.add(price.index);
+      newTables.push({
+        lineIndex: rowIndex,
+        codeX: null,
+        sizeX: size.index,
+        priceX: price.index,
+        centerX: (size.index + price.index) / 2,
+        codeColumn: null,
+        sizeColumn: size.index,
+        priceColumn: price.index,
+      });
+    }
     tables.push(...newTables);
   }
 
@@ -331,7 +404,7 @@ export function extractPdfCatalogFromGrid(grid: string[][]): PdfCatalogPageResul
       const row = grid[rowIndex] ?? [];
       const candidates = row.flatMap((cell, index) => {
         const value = cell.trim();
-        if (!value || !/[\p{L}]/u.test(value) || headerKind(value) || /bella\s*city/i.test(value) || /\d{6,}/.test(value)) return [];
+        if (!value || !/[\p{L}]/u.test(value) || headerKind(value) || detectPdfCatalogBrand(value) || /\d{6,}/.test(value)) return [];
         return [{ value, index, distance: Math.abs(index - header.centerX) }];
       });
       candidates.sort((a, b) => a.distance - b.distance);
@@ -354,31 +427,40 @@ export function extractPdfCatalogFromGrid(grid: string[][]): PdfCatalogPageResul
     for (let rowIndex = table.lineIndex + 1; rowIndex < endRow; rowIndex++) {
       const row = grid[rowIndex] ?? [];
       const codeColumns = row.flatMap((cell, index) => isItemCode(cell) ? [{ cell, index }] : []);
-      for (const codeCell of codeColumns) {
+      const rowDescriptors = table.codeColumn == null
+        ? codeColumns.length ? [] : [{ cell: "", index: -1 }]
+        : codeColumns;
+      for (const codeCell of rowDescriptors) {
         const activeTables = tables.filter((candidate) => candidate.lineIndex <= rowIndex);
-        const closestTable = activeTables.reduce((best, candidate) => {
-          const distance = Math.abs(codeCell.index - candidate.codeColumn);
-          const bestDistance = Math.abs(codeCell.index - best.codeColumn);
-          return distance < bestDistance || (distance === bestDistance && candidate.lineIndex > best.lineIndex)
-            ? candidate
-            : best;
-        }, activeTables[0] ?? table);
-        if (closestTable !== table) continue;
+        if (codeCell.index >= 0) {
+          const closestTable = activeTables.reduce((best, candidate) => {
+            const distance = candidate.codeColumn == null ? Infinity : Math.abs(codeCell.index - candidate.codeColumn);
+            const bestDistance = best.codeColumn == null ? Infinity : Math.abs(codeCell.index - best.codeColumn);
+            return distance < bestDistance || (distance === bestDistance && candidate.lineIndex > best.lineIndex)
+              ? candidate
+              : best;
+          }, activeTables[0] ?? table);
+          if (closestTable !== table) continue;
+        } else if (codeColumns.length) {
+          continue;
+        }
         const numeric = row.flatMap((cell, index) => isNumericCell(cell) ? [{ cell, index }] : []);
         const closestValue = (column: number, excluded: Set<number>) => {
           const choices = numeric.filter((value) => !excluded.has(value.index));
           choices.sort((a, b) => Math.abs(a.index - column) - Math.abs(b.index - column));
-          return choices[0] ?? null;
+          const choice = choices[0] ?? null;
+          return choice && Math.abs(choice.index - column) <= 2 ? choice : null;
         };
-        const excluded = new Set([codeCell.index]);
+        const excluded = new Set(codeCell.index >= 0 ? [codeCell.index] : []);
         const price = closestValue(table.priceColumn, excluded);
         if (!price) continue;
         excluded.add(price.index);
         const size = closestValue(table.sizeColumn, excluded);
+        if (!size) continue;
         const itemTitle = title ?? productTitle;
         if (!itemTitle) continue;
         const code = codeCell.cell.replace(/\s+/g, "").trim();
-        const rawSize = size?.cell.trim() ?? "";
+        const rawSize = normalizeSizeText(size?.cell ?? "");
         items.push({
           nameAr: buildName(itemTitle, rawSize, code),
           code,
@@ -395,12 +477,17 @@ export function extractPdfCatalogFromGrid(grid: string[][]): PdfCatalogPageResul
     const key = `${item.code.toLowerCase()}|${item.size}`;
     if (!unique.has(key)) unique.set(key, item);
   }
-  return { items: [...unique.values()], productTitle, detectedBrand: gridHasBellaCity(grid) };
+  return { items: [...unique.values()], productTitle, detectedBrand: detectPdfCatalogBrand(grid.flat().join(" ")) };
 }
 
-/** Detect brand text from OCR/text grids, including the BELLA CITY logo. */
+/** Detect known brand text from OCR grids, including names split across cells. */
+export function gridDetectPdfCatalogBrand(grid: string[][]): string | null {
+  return detectPdfCatalogBrand(grid.flat().join(" "));
+}
+
+/** Kept for callers/tests that specifically need the BELLA CITY check. */
 export function gridHasBellaCity(grid: string[][]): boolean {
-  return /bella\s*city/i.test(grid.flat().join(" "));
+  return gridDetectPdfCatalogBrand(grid) === "BELLA CITY";
 }
 
 /** Returns true when a page contains item-code-looking cells not in extracted rows. */

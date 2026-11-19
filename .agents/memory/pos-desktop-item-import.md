@@ -1,12 +1,20 @@
 ---
 name: POS Desktop item price-list import
-description: Offline import of items from Excel/text-PDF/paste with dedup + auto price update + brand tagging
+description: Safe catalog import must reconcile existing items and preserve source-specific brand links.
 ---
 
 # POS Desktop — استيراد الأصناف من ملف (item_import screen)
 
-Offline-only (no AI/OCR) importer that ingests a price list from Excel, a
-text-based PDF, or manual paste, and reconciles it against the local catalog.
+## Durable import invariants
+
+- Re-importing a price list must not create duplicates: existing items are
+  matched by code, barcode, then normalized name; matched rows update price
+  only, preserving other item fields.
+- Duplicate new rows within the same source file must be caught before writes.
+- Conflicting identifiers must be rejected rather than silently updating the
+  wrong item.
+- A source list may be linked to its own brand while keeping one catalog item
+  reusable across several brands.
 
 ## Match + dedup rules (the whole point of the feature)
 - **Match precedence** code → barcode → name (normalised, whitespace-collapsed, lowercased).
@@ -17,10 +25,5 @@ text-based PDF, or manual paste, and reconciles it against the local catalog.
 
 ## Brand tagging
 - One import list → ONE brand; each brand carries its own price/barcode/cost on the item, so one item holds MANY brands. Link dedup is by `brandId` (find-then-update-or-append), reusing `listItemBrandLinks`/`setItemBrands` (LS-overlay, PRINT-ONLY, never ZATCA). New links omit `id` (setItemBrands mints the uuid).
-
-## Parsing
-- Arabic-Indic (٠-٩ and ۰-۹) digits normalised in `parseNum`; Arabic decimal sep ٫ → dot, thousands ٬ dropped.
-- PDF has NO table structure: cluster text runs into rows by y (tol 4) and columns by gap-based x clustering (GAP 18). Scanned/image PDFs yield no text runs → explicit "لا يوجد نص" error (no OCR by design).
-- `pdfjs-dist` (main build, NOT legacy) + worker via `import ...?url` — Tauri WebView2 Chromium supports the modern build.
 
 **Why:** user explicitly required "reimport auto-updates price + never duplicate". The naive single-snapshot match satisfies existing-item dedup but silently duplicates repeated NEW rows and can mutate the wrong item on identifier conflict — both caught in code review, both must stay fixed.
