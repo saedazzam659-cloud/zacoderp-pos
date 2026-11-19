@@ -28,6 +28,11 @@ import {
   type PdfCatalogItem,
   type PdfCatalogTextRun,
 } from "../lib/pdfCatalogImport";
+import {
+  describePdfReadError,
+  NoPdfTextLayerError,
+  openLocalPdf,
+} from "../lib/localPdfFile";
 import { createApi } from "../lib/api";
 import { loadDeviceToken } from "../lib/tauri-shim";
 import { IS_TAURI } from "../lib/localStore";
@@ -49,6 +54,11 @@ async function excelToGrid(buf: ArrayBuffer): Promise<string[][]> {
   const ws = wb.Sheets[first];
   const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: "" });
   return aoa.map((row) => (Array.isArray(row) ? row.map((c) => (c == null ? "" : String(c).trim())) : []));
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 interface PdfReadResult {
@@ -99,11 +109,14 @@ function pageRunsToGrid(runs: PdfCatalogTextRun[]): string[][] {
 /**
  * Parse one page at a time. The application retains only import rows and the
  * compact fallback grid, not thousands of positioned text-run objects. PDF.js
- * receives a single byte view, avoiding the previous full-file .slice() copy.
+ * requests local-file byte ranges instead of loading the complete PDF at once.
  */
-async function pdfToGrid(file: File, onPage: (done: number, total: number) => void): Promise<PdfReadResult> {
-  const data = new Uint8Array(await file.arrayBuffer());
-  const doc = await pdfjsLib.getDocument({ data }).promise;
+async function pdfToGrid(
+  file: File,
+  onPage: (done: number, total: number) => void,
+  onBytes: (loaded: number, total: number) => void,
+): Promise<PdfReadResult> {
+  const { document: doc, transport } = await openLocalPdf(file, file.name, onBytes);
   const genericGrid: string[][] = [];
   const catalogItems: PdfCatalogItem[] = [];
   let previousTitle: string | undefined;
@@ -138,18 +151,19 @@ async function pdfToGrid(file: File, onPage: (done: number, total: number) => vo
       await page.cleanup();
       onPage(pageNumber, pageCount);
     }
+    if (!textRunCount) throw new NoPdfTextLayerError();
+    return {
+      grid: catalogItems.length ? pdfCatalogItemsToGrid(catalogItems) : genericGrid,
+      brandDetected,
+      parsedCatalogRows: catalogItems.length,
+      pagesWithUnparsedCodes,
+      pages: pageCount,
+    };
+  } catch (error) {
+    throw transport.failureReason ?? error;
   } finally {
     await doc.destroy();
   }
-
-  if (!textRunCount) throw new Error("لا يوجد نص قابل للقراءة في هذا الملف (قد يكون ممسوحًا كصورة).");
-  return {
-    grid: catalogItems.length ? pdfCatalogItemsToGrid(catalogItems) : genericGrid,
-    brandDetected,
-    parsedCatalogRows: catalogItems.length,
-    pagesWithUnparsedCodes,
-    pages: pageCount,
-  };
 }
 
 function pasteToGrid(text: string): string[][] {
@@ -177,9 +191,9 @@ async function blobToBase64(blob: Blob): Promise<string> {
 async function scanPdfPages(
   file: File,
   onPage: (page: number, total: number, blob: Blob) => Promise<void>,
+  onBytes: (loaded: number, total: number) => void,
 ): Promise<void> {
-  const data = new Uint8Array(await file.arrayBuffer());
-  const doc = await pdfjsLib.getDocument({ data }).promise;
+  const { document: doc, transport } = await openLocalPdf(file, file.name, onBytes);
   try {
     for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber++) {
       const page = await doc.getPage(pageNumber);
@@ -196,6 +210,8 @@ async function scanPdfPages(
       if (blob) await onPage(pageNumber, doc.numPages, blob);
       await page.cleanup();
     }
+  } catch (error) {
+    throw transport.failureReason ?? error;
   } finally {
     await doc.destroy();
   }
@@ -316,6 +332,7 @@ export default function ItemImport() {
     const file = e.target.files?.[0];
     if (!file) return;
     setBusy(true); setErr(null); setOcrNote(null); setPdfWarning(null); setProgress(null); setProgressLabel("");
+    let fileReadFailed = false;
     try {
       if (sourceKind === "image") {
         afterParse(await ocrBlobHybrid(file));
@@ -331,8 +348,11 @@ export default function ItemImport() {
           pdfResult = await pdfToGrid(file, (done, total) => {
             setProgress({ done, total });
             setProgressLabel(`جارٍ قراءة صفحات PDF: ${done} من ${total}`);
+          }, (loaded, total) => {
+            setProgressLabel(`جارٍ تحميل أجزاء PDF: ${formatFileSize(loaded)} من ${formatFileSize(total)}`);
           });
         } catch (pdfError) {
+          if (!(pdfError instanceof NoPdfTextLayerError)) throw pdfError;
           const scannedPages: string[][] = [];
           const scannedCatalogItems: PdfCatalogItem[] = [];
           let scannedCatalogFormatFound = false;
@@ -355,6 +375,8 @@ export default function ItemImport() {
             }
             setProgress({ done: page, total });
             setProgressLabel(`اكتملت قراءة الصفحة ${page} من ${total}`);
+          }, (loaded, total) => {
+            setProgressLabel(`جارٍ تحميل أجزاء PDF الممسوح: ${formatFileSize(loaded)} من ${formatFileSize(total)}`);
           });
           if (!scannedPages.length && !scannedCatalogItems.length) throw pdfError;
           pdfResult = {
@@ -382,16 +404,17 @@ export default function ItemImport() {
         afterParse(await excelToGrid(buf));
       }
     } catch (ex) {
-      // Surface the REAL cause instead of swallowing non-Error throws behind a
-      // generic message (see memory: make errors visible before guess-fixing).
-      const detail = ex instanceof Error ? ex.message : typeof ex === "string" ? ex : "";
-      setErr(detail ? `تعذّرت قراءة الملف: ${detail}` : "تعذّرت قراءة الملف.");
+      fileReadFailed = true;
+      const detail = describePdfReadError(ex);
+      setErr(`تعذّرت قراءة «${file.name}» (${formatFileSize(file.size)}): ${detail}`);
       console.error("[ItemImport] file read failed:", ex);
     } finally {
       setBusy(false);
       setProgress(null);
       setProgressLabel("");
-      if (fileRef.current) fileRef.current.value = "";
+      // Keep the chosen filename visible after failure. Clear it only after
+      // success; clicking the input clears it so the same file can be retried.
+      if (!fileReadFailed && fileRef.current) fileRef.current.value = "";
     }
   }
 
@@ -526,6 +549,7 @@ export default function ItemImport() {
                 type="file"
                 accept={sourceKind === "excel" ? ".xlsx,.xls,.csv" : sourceKind === "pdf" ? ".pdf" : "image/png,image/jpeg,image/webp,image/*"}
                 onChange={onFile}
+                onClick={(event) => { event.currentTarget.value = ""; setErr(null); }}
                 disabled={busy}
                 style={S.file}
                 data-testid="input-item-import-file"
