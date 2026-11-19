@@ -43,6 +43,9 @@ import {
 } from "../lib/parkedCarts";
 import { useTaxSettings, computeTotals } from "../lib/taxSettings";
 import { uiText, useUiLanguage } from "../lib/appSettings";
+import { findItemBrandLinkByBarcode, listItemBrands, type ItemBrandView } from "../lib/brands";
+import { calculateBrandNetPrice } from "../lib/brandPricing";
+import BrandPricePicker from "../components/BrandPricePicker";
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 
 interface CartLine {
@@ -60,6 +63,12 @@ interface CartLine {
    * counts these units; `factor` = base units (pieces) per one of this unit and
    * is used to deduct stock in the base unit. */
   unit?: { id: string; name: string; factor: number };
+  brandId?: number | null;
+  brandName?: string | null;
+  brandDiscountType?: ItemBrandView["discountType"];
+  brandDiscountValue?: number | null;
+  brandListPrice?: number | null;
+  brandDiscountAmount?: number | null;
 }
 
 function newLineId(): string {
@@ -102,6 +111,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
   // Multi-unit picker modal state. Holds the item whose sale-unit (base /
   // carton / half-carton) the cashier is choosing on a manual tap.
   const [unitPickItem, setUnitPickItem] = useState<LocalItem | null>(null);
+  const [brandPickItem, setBrandPickItem] = useState<LocalItem | null>(null);
   const [vertical, setVertical] = useState<Vertical>("general");
   useEffect(() => { void getVertical().then((v) => v && setVertical(v)); }, []);
   const isPharmacy = vertical === "pharmacy";
@@ -143,6 +153,12 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             code: "", nameEn: null, updatedAt: null,
           } as unknown as LocalItem,
           qty: l.qty,
+          brandId: l.brandId ?? null,
+          brandName: l.brandName ?? null,
+          brandListPrice: l.brandListPrice ?? null,
+          brandDiscountAmount: l.brandDiscountAmount ?? null,
+          brandDiscountType: l.brandDiscountType ?? undefined,
+          brandDiscountValue: l.brandDiscountValue ?? null,
           // Restore the sale-unit so stock still deducts in base units and the
           // line keeps showing "كرتونة" etc. after a resume.
           ...(l.unitId != null && l.unitName != null && l.unitFactor != null
@@ -232,6 +248,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           barcode: l.item.barcode ?? null, qty: l.qty,
           unitId: l.unit?.id ?? null, unitName: l.unit?.name ?? null,
           unitFactor: l.unit?.factor ?? null,
+          brandId: l.brandId ?? null, brandName: l.brandName ?? null,
+          brandListPrice: l.brandListPrice ?? null, brandDiscountAmount: l.brandDiscountAmount ?? null,
+          brandDiscountType: l.brandDiscountType ?? null, brandDiscountValue: l.brandDiscountValue ?? null,
         })),
       });
       setCart([]); setCheckoutKey(null); setActiveParkedId(null);
@@ -294,7 +313,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       // Ignore scans while a blocking modal owns the screen — otherwise the
       // cashier's pending weight entry / customer pick would silently lose
       // focus or get overwritten by an unrelated background cart mutation.
-      if (weighItem || unitPickItem || showCustomerPicker || paying) return;
+      if (weighItem || unitPickItem || brandPickItem || showCustomerPicker || paying) return;
       try {
         // Task #201: a barcode-printing scale prints EAN-13 stickers that
         // encode prefix + PLU + weight. Try that first; if it matches AND
@@ -310,6 +329,16 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
           // PLU unknown → fall through to the regular barcode lookup
           // (some POSes also ship plain-EAN catalogs that happen to match
           // the weight-prefix range).
+        }
+        const brandHit = findItemBrandLinkByBarcode(code);
+        if (brandHit) {
+          const catalog = await listItems();
+          const item = catalog.find((row) => row.id === brandHit.itemId);
+          const brand = item ? listItemBrands(item.id).find((row) => row.brandId === brandHit.link.brandId) : null;
+          if (item && brand) {
+            await addToCart(item, brand);
+            return;
+          }
         }
         // Unit-aware lookup: a scanned code may belong to a specific sale-unit
         // (e.g. the carton barcode) — that wins over the base barcode. `unit`
@@ -400,7 +429,7 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
     return true;
   }
 
-  async function addToCart(item: LocalItem) {
+  async function addToCart(item: LocalItem, selectedBrand?: ItemBrandView | null) {
     setMsg(null);
     // Task #201: weighed items go through the WeightCaptureModal instead
     // of being pushed at qty=1.
@@ -412,16 +441,37 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
       setWeighItem(item);
       return;
     }
+    if (selectedBrand === undefined) {
+      const activeBrands = listItemBrands(item.id).filter((brand) => brand.status === "active");
+      if (activeBrands.length > 1) {
+        setBrandPickItem(item);
+        return;
+      }
+      selectedBrand = activeBrands[0] ?? null;
+    }
     if (!(await ensureExpiryAllowed(item))) return;
+    const listPrice = selectedBrand
+      ? Number(selectedBrand.salePrice1) > 0 ? Number(selectedBrand.salePrice1) : Number(item.salePrice) || 0
+      : Number(item.salePrice) || 0;
+    const discountedPrice = calculateBrandNetPrice(listPrice, selectedBrand?.discountType, selectedBrand?.discountValue);
+    const pricedItem = { ...item, salePrice: discountedPrice };
     setCart((prev) => {
       // Non-weighed lines still collapse to a single line per catalog row —
       // tapping the same product twice should bump qty, not spawn duplicates.
       // Weighed lines bypass this branch entirely (see pushWeighedLine).
       // `!l.unit` keeps base-unit lines separate from carton/half-carton lines
       // of the same product (those are added by addUnitToCart).
-      const existing = prev.find((l) => l.item.id === item.id && !l.weighed && !l.unit);
+      const brandId = selectedBrand?.brandId ?? null;
+      const existing = prev.find((l) => l.item.id === item.id && !l.weighed && !l.unit && (l.brandId ?? null) === brandId);
       if (existing) return prev.map((l) => l.lineId === existing.lineId ? { ...l, qty: l.qty + 1 } : l);
-      return [...prev, { lineId: newLineId(), item, qty: 1 }];
+      return [...prev, {
+        lineId: newLineId(), item: pricedItem, qty: 1, brandId,
+        brandName: selectedBrand?.brandNameAr ?? null,
+        brandDiscountType: selectedBrand?.discountType,
+        brandDiscountValue: selectedBrand?.discountValue ?? null,
+        brandListPrice: selectedBrand ? listPrice : null,
+        brandDiscountAmount: selectedBrand ? Math.max(0, listPrice - discountedPrice) : null,
+      }];
     });
   }
 
@@ -511,6 +561,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             ? `${l.item.nameAr} (${l.qty.toFixed(3)} كجم)`
             : l.unit ? `${l.item.nameAr} (${l.unit.name})` : l.item.nameAr,
           qty: l.qty, unitPrice: l.item.salePrice, vatRate: l.item.vatRate,
+          brandId: l.brandId ?? null, brandName: l.brandName ?? null,
+          brandListPrice: l.brandListPrice ?? null, brandDiscountAmount: l.brandDiscountAmount ?? null,
+          brandDiscountType: l.brandDiscountType ?? null, brandDiscountValue: l.brandDiscountValue ?? null,
           ...(l.unit ? { unitId: l.unit.id, unitName: l.unit.name, unitFactor: l.unit.factor } : {}),
           ...(l.weighed ? { weighed: true } : {}),
         })),
@@ -828,6 +881,9 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
                     <div style={{ fontSize: 14, color: "#0f172a", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.item.nameAr}</div>
                     <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
                       {l.unit && <span style={{ color: "#7c3aed", fontWeight: 700 }}>{l.unit.name} · </span>}
+                      {l.brandName && <span style={{ color: "#087f69", fontWeight: 700 }}>🏷 {l.brandName} · </span>}
+                      {l.brandDiscountType && l.brandDiscountType !== "none" && Number(l.brandDiscountValue) > 0 &&
+                        <span style={{ color: "#b45309", fontWeight: 700 }}>{text("خصم", "Discount")} {l.brandDiscountType === "percent" ? `${l.brandDiscountValue}%` : `${l.brandDiscountValue} ${sym}`} ({Number(l.brandDiscountAmount ?? 0).toFixed(2)} {sym}) · </span>}
                       {l.item.salePrice.toFixed(2)} × {l.qty} = <strong style={{ color: "#0f172a" }}>{(l.item.salePrice * l.qty).toFixed(2)}</strong>
                     </div>
                   </div>
@@ -965,6 +1021,17 @@ export default function SalesScreen({ companyName = "ZACOD POS", vatNumber = "30
             if (unit) void addUnitToCart(unitPickItem, unit);
             else void addToCart(unitPickItem);
             setUnitPickItem(null);
+          }}
+        />
+      )}
+      {brandPickItem && (
+        <BrandPricePicker
+          item={brandPickItem}
+          onCancel={() => setBrandPickItem(null)}
+          onPick={(brand) => {
+            const item = brandPickItem;
+            setBrandPickItem(null);
+            void addToCart(item, brand);
           }}
         />
       )}

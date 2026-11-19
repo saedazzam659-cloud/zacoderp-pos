@@ -35,6 +35,9 @@ import {
 } from "../lib/parkedCarts";
 import { useTaxSettings, computeTotals } from "../lib/taxSettings";
 import { uiText, useUiLanguage } from "../lib/appSettings";
+import { findItemBrandLinkByBarcode, listItemBrands, type ItemBrandView } from "../lib/brands";
+import { calculateBrandNetPrice } from "../lib/brandPricing";
+import BrandPricePicker from "../components/BrandPricePicker";
 
 const LS_PRINTER = "pos_desktop_peripherals_printer";
 const LS_THEME = "pos_desktop_register_theme";
@@ -54,6 +57,12 @@ interface CartLine {
    * `item.salePrice` holds the per-unit price; `factor` = base units per one
    * of this unit and is used to deduct stock in the base unit at checkout. */
   unit?: { id: string; name: string; factor: number };
+  brandId?: number | null;
+  brandName?: string | null;
+  brandDiscountType?: ItemBrandView["discountType"];
+  brandDiscountValue?: number | null;
+  brandListPrice?: number | null;
+  brandDiscountAmount?: number | null;
 }
 
 function newLineId(): string {
@@ -90,6 +99,8 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [unitPickItem, setUnitPickItem] = useState<LocalItem | null>(null);
   const [pendingUnitQty, setPendingUnitQty] = useState(1);
+  const [brandPickItem, setBrandPickItem] = useState<LocalItem | null>(null);
+  const [pendingBrandQty, setPendingBrandQty] = useState(1);
   const [paidStr, setPaidStr] = useState("");
   const [payMethods, setPayMethods] = useState<PosPaymentMethod[]>([]);
   const [payMethodId, setPayMethodId] = useState<number | null>(null);
@@ -144,6 +155,12 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
             code: "", nameEn: null, updatedAt: null,
           } as unknown as LocalItem,
           qty: l.qty,
+          brandId: l.brandId ?? null,
+          brandName: l.brandName ?? null,
+          brandListPrice: l.brandListPrice ?? null,
+          brandDiscountAmount: l.brandDiscountAmount ?? null,
+          brandDiscountType: l.brandDiscountType ?? undefined,
+          brandDiscountValue: l.brandDiscountValue ?? null,
           ...(l.unitId != null && l.unitName != null && l.unitFactor != null
             ? { unit: { id: l.unitId, name: l.unitName, factor: l.unitFactor } }
             : {}),
@@ -187,6 +204,12 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
               code: "", nameEn: null, updatedAt: null,
             } as unknown as LocalItem,
             qty: l.qty,
+            brandId: l.brandId ?? null,
+            brandName: l.brandName ?? null,
+            brandListPrice: l.brandListPrice ?? null,
+            brandDiscountAmount: l.brandDiscountAmount ?? null,
+            brandDiscountType: l.brandDiscountType ?? undefined,
+            brandDiscountValue: l.brandDiscountValue ?? null,
             ...(l.unitId != null && l.unitName != null && l.unitFactor != null
               ? { unit: { id: l.unitId, name: l.unitName, factor: l.unitFactor } }
               : {}),
@@ -228,6 +251,9 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
           barcode: l.item.barcode ?? null, qty: l.qty,
           unitId: l.unit?.id ?? null, unitName: l.unit?.name ?? null,
           unitFactor: l.unit?.factor ?? null,
+          brandId: l.brandId ?? null, brandName: l.brandName ?? null,
+          brandListPrice: l.brandListPrice ?? null, brandDiscountAmount: l.brandDiscountAmount ?? null,
+          brandDiscountType: l.brandDiscountType ?? null, brandDiscountValue: l.brandDiscountValue ?? null,
         })),
       });
       setCart([]); setCheckoutKey(null); setActiveParkedId(null);
@@ -280,8 +306,18 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
 
   useBarcodeScanner({
     onScan: async (code) => {
-      if (unitPickItem || showCustomerPicker || paying) return;
+      if (unitPickItem || brandPickItem || showCustomerPicker || paying) return;
       try {
+        const brandHit = findItemBrandLinkByBarcode(code);
+        if (brandHit) {
+          const catalog = await listItems();
+          const item = catalog.find((row) => row.id === brandHit.itemId);
+          const brand = item ? listItemBrands(item.id).find((row) => row.brandId === brandHit.link.brandId) : null;
+          if (item && brand) {
+            addToCart(item, 1, brand);
+            return;
+          }
+        }
         const match = await findItemUnitByBarcode(code);
         if (match) {
           if (match.unit) addUnitToCart(match.item, match.unit);
@@ -299,12 +335,34 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
     return computeTotals(raw, vatRatePct, taxMode);
   }, [cart, vatRatePct, taxMode]);
 
-  function addToCart(item: LocalItem, qty = 1) {
+  function addToCart(item: LocalItem, qty = 1, selectedBrand?: ItemBrandView | null) {
     setMsg(null);
+    if (selectedBrand === undefined) {
+      const activeBrands = listItemBrands(item.id).filter((brand) => brand.status === "active");
+      if (activeBrands.length > 1) {
+        setBrandPickItem(item);
+        setPendingBrandQty(qty);
+        return;
+      }
+      selectedBrand = activeBrands[0] ?? null;
+    }
+    const listPrice = selectedBrand
+      ? Number(selectedBrand.salePrice1) > 0 ? Number(selectedBrand.salePrice1) : Number(item.salePrice) || 0
+      : Number(item.salePrice) || 0;
+    const netPrice = calculateBrandNetPrice(listPrice, selectedBrand?.discountType, selectedBrand?.discountValue);
+    const pricedItem = { ...item, salePrice: netPrice };
     setCart((prev) => {
-      const existing = prev.find((l) => l.item.id === item.id && !l.unit);
+      const brandId = selectedBrand?.brandId ?? null;
+      const existing = prev.find((l) => l.item.id === item.id && !l.unit && (l.brandId ?? null) === brandId);
       if (existing) return prev.map((l) => l.lineId === existing.lineId ? { ...l, qty: l.qty + qty } : l);
-      return [...prev, { lineId: newLineId(), item, qty }];
+      return [...prev, {
+        lineId: newLineId(), item: pricedItem, qty, brandId,
+        brandName: selectedBrand?.brandNameAr ?? null,
+        brandDiscountType: selectedBrand?.discountType,
+        brandDiscountValue: selectedBrand?.discountValue ?? null,
+        brandListPrice: selectedBrand ? listPrice : null,
+        brandDiscountAmount: selectedBrand ? Math.max(0, listPrice - netPrice) : null,
+      }];
     });
   }
 
@@ -418,6 +476,9 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
           itemId: l.item.id,
           nameAr: l.unit ? `${l.item.nameAr} (${l.unit.name})` : l.item.nameAr,
           qty: l.qty, unitPrice: l.item.salePrice, vatRate: l.item.vatRate,
+          brandId: l.brandId ?? null, brandName: l.brandName ?? null,
+          brandListPrice: l.brandListPrice ?? null, brandDiscountAmount: l.brandDiscountAmount ?? null,
+          brandDiscountType: l.brandDiscountType ?? null, brandDiscountValue: l.brandDiscountValue ?? null,
           ...(l.unit ? { unitId: l.unit.id, unitName: l.unit.name, unitFactor: l.unit.factor } : {}),
         })),
       };
@@ -674,6 +735,9 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
                 <div key={l.lineId} style={{ ...S.row, ...(idx % 2 ? S.rowAlt : null) }}>
                   <div style={S.colName}>
                     <div style={S.rowName}>{l.item.nameAr}</div>
+                    {l.brandName && <small style={{ display: "block", color: "#087f69" }}>🏷 {l.brandName}</small>}
+                    {l.brandDiscountType && l.brandDiscountType !== "none" && Number(l.brandDiscountValue) > 0 &&
+                      <small style={{ display: "block", color: "#b45309" }}>{text("خصم", "Discount")} {l.brandDiscountType === "percent" ? `${l.brandDiscountValue}%` : `${l.brandDiscountValue} ${sym}`} ({Number(l.brandDiscountAmount ?? 0).toFixed(2)} {sym})</small>}
                   </div>
                   <div style={S.colQty}>
                     <div style={S.qtyBox}>
@@ -771,6 +835,19 @@ export default function RegisterScreen({ companyName = "ZACOD POS", vatNumber = 
             else addToCart(unitPickItem, pendingUnitQty);
             setUnitPickItem(null);
             setPendingUnitQty(1);
+          }}
+        />
+      )}
+      {brandPickItem && (
+        <BrandPricePicker
+          item={brandPickItem}
+          onCancel={() => { setBrandPickItem(null); setPendingBrandQty(1); }}
+          onPick={(brand) => {
+            const item = brandPickItem;
+            const qty = pendingBrandQty;
+            setBrandPickItem(null);
+            setPendingBrandQty(1);
+            addToCart(item, qty, brand);
           }}
         />
       )}

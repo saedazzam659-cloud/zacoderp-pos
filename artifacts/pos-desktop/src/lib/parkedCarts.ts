@@ -30,6 +30,12 @@ export interface ParkedCartLine {
   unitId?: string | null;
   unitName?: string | null;
   unitFactor?: number | null;
+  brandId?: number | null;
+  brandName?: string | null;
+  brandListPrice?: number | null;
+  brandDiscountAmount?: number | null;
+  brandDiscountType?: "none" | "percent" | "amount" | null;
+  brandDiscountValue?: number | null;
 }
 
 export interface ParkedCart {

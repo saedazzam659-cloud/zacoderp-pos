@@ -52,6 +52,7 @@ import {
   computeDiscount, lineNet, saveDocDiscount, getDocDiscount,
   clearDocDiscount, type DiscType, type DiscFields,
 } from "../lib/discount";
+import { brandDiscountForLine } from "../lib/brandPricing";
 import {
   buildSalesInvoiceZatcaInput, queueOrSubmitZatcaDocument,
   useLocalZatcaEntitlement,
@@ -64,6 +65,7 @@ type FLine = SalesLine & DiscFields & {
   unitKey?: string;
   brandId?: number | null;
   brandName?: string | null;
+  autoBrandDiscount?: { discountType: "percent" | "amount"; discountValue: number };
   quickCreateEntryKey?: string;
   quickCreateCreatedInSession?: boolean;
 };
@@ -854,22 +856,43 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         }
         // A different item carries different brands — clear any prior pick.
         next.brandId = null; next.brandName = null;
+        next.autoBrandDiscount = undefined;
       }
       // Brand pick (PRINT-ONLY, back-office only). Loads the brand's own sale
       // price into unitPrice and snapshots the brand name for the printed
       // invoice. NEVER enters the ZATCA UBL/hash/signature/QR/ICV-PIH.
       if (patch.brandId !== undefined) {
         const bid = patch.brandId;
+        const hadAutoDiscount = !!l.autoBrandDiscount;
         if (bid) {
           const link = listItemBrands(Number(next.itemId)).find((b) => b.brandId === bid);
           if (link) {
             next.brandName = link.brandNameAr;
-            if ((link.salePrice1 ?? 0) > 0) next.unitPrice = link.salePrice1 as number;
+            next.unitPrice = (link.salePrice1 ?? 0) > 0 ? link.salePrice1 as number
+              : deps.items.find((item) => item.id === Number(next.itemId))?.salePrice ?? next.unitPrice;
+            if (link.discountType && link.discountType !== "none" && Number(link.discountValue) > 0) {
+              next.autoBrandDiscount = { discountType: link.discountType, discountValue: Number(link.discountValue) };
+              const discount = brandDiscountForLine(link, Number(next.qty) || 0);
+              next.disc = discount?.disc ?? 0;
+              next.discType = discount?.discType ?? "percent";
+            } else {
+              next.autoBrandDiscount = undefined;
+              if (hadAutoDiscount) { next.disc = 0; next.discType = "percent"; }
+            }
           }
         } else {
           next.brandName = null;
+          next.unitPrice = deps.items.find((item) => item.id === Number(next.itemId))?.salePrice ?? next.unitPrice;
+          next.autoBrandDiscount = undefined;
+          if (hadAutoDiscount) { next.disc = 0; next.discType = "percent"; }
         }
       }
+      if (patch.qty !== undefined && next.autoBrandDiscount) {
+        const discount = brandDiscountForLine(next.autoBrandDiscount, Number(next.qty) || 0);
+        next.disc = discount?.disc ?? 0;
+        next.discType = discount?.discType ?? "percent";
+      }
+      if (patch.disc !== undefined || patch.discType !== undefined) next.autoBrandDiscount = undefined;
       // Unit change via the per-item picker. Picking an ADDITIONAL unit auto-fills
       // its own price + conversion factor; the BASE unit restores the base price.
       if (patch.unitKey !== undefined) {
@@ -929,6 +952,12 @@ function CreateForm({ deps, initial, invoiceCount, onRefreshDeps, onCancel, onDo
         vatRate: selectedRate ?? item.vatRate ?? 0,
         uomId: uom?.id ?? null, uomName: uom?.nameAr ?? null, conversionFactor: uom?.baseQty ?? 1,
       };
+      if (selected?.discountType && selected.discountType !== "none" && Number(selected.discountValue) > 0) {
+        line.autoBrandDiscount = { discountType: selected.discountType, discountValue: Number(selected.discountValue) };
+        const discount = brandDiscountForLine(selected, line.qty);
+        line.disc = discount?.disc ?? 0;
+        line.discType = discount?.discType ?? "percent";
+      }
       const { net } = lineNet(line.qty, line.unitPrice, line.disc, line.discType);
       line.lineTotal = net + net * (Number(line.vatRate) || 0) / 100;
       return line;

@@ -55,6 +55,14 @@ export interface OfflineInvoicePayload {
     // invoices lack these → reuse falls back to a base-unit line.
     unitId?: string | null; unitName?: string | null; unitFactor?: number | null;
     weighed?: boolean;
+    /** Local-only brand snapshot; ZATCA payload builders intentionally ignore it. */
+    brandId?: number | null;
+    brandName?: string | null;
+    /** Per-unit reference price and discount retained for invoice detail; fiscal lines use unitPrice. */
+    brandListPrice?: number | null;
+    brandDiscountAmount?: number | null;
+    brandDiscountType?: "none" | "percent" | "amount" | null;
+    brandDiscountValue?: number | null;
     /** Per-BASE-unit cost override for the COGS leg; omitted → Rust uses local
      *  stock cost, then the synced item-card cost for sales. */
     cost?: number | null;

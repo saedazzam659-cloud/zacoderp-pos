@@ -22,6 +22,7 @@ import { LS_KEYS, lsRead, lsWrite } from "./localStore";
 import { emitData } from "./dataBus";
 
 export type BrandStatus = "active" | "inactive";
+export type BrandDiscountType = "none" | "percent" | "amount";
 
 /** Brand master record. Mirrors the web core `brands` table field set. */
 export interface Brand {
@@ -59,6 +60,9 @@ export interface ItemBrandLink {
   salePrice3?: number | null;
   minSalePrice?: number | null;
   profitMargin?: number | null;
+  /** Optional per-brand sales discount, applied only when this brand is selected. */
+  discountType?: BrandDiscountType;
+  discountValue?: number | null;
   countryOfOrigin?: string | null;
   warrantyPeriod?: string | null;
   status: BrandStatus;
@@ -236,6 +240,17 @@ export function listItemBrands(itemId: number): ItemBrandView[] {
   return out;
 }
 
+/** Find an active item-brand link by its optional brand-specific barcode. */
+export function findItemBrandLinkByBarcode(barcode: string): { itemId: number; link: ItemBrandLink } | null {
+  const code = barcode.trim();
+  if (!code) return null;
+  for (const [itemId, links] of Object.entries(readItemBrandMap())) {
+    const link = links.find((row) => row.status === "active" && row.barcode?.trim() === code);
+    if (link) return { itemId: Number(itemId), link };
+  }
+  return null;
+}
+
 /** True when an item has at least one attached brand (drives picker visibility). */
 export function itemHasBrands(itemId: number): boolean {
   return listItemBrandLinks(itemId).length > 0;
@@ -255,6 +270,23 @@ export function setItemBrands(
       id: l.id ?? uuid(),
       status: l.status ?? "active",
     }));
+  }
+  writeItemBrandMap(map);
+  emitData("brands", "items");
+}
+
+/**
+ * Replace links for many catalog items in one localStorage write. This keeps
+ * bulk price/discount changes from leaving a partially-updated catalog if an
+ * individual item operation fails, and emits one refresh event for all views.
+ */
+export function setManyItemBrands(
+  updates: Array<{ itemId: number; links: ItemBrandLink[] }>,
+): void {
+  const map = readItemBrandMap();
+  for (const { itemId, links } of updates) {
+    if (!links.length) delete map[itemId];
+    else map[itemId] = links;
   }
   writeItemBrandMap(map);
   emitData("brands", "items");

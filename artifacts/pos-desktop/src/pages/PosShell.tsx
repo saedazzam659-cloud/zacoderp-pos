@@ -123,6 +123,7 @@ import { getAppProfile } from "../lib/standalone";
 import ExpiryReport from "./ExpiryReport";
 import StockImport from "./StockImport";
 import ItemImport from "./ItemImport";
+import BulkItemPriceUpdate from "./BulkItemPriceUpdate";
 import InvoiceImport from "./InvoiceImport";
 import LowStockReport, { countLowStockTracked } from "./LowStockReport";
 import { listItems, bulkImportLocalItems, type CreateItemInput } from "../lib/items";
@@ -687,6 +688,7 @@ export default function PosShell({
     { id: "brands",           icon: "🏷️", label: "العلامات التجارية", perm: "brands" },
     { id: "stock_import",     icon: "📥", label: "استيراد الأرصدة", perm: "stock_import" },
     { id: "item_import",      icon: "📤", label: "استيراد الأصناف من ملف", perm: "item_import" },
+    { id: "bulk_price_update", icon: "🏷️", label: "تحديث أسعار وخصومات العلامات", perm: "bulk_price_update" },
     { id: "low_stock",        icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined, perm: "low_stock" },
     { id: "uom",              icon: "📐", label: "وحدات القياس", perm: "uom" },
     { id: "purchase_orders",  icon: "📋", label: "أوامر الشراء", perm: "purchase_orders" },
@@ -798,6 +800,7 @@ export default function PosShell({
     { id: "brands",    icon: "🏷️", label: "العلامات التجارية" },
     { id: "stock_import", icon: "📥", label: "استيراد الأرصدة" },
     { id: "item_import", icon: "📤", label: "استيراد الأصناف من ملف" },
+    { id: "bulk_price_update", icon: "🏷️", label: "تحديث أسعار وخصومات العلامات" },
     { id: "invoice_import", icon: "📂", label: "استيراد الفواتير" },
     { id: "low_stock", icon: "⚠️", label: "أصناف تحت الحد", badge: lowStockCount > 0 ? lowStockCount : undefined },
     { id: "uom",       icon: "📐", label: "وحدات القياس" },
@@ -869,6 +872,7 @@ export default function PosShell({
           {v === "brands" && <div style={S.pagePad}><BrandsAdmin /></div>}
           {v === "stock_import" && <div style={S.pagePad}><StockImport onDone={() => void refreshLowStock()} /></div>}
           {v === "item_import" && <div style={S.pagePad}><ItemImport /></div>}
+          {v === "bulk_price_update" && <div style={S.pagePad}><BulkItemPriceUpdate /></div>}
           {v === "invoice_import" && <div style={S.pagePad}><InvoiceImport sellerName={effectiveCompanyName} /></div>}
           {v === "low_stock" && <div style={S.pagePad}><LowStockReport onGoToImport={() => setView("stock_import")} /></div>}
           {v === "uom" && <div style={S.pagePad}><UomAdmin /></div>}
@@ -1459,6 +1463,7 @@ function labelFor(v: View): string {
     brands: "العلامات التجارية",
     stock_import: "استيراد الأرصدة الافتتاحية",
     item_import: "استيراد الأصناف من ملف",
+    bulk_price_update: "تحديث أسعار وخصومات العلامات",
     low_stock: "الأصناف تحت الحد الأدنى",
     uom: "وحدات القياس",
     expiry: "تقرير الصلاحية",

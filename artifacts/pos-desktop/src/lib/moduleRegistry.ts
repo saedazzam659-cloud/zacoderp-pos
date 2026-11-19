@@ -26,7 +26,7 @@
 export type WindowsView =
   | "sales" | "returns" | "pending" | "parked" | "daily"
   | "customers" | "items" | "item_groups" | "brands" | "uom" | "dashboard" | "updates" | "users"
-  | "expiry" | "scale" | "stock_import" | "item_import" | "low_stock" | "network"
+  | "expiry" | "scale" | "stock_import" | "item_import" | "bulk_price_update" | "low_stock" | "network"
   | "suppliers" | "supplier_groups" | "supplier_settlement"
   | "purchases" | "purchase_orders" | "goods_receipts" | "purchase_returns" | "letters_of_credit"
   | "report_purchases_by_supplier" | "report_purchases_by_item" | "report_purchases_by_period"
@@ -103,6 +103,7 @@ export const VIEW_MODULE: Record<WindowsView, ViewMeta> = {
   low_stock:    { module: "inventory", profile: "pos" },
   stock_import: { module: "inventory", profile: "pos" },
   item_import:  { module: "inventory", profile: "pos" },
+  bulk_price_update: { module: "inventory", profile: "erp" },
   invoice_import: { module: "pos", profile: "pos" },
   pos_invoices: { module: "pos", profile: "pos" },
   expiry:       { module: "inventory", profile: "pos" },

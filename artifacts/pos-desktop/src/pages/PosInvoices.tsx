@@ -194,6 +194,7 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
 
   const subtitle = [cashierName ? `${text("الكاشير", "Cashier")}: ${cashierName}` : null, companyName]
     .filter(Boolean).join(" · ");
+  const hasBrandDiscount = detailPayload?.lines.some((line) => Number(line.brandDiscountAmount ?? 0) > 0) ?? false;
 
   return (
     <div dir={language === "en" ? "ltr" : "rtl"}>
@@ -325,6 +326,9 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                       <tr>
                         <Th>{text("الصنف", "Item")}</Th>
                         <Th>{text("الكمية", "Quantity")}</Th>
+                        {hasBrandDiscount && <Th>{text("العلامة", "Brand")}</Th>}
+                        {hasBrandDiscount && <Th>{text("السعر قبل الخصم", "Price before discount")}</Th>}
+                        {hasBrandDiscount && <Th>{text("خصم العلامة", "Brand discount")}</Th>}
                         <Th>{text("السعر", "Price")}</Th>
                         <Th>{text("الضريبة", "Tax")}</Th>
                         <Th>{text("الإجمالي", "Total")}</Th>
@@ -335,6 +339,9 @@ export default function PosInvoices({ companyName, cashierName, onReuse }: { com
                         <tr key={i}>
                           <Td>{l.nameAr}</Td>
                           <Td num>{fmt(l.qty)}</Td>
+                          {hasBrandDiscount && <Td>{l.brandName || "—"}</Td>}
+                          {hasBrandDiscount && <Td num>{fmt(l.brandListPrice ?? l.unitPrice)} {sym}</Td>}
+                          {hasBrandDiscount && <Td num>{fmt(Number(l.brandDiscountAmount ?? 0) * Math.abs(l.qty))} {sym}</Td>}
                           <Td num>{fmt(l.unitPrice)} {sym}</Td>
                           <Td num>{fmt(l.vatRate)}%</Td>
                           <Td num>{fmt(l.qty * l.unitPrice)} {sym}</Td>

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { salesItemPartyHistory, type SalesItemPartyHistoryEntry } from "../lib/accounting";
 import type { LocalItem } from "../lib/items";
-import { listBrands, listItemBrands } from "../lib/brands";
+import { listBrands, listItemBrands, type ItemBrandView } from "../lib/brands";
+import { calculateBrandNetPrice } from "../lib/brandPricing";
 import { uiText, useUiLanguage } from "../lib/appSettings";
 import { fmt, input, btnPrimary, btnSecondary } from "../pages/_adminUi";
 
@@ -46,6 +47,8 @@ export interface DocumentItemPickerSelection {
   brandName: string | null;
   salePrice: number;
   barcode: string | null;
+  discountType?: ItemBrandView["discountType"];
+  discountValue?: number | null;
 }
 
 interface DocumentItemPickerEntry extends DocumentItemPickerSelection {
@@ -100,6 +103,8 @@ export function DocumentItemPicker({ items, onCancel, onAdd, showBrandFilters = 
         brandName: link.brandNameAr,
         salePrice: (link.salePrice1 ?? 0) > 0 ? Number(link.salePrice1) : item.salePrice ?? 0,
         barcode: link.barcode?.trim() || item.barcode || null,
+        discountType: link.discountType,
+        discountValue: link.discountValue,
         brandCode: brand?.code ?? null,
         brandLogo: brand?.logoUrl ?? null,
       };
@@ -224,7 +229,14 @@ export function DocumentItemPicker({ items, onCancel, onAdd, showBrandFilters = 
                     style={{ ...input, width: "100%", height: 34, boxSizing: "border-box", textAlign: "center", padding: "4px 6px", fontVariantNumeric: "tabular-nums" }} />
                 </label>
               ) : <span />}
-              <span style={{ textAlign: "end", fontVariantNumeric: "tabular-nums", color: "#315e56", fontWeight: 700 }}>{fmt(entry.salePrice)}</span>
+              <span style={{ textAlign: "end", fontVariantNumeric: "tabular-nums", color: "#315e56", fontWeight: 700 }}>
+                {fmt(calculateBrandNetPrice(entry.salePrice, entry.discountType, entry.discountValue))}
+                {entry.discountType && entry.discountType !== "none" && Number(entry.discountValue) > 0 && (
+                  <small style={{ display: "block", color: "#b45309", fontSize: 10 }}>
+                    {text("بعد الخصم", "after discount")}
+                  </small>
+                )}
+              </span>
               <input type="checkbox" checked={selected.has(entry.key)}
                 aria-label={text(`اختيار ${entry.item.nameAr}${entry.brandName ? ` - ${entry.brandName}` : ""}`, `Select ${entry.item.nameAr}${entry.brandName ? ` - ${entry.brandName}` : ""}`)}
                 onChange={(e) => setSelected((old) => {
