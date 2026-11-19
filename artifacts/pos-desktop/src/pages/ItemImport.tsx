@@ -160,7 +160,7 @@ async function pdfToGrid(
       pages: pageCount,
     };
   } catch (error) {
-    throw transport.failureReason ?? error;
+    throw transport?.failureReason ?? error;
   } finally {
     await doc.destroy();
   }
@@ -211,7 +211,7 @@ async function scanPdfPages(
       await page.cleanup();
     }
   } catch (error) {
-    throw transport.failureReason ?? error;
+    throw transport?.failureReason ?? error;
   } finally {
     await doc.destroy();
   }
@@ -349,7 +349,7 @@ export default function ItemImport() {
             setProgress({ done, total });
             setProgressLabel(`جارٍ قراءة صفحات PDF: ${done} من ${total}`);
           }, (loaded, total) => {
-            setProgressLabel(`جارٍ تحميل أجزاء PDF: ${formatFileSize(loaded)} من ${formatFileSize(total)}`);
+            setProgressLabel(`جارٍ تحميل بيانات PDF: ${formatFileSize(loaded)} من ${formatFileSize(total)}`);
           });
         } catch (pdfError) {
           if (!(pdfError instanceof NoPdfTextLayerError)) throw pdfError;
@@ -376,7 +376,7 @@ export default function ItemImport() {
             setProgress({ done: page, total });
             setProgressLabel(`اكتملت قراءة الصفحة ${page} من ${total}`);
           }, (loaded, total) => {
-            setProgressLabel(`جارٍ تحميل أجزاء PDF الممسوح: ${formatFileSize(loaded)} من ${formatFileSize(total)}`);
+            setProgressLabel(`جارٍ تحميل بيانات PDF الممسوح: ${formatFileSize(loaded)} من ${formatFileSize(total)}`);
           });
           if (!scannedPages.length && !scannedCatalogItems.length) throw pdfError;
           pdfResult = {

@@ -273,28 +273,17 @@ jobs:
           Remove-Item $certPath
           Write-Host "Certificate imported."
 
-      - name: Build Tauri installers (unsigned)
+      - name: Build small online Tauri MSI (unsigned)
         if: steps.signing.outputs.MODE == 'unsigned'
         run: |
-          # Pass 1 — SMALL online MSI (downloadBootstrapper from base config):
-          # served by the public /download page AND used by the in-app updater
-          # (platform=win-x64). WebView2 is fetched at install time.
+          # Build only the small online MSI for this 0.9.11 candidate.
+          # WebView2 is fetched at install time; do not embed the offline runtime.
           pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi
-          # Both passes emit bundle/msi/<same-name>.msi, so stash the online MSI
-          # before Pass 2 overwrites it.
           MSI_DIR="src-tauri/target/${{ env.TAURI_TARGET }}/release/bundle/msi"
-          mkdir -p staging/online staging/offline
+          mkdir -p staging/online
           mv "$MSI_DIR"/*.msi staging/online/
-          # Pass 2 — LARGE OFFLINE MSI (offlineInstaller embeds the full WebView2
-          # runtime) for the protected /install wizard (platform=win-x64-exe).
-          # Same installer TYPE (per-machine MSI) as the online one, so they can
-          # never diverge into separate per-user/per-machine products.
-          pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi --config src-tauri/tauri.offline.conf.json
-          for f in "$MSI_DIR"/*.msi; do
-            mv "$f" "staging/offline/$(basename "${f%.msi}")-offline.msi"
-          done
 
-      - name: Build Tauri MSI (signed)
+      - name: Build small online Tauri MSI (signed)
         if: steps.signing.outputs.MODE == 'signed'
         env:
           TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -303,18 +292,11 @@ jobs:
           TAURI__BUNDLE__WINDOWS__DIGEST_ALGORITHM: "sha256"
           TAURI__BUNDLE__WINDOWS__TIMESTAMP_URL: "http://timestamp.digicert.com"
         run: |
-          # Pass 1 — SMALL online MSI (downloadBootstrapper) → /download + updater
+          # Build only the small online MSI for this 0.9.11 candidate.
           pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi
-          # Both passes emit bundle/msi/<same-name>.msi, so stash the online MSI
-          # before Pass 2 overwrites it.
           MSI_DIR="src-tauri/target/${{ env.TAURI_TARGET }}/release/bundle/msi"
-          mkdir -p staging/online staging/offline
+          mkdir -p staging/online
           mv "$MSI_DIR"/*.msi staging/online/
-          # Pass 2 — LARGE OFFLINE MSI (offlineInstaller, full WebView2) → /install
-          pnpm exec tauri build --target ${{ env.TAURI_TARGET }} --bundles msi --config src-tauri/tauri.offline.conf.json
-          for f in "$MSI_DIR"/*.msi; do
-            mv "$f" "staging/offline/$(basename "${f%.msi}")-offline.msi"
-          done
 
       # ─── 8. Locate + checksum the MSI ───────────────────────────────
       - name: Find produced MSI
@@ -336,32 +318,6 @@ jobs:
           echo ""
           echo "MSI: $MSI_NAME ($MSI_SIZE bytes)"
           echo "SHA256: $MSI_SHA256"
-
-      # ─── 8b. Locate + checksum the OFFLINE MSI ──────────────────────
-      # The offline installer is now an MSI (offlineInstaller — full WebView2
-      # runtime embedded, per-machine) used by the protected /install wizard
-      # (platform=win-x64-exe). Same installer TYPE as the online MSI, so the
-      # in-app updater (MSI) always replaces it cleanly — no per-user vs
-      # per-machine split. The public /download page serves the online MSI.
-      - name: Find produced offline MSI
-        id: exe
-        shell: bash
-        run: |
-          EXE_PATH=$(find staging/offline -name "*-offline.msi" | head -n1)
-          if [[ -z "$EXE_PATH" ]]; then
-            echo "::error::No offline MSI produced — check Tauri build output above."
-            exit 1
-          fi
-          EXE_NAME=$(basename "$EXE_PATH")
-          EXE_SIZE=$(stat -c %s "$EXE_PATH" 2>/dev/null || stat -f %z "$EXE_PATH")
-          EXE_SHA256=$(sha256sum "$EXE_PATH" | cut -d' ' -f1)
-          echo "PATH=$EXE_PATH" >> "$GITHUB_OUTPUT"
-          echo "NAME=$EXE_NAME" >> "$GITHUB_OUTPUT"
-          echo "SIZE=$EXE_SIZE" >> "$GITHUB_OUTPUT"
-          echo "SHA256=$EXE_SHA256" >> "$GITHUB_OUTPUT"
-          echo ""
-          echo "Offline MSI: $EXE_NAME ($EXE_SIZE bytes)"
-          echo "SHA256: $EXE_SHA256"
 
       - name: Write build manifest
         shell: bash
@@ -387,7 +343,6 @@ jobs:
           name: pos-desktop-${{ github.sha }}-${{ steps.signing.outputs.MODE }}
           path: |
             artifacts/pos-desktop/${{ steps.msi.outputs.PATH }}
-            artifacts/pos-desktop/${{ steps.exe.outputs.PATH }}
             artifacts/pos-desktop/build-manifest.json
           retention-days: 30
           if-no-files-found: error
@@ -399,7 +354,6 @@ jobs:
         with:
           files: |
             artifacts/pos-desktop/${{ steps.msi.outputs.PATH }}
-            artifacts/pos-desktop/${{ steps.exe.outputs.PATH }}
             artifacts/pos-desktop/build-manifest.json
           name: "ZACOD POS Desktop ${{ github.ref_name }}"
           draft: true
@@ -411,20 +365,11 @@ jobs:
             **Size:** ${{ steps.msi.outputs.SIZE }} bytes
             **SHA-256:** `${{ steps.msi.outputs.SHA256 }}`
 
-            **Offline MSI installer (`/install` wizard):** `${{ steps.exe.outputs.NAME }}`
-            **Size:** ${{ steps.exe.outputs.SIZE }} bytes
-            **SHA-256:** `${{ steps.exe.outputs.SHA256 }}`
-
             **Signed:** `${{ steps.signing.outputs.MODE }}`
             **Commit:** ${{ github.sha }}
 
-            ### Next steps for SuperAdmin
-            The server auto-mirrors BOTH assets hourly into the Releases table
-            (`ALL` country): the online `.msi` as platform `win-x64` and the
-            `-offline.msi` as platform `win-x64-exe`. To publish immediately, hit
-            **SuperAdmin → POS Devices → Releases tab → مزامنة الآن**, or add
-            per-country rows manually (use platform `win-x64` for `/download`,
-            `win-x64-exe` for the `/install` offline wizard).
+            This candidate contains the small online MSI only. It does not include
+            the offline WebView2 runtime installer.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

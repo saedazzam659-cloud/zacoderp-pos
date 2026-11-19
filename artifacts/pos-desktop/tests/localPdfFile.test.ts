@@ -4,6 +4,7 @@ import {
   describeFileReadError,
   LocalPdfFileRangeTransport,
   openLocalPdf,
+  PDF_BUFFERED_READ_LIMIT,
   PDF_FILE_RANGE_CHUNK_SIZE,
 } from "../src/lib/localPdfFile.ts";
 
@@ -52,12 +53,39 @@ test("local PDF range transport reads only the requested byte slice", async () =
   assert.equal(PDF_FILE_RANGE_CHUNK_SIZE, 256 * 1024);
 });
 
+test("opens ordinary PDFs through PDF.js's direct buffer path", async () => {
+  const pdf = makeTextPdf(12 * 1024 * 1024);
+  const file = new Blob([pdf], { type: "application/pdf" });
+  const progress: Array<[number, number]> = [];
+  const { document, transport } = await openLocalPdf(file, "small-buffer-test.pdf", (loaded, total) => {
+    progress.push([loaded, total]);
+  });
+
+  try {
+    assert.equal(transport, null);
+    assert.equal(progress.at(-1)?.[0], file.size);
+    assert.equal(progress.at(-1)?.[1], file.size);
+    assert.equal(document.numPages, 1);
+    const page = await document.getPage(1);
+    const text = await page.getTextContent();
+    assert.match(text.items.map((item) => item.str).join(" "), /HELLO RANGE/);
+  } finally {
+    await document.destroy();
+  }
+});
+
 test("opens a large local PDF in bounded byte ranges and extracts its text", async () => {
   const pdf = makeTextPdf(2 * 1024 * 1024);
   const file = new Blob([pdf], { type: "application/pdf" });
-  const { document, transport } = await openLocalPdf(file, "large-range-test.pdf");
+  const { document, transport } = await openLocalPdf(
+    file,
+    "large-range-test.pdf",
+    undefined,
+    { bufferThresholdBytes: 0 },
+  );
 
   try {
+    assert.ok(transport);
     assert.equal(document.numPages, 1);
     const page = await document.getPage(1);
     const text = await page.getTextContent();
@@ -77,4 +105,7 @@ test("shows readable details from plain PDF.js error objects", () => {
     describeFileReadError({ name: "UnknownErrorException", message: "Worker initialization failed" }),
     "UnknownErrorException: Worker initialization failed",
   );
+  assert.match(describeFileReadError(null), /null/);
+  assert.match(describeFileReadError(undefined), /undefined/);
+  assert.equal(PDF_BUFFERED_READ_LIMIT, 16 * 1024 * 1024);
 });

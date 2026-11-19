@@ -1,6 +1,12 @@
 import * as pdfjsLib from "pdfjs-dist";
 
 export const PDF_FILE_RANGE_CHUNK_SIZE = 256 * 1024;
+export const PDF_BUFFERED_READ_LIMIT = 16 * 1024 * 1024;
+
+export interface OpenLocalPdfOptions {
+  /** Allows tests to exercise range reads without creating a huge fixture. */
+  bufferThresholdBytes?: number;
+}
 
 export class NoPdfTextLayerError extends Error {
   readonly code = "PDF_NO_TEXT_LAYER";
@@ -93,7 +99,38 @@ export async function openLocalPdf(
   file: Blob,
   fileName: string,
   onProgress?: (loaded: number, total: number) => void,
-): Promise<{ document: pdfjsLib.PDFDocumentProxy; transport: LocalPdfFileRangeTransport }> {
+  options: OpenLocalPdfOptions = {},
+): Promise<{ document: pdfjsLib.PDFDocumentProxy; transport: LocalPdfFileRangeTransport | null }> {
+  const bufferThreshold = options.bufferThresholdBytes ?? PDF_BUFFERED_READ_LIMIT;
+
+  // PDF.js's custom range transport has failed on a real 12 MB catalog even
+  // though bounded-range tests pass. For ordinary-size PDFs, use the native
+  // ArrayBuffer input path; reserve bounded Blob slices for genuinely large
+  // catalogs to avoid allocating the whole file at once.
+  if (file.size <= bufferThreshold) {
+    onProgress?.(0, file.size);
+    let data: ArrayBuffer;
+    try {
+      data = await file.arrayBuffer();
+    } catch (error) {
+      throw normalizeEmptyPdfError(error, fileName, "قراءة الملف");
+    }
+    onProgress?.(file.size, file.size);
+
+    let loadingTask: ReturnType<typeof pdfjsLib.getDocument> | null = null;
+    try {
+      loadingTask = pdfjsLib.getDocument({ data });
+      return { document: await loadingTask.promise, transport: null };
+    } catch (error) {
+      try {
+        await loadingTask?.destroy();
+      } catch {
+        // Preserve the original PDF.js or local-file error.
+      }
+      throw normalizeEmptyPdfError(error, fileName, "فتح الملف");
+    }
+  }
+
   const transport = new LocalPdfFileRangeTransport(file, fileName, onProgress);
   const loadingTask = pdfjsLib.getDocument({
     range: transport,
@@ -111,13 +148,21 @@ export async function openLocalPdf(
     } catch {
       // Preserve the original PDF or local-file read error.
     }
-    throw transport.failureReason ?? error;
+    throw normalizeEmptyPdfError(transport.failureReason ?? error, fileName, "فتح الملف");
   }
+}
+
+function normalizeEmptyPdfError(error: unknown, fileName: string, phase: string): unknown {
+  if (error != null) return error;
+  const value = error === null ? "null" : "undefined";
+  return new Error(`PDF.js لم يُرجع تفاصيل أثناء ${phase} «${fileName}» (القيمة: ${value}).`);
 }
 
 export function describeFileReadError(error: unknown): string {
   if (error instanceof Error) return error.message || error.name || "خطأ غير معروف";
   if (typeof error === "string" && error.trim()) return error;
+  if (error === null) return "PDF.js أعاد خطأ فارغًا (null).";
+  if (error === undefined) return "PDF.js لم يُرجع تفاصيل للخطأ (undefined).";
 
   if (error && typeof error === "object") {
     const value = error as { name?: unknown; message?: unknown; code?: unknown };
@@ -133,5 +178,5 @@ export function describeFileReadError(error: unknown): string {
     }
   }
 
-  return error == null ? "سبب غير معروف" : String(error);
+  return String(error);
 }
