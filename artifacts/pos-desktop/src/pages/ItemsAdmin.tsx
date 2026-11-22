@@ -11,11 +11,12 @@ import {
 } from "../lib/items";
 import { listUom, getDefaultUom } from "../lib/uom";
 import { listItemGroups } from "../lib/itemGroups";
-import { listBrands, listItemBrandLinks, setItemBrands, dropItemBrands, type ItemBrandLink } from "../lib/brands";
+import { listBrands, listItemBrandLinks, listItemBrandsForItems, setItemBrands, dropItemBrands, type ItemBrandLink } from "../lib/brands";
 import { listAccounts, type Account } from "../lib/accounting";
 import { getAllStockShared, type StockMap } from "../lib/stock";
 import { getVertical, type Vertical } from "../lib/standalone";
 import { currencySymbol } from "../lib/currency";
+import { serializeBrandLinks, serializeSalesUnits } from "../lib/catalogTransfer";
 import { SearchCombobox, Pagination, pageSlice } from "./_adminUi";
 import { exportToExcel, exportToPdf, type ExportColumn } from "../lib/exporters";
 import { useDataRefresh, emitData } from "../lib/dataBus";
@@ -193,8 +194,10 @@ function evalAdvCond(c: AdvCond, it: LocalItem, s: StockMap): boolean {
 
 function itemsToCsv(list: LocalItem[], s: StockMap, language: UiLanguage): string {
   const headers = language === "en"
-    ? ["Name", "English name", "Available quantity", "Barcode", "Code", "Price", "Tax %", "Source"]
-    : ["الاسم", "الاسم بالإنجليزية", "الكمية المتاحة", "الباركود", "الكود", "السعر", "الضريبة %", "المصدر"];
+    ? ["Name", "English name", "Available quantity", "Barcode", "Code", "Price", "Purchase cost", "Tax %", "Source", "Base unit", "Variant group", "Variant size/model", "Brand links JSON", "Sales units JSON", "POS Desktop Catalog Transfer Version"]
+    : ["الاسم", "الاسم بالإنجليزية", "الكمية المتاحة", "الباركود", "الكود", "السعر", "التكلفة", "الضريبة %", "المصدر", "الوحدة الأساسية", "مجموعة المقاس", "المقاس / النسخة", "العلامات التجارية JSON", "وحدات البيع JSON", "إصدار ملف نقل زاكود"];
+  const uomNames = new Map(listUom().map((uom) => [uom.id, uom.nameAr]));
+  const brandLinksByItem = listItemBrandsForItems(list.map((item) => item.id));
   const esc = (x: string) => (/[",\n\r]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x);
   const lines = [headers.map(esc).join(",")];
   for (const it of list) {
@@ -206,8 +209,15 @@ function itemsToCsv(list: LocalItem[], s: StockMap, language: UiLanguage): strin
       it.barcode ?? "",
       it.code ?? "",
       it.salePrice.toFixed(2),
+      (it.costPrice ?? 0).toFixed(2),
       String(it.vatRate),
       it.cloudId ? uiText("سحابي", "Cloud", language) : uiText("محلي", "Local", language),
+      uomNames.get(it.uomId ?? -1) ?? "",
+      it.metadata?.variantGroupName ?? "",
+      it.metadata?.variantLabel ?? "",
+      serializeBrandLinks(brandLinksByItem[it.id] ?? []),
+      serializeSalesUnits(it.units),
+      "1",
     ].map((c) => esc(String(c))).join(","));
   }
   return "\uFEFF" + lines.join("\r\n");
@@ -477,8 +487,23 @@ export default function ItemsAdmin() {
     { header: text("الضريبة %", "Tax %"), cell: (it) => it.vatRate },
     { header: text("المصدر", "Source"), cell: (it) => (it.cloudId ? text("سحابي", "Cloud") : text("محلي", "Local")) },
   ];
+  const transferUomNames = useMemo(() => new Map(listUom().map((uom) => [uom.id, uom.nameAr])), []);
+  const transferBrandLinksByItem = useMemo(
+    () => listItemBrandsForItems(processed.map((item) => item.id)),
+    [processed],
+  );
+  const transferColumns: ExportColumn<LocalItem>[] = [
+    ...exportColumns,
+    { header: text("التكلفة", "Purchase cost"), cell: (it) => it.costPrice },
+    { header: text("الوحدة الأساسية", "Base unit"), cell: (it) => transferUomNames.get(it.uomId ?? -1) ?? "" },
+    { header: text("مجموعة المقاس", "Variant group"), cell: (it) => it.metadata?.variantGroupName ?? "" },
+    { header: text("المقاس / النسخة", "Variant size/model"), cell: (it) => it.metadata?.variantLabel ?? "" },
+    { header: text("العلامات التجارية JSON", "Brand links JSON"), cell: (it) => serializeBrandLinks(transferBrandLinksByItem[it.id] ?? []) },
+    { header: text("وحدات البيع JSON", "Sales units JSON"), cell: (it) => serializeSalesUnits(it.units) },
+    { header: "POS Desktop Catalog Transfer Version", cell: () => "1" },
+  ];
   function exportExcel() {
-    exportToExcel("items", exportColumns, processed);
+    exportToExcel("items", transferColumns, processed);
   }
   function exportPdf() {
     exportToPdf(text("قائمة الأصناف", "Item list"), exportColumns, processed);
@@ -1162,7 +1187,7 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"basic" | "pricing" | "units" | "accounts" | "inventory" | "restaurant-modifiers" | "additional" | "usage" | "notes" | "retail">("basic");
+  const [activeTab, setActiveTab] = useState<"basic" | "pricing" | "units" | "variants" | "accounts" | "inventory" | "restaurant-modifiers" | "additional" | "usage" | "notes" | "retail">("basic");
   const [profile, setProfile] = useState<ItemWebProfile>(() => {
     const saved = initial?.metadata ?? {};
     const oldNature = initial?.itemType;
@@ -1195,6 +1220,8 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
       retailCategory: saved.retailCategory ?? "apparel",
       retailColor: saved.retailColor ?? "",
       retailSize: saved.retailSize ?? "",
+      variantGroupName: saved.variantGroupName ?? "",
+      variantLabel: saved.variantLabel ?? "",
       auditHistory: saved.auditHistory ?? [],
     };
   });
@@ -1317,6 +1344,11 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
     if (profile.businessType === "prepaid_expense" && !profile.costAccountId) {
       setActiveTab("accounts"); setErr(text("حساب التكلفة مطلوب للمصروفات المقدمة", "A cost account is required for prepaid expenses.")); return;
     }
+    if (!!profile.variantGroupName?.trim() !== !!profile.variantLabel?.trim()) {
+      setActiveTab("variants");
+      setErr(text("أدخل اسم مجموعة المقاسات والمقاس معًا، أو اترك الحقلين فارغين.", "Enter both the variant family and size, or leave both fields empty."));
+      return;
+    }
     // Multi-unit validation — only for non-weighed items (units are hidden for
     // weighed). Each unit needs a name, a factor > 0, and a price > 0.
     const cleanUnits: ItemUnit[] = form.isWeighed ? [] : units
@@ -1390,6 +1422,8 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
         { field: "vatRate", before: initial.vatRate, after: form.vatRate },
         { field: "uomId", before: initial.uomId, after: form.uomId },
         { field: "groupId", before: initial.groupId, after: form.groupId },
+        { field: "variantGroupName", before: initial.metadata?.variantGroupName, after: profile.variantGroupName },
+        { field: "variantLabel", before: initial.metadata?.variantLabel, after: profile.variantLabel },
         { field: "businessType", before: initial.metadata?.businessType, after: profile.businessType },
         { field: "businessNature", before: initial.metadata?.businessNature ?? initial.itemType, after: profile.businessNature },
         { field: "subgroupName", before: initial.metadata?.subgroupName, after: profile.subgroupName },
@@ -1641,6 +1675,7 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
     { id: "basic" as const, icon: "📦", ar: "البيانات الأساسية", en: "Basic data" },
     { id: "pricing" as const, icon: "💲", ar: "الأسعار والكميات", en: "Pricing & quantities" },
     { id: "units" as const, icon: "📏", ar: "الوحدات", en: "Units" },
+    { id: "variants" as const, icon: "↔️", ar: "المقاسات والأصناف الفرعية", en: "Sizes & SKU variants" },
     ...(profile.businessType !== "stock" ? [{ id: "accounts" as const, icon: "📘", ar: "الربط المحاسبي", en: "Accounting links" }] : []),
     { id: "inventory" as const, icon: "🏬", ar: "المخزون والمستودعات", en: "Inventory & warehouses" },
     ...(profile.showInPos !== false ? [{ id: "restaurant-modifiers" as const, icon: "🍽️", ar: "إضافات وخيارات المطعم", en: "Restaurant modifiers" }] : []),
@@ -1853,6 +1888,35 @@ function ItemForm({ initial, isPharmacy, canRetailVariants, onClose, onSaved }: 
                 <button type="button" onClick={addUnit} style={S.btnAddCond}>+ {text("إضافة وحدة بيع", "Add sales unit")}</button>
               </>
             ) : <div style={S.infoBox}>{text("الوحدات الإضافية غير متاحة للصنف المباع بالوزن.", "Additional sale units are unavailable for weighed items.")}</div>}
+          </div>
+        )}
+
+        {activeTab === "variants" && (
+          <div>
+            <div style={S.infoBox}>
+              {text(
+                "استخدم هذا القسم عندما تكون المقاسات أصنافًا مستقلة في المخزون. كل مقاس له كود وسعر وباركود ورصيد خاص به؛ اسم المجموعة للربط والتصدير فقط. العلامة التجارية ووحدات البيع تُضبط في أقسامها المنفصلة.",
+                "Use this for sizes that are separate inventory SKUs. Each size keeps its own code, price, barcode, and stock; the family label is for grouping and transfer only. Configure brands and sale units in their separate sections.",
+              )}
+            </div>
+            <div style={S.formGrid4}>
+              <Field label={text("اسم مجموعة المقاسات", "Variant family name")}>
+                <input
+                  value={profile.variantGroupName ?? ""}
+                  onChange={(e) => patchProfile({ variantGroupName: e.target.value })}
+                  style={S.input}
+                  placeholder={text("مثال: مواسير PN20", "e.g. PN20 pipes")}
+                />
+              </Field>
+              <Field label={text("المقاس أو النسخة", "Size or variant")}>
+                <input
+                  value={profile.variantLabel ?? ""}
+                  onChange={(e) => patchProfile({ variantLabel: e.target.value })}
+                  style={S.input}
+                  placeholder={text("مثال: 20 مم", "e.g. 20 mm")}
+                />
+              </Field>
+            </div>
           </div>
         )}
 

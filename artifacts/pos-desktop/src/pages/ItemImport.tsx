@@ -13,7 +13,7 @@ import { listItems, type LocalItem } from "../lib/items";
 import { listBrands, createBrand, type Brand } from "../lib/brands";
 import { emitData, useDataRefresh } from "../lib/dataBus";
 import {
-  IMPORT_FIELDS, guessMapping, parseRows, buildPlan, applyPlan,
+  IMPORT_FIELDS, guessMapping, parseRows, buildPlan, applyPlan, resolveImportUomId,
   type ColMapping, type ImportField, type ParsedRow, type RowPlan, type PlanSummary, type ApplyResult,
 } from "../lib/importItems";
 import { currencySymbol } from "../lib/currency";
@@ -281,6 +281,11 @@ export default function ItemImport() {
     if (!parsedRows.length) return null;
     return buildPlan(parsedRows, existing, { updatePrices });
   }, [parsedRows, existing, updatePrices]);
+  const hasTransferColumns = mapping.transferVersion != null
+    || mapping.variantGroupName != null
+    || mapping.variantLabel != null
+    || mapping.brandLinksJson != null
+    || mapping.unitsJson != null;
 
   function resetAll() {
     setStep("source"); setGrid([]); setMapping({}); setPasteText("");
@@ -292,6 +297,15 @@ export default function ItemImport() {
     if (!summary) return;
     setBusy(true); setErr(null); setProgress({ done: 0, total: summary.plans.length });
     try {
+      const missingUnit = summary.plans.find((plan) =>
+        plan.kind !== "invalid"
+        && (plan.kind === "new" || plan.row.isCatalogTransfer)
+        && plan.row.uomName.trim()
+        && resolveImportUomId(plan.row.uomName) == null,
+      );
+      if (missingUnit) {
+        throw new Error(`وحدة القياس "${missingUnit.row.uomName}" غير موجودة في دليل الوحدات.`);
+      }
       let useBrandId: number | null = null;
       if (brandMode === "existing" && brandId !== "") useBrandId = Number(brandId);
       if (brandMode === "new") {
@@ -474,6 +488,13 @@ export default function ItemImport() {
               تحديث أسعار الأصناف الموجودة تلقائيًا
             </label>
           </div>
+          {hasTransferColumns && (
+            <div style={S.hint}>
+              {mapping.transferVersion != null
+                ? "هذا ملف نقل كامل؛ سيُحدّث بيانات الصنف والعلامات ووحدات البيع والمقاسات، دون تغيير أرصدة المخزون."
+                : "سيتم استيراد الحقول الإضافية التي تم تعيينها فقط. استخدم ملف النقل الكامل لاستعادة بيانات الصنف دون تغيير أرصدة المخزون."}
+            </div>
+          )}
 
           {/* brand tagging */}
           <div style={S.brandBox}>
@@ -531,7 +552,7 @@ export default function ItemImport() {
             <button style={S.btnGhost} onClick={() => setStep("map")} disabled={busy}>→ رجوع</button>
             <button
               style={S.btnPrimary}
-              disabled={busy || (summary.counts.new + summary.counts.priceUpdate === 0 && brandMode === "none")}
+              disabled={busy || (summary.counts.new + summary.counts.priceUpdate === 0 && brandMode === "none" && !hasTransferColumns)}
               onClick={runImport}
             >
               {busy ? "جارٍ الاستيراد…" : "تنفيذ الاستيراد ←"}
@@ -546,6 +567,7 @@ export default function ItemImport() {
           <div style={S.countRow}>
             <Stat label="أصناف مضافة" value={result.inserted} tone="new" />
             <Stat label="أسعار مُحدَّثة" value={result.priceUpdated} tone="upd" />
+            <Stat label="أصناف استُعيدت بياناتها" value={result.extendedUpdated} tone="same" />
             <Stat label="روابط علامات" value={result.brandLinked} tone="brand" />
             <Stat label="متجاهَل" value={result.skipped} tone="bad" />
           </div>

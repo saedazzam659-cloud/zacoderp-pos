@@ -218,6 +218,10 @@ export interface ItemWebProfile {
   retailCategory?: string;
   retailColor?: string;
   retailSize?: string;
+  /** Shared family label for independently stocked SKU variants. */
+  variantGroupName?: string;
+  /** This SKU's size/model value within the family, e.g. "20 mm". */
+  variantLabel?: string;
 }
 
 export interface LocalItem {

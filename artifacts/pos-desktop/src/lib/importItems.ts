@@ -14,8 +14,10 @@
 // lib/items (createItem/updateItem) and lib/brands (listItemBrandLinks/
 // setItemBrands), both of which already handle SQLite vs LS internally.
 
-import { createItem, updateItem, type LocalItem, type CreateItemInput } from "./items";
-import { listItemBrandLinks, setItemBrands, type ItemBrandLink } from "./brands";
+import { createItem, listItems, updateItem, type LocalItem, type CreateItemInput, type ItemUnit } from "./items";
+import { createBrand, listBrands, listItemBrandLinks, setItemBrands, type ItemBrandLink } from "./brands";
+import { getDefaultUom, listUom } from "./uom";
+import { isIndependentSkuVariant, parseBrandLinksJson, parseSalesUnitsJson, type CatalogTransferBrandLink, type CatalogTransferUnit } from "./catalogTransfer";
 
 // ─── Field model ────────────────────────────────────────────────────────
 
@@ -28,7 +30,13 @@ export type ImportField =
   | "salePrice"
   | "vatRate"
   | "cost"
-  | "partNumber";
+  | "partNumber"
+  | "uom"
+  | "variantGroupName"
+  | "variantLabel"
+  | "brandLinksJson"
+  | "unitsJson"
+  | "transferVersion";
 
 export const IMPORT_FIELDS: { key: ImportField; label: string; numeric: boolean }[] = [
   { key: "nameAr", label: "اسم الصنف", numeric: false },
@@ -38,7 +46,13 @@ export const IMPORT_FIELDS: { key: ImportField; label: string; numeric: boolean 
   { key: "cost", label: "التكلفة / سعر الشراء", numeric: true },
   { key: "vatRate", label: "نسبة الضريبة %", numeric: true },
   { key: "partNumber", label: "رقم القطعة / الموديل", numeric: false },
+  { key: "uom", label: "وحدة القياس", numeric: false },
   { key: "nameEn", label: "الاسم بالإنجليزية", numeric: false },
+  { key: "variantGroupName", label: "مجموعة المقاسات", numeric: false },
+  { key: "variantLabel", label: "المقاس / النسخة", numeric: false },
+  { key: "brandLinksJson", label: "بيانات العلامات التجارية (JSON)", numeric: false },
+  { key: "unitsJson", label: "وحدات البيع (JSON)", numeric: false },
+  { key: "transferVersion", label: "إصدار ملف النقل (تلقائي)", numeric: false },
 ];
 
 /** field → source-column index (undefined = not mapped). */
@@ -54,6 +68,18 @@ export interface ParsedRow {
   cost: number | null;
   vatRate: number | null;
   partNumber: string;
+  uomName: string;
+  hasUom: boolean;
+  variantGroupName?: string;
+  variantLabel?: string;
+  hasVariantGroupName: boolean;
+  hasVariantLabel: boolean;
+  brandLinks?: CatalogTransferBrandLink[];
+  hasBrandLinksJson: boolean;
+  salesUnits?: CatalogTransferUnit[];
+  hasUnitsJson: boolean;
+  isCatalogTransfer: boolean;
+  transferError?: string;
   rowIndex: number;
 }
 
@@ -79,6 +105,7 @@ export interface ApplyResult {
   inserted: number;
   priceUpdated: number;
   brandLinked: number;
+  extendedUpdated: number;
   skipped: number;
 }
 
@@ -124,6 +151,12 @@ const FIELD_KEYWORDS: Record<ImportField, string[]> = {
   vatRate: ["ضريبة", "الضريبة", "القيمة المضافة", "vat", "tax"],
   partNumber: ["رقم القطعة", "القطعة", "موديل", "الموديل", "part", "part no", "partnumber", "model"],
   nameEn: ["english", "الانجليزي", "الإنجليزي", "بالانجليزية", "name en", "english name", "en"],
+  uom: ["وحدة القياس", "الوحدة الأساسية", "الوحدة", "unit of measure", "base unit", "uom"],
+  variantGroupName: ["مجموعة المقاسات", "مجموعة المقاس", "variant group"],
+  variantLabel: ["المقاس / النسخة", "مقاس الصنف", "variant size", "variant label"],
+  brandLinksJson: ["العلامات التجارية json", "brand links json"],
+  unitsJson: ["وحدات البيع json", "sales units json"],
+  transferVersion: ["pos desktop catalog transfer version", "pos desktop transfer version", "إصدار ملف نقل زاكود"],
 };
 
 /**
@@ -135,7 +168,10 @@ export function guessMapping(header: string[]): ColMapping {
   const norm = header.map((h) => normName(h).toLowerCase());
   const used = new Set<number>();
   const map: ColMapping = {};
-  const order: ImportField[] = ["nameAr", "barcode", "code", "salePrice", "cost", "vatRate", "partNumber", "nameEn"];
+  const order: ImportField[] = [
+    "transferVersion", "brandLinksJson", "unitsJson", "variantGroupName", "variantLabel",
+    "nameAr", "barcode", "code", "salePrice", "uom", "cost", "vatRate", "partNumber", "nameEn",
+  ];
   for (const field of order) {
     const kws = FIELD_KEYWORDS[field];
     let best = -1;
@@ -167,6 +203,33 @@ export function parseRows(grid: string[][], mapping: ColMapping, hasHeader: bool
   for (let r = start; r < grid.length; r++) {
     const row = grid[r];
     if (!row || row.every((c) => !(c ?? "").toString().trim())) continue;
+    const rawTransferVersion = cellAt(row, mapping.transferVersion);
+    let transferError: string | undefined;
+    let brandLinks: CatalogTransferBrandLink[] | undefined;
+    let salesUnits: CatalogTransferUnit[] | undefined;
+    if (mapping.brandLinksJson != null) {
+      try { brandLinks = parseBrandLinksJson(cellAt(row, mapping.brandLinksJson)); }
+      catch (error) { transferError = error instanceof Error ? error.message : "بيانات العلامات التجارية غير صالحة."; }
+    }
+    if (mapping.unitsJson != null) {
+      try { salesUnits = parseSalesUnitsJson(cellAt(row, mapping.unitsJson)); }
+      catch (error) { transferError ??= error instanceof Error ? error.message : "بيانات وحدات البيع غير صالحة."; }
+    }
+    const baseBarcode = cellAt(row, mapping.barcode);
+    if (baseBarcode && salesUnits?.some((unit) => unit.barcode?.trim() === baseBarcode)) {
+      transferError ??= "باركود وحدة البيع يطابق باركود الصنف الأساسي.";
+    }
+    if (rawTransferVersion && rawTransferVersion !== "1") transferError ??= `إصدار ملف النقل "${rawTransferVersion}" غير مدعوم.`;
+    const isCatalogTransfer = rawTransferVersion === "1";
+    if (isCatalogTransfer) {
+      const requiredFields: ImportField[] = [
+        "nameAr", "nameEn", "code", "barcode", "salePrice", "cost", "vatRate", "uom",
+        "variantGroupName", "variantLabel", "brandLinksJson", "unitsJson",
+      ];
+      if (requiredFields.some((field) => mapping[field] == null)) {
+        transferError ??= "ملف النقل الكامل لا يحتوي على كل الأعمدة المطلوبة؛ أعد التعيين التلقائي أو استخدم الملف كما تم تصديره.";
+      }
+    }
     out.push({
       code: cellAt(row, mapping.code),
       nameAr: normName(cellAt(row, mapping.nameAr)),
@@ -176,6 +239,18 @@ export function parseRows(grid: string[][], mapping: ColMapping, hasHeader: bool
       cost: parseNum(cellAt(row, mapping.cost)),
       vatRate: parseNum(cellAt(row, mapping.vatRate)),
       partNumber: cellAt(row, mapping.partNumber),
+      uomName: cellAt(row, mapping.uom),
+      hasUom: mapping.uom != null,
+      variantGroupName: mapping.variantGroupName == null ? undefined : cellAt(row, mapping.variantGroupName),
+      variantLabel: mapping.variantLabel == null ? undefined : cellAt(row, mapping.variantLabel),
+      hasVariantGroupName: mapping.variantGroupName != null,
+      hasVariantLabel: mapping.variantLabel != null,
+      brandLinks,
+      hasBrandLinksJson: mapping.brandLinksJson != null,
+      salesUnits,
+      hasUnitsJson: mapping.unitsJson != null,
+      isCatalogTransfer,
+      transferError,
       rowIndex: r,
     });
   }
@@ -216,6 +291,11 @@ export function buildPlan(rows: ParsedRow[], existing: LocalItem[], opts: BuildP
   const plannedName = new Set<string>();
 
   for (const row of rows) {
+    if (row.transferError) {
+      plans.push({ row, kind: "invalid", matchedItemId: null, matchedBy: null, oldPrice: null, newPrice: null, reason: row.transferError });
+      counts.invalid++;
+      continue;
+    }
     if (!row.nameAr && !row.code && !row.barcode) {
       plans.push({ row, kind: "invalid", matchedItemId: null, matchedBy: null, oldPrice: null, newPrice: null, reason: "لا يوجد اسم أو كود أو باركود" });
       counts.invalid++;
@@ -232,7 +312,9 @@ export function buildPlan(rows: ParsedRow[], existing: LocalItem[], opts: BuildP
     const mCode = kCode ? byCode.get(kCode) : undefined;
     const mBarcode = kBarcode ? byBarcode.get(kBarcode) : undefined;
     const mName = kName ? byName.get(kName) : undefined;
-    const distinctIds = new Set([mCode, mBarcode, mName].filter((m): m is LocalItem => !!m).map((m) => m.id));
+    const isIndependentVariant = isIndependentSkuVariant({ ...row, isCatalogTransfer: row.isCatalogTransfer });
+    const nameMatch = isIndependentVariant ? undefined : mName;
+    const distinctIds = new Set([mCode, mBarcode, nameMatch].filter((m): m is LocalItem => !!m).map((m) => m.id));
     if (distinctIds.size > 1) {
       plans.push({ row, kind: "invalid", matchedItemId: null, matchedBy: null, oldPrice: null, newPrice: row.salePrice, reason: "تعارض: الكود/الباركود/الاسم يخصّون أصنافًا مختلفة" });
       counts.invalid++;
@@ -243,7 +325,7 @@ export function buildPlan(rows: ParsedRow[], existing: LocalItem[], opts: BuildP
     let matchedBy: RowPlan["matchedBy"] = null;
     if (mCode) { match = mCode; matchedBy = "code"; }
     else if (mBarcode) { match = mBarcode; matchedBy = "barcode"; }
-    else if (mName) { match = mName; matchedBy = "name"; }
+    else if (nameMatch) { match = nameMatch; matchedBy = "name"; }
 
     if (!match) {
       if (!row.nameAr) {
@@ -252,14 +334,14 @@ export function buildPlan(rows: ParsedRow[], existing: LocalItem[], opts: BuildP
         continue;
       }
       // Already planned as a new insert earlier in this same file → skip the dup.
-      if ((kCode && plannedCode.has(kCode)) || (kBarcode && plannedBarcode.has(kBarcode)) || (kName && plannedName.has(kName))) {
+      if ((kCode && plannedCode.has(kCode)) || (kBarcode && plannedBarcode.has(kBarcode)) || (!isIndependentVariant && kName && plannedName.has(kName))) {
         plans.push({ row, kind: "invalid", matchedItemId: null, matchedBy: null, oldPrice: null, newPrice: row.salePrice, reason: "مكرر داخل نفس الملف" });
         counts.invalid++;
         continue;
       }
       if (kCode) plannedCode.add(kCode);
       if (kBarcode) plannedBarcode.add(kBarcode);
-      if (kName) plannedName.add(kName);
+      if (!isIndependentVariant && kName) plannedName.add(kName);
       plans.push({ row, kind: "new", matchedItemId: null, matchedBy: null, oldPrice: null, newPrice: row.salePrice });
       counts.new++;
       continue;
@@ -290,6 +372,45 @@ export interface ApplyOpts {
   onProgress?: (done: number, total: number) => void;
 }
 
+function importedUnits(units: CatalogTransferUnit[]): ItemUnit[] {
+  return units.map((unit, index) => ({
+    ...unit,
+    barcode: unit.barcode || undefined,
+    id: typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `import-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+  }));
+}
+
+function brandForTransfer(link: CatalogTransferBrandLink) {
+  const brands = listBrands();
+  const code = link.brandCode.trim().toLowerCase();
+  const nameAr = link.brandNameAr.trim().replace(/\s+/g, " ").toLowerCase();
+  const existing = (code ? brands.find((brand) => (brand.code ?? "").trim().toLowerCase() === code) : undefined)
+    ?? brands.find((brand) => brand.nameAr.trim().replace(/\s+/g, " ").toLowerCase() === nameAr);
+  if (existing) return existing;
+  return createBrand({
+    code: link.brandCode.trim() || undefined,
+    nameAr: link.brandNameAr,
+    nameEn: link.brandNameEn ?? null,
+  });
+}
+
+function normalizeUomName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "").replace(/[ـًٌٍَُِّْ]/g, "");
+}
+
+/** Resolve imported unit names against the local unit catalog. */
+export function resolveImportUomId(name: string): number | null {
+  const units = listUom();
+  if (!name.trim()) return getDefaultUom()?.id ?? units[0]?.id ?? null;
+  const key = normalizeUomName(name);
+  return units.find((unit) =>
+    [unit.nameAr, unit.nameEn ?? "", unit.shortCode ?? ""]
+      .some((label) => normalizeUomName(label) === key),
+  )?.id ?? null;
+}
+
 /**
  * Execute a plan. New rows are created, price_update rows are patched
  * (price only — other item fields are preserved by updateItem's merge), and
@@ -300,7 +421,8 @@ export interface ApplyOpts {
  */
 export async function applyPlan(plans: RowPlan[], opts: ApplyOpts = {}): Promise<ApplyResult> {
   const brandId = opts.brandId ?? null;
-  const res: ApplyResult = { inserted: 0, priceUpdated: 0, brandLinked: 0, skipped: 0 };
+  const res: ApplyResult = { inserted: 0, priceUpdated: 0, brandLinked: 0, extendedUpdated: 0, skipped: 0 };
+  const existingById = new Map((await listItems()).map((item) => [item.id, item]));
   const total = plans.length;
   let done = 0;
 
@@ -311,15 +433,23 @@ export async function applyPlan(plans: RowPlan[], opts: ApplyOpts = {}): Promise
     if (p.kind === "invalid") { res.skipped++; continue; }
 
     let itemId: number | null = p.matchedItemId;
+    let restoredExtendedData = false;
 
     if (p.kind === "new") {
+      const metadata: NonNullable<LocalItem["metadata"]> = {};
+      if (p.row.hasVariantGroupName) metadata.variantGroupName = p.row.variantGroupName ?? "";
+      if (p.row.hasVariantLabel) metadata.variantLabel = p.row.variantLabel ?? "";
       const input: CreateItemInput = {
         code: p.row.code || null,
         nameAr: p.row.nameAr,
         nameEn: p.row.nameEn || null,
         barcode: p.row.barcode || null,
+        ...(p.row.isCatalogTransfer && p.row.cost != null ? { costPrice: p.row.cost } : {}),
         salePrice: p.row.salePrice ?? 0,
         vatRate: p.row.vatRate ?? 0,
+        uomId: p.row.isCatalogTransfer && !p.row.uomName ? null : resolveImportUomId(p.row.uomName),
+        ...(p.row.hasUnitsJson ? { units: importedUnits(p.row.salesUnits ?? []) } : {}),
+        ...(p.row.hasVariantGroupName || p.row.hasVariantLabel || p.row.isCatalogTransfer ? { metadata } : {}),
       };
       try {
         const created = await createItem(input);
@@ -329,12 +459,56 @@ export async function applyPlan(plans: RowPlan[], opts: ApplyOpts = {}): Promise
         res.skipped++;
         continue;
       }
-    } else if (p.kind === "price_update" && itemId != null && p.newPrice != null) {
+    }
+
+    if (p.kind !== "new" && itemId != null) {
+      const current = existingById.get(itemId);
+      const patch: Partial<CreateItemInput> = {};
+      if (p.row.isCatalogTransfer) {
+        patch.code = p.row.code || null;
+        patch.nameAr = p.row.nameAr;
+        patch.nameEn = p.row.nameEn || null;
+        patch.barcode = p.row.barcode || null;
+        if (p.row.cost != null) patch.costPrice = p.row.cost;
+        if (p.row.vatRate != null) patch.vatRate = p.row.vatRate;
+        if (p.row.hasUom) patch.uomId = p.row.uomName ? resolveImportUomId(p.row.uomName) : null;
+        restoredExtendedData = true;
+      }
+      if (p.kind === "price_update" && p.newPrice != null) patch.salePrice = p.newPrice;
+      if (p.row.hasVariantGroupName || p.row.hasVariantLabel) {
+        const metadata: NonNullable<LocalItem["metadata"]> = { ...(current?.metadata ?? {}) };
+        if (p.row.hasVariantGroupName) metadata.variantGroupName = p.row.variantGroupName ?? "";
+        if (p.row.hasVariantLabel) metadata.variantLabel = p.row.variantLabel ?? "";
+        patch.metadata = metadata;
+        restoredExtendedData = true;
+      }
+      if (p.row.hasUnitsJson) {
+        patch.units = importedUnits(p.row.salesUnits ?? []);
+        restoredExtendedData = true;
+      }
+      if (Object.keys(patch).length) {
+        try {
+          await updateItem(itemId, patch);
+          if (p.kind === "price_update" && p.newPrice != null) res.priceUpdated++;
+        } catch {
+          res.skipped++;
+          continue;
+        }
+      }
+    }
+
+    if (p.row.hasBrandLinksJson && itemId != null) {
       try {
-        await updateItem(itemId, { salePrice: p.newPrice });
-        res.priceUpdated++;
+        const restoredLinks = (p.row.brandLinks ?? []).map((link) => {
+          const brand = brandForTransfer(link);
+          const { brandCode: _brandCode, brandNameAr: _brandNameAr, brandNameEn: _brandNameEn, ...brandFields } = link;
+          return { brandId: brand.id, ...brandFields };
+        });
+        setItemBrands(itemId, restoredLinks);
+        restoredExtendedData = true;
+        res.brandLinked += restoredLinks.length;
       } catch {
-        // Price write failed; still attempt the brand link below.
+        res.skipped++;
       }
     }
 
@@ -371,6 +545,7 @@ export async function applyPlan(plans: RowPlan[], opts: ApplyOpts = {}): Promise
         /* brand link is best-effort; item price/insert already succeeded */
       }
     }
+    if (p.kind !== "new" && restoredExtendedData) res.extendedUpdated++;
   }
 
   return res;

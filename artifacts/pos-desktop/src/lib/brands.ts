@@ -240,6 +240,31 @@ export function listItemBrands(itemId: number): ItemBrandView[] {
   return out;
 }
 
+/** Read item-brand links for a catalog export in one pass instead of reparsing local storage per item. */
+export function listItemBrandsForItems(itemIds: number[]): Record<number, ItemBrandView[]> {
+  const wanted = new Set(itemIds);
+  const brandsById = new Map(readBrands().map((brand) => [brand.id, brand]));
+  const linksByItem = readItemBrandMap();
+  const result: Record<number, ItemBrandView[]> = {};
+  for (const [rawItemId, links] of Object.entries(linksByItem)) {
+    const itemId = Number(rawItemId);
+    if (!wanted.has(itemId)) continue;
+    const visible: ItemBrandView[] = [];
+    for (const link of links) {
+      const brand = brandsById.get(link.brandId);
+      if (!brand) continue;
+      visible.push({
+        ...link,
+        brandNameAr: brand.nameAr,
+        brandNameEn: brand.nameEn ?? null,
+        brandCode: brand.code,
+      });
+    }
+    result[itemId] = visible;
+  }
+  return result;
+}
+
 /** Find an active item-brand link by its optional brand-specific barcode. */
 export function findItemBrandLinkByBarcode(barcode: string): { itemId: number; link: ItemBrandLink } | null {
   const code = barcode.trim();
